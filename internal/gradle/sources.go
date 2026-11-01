@@ -14,13 +14,21 @@ import (
 
 // TestSourceSet is the source set whose classes the test task task of
 // project runs, as its build file declares it literally: the one a Test task
-// names in testClassesDirs = sourceSets.<name>.output.classesDirs, else test
-// for the test task and a JVM test suite's own for the suite's task. A task
-// whose source set ddtest cannot follow has none.
-func TestSourceSet(root string, project Project, task string) (string, bool) {
+// names in testClassesDirs = sourceSets.<name>.output.classesDirs, the last
+// such assignment winning as in Gradle, else test for the test task and a JVM
+// test suite's own for the suite's task. A task whose source set ddtest cannot
+// follow has none, as when build, the root project, sets testClassesDirs for
+// its subprojects.
+func TestSourceSet(root string, build, project Project, task string) (string, bool) {
 	source, ok := buildSource(root, project)
 	if !ok {
 		return "", false
+	}
+	if project.Path != build.Path {
+		rootSource, ok := buildSource(root, build)
+		if !ok || strings.Contains(rootSource, "testClassesDirs") {
+			return "", false
+		}
 	}
 	name := regexp.QuoteMeta(task)
 	// The source set is named in the task's declaration or configuration,
@@ -31,14 +39,19 @@ func TestSourceSet(root string, project Project, task string) (string, bool) {
 		`\btask\s+` + name + `\s*\(\s*type\s*:\s*Test\b[^{\n]*\{|` +
 		`\bval\s+` + name + `\s+by\s+(?:tasks\.)?(?:registering|creating|existing|getting)\s*\(\s*Test::class[^{\n]*\{|` +
 		`\btasks\.` + name + `\s*\{|(?m:^[ \t]*` + name + `\s*\{)`)
+	assigned := ""
 	for _, match := range declaration.FindAllStringIndex(source, -1) {
 		body, ok := block(source, match[1]-1)
 		if !ok {
 			continue
 		}
-		if set := classesSourceSet.FindStringSubmatch(body); set != nil {
-			return set[1] + set[2] + set[3], true
+		if sets := classesSourceSet.FindAllStringSubmatch(body, -1); sets != nil {
+			set := sets[len(sets)-1]
+			assigned = set[1] + set[2] + set[3]
 		}
+	}
+	if assigned != "" {
+		return assigned, true
 	}
 	if task == "test" {
 		return "test", true
@@ -84,6 +97,10 @@ func SourceDirectory(root string, project Project, set, language string) (string
 					configurations = append(configurations, configuration{match[1] + language[0], body})
 				}
 			}
+			// java.srcDirs = […] inside the set's block.
+			for _, assignment := range regexp.MustCompile(`\b`+lang+`\.((?:srcDirs\s*=|setSrcDirs\()[^\n]*)`).FindAllStringSubmatchIndex(set, -1) {
+				configurations = append(configurations, configuration{match[1] + assignment[0], set[assignment[2]:assignment[3]]})
+			}
 		}
 	}
 	// sourceSets.integrationTest.java.srcDirs = […] on one line.
@@ -94,12 +111,12 @@ func SourceDirectory(root string, project Project, set, language string) (string
 	slices.SortStableFunc(configurations, func(a, b configuration) int { return a.offset - b.offset })
 	for _, configuration := range configurations {
 		body := configuration.body
-		replaced := srcDirsAssignment.FindStringIndex(body)
-		if replaced == nil {
+		replacements := srcDirsAssignment.FindAllStringIndex(body, -1)
+		if replacements == nil {
 			// srcDir adds a directory and keeps the default.
 			continue
 		}
-		literal := firstLiteral.FindStringSubmatch(body[replaced[1]:])
+		literal := firstLiteral.FindStringSubmatch(body[replacements[len(replacements)-1][1]:])
 		if literal == nil {
 			return "", false
 		}
@@ -115,8 +132,9 @@ var (
 	// srcDirsAssignment replaces a source directory set's directories.
 	srcDirsAssignment = regexp.MustCompile(`\bsrcDirs\s*=|\bsetSrcDirs\s*\(`)
 	// firstLiteral is the first directory of the list that follows it, as
-	// ['src/itest/java'], listOf("src/itest/java") or files("src/itest/java").
-	firstLiteral = regexp.MustCompile(`^\s*(?:\[|(?:listOf|setOf|files|mutableListOf)\s*\(|\()?\s*(?:"([^"$]+)"|'([^'$]+)')`)
+	// ['src/itest/java'], listOf("src/itest/java") or files("src/itest/java"),
+	// when that element is a whole literal, not the start of a computed path.
+	firstLiteral = regexp.MustCompile(`^\s*(?:\[|(?:listOf|setOf|files|mutableListOf)\s*\(|\()?\s*(?:"([^"$]+)"|'([^'$]+)')\s*(?:,|\]|\)|$)`)
 )
 
 // buildSource is a project's build file without comments; a project without

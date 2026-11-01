@@ -91,8 +91,8 @@ func (t *Testdrive) javaBuild(args []string) (javaBuild, error) {
 }
 
 // mavenUserHome is the user home Maven validation runs set, and the MAVEN_OPTS
-// they extend with it, when neither the command nor its MAVEN_OPTS or
-// MAVEN_ARGS sets user.home or maven.repo.local; empty otherwise.
+// they extend with it, when neither the command nor its MAVEN_OPTS, MAVEN_ARGS
+// or .mvn/jvm.config sets user.home or maven.repo.local; empty otherwise.
 func (t *Testdrive) mavenUserHome(args []string) (options, home string) {
 	value := func(key string) string {
 		if value, ok := t.configurationEnvironment[key]; ok {
@@ -104,10 +104,21 @@ func (t *Testdrive) mavenUserHome(args []string) (options, home string) {
 	selects := func(word string) bool {
 		return strings.HasPrefix(word, "-Duser.home=") || strings.HasPrefix(word, "-Dmaven.repo.local=")
 	}
-	if slices.ContainsFunc(append(append(slices.Clone(args), strings.Fields(options)...), strings.Fields(value("MAVEN_ARGS"))...), selects) {
+	// Maven puts jvm.config before MAVEN_OPTS, so a home added there would win.
+	directory, err := t.javaMavenDirectory(args)
+	if err != nil {
 		return "", ""
 	}
-	home, err := os.UserHomeDir()
+	var jvmConfig []byte
+	if directory != "" {
+		if jvmConfig, err = os.ReadFile(filepath.Join(directory, "jvm.config")); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return "", ""
+		}
+	}
+	if slices.ContainsFunc(slices.Concat(args, strings.Fields(options), strings.Fields(value("MAVEN_ARGS")), strings.Fields(string(jvmConfig))), selects) {
+		return "", ""
+	}
+	home, err = os.UserHomeDir()
 	// MAVEN_OPTS is split on whitespace, so a home with any is left alone.
 	if err != nil || strings.ContainsAny(home, " \t") {
 		return "", ""

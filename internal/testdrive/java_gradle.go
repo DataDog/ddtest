@@ -12,6 +12,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -318,7 +319,7 @@ func (b *gradleBuild) probe(target javaProbeTarget, framework string, args []str
 	if !ok {
 		return javaProbe{}, "", fmt.Errorf("no Gradle test task %s", target.module)
 	}
-	set, ok := gradle.TestSourceSet(b.root, project, task)
+	set, ok := gradle.TestSourceSet(b.root, b.byPaths[":"], project, task)
 	directory := func(language string) (string, string) {
 		if !ok {
 			return "", "The sources of " + target.module + " are set by build logic ddtest does not read, so the probe cannot be placed and its features are not validated."
@@ -386,9 +387,9 @@ func (b *gradleBuild) cucumberProbe(target javaProbeTarget, project gradle.Proje
 	// and no command line excludes, would run the probe beside the suite's.
 	// The probe joins the suite's own features instead, selected by its tag,
 	// so only the suite runs it, with its glue and configuration.
-	features, err := javaFeatureDirectory(filepath.Join(b.root, resources))
-	if err != nil {
-		return javaProbe{}, "", err
+	features, reason, err := javaSuiteFeatureDirectory(filepath.Join(b.root, sources), filepath.Join(b.root, resources), runner)
+	if err != nil || reason != "" {
+		return javaProbe{}, reason, err
 	}
 	if features == "" {
 		return javaProbe{}, "No Cucumber feature file was found in the test resources of " + target.module + ", so the probe feature cannot join the features the suite selects.", nil
@@ -404,6 +405,42 @@ func (b *gradleBuild) cucumberProbe(target javaProbeTarget, project gradle.Proje
 // javaCucumberTaggedFeature is the probe feature with the tag that selects it
 // among a suite's features.
 var javaCucumberTaggedFeature = strings.Replace(javaCucumberFeature, "  Scenario:", "  @ddtest\n  Scenario:", 1)
+
+// javaSuiteSelector is the classpath resource or package a JUnit Platform
+// suite selects its features from.
+var javaSuiteSelector = regexp.MustCompile(`@(?:[\w.]+\.)?(SelectClasspathResource|SelectPackages)\(\s*(?:value\s*=\s*)?\{?\s*"([^"]+)"`)
+
+// javaSuiteFeatureDirectory is the directory, relative to resources, where a
+// probe feature joins the features the Cucumber suite runner selects: the
+// classpath resource or package its source selects, when that holds a
+// feature, else the first directory with one. A suite that selects a single
+// feature file has no room for the probe, which reason explains.
+func javaSuiteFeatureDirectory(sources, resources, runner string) (directory, reason string, err error) {
+	data, err := os.ReadFile(filepath.Join(sources, filepath.FromSlash(strings.ReplaceAll(runner, ".", "/"))+".java"))
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return "", "", err
+	}
+	match := javaSuiteSelector.FindStringSubmatch(string(data))
+	if match == nil {
+		directory, err := javaFeatureDirectory(resources)
+		return directory, "", err
+	}
+	selected := strings.Trim(match[2], "/")
+	if match[1] == "SelectPackages" {
+		selected = strings.ReplaceAll(selected, ".", "/")
+	}
+	if strings.HasSuffix(selected, ".feature") {
+		return "", "The Cucumber suite " + runner + " selects the single feature file " + selected + ", so the probe feature cannot join the features it runs.", nil
+	}
+	if !filepath.IsLocal(filepath.FromSlash(selected)) {
+		return "", "", nil
+	}
+	found, err := javaFeatureDirectory(filepath.Join(resources, filepath.FromSlash(selected)))
+	if err != nil || found == "" {
+		return "", "", err
+	}
+	return filepath.FromSlash(selected), "", nil
+}
 
 // javaFeatureDirectory is the directory, relative to resources, of the first
 // Cucumber feature file in it, by path; empty when it has none.
@@ -480,7 +517,7 @@ func (b *gradleBuild) directory(module string) (string, bool) {
 	if !ok {
 		return "", false
 	}
-	if _, ok := gradle.TestSourceSet(b.root, project, task); !ok {
+	if _, ok := gradle.TestSourceSet(b.root, b.byPaths[":"], project, task); !ok {
 		return "", false
 	}
 	return project.Directory, true

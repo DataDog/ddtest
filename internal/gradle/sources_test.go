@@ -47,21 +47,36 @@ func TestTestSourceSets(t *testing.T) {
 		"test task reconfigured":    {"tasks.test {\n  testClassesDirs = sourceSets.integrationTest.output.classesDirs\n}", "test", "integrationTest"},
 		"Groovy test block":         {"test {\n  useJUnitPlatform()\n  testClassesDirs = sourceSets.it.output.classesDirs\n}", "test", "it"},
 		"suite named test":          {sshjBuild, "test", "test"},
+		"last assignment wins":      {"tasks.test { testClassesDirs = sourceSets.old.output.classesDirs }\ntasks.test {\n  testClassesDirs = sourceSets.it.output.classesDirs\n}", "test", "it"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			root := t.TempDir()
 			writeFile(t, root, "build.gradle", tc.build)
-			set, ok := TestSourceSet(root, Project{Path: ":", Directory: ".", BuildFile: "build.gradle"}, tc.task)
+			project := Project{Path: ":", Directory: ".", BuildFile: "build.gradle"}
+			set, ok := TestSourceSet(root, project, project, tc.task)
 			require.True(t, ok)
 			require.Equal(t, tc.set, set)
 		})
 	}
 	root := t.TempDir()
 	writeFile(t, root, "build.gradle", "tasks.register<Test>(\"ci\") { useJUnitPlatform() }\ntasks.register<Test>(\"computed\") { testClassesDirs = files(dirs) }\n")
+	build := Project{Path: ":", Directory: ".", BuildFile: "build.gradle"}
 	for _, task := range []string{"ci", "computed", "unknown"} {
-		_, ok := TestSourceSet(root, Project{Path: ":", Directory: ".", BuildFile: "build.gradle"}, task)
+		_, ok := TestSourceSet(root, build, build, task)
 		require.False(t, ok, "%s's classes are not a source set ddtest can read", task)
 	}
+
+	// The root build may set a subproject's test classes.
+	root = t.TempDir()
+	writeFile(t, root, "app/build.gradle", "")
+	app := Project{Path: ":app", Directory: "app", BuildFile: filepath.Join("app", "build.gradle")}
+	writeFile(t, root, "build.gradle", "subprojects {\n  tasks.test { testClassesDirs = sourceSets.integrationTest.output.classesDirs }\n}\n")
+	_, ok := TestSourceSet(root, build, app, "test")
+	require.False(t, ok, "the root build reconfigures the subproject's test task")
+	writeFile(t, root, "build.gradle", "subprojects { repositories { mavenCentral() } }\n")
+	set, ok := TestSourceSet(root, build, app, "test")
+	require.True(t, ok)
+	require.Equal(t, "test", set)
 }
 
 func TestSourceDirectories(t *testing.T) {
@@ -84,6 +99,8 @@ func TestSourceDirectories(t *testing.T) {
 		"brace inside a literal": {"sourceSets { it { java { srcDirs = ['src/{it}/java'] } } }", "it", "java", filepath.Join("src", "{it}", "java")},
 		"last replacement wins":  {"sourceSets.test.java.srcDirs = ['src/old/java']\nsourceSets { test { java { srcDirs = ['src/test/java'] } } }", "test", "java", filepath.Join("src", "test", "java")},
 		"in file order":          {"sourceSets { test { java { srcDirs = ['src/test/java'] } } }\nsourceSets.test.java.srcDirs = ['src/old/java']", "test", "java", filepath.Join("src", "old", "java")},
+		"dotted in the set":      {"sourceSets { integrationTest { java.srcDirs = ['src/it-java'] } }", "integrationTest", "java", "src/it-java"},
+		"last in a block":        {"sourceSets { test { java {\n  srcDirs = ['src/old/java']\n  srcDirs = ['src/test/java']\n} } }", "test", "java", filepath.Join("src", "test", "java")},
 	} {
 		t.Run(name, func(t *testing.T) {
 			got, ok := directory(tc.build, tc.set, tc.language)
@@ -95,6 +112,7 @@ func TestSourceDirectories(t *testing.T) {
 		"sourceSets { it { java { srcDirs = files(generated) } } }",
 		"sourceSets { it { java { srcDirs = [\"$rootDir/it\"] } } }",
 		"sourceSets { it { java { srcDirs = ['../shared/it'] } } }",
+		"sourceSets { it { java { srcDirs = ['src/' + 'it/java'] } } }",
 	} {
 		_, ok := directory(build, "it", "java")
 		require.False(t, ok, build)

@@ -6,6 +6,7 @@
 package testdrive
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -126,4 +127,8 @@ func TestMavenRunsUseTheUserHomeValidationReads(t *testing.T) {
 	} {
 		require.NotContains(t, options(tc.opts, tc.mavenArgs, tc.args, map[string]string{}), "-Duser.home="+home, tc.name)
 	}
+	// Maven puts .mvn/jvm.config before MAVEN_OPTS, where a default would win.
+	require.NoError(t, os.Mkdir(filepath.Join(root, ".mvn"), 0755))
+	requireWriteFile(t, filepath.Join(root, ".mvn", "jvm.config"), "-Xmx2g -Duser.home=/custom-home\n")
+	require.NotContains(t, options("", "", []string{"verify"}, map[string]string{}), "-Duser.home="+home, "jvm.config sets the home")
 }

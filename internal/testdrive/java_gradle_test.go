@@ -154,6 +154,15 @@ func TestGradleProbeCoversEveryFramework(t *testing.T) {
 	require.Contains(t, probe.files[0].source, "  @ddtest\n  Scenario: ddtestProbe")
 	require.Equal(t, []string{"-Dcucumber.filter.tags=@ddtest"}, probe.properties)
 	require.True(t, probe.filtered, "the suite reports the scenarios the tag excludes as skipped")
+	// The probe joins the features the suite selects, not the first ones found.
+	writeJavaSource(t, filepath.Join(root, "app/src/test/resources/a/other.feature"), "Feature: Other\n")
+	probe, _, err = build.probe(app, "cucumber-java", nil)
+	require.NoError(t, err)
+	require.Equal(t, filepath.Join("app", "src", "test", "resources", "example", "DdtestValidation.feature"), probe.files[0].path)
+	writeJavaSource(t, filepath.Join(root, "app/src/test/java/example/RunCucumberTest.java"), "package example;\n@org.junit.platform.suite.api.Suite\n@org.junit.platform.suite.api.IncludeEngines(\"cucumber\")\n@org.junit.platform.suite.api.SelectClasspathResource(\"example/calc.feature\")\npublic class RunCucumberTest {}\n")
+	_, reason, err = build.probe(app, "cucumber-java", nil)
+	require.NoError(t, err)
+	require.Contains(t, reason, "selects the single feature file example/calc.feature")
 
 	writeJavaSource(t, filepath.Join(root, "app/src/test/java/example/KarateTest.java"), "package example;\nclass KarateTest {\n    @com.intuit.karate.junit5.Karate.Test com.intuit.karate.junit5.Karate calc() { return com.intuit.karate.junit5.Karate.run(\"classpath:example\"); }\n}\n")
 	probe, reason, err = build.probe(app, "karate", []string{"test"})
