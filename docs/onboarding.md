@@ -662,6 +662,9 @@ form differs from Buildkite's where Jenkins needs it:
   trace (`sh -x`) prints without the key's value.
 - No `$` is escaped: the `sh` script is a single-quoted Groovy string.
 - `DD_CIVISIBILITY_AUTO_INSTRUMENTATION_PROVIDER` is `jenkins`.
+- It goes in the `sh` script that runs the tests, before the test command:
+  each `sh` step is a shell of its own, so its exports reach only the later
+  commands of that script, and every `sh` step that runs the tests needs one.
 
 The snippet is complete under Buildkite's rules: the pinned installer release
 and its SHA256, an exact tracer release, the selected site, and a runtime from
@@ -843,7 +846,9 @@ nothing is written. Applying again changes nothing (`… CI setup is already con
 edits.`).
 
 In each container stage that runs the tests, `onboard --apply` adds the setup
-snippet to the `sh` step that runs them, before the test statement: a
+snippet to every `sh` step that runs them, before its first test statement
+(each `sh` step is a shell of its own, and the snippet's exports reach only
+the later commands of its own): a
 multi-line single-quoted script (`sh '''…'''`) gets the snippet's lines before
 the test's line, with its indentation, and a one-line `sh '…'` becomes a
 multi-line one, its statements before the test on a line of their own. The
@@ -858,8 +863,10 @@ the dd-trace release JavaScript's `onboard --apply` selects for the stage's
 Node, or the `datadog-ci` release Gemfile.lock pins for Ruby: without a pin,
 with host stages beside them, the result asks for the pin first
 (`ci_edit_required`); with container stages alone, the snippet stays the
-instructions'. A container stage that runs the snippet already is checked, not
-edited again, and the edited Jenkinsfile is read again like the plugin's edit.
+instructions'. An `sh` step that runs the snippet already is checked, not
+edited again, and the edited Jenkinsfile is read again like the plugin's edit:
+a container test command whose own `sh` step does not run the snippet before
+it is not set up, whatever another `sh` step of the stage runs.
 
 It refuses, and onboarding gives the instructions instead with the
 reason: a Jenkinsfile that loads a shared library (`@Library`, `library …` or a

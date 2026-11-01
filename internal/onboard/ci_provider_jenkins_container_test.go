@@ -274,3 +274,54 @@ func readTestFile(t *testing.T, root, name string) string {
 	require.NoError(t, err)
 	return string(data)
 }
+
+// The setup snippet's exports reach only the sh step it runs in, each a
+// shell of its own: a container test shell without its own snippet is not
+// set up, whatever another sh step of the stage runs, and onboard --apply
+// adds the snippet to that one only.
+func TestJenkinsSnippetInEveryContainerTestShell(t *testing.T) {
+	snippet := jenkinsTestSnippet("js", "6.22.0", false)
+	firstOnly := "pipeline {\n  agent { docker { image 'node:22' } }\n  stages {\n    stage('Test') {\n      steps {\n        withCredentials([string(credentialsId: 'datadog-api-key', variable: 'DD_API_KEY')]) {\n          sh '''\n      " + snippet + "\n      npm test -- packages/a\n          '''\n          sh 'npm test -- packages/b'\n        }\n      }\n    }\n  }\n}\n"
+	root := jenkinsApplyRepository(t, "jest", firstOnly)
+	workflows, err := readProviderWorkflows(jenkins{}, root)
+	require.NoError(t, err)
+	problem := providerJobSetupProblem(root, jenkins{}, workflows[0], "Test", "javascript", "jest", "datadoghq.com")
+	require.Contains(t, problem, "runs in another shell than the test command at Jenkinsfile:")
+	require.Contains(t, problem, "each shell that runs the tests needs it before its test command")
+
+	plan, err := planProviderSetup(root, "jest", "datadoghq.com", "6.22.0")
+	require.NoError(t, err)
+	require.Len(t, plan.edits, 1)
+	after := string(plan.edits[0].after)
+	require.Equal(t, 2, strings.Count(after, "install_test_visibility.sh\" >\"$DD_TRACER_FOLDER/test-optimization.env\""), "the second shell gets a snippet; the first keeps its own")
+	require.True(t, strings.HasPrefix(after, firstOnly[:strings.Index(firstOnly, "          sh 'npm test -- packages/b'")]), "the first sh step is unchanged")
+	_, err = plan.Apply(true)
+	require.NoError(t, err)
+	workflows, err = readProviderWorkflows(jenkins{}, root)
+	require.NoError(t, err)
+	require.Empty(t, providerJobSetupProblem(root, jenkins{}, workflows[0], "Test", "javascript", "jest", "datadoghq.com"))
+
+	// A snippet in an sh step of its own sets up no later test shell.
+	alone := strings.Replace(firstOnly, "\n      npm test -- packages/a\n", "\n", 1)
+	writeFile(t, root, "Jenkinsfile", alone)
+	workflows, err = readProviderWorkflows(jenkins{}, root)
+	require.NoError(t, err)
+	require.Contains(t, providerJobSetupProblem(root, jenkins{}, workflows[0], "Test", "javascript", "jest", "datadoghq.com"), "runs in another shell")
+}
+
+// Ruby's snippet exports RUBYOPT in its own shell only, too.
+func TestJenkinsRubySnippetInEveryContainerTestShell(t *testing.T) {
+	jenkinsfile := "pipeline {\n  agent { docker { image 'ruby:3.3' } }\n  stages {\n    stage('Test') {\n      steps {\n        sh 'bundle exec rake spec'\n        sh 'bundle exec rake spec SPEC=spec/calculator_spec.rb'\n      }\n    }\n  }\n}\n"
+	root := jenkinsApplyRepository(t, "rspec", jenkinsfile)
+	writeFile(t, root, "Gemfile.lock", "GEM\n  specs:\n    datadog-ci (1.42.0)\n    rake (13.4.2)\n")
+	plan, err := planProviderSetup(root, "rspec", "datadoghq.com", "")
+	require.NoError(t, err)
+	require.Len(t, plan.edits, 1)
+	after := string(plan.edits[0].after)
+	require.Equal(t, 2, strings.Count(after, `DD_SET_TRACER_VERSION_RUBY="1.42.0"`), after)
+	_, err = plan.Apply(true)
+	require.NoError(t, err)
+	again, err := planProviderSetup(root, "rspec", "datadoghq.com", "")
+	require.NoError(t, err)
+	require.True(t, again.Configured())
+}
