@@ -116,6 +116,30 @@ class EvidenceTests(unittest.TestCase):
         with patch.dict(os.environ, {"DD_API_KEY": "real-known-key-value"}):
             self.assertNotIn("real-known-key-value", run_eval.redact("${DD_API_KEY:-real-known-key-value}"))
 
+    def test_parameter_expansions_survive_and_only_literal_defaults_are_redacted(self):
+        # Only a default supplies the variable's value; the other operands
+        # replace, test, trim or slice it (B06's changes.patch had ${DD_API_KEY:+set}).
+        kept = ('if [ "${DD_API_KEY:+set}" = set ]; then', "${DD_API_KEY+set}", "$${DD_API_KEY:+set}",
+                "${DD_API_KEY:?DD_API_KEY must be set}", "${DD_API_KEY?unset}", "${DD_API_KEY#dd}",
+                "${DD_API_KEY##*/}", "${DD_API_KEY%x}", "${DD_API_KEY%%x}", "${#DD_API_KEY}", "${!GITHUB_TOKEN}",
+                "${DD_API_KEY:0:4}", "${DD_API_KEY: -4}", "${DD_API_KEY/abc/x}", "${DD_API_KEY//a/b}",
+                "${DD_API_KEY^^}", "${DD_API_KEY,,}", "${DD_API_KEY@Q}", "${GITHUB_TOKEN:+-H x}",
+                "${DD_API_KEY:-$OTHER}", "${DD_API_KEY:=${OTHER}}", '${DD_API_KEY:-""}', "${DD_API_KEY-}",
+                "api_key: ${DD_API_KEY:+set}", "DD_API_KEY=${DD_API_KEY:+set}", "${DD_API_KEY:+set")
+        for text in kept:
+            self.assertEqual(run_eval.redact(text), text)
+        for text, expected in (("${DD_API_KEY-abc123}", "${DD_API_KEY-[REDACTED]}"),
+                               ("${DD_API_KEY=abc123}", "${DD_API_KEY=[REDACTED]}"),
+                               ("${DD_API_KEY:=abc123}", "${DD_API_KEY:=[REDACTED]}"),
+                               ('${DD_API_KEY:-"abc123"}', "${DD_API_KEY:-[REDACTED]}"),
+                               ("DD_API_KEY=${DD_API_KEY:-abc123}", "DD_API_KEY=${DD_API_KEY:-[REDACTED]}"),
+                               # Without its closing brace (a truncated line), a default is still a value.
+                               ("${DD_API_KEY:-abc123", "${DD_API_KEY:-[REDACTED]"),
+                               ("${DD_API_KEY=abc123", "${DD_API_KEY=[REDACTED]"),
+                               # Recognized token shapes are redacted in any operand.
+                               ("${DD_API_KEY:+sk-1234567890abcdefghijk}", "${DD_API_KEY:+[REDACTED]}")):
+            self.assertEqual(run_eval.redact(text), expected)
+
     def test_excerpt_keeps_start_and_end_within_the_limit(self):
         text = "START" + "x" * 100_000 + "END"
         kept = run_eval.excerpt(text, 1000)

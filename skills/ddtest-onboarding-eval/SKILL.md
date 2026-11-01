@@ -81,9 +81,17 @@ digest-pinned Temurin JDK 21 (select another with
 `--build-arg JDK_IMAGE=eclipse-temurin:<version>-jdk@sha256:<digest>`) and a
 checksum-verified Maven. The runner records the JDK's release version before
 cloning and checks the report against it; local validation certifies only CI
-rows of that JDK major. Maven downloads dependencies into the private trial
-HOME during validation, so no setup command is required; `mvn -B -q
-dependency:go-offline` works as a readiness command. Java's `TMPDIR` uses the
+rows of that JDK major. The container user has no passwd entry, so the JVM's
+`user.home` is `?` whatever `HOME` says, and Maven or Gradle would create
+`?/.m2` or `?/.gradle` in the checkout. Java trials therefore set
+`MAVEN_OPTS=-Duser.home=/trial/home` and `GRADLE_USER_HOME=/trial/home/.gradle`
+for setup, readiness and the agent (recorded under `private_caches` in
+`run.json`; ddtest keeps them in both validation runs). Maven then downloads
+dependencies into the private trial HOME, so no setup command is required;
+`mvn -B -q dependency:go-offline` works as a readiness command. A setup or
+readiness command that sets its own `MAVEN_OPTS` must keep `-Duser.home` or pass
+`-Dmaven.repo.local=/trial/home/.m2/repository`. Readiness, like setup, must
+leave the checkout clean, or the trial stops before the agent. Java's `TMPDIR` uses the
 container's private tmpfs, like Ruby's, since validation copies the repository
 per configuration.
 Ruby multi-bundle and Java multi-configuration validation can
@@ -212,7 +220,11 @@ keeps its start and end, up to `--excerpt-limit` characters (default 64000), and
 4000 once `activity.jsonl` reaches 64 MiB (`activity_excerpts` in `run.json`).
 Variable references such as `${DD_API_KEY:-}`, `$DD_API_KEY`,
 `${{ secrets.DD_API_KEY }}` or `credentials('id')` are kept; literal values are
-redacted. Treat
+redacted. Every shell parameter expansion of a secret-named variable is kept
+(`${DD_API_KEY:+set}`, `${DD_API_KEY:?message}`, `${DD_API_KEY#prefix}`,
+`${#DD_API_KEY}` and so on) except a literal default (`-`, `:-`, `=`, `:=`),
+the only operand that supplies the value; recognized token shapes are redacted
+anywhere. Treat
 redaction as a precaution: inspect evidence before sharing it, and do not archive
 credentials, raw telemetry streams or dependency trees.
 
@@ -233,7 +245,13 @@ concrete evidence:
   `reporting_counts` and `last_execution.current`. Historical counts must remain
   historical. Missing canonical text needs review; direct contradictions fail.
   "Unique"/"distinct" test counts and success claims on a report that isn't
-  `COMPLETE LOCALLY` need review even when the numbers match.
+  `COMPLETE LOCALLY` need review even when the numbers match. Success claims
+  include a bare "Onboarded."/"Done."/"All set.", the repository or Test
+  Optimization said to be onboarded or set up, and "I've onboarded…"; a stated
+  onboarding verdict ("Onboarding is done") that contradicts the report fails.
+  Report text the agent quotes (code, blockquotes, quotation marks or a
+  sentence the report contains), and negated or conditional statements, are not
+  claims.
 - **Cleanup:** assess ddtest session cleanup, agent artifacts at CLI exit and
   evaluator teardown separately. A clean Git diff alone is insufficient.
 

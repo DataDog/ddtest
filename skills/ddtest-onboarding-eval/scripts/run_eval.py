@@ -60,17 +60,37 @@ SECRET_LOOKUP = re.compile(r"[A-Za-z_][\w.]*[(\[]")
 SECRET_ASSIGNMENT = re.compile(r"(?i)((?:\b[\w-]{0,80}(?:token|secret|password|api[_-]?key)|\bauthorization)[\"']?\s*[:=]\s*[\"']?)((?:bearer\s+)?)([^\s,;\"'}]+)")
 
 
+# A POSIX (or Bash) parameter expansion of a secret-named variable:
+# ${NAME}, ${#NAME}, ${NAME:-word}, ${NAME+word}, ${NAME:?message},
+# ${NAME#pattern}, ${NAME%%pattern}, ${NAME/pattern/string}, ${NAME:offset},
+# ${NAME^^}, ${NAME@Q}. Only a default ((:)- or (:)=) supplies the variable's
+# value; the other operands replace, test, trim or slice it.
+SECRET_EXPANSION = re.compile(r"(\$\{[#!]?(?i:[A-Za-z_]\w*(?:token|secret|password|api_?key)|authorization))"
+                              r"(:?[-=]|:?[?+]|##?|%%?|//?|\^\^?|,,?|@|:)?([^}]*)\}")
+
+
+def literal_default(operator, word):
+    bare = word.strip(" \t\"'")
+    return operator in ("-", ":-", "=", ":=") and bool(bare) and not SECRET_REFERENCE.match(bare)
+
+
+def redact_expansion(match):
+    head, operator, word = match.groups()
+    return head + operator + "[REDACTED]}" if literal_default(operator, word) else match[0]
+
+
 def redact_assignment(match):
     prefix, bearer, value = match.groups()
     if not bearer and (SECRET_REFERENCE.match(value) or
                        SECRET_LOOKUP.fullmatch(value) and match.string[match.end():match.end() + 1] in ("'", '"')):
         return match[0]
-    if match.string[:match.start()].endswith("${") and prefix.endswith(":"):
-        # Shell expansion ${NAME:-default}: only a literal default can be a value.
-        default = value.lstrip("-=?+")
-        if not default or SECRET_REFERENCE.match(default):
-            return match[0]
-        return prefix + value[:len(value) - len(default)] + "[REDACTED]"
+    if match.string[:match.start()].rstrip("#!").endswith("${"):
+        # A parameter expansion redact_expansion did not see, such as one
+        # without its closing brace: still only a literal default is a value.
+        operator = prefix[-1] + value[:1] if prefix.endswith(":") and value[:1] in "-=" else prefix[-1]
+        if literal_default(operator, value[len(operator) - 1:]):
+            return prefix + value[:len(operator) - 1] + "[REDACTED]"
+        return match[0]
     return prefix + "[REDACTED]"
 
 
@@ -91,8 +111,10 @@ def redact(value):
             value = value.replace(secret, "[REDACTED]")
     value = re.sub(r"-----BEGIN [^-]*PRIVATE KEY-----.*?-----END [^-]*PRIVATE KEY-----", "[REDACTED PRIVATE KEY]", value, flags=re.S)
     value = re.sub(r"\b(?:AKIA[A-Z0-9]{16}|(?:gh[pousr]_|github_pat_|npm_|sk-)[A-Za-z0-9_-]{12,}|eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)\b", "[REDACTED]", value)
-    # References such as ${{ secrets.DD_API_KEY }} or ${DD_API_KEY:-} name a
-    # secret without containing it, so the CI evidence keeps them intact.
+    # References such as ${{ secrets.DD_API_KEY }}, ${DD_API_KEY:-} or
+    # ${DD_API_KEY:+set} name a secret without containing it, so the CI
+    # evidence keeps them intact.
+    value = SECRET_EXPANSION.sub(redact_expansion, value)
     return SECRET_ASSIGNMENT.sub(redact_assignment, value)
 
 
@@ -329,9 +351,21 @@ def reporting_verdict(text, report):
             continue
         compare("onboarding verdict", summary.get("status"), stated)
     if summary.get("status") != "COMPLETE LOCALLY":
-        for match in re.finditer(r"\b(?:(?:fully|successfully|completely)\s+onboarded|onboarded\s+(?:this|the)\s+(?:repo|repository|project)|onboarding\s+(?:succeeded|is\s+finished|was\s+a\s+success)|(?:everything|all)\s+(?:is\s+)?(?:done|complete|set up))\b", extra):
-            if not negated(extra, match.start()):
-                unsupported.append(f"Success claim \"{match[0]}\" while the report status is {summary.get('status') or 'unavailable'}.")
+        # Quoted report text, in code, a blockquote, quotation marks or a
+        # sentence the report itself contains, is not the agent's claim.
+        prose = normalize(unquoted(remaining))
+        quoted = normalize("\n".join(report_strings(report)))
+        for match in SUCCESS_CLAIM.finditer(prose):
+            if negated(prose, match.start()):
+                continue
+            sentence = re.split(r"[.!?\n]", prose[:match.start()])[-1] + re.split(r"[.!?\n]", prose[match.start():])[0]
+            if len(sentence.strip()) >= 12 and sentence.strip() in quoted:
+                continue
+            # "Onboarded once CI runs" states a condition, not completion.
+            if re.search(r"\b(?:once|when|after|until|unless|if|as soon as)\b", sentence):
+                continue
+            claim = match[0].strip(" \t.!—–-")
+            unsupported.append(f"Success claim \"{claim}\" while the report status is {summary.get('status') or 'unavailable'}.")
     for match in re.finditer(r"\blocal\s+validation\s*(?::|is|was|remains)?\s*((?:passed|failed|incomplete|not exercised)(?: earlier; not rerun)?|historical only)\b", plain):
         compare("local verdict", summary.get("local_validation"), match[1].strip().upper())
     for key, label in (("selected_validation", "selected"), ("executed_validation", "executed")):
@@ -388,6 +422,41 @@ def reporting_verdict(text, report):
             "Canonical handoff retained without direct contradictions; independent technical evaluation is still required.",
             "canonical_handoff":bool(isinstance(canonical,str) and canonical and canonical in text),
             "checks":checks, "differences":differences[:10], "missing":missing, "unsupported":unsupported[:10]}
+
+
+# A success claim, in normalized prose: a sentence that is only a completion
+# word ("Onboarded.", "Done!", "All set."), the repository or Test
+# Optimization said to be onboarded, set up or complete, or the agent saying it
+# onboarded the repository or finished onboarding.
+SUCCESS_CLAIM = re.compile(
+    r"(?m)(?:^|(?<=[.!?])[ \t]+)[ \t]*(?:[-+>][ \t]+)?(?:(?:fully|successfully|all)[ \t]+)?"
+    r"(?:onboarded|done|complete|completed|finished|success|succeeded|set up|all set)[ \t]*(?:[.!]|$|[—–][ \t]|-[ \t])"
+    r"|\b(?:(?:fully|successfully|completely)\s+(?:onboarded|set\s+up\s+(?:test\s+optimization|datadog))"
+    r"|onboarded\s+(?:this|the)\s+(?:repo|repository|project|codebase)"
+    r"|onboarding\s+(?:succeeded|is\s+finished|was\s+a\s+success|has\s+succeeded)"
+    r"|(?:everything|all)\s+(?:is\s+)?(?:done|complete|set\s+up)"
+    r"|(?:this|the)\s+(?:repo|repository|project|codebase)\s+(?:is|has\s+been|was)\s+(?:now\s+)?(?:fully\s+|successfully\s+)?(?:onboarded|set\s+up)"
+    r"|(?:datadog\s+)?test[\s-]+optimization\s+(?:is|has\s+been|was)\s+(?:now\s+)?(?:fully\s+|successfully\s+)?(?:onboarded|set\s+up|complete|done|in\s+place)"
+    r"|(?:i|we)(?:'ve|\s+have)?\s+(?:now\s+)?(?:fully\s+|successfully\s+)?(?:onboarded|finished\s+(?:the\s+)?onboarding|completed\s+(?:the\s+)?onboarding|set\s+up\s+test[\s-]+optimization))\b")
+
+
+def unquoted(text):
+    """Text without code, blockquotes or quotations, as Markdown shows them."""
+    text = re.sub(r"(?ms)^[ \t]*(```|~~~).*?(?:^[ \t]*\1[^\n]*$|\Z)", "", text)
+    text = re.sub(r"(?m)^[ \t]*>.*$", "", text)
+    text = re.sub(r"`[^`\n]*`", "", text)
+    return re.sub(r"\"[^\"\n]*\"|“[^”\n]*”", "", text)
+
+
+def report_strings(value):
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for item in value.values():
+            yield from report_strings(item)
+    elif isinstance(value, list):
+        for item in value:
+            yield from report_strings(item)
 
 
 def negated(text, start):
@@ -623,6 +692,17 @@ def run(args):
     # removed with the container; retained reports remain in the checkout.
     if getattr(args, "framework", None) in (*RUBY_FRAMEWORKS, *JAVA_FRAMEWORKS):
         env["TMPDIR"] = "/tmp"
+    java_build_homes = {}
+    if getattr(args, "framework", None) in JAVA_FRAMEWORKS:
+        # The container user has no passwd entry, so the JVM's user.home is "?"
+        # whatever HOME says, and Maven and Gradle would create ?/.m2 and
+        # ?/.gradle in the working directory: the checkout, for a readiness
+        # command or the agent's own build. ddtest keeps these options in both
+        # validation runs.
+        env["MAVEN_OPTS"] = f"-Duser.home={home}"
+        env["GRADLE_USER_HOME"] = str(home / ".gradle")
+        java_build_homes = {"maven_local_repository": str(home / ".m2" / "repository"),
+                            "GRADLE_USER_HOME": env["GRADLE_USER_HOME"]}
     # pnpm's own configuration is not inherited by npm commands in test scripts.
     pnpm_config = Path(env["XDG_CONFIG_HOME"]) / "pnpm" / "rc"
     pnpm_config.parent.mkdir()
@@ -687,6 +767,7 @@ def run(args):
                                      "reduced_limit_characters": REDUCED_EXCERPT_LIMIT}
     manifest["private_caches"]["pnpm_store"] = str(pnpm_store)
     manifest["private_caches"]["pnpm_cache"] = str(pnpm_cache)
+    manifest["private_caches"].update(java_build_homes)
     if node is not None or python is not None:
         manifest["shell_isolation"] = {"zdotdir": env["ZDOTDIR"], "login_shell": False if args.agent == "codex" else "CLI default", "shell_snapshot": False if args.agent == "codex" else "not applicable"}
     activity = (output / "activity.jsonl").open("w")
@@ -907,8 +988,12 @@ def run(args):
         if status:
             raise RuntimeError("Dependency setup changed the checkout; choose setup that leaves it clean")
         manifest["failure_stage"] = "runtime_readiness"
-        for ready in getattr(args,"readiness_command",[]):
+        readiness = getattr(args,"readiness_command",[])
+        for ready in readiness:
             command(shlex.split(ready),cwd=checkout)
+        # The agent must start from the clean checkout, as after setup.
+        if readiness and command(["git", "status", "--porcelain"], cwd=checkout):
+            raise RuntimeError("A readiness command changed the checkout; choose readiness checks that leave it clean")
         manifest.pop("failure_stage",None)
         # Setup descendants cannot mutate credential directories during installation.
         if hasattr(container,"control"):

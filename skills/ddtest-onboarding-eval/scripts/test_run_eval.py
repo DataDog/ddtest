@@ -655,6 +655,59 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(manifest["private_caches"]["TMPDIR"], "/tmp")
         self.assertEqual(manifest["ddtest_java_runtime"]["requested_version"], "17.0.20.1")
 
+    def fake_java_tools(self):
+        """A JDK, and a mvn that resolves its local repository as Maven does:
+        from user.home, which is "?" (relative) without a passwd entry."""
+        jdk = self.root / "jdk"
+        (jdk / "bin").mkdir(parents=True)
+        (jdk / "bin" / "java").write_text("#!/bin/sh\n")
+        (jdk / "bin" / "java").chmod(0o755)
+        (jdk / "release").write_text('JAVA_VERSION="21.0.5"\n')
+        (self.root / "java").symlink_to(jdk / "bin" / "java")
+        mvn = self.root / "mvn"
+        mvn.write_text("#!/usr/bin/env python3\nimport os, pathlib, re\n"
+                       "found = re.search(r'-Duser\\.home=(\\S+)', os.environ.get('MAVEN_OPTS', ''))\n"
+                       "repository = pathlib.Path(found[1] if found else '?', '.m2', 'repository', 'junit')\n"
+                       "repository.mkdir(parents=True)\n(repository / 'junit.pom').write_text('pom')\n")
+        mvn.chmod(0o755)
+        self.args.framework = "junit5"
+
+    def test_java_builds_keep_their_user_homes_out_of_the_checkout(self):
+        self.fake_java_tools()
+        self.args.readiness_command = ["mvn -B -q dependency:go-offline"]
+        with patch.dict(os.environ):
+            os.environ.pop("JAVA_HOME", None)
+            code, manifest = self.trial()
+        self.assertEqual(code, 0, manifest.get("error"))
+        home = Path(manifest["trial_directory"]) / "home"
+        observed = json.loads((Path(manifest["checkout"]) / "observed.json").read_text())["environment"]
+        self.assertEqual(observed["MAVEN_OPTS"], f"-Duser.home={home}")
+        self.assertEqual(observed["GRADLE_USER_HOME"], str(home / ".gradle"))
+        self.assertTrue((home / ".m2" / "repository" / "junit" / "junit.pom").is_file())
+        self.assertFalse((Path(manifest["checkout"]) / "?").exists())
+        self.assertEqual(manifest["private_caches"]["maven_local_repository"], str(home / ".m2" / "repository"))
+        self.assertEqual(manifest["private_caches"]["GRADLE_USER_HOME"], str(home / ".gradle"))
+
+    def test_other_frameworks_leave_java_build_options_unset(self):
+        code, manifest = self.trial()
+        self.assertEqual(code, 0)
+        observed = json.loads((Path(manifest["checkout"]) / "observed.json").read_text())["environment"]
+        self.assertNotIn("MAVEN_OPTS", observed)
+        self.assertNotIn("GRADLE_USER_HOME", observed)
+        self.assertNotIn("maven_local_repository", manifest["private_caches"])
+
+    def test_readiness_that_changes_the_checkout_stops_before_the_agent(self):
+        self.fake_java_tools()
+        # A readiness check the runner does not configure, as with user.home "?".
+        self.args.readiness_command = ["env MAVEN_OPTS= mvn -B -q dependency:go-offline"]
+        with patch.dict(os.environ):
+            os.environ.pop("JAVA_HOME", None)
+            code, manifest = self.trial()
+        self.assertNotEqual(code, 0)
+        self.assertEqual(manifest["failure_stage"], "runtime_readiness")
+        self.assertIn("readiness command changed the checkout", manifest["error"])
+        self.assertFalse((Path(manifest["checkout"]) / "observed.json").exists())
+
     def test_framework_scope_reaches_agent_without_extra_instructions(self):
         self.args.framework = "playwright"
         code, manifest = self.trial()
@@ -1006,6 +1059,38 @@ class VerdictTests(unittest.TestCase):
         report = self.compact_report()
         report["summary"]["local_validation"] = "INCOMPLETE"
         self.assertEqual(run_eval.reporting_verdict(self.compact_answer(),report)["status"],"fail")
+
+    def test_plain_success_claims_on_a_report_that_is_not_complete_need_review(self):
+        # B08 opened with "Onboarded." on an INCOMPLETE report.
+        for claim in ("Onboarded. ddtest reports Python has no coordinator.", "Done!", "All set.", "Success.",
+                      "Fully onboarded — see below.", "The repository is now onboarded to Test Optimization.",
+                      "This project has been set up.", "Test Optimization is set up in CI.",
+                      "I've onboarded the repository.", "We have finished onboarding.", "Successfully set up Test Optimization."):
+            with self.subTest(claim=claim):
+                result = run_eval.reporting_verdict(self.compact_answer() + "\n" + claim, self.compact_report())
+                self.assertEqual(result["status"], "review")
+                self.assertEqual(len(result["unsupported"]), 1, result)
+                self.assertIn("while the report status is INCOMPLETE", result["unsupported"][0])
+                for status in ("PASSED", "FAILED"):
+                    report = {"summary": {"status": status}}
+                    self.assertTrue(run_eval.reporting_verdict(claim, report)["unsupported"], status)
+                complete = {"summary": {"status": "COMPLETE LOCALLY"}}
+                self.assertEqual(run_eval.reporting_verdict(claim, complete)["unsupported"], [])
+        self.assertEqual(run_eval.reporting_verdict("Onboarded.", self.compact_report())["unsupported"],
+                         ['Success claim "onboarded" while the report status is INCOMPLETE.'])
+
+    def test_quoted_negated_conditional_or_partial_completion_is_not_a_success_claim(self):
+        report = self.compact_report()
+        report["blocking_checks"] = [{"message": "Setup complete for the release job; the test job needs review."}]
+        for text in ("ddtest printed:\n> Onboarded.\n", "It printed `Done.`", "```\nDone.\n```", 'The result says "Onboarded."',
+                     "Setup complete for the release job; the test job needs review.",
+                     "Not onboarded yet.", "I have not onboarded the repository.", "Workflow edits are complete.",
+                     "Once CI runs, the repository is onboarded.", "Test Optimization is set up when the secret is added.",
+                     "CI is set up to skip forks.", "Onboarded, except the testwheel job."):
+            with self.subTest(text=text):
+                result = run_eval.reporting_verdict(self.compact_answer() + "\n" + text, report)
+                self.assertEqual(result["unsupported"], [])
+                self.assertEqual(result["status"], "pass")
 
 
     def test_startup_timeout_prevents_clone_and_is_retryable(self):
