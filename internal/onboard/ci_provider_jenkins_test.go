@@ -1764,3 +1764,39 @@ func TestJenkinsRubyContainerJobReason(t *testing.T) {
 	require.Len(t, jobs, 1)
 	require.Equal(t, "Run the Datadog setup snippet with an exact DD_SET_TRACER_VERSION_RUBY before this test command, in a job whose image selects a static Ruby version (such as ruby:3.3); validate other installs separately.", jobs[0].Reason, "the container stage's mechanism is the snippet")
 }
+
+// A shell an environment value runs starts with the inherited environment
+// in a stage with its own datadog(…) option, which the plugin sets up for
+// the environment's steps too, and in a container stage.
+func TestJenkinsEnvironmentValueShellsInPluginAndContainerStages(t *testing.T) {
+	jobs := jenkinsJobs(t, `pipeline {
+  agent none
+  stages {
+    stage('Plugin') {
+      agent { label 'linux' }
+      options { datadog(testOptimization: [enabled: true, serviceName: 'app', languages: ['JAVASCRIPT']]) }
+      environment {
+        RUN_TESTS = 'false'
+        OUTPUT = sh(script: 'if [ "$RUN_TESTS" != false ]; then npm test; fi', returnStdout: true)
+      }
+      steps { sh 'if [ "$RUN_TESTS" != false ]; then npm run steps; fi' }
+    }
+    stage('Docker') {
+      agent { docker { image 'node:20' } }
+      environment {
+        RUN_TESTS = 'false'
+        OUTPUT = sh(script: 'if [ "$RUN_TESTS" != false ]; then npm test; fi', returnStdout: true)
+      }
+      steps { sh 'if [ "$RUN_TESTS" != false ]; then npm run steps; fi' }
+    }
+  }
+}`)
+	const value = `if [ "$RUN_TESTS" != false ]; then npm test; fi`
+	require.Equal(t, []string{"SETUP", value}, jenkinsRuns(jobs["Plugin"]), "the environment's shell keeps its test branch, and the steps after it read RUN_TESTS")
+	for _, step := range jobs["Plugin"].Steps {
+		if step.Run == value {
+			require.NotEmpty(t, step.Env["NODE_OPTIONS"], "the stage's plugin variables reach the environment's shell")
+		}
+	}
+	require.Equal(t, []string{value}, jenkinsRuns(jobs["Docker"]), "the container stage's environment shell keeps its test branch")
+}
