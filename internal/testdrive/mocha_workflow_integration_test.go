@@ -192,11 +192,15 @@ func TestPublicMochaTestdrive(t *testing.T) {
 				output, err = command(root, binary, "testdrive", "--framework", "mocha", "--yes")
 				require.Error(t, err)
 				require.NotContains(t, string(output), "Isolating configuration")
-				rejected := readValidationReport(t, root)
+				// A run of one command after the --all run is written beside it:
+				// the rejection leaves the --all report and its findings in place.
+				rejected := readFocusedValidationReport(t, root)
 				require.Contains(t, rejected.Error, "watch mode is not supported")
 				require.Empty(t, rejected.Runs)
 				require.False(t, rejected.HTMLReportCurrent)
-				require.NoFileExists(t, htmlReportPath(root))
+				require.NoFileExists(t, filepath.Join(root, ".testoptimization", focusedReportFilename))
+				require.Equal(t, report.Session, readValidationReport(t, root).Session)
+				require.FileExists(t, htmlReportPath(root))
 			}
 		})
 	}

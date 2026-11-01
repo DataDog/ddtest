@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -173,6 +174,8 @@ func TestPublicJestPackageConfiguration(t *testing.T) {
 	// Default execution must match CI independently of --showConfig. The fixture
 	// does not inherit extra options for this final root comparison.
 	t.Setenv("NODE_OPTIONS", "")
+	kept := readValidationReport(t, root)
+	require.True(t, kept.All, "the earlier explicit run validated every configuration")
 	for _, extra := range [][]string{nil, {"--command", "npm test"}, {"--all"}} {
 		args := append([]string{"testdrive", "--framework", "jest", "--yes"}, extra...)
 		cmd := exec.CommandContext(ctx, binary, args...)
@@ -180,6 +183,15 @@ func TestPublicJestPackageConfiguration(t *testing.T) {
 		data, err = cmd.CombinedOutput()
 		require.NoError(t, err, string(data))
 		report := readValidationReport(t, root)
+		if !slices.Contains(extra, "--all") {
+			// A run of one command after an --all run is written beside
+			// that report, which it leaves in place.
+			require.Equal(t, kept.Session, report.Session)
+			report = readFocusedValidationReport(t, root)
+		} else {
+			require.True(t, report.All)
+			require.NotEqual(t, kept.Session, report.Session, "--all replaces the saved report")
+		}
 		require.Equal(t, err == nil, report.Success, string(data))
 		require.Equal(t, "passed", report.Configurations[0].Status)
 	}
