@@ -208,8 +208,9 @@ class RecorderTests(unittest.TestCase):
             root = Path(directory)
             records = root / "records"
             records.mkdir()
-            # The runner's name for the real binary, beside the wrapper.
-            real = root / run_eval.REAL_DDTEST
+            # The runner keeps the real binary in the harness folder.
+            (root / "harness").mkdir()
+            real = root / "harness" / run_eval.REAL_DDTEST
             real.write_text('#!/bin/sh\nread line\nprintf "out:%s:%s\\n" "$1" "$line"\necho err >&2\nexit 3\n')
             real.chmod(0o755)
             wrapper = root / "ddtest"
@@ -389,7 +390,7 @@ class TrialTests(unittest.TestCase):
         observed = json.loads((Path(manifest["checkout"]) / "observed.json").read_text())
         self.assertIn(str(directory), observed["environment"]["PATH"].split(os.pathsep))
         # The folder the prompt names still holds only ddtest.
-        self.assertEqual(sorted(path.name for path in (directory.parent / "bin").iterdir()), ["ddtest", run_eval.REAL_DDTEST])
+        self.assertEqual(sorted(path.name for path in (directory.parent / "bin").iterdir()), ["ddtest"])
 
     def test_binstub_folder_replaced_by_a_symlink_is_not_listed(self):
         outside = self.case.root / "host-folder"

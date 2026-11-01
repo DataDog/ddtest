@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 
@@ -454,9 +455,31 @@ func DDTestCommand(args ...string) []string {
 	return command
 }
 
-// ddtestExecutable prefers the running executable. Only a temporary go run
-// binary falls back to ddtest on PATH, which may be a different version.
+// SelfPathVariable names an executable that returned commands use in place of
+// the running one, such as a wrapper that runs this ddtest.
+const SelfPathVariable = "DDTEST_SELF_PATH"
+
+// selfPath is SelfPathVariable's value when it is an absolute path to an
+// executable regular file; empty otherwise.
+func selfPath() string {
+	path := os.Getenv(SelfPathVariable)
+	if !filepath.IsAbs(path) {
+		return ""
+	}
+	info, err := os.Stat(path)
+	if err != nil || !info.Mode().IsRegular() || (runtime.GOOS != "windows" && info.Mode().Perm()&0o111 == 0) {
+		return ""
+	}
+	return path
+}
+
+// ddtestExecutable prefers SelfPathVariable, then the running executable. Only
+// a temporary go run binary falls back to ddtest on PATH, which may be a
+// different version.
 func ddtestExecutable() (path string, fromPATH bool) {
+	if path := selfPath(); path != "" {
+		return path, false
+	}
 	executable, err := os.Executable()
 	if err == nil && persistentExecutable(executable) {
 		return executable, false

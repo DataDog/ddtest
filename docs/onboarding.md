@@ -873,6 +873,11 @@ without guessing a different framework, tracer or suite. Missing capability and
 setup facts are distinct from failed test assertions. Registry transport may retry
 once; authentication, permissions and feature failures are not silently retried.
 
+Returned commands start with the running ddtest's own path. A host that runs
+ddtest through a wrapper can set `DDTEST_SELF_PATH` to the wrapper's absolute
+path so returned commands name the wrapper instead. ddtest ignores a value that
+is not an absolute path to an executable file.
+
 A checkpoint caches successful preparation only. `--resume <run_id>` always runs
 fresh tests and invalidates preparation after source, runtime, tracer, facts or
 binary changes. Three identical failures stop with a reportable blocker. Temporary

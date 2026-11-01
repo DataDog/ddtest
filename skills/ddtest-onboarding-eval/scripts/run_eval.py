@@ -163,13 +163,33 @@ exec 4>&-
 mv -f "$record" "$record.done" 2>/dev/null
 exit "${{status:-1}}"
 """
-# ddtest prints its own path, from os.Executable, in next_command and
-# resume_command. On Linux that is /proc/self/exe, which ignores argv[0] and
-# reads "<path> (deleted)" for a deleted file; Go trims that suffix. The real
-# binary is therefore named "ddtest (deleted)" beside the wrapper, and every
-# command ddtest prints names the wrapper, so an agent that follows them stays
-# recorded.
-REAL_DDTEST = "ddtest (deleted)"
+# ddtest prints its own path in next_command and resume_command, or the
+# executable DDTEST_SELF_PATH names. The real binary stays in the harness
+# folder and DDTEST_SELF_PATH names the wrapper, so every command ddtest prints
+# runs the wrapper and an agent that follows them stays recorded.
+REAL_DDTEST = "ddtest"
+SELF_PATH_VARIABLE = "DDTEST_SELF_PATH"
+# Older builds ignore DDTEST_SELF_PATH and print os.Executable. On Linux that
+# is /proc/self/exe, which ignores argv[0] and reads "<path> (deleted)" for a
+# deleted file; Go trims that suffix. For them the real binary moves beside the
+# wrapper under that name, so the printed path is still the wrapper's.
+LEGACY_REAL_DDTEST = "ddtest (deleted)"
+# Unconfirmed testdrive in a new empty repository writes nothing and returns
+# consent_required, whose next_command starts with the path ddtest prints.
+SELF_PATH_PROBE = 'd=$(mktemp -d) && cd "$d" && git init -q . && { "$0" testdrive --agent; rm -rf "$d"; }; exit 0'
+
+
+def printed_executable(output):
+    """The executable of the first next_command in ddtest's output, or None."""
+    for line in output.splitlines():
+        try:
+            result = json.loads(line)
+        except ValueError:
+            continue
+        command = result.get("next_command") if isinstance(result, dict) else None
+        if isinstance(command, list) and command and isinstance(command[0], str):
+            return command[0]
+    return None
 # The runner moves each completed record out of the trial, into evidence the
 # container does not mount, as soon as the agent reports a tool result. The
 # harness log is therefore never in the checkout or in the agent's later view,
@@ -813,9 +833,12 @@ def run(args):
     harness = trial / "harness"
     ddtest_records = harness / "records"
     ddtest_records.mkdir(parents=True)
-    real_ddtest = bin_dir / REAL_DDTEST
+    real_ddtest = harness / REAL_DDTEST
     shutil.copy2(binary, real_ddtest)
+    wrapper = bin_dir / "ddtest"
     env = environment(home)
+    # Setup, readiness and the agent all print commands naming the wrapper.
+    env[SELF_PATH_VARIABLE] = str(wrapper)
     env["PATH"] = container.path
     env["SHELL"] = "/bin/bash"
     env["CODEX_HOME"] = str(home/".codex")
@@ -858,9 +881,11 @@ def run(args):
     pnpm_store.mkdir()
     pnpm_cache.mkdir()
     inside = container.inside if hasattr(container,"inside") else str
-    wrapper = bin_dir / "ddtest"
-    wrapper.write_text(DDTEST_WRAPPER.format(records=shlex.quote(inside(ddtest_records)), real=shlex.quote(inside(real_ddtest))))
-    wrapper.chmod(0o755)
+
+    def write_wrapper():
+        wrapper.write_text(DDTEST_WRAPPER.format(records=shlex.quote(inside(ddtest_records)), real=shlex.quote(inside(real_ddtest))))
+        wrapper.chmod(0o755)
+    write_wrapper()
     pnpm_config.write_text(f"store-dir={inside(pnpm_store)}\ncache-dir={inside(pnpm_cache)}\n")
     pnpm_config.with_name("config.yaml").write_text(
         f"storeDir: {json.dumps(inside(pnpm_store))}\ncacheDir: {json.dumps(inside(pnpm_cache))}\n")
@@ -1092,6 +1117,23 @@ def run(args):
         if not re.search(r"(?<![\d.])"+re.escape(expected_cli)+r"(?![\d.])", manifest["cli_version"]):
             raise RuntimeError(f"Expected {args.agent} {expected_cli}; image CLI version differs")
         manifest["ddtest_version"] = command([str(real_ddtest),"--version"],timeout=CLI_STARTUP_TIMEOUT)
+        # The probe runs the real binary, so it leaves no record.
+        def probe_printed_executable():
+            return printed_executable(command(["sh", "-c", SELF_PATH_PROBE, str(real_ddtest)], timeout=CLI_STARTUP_TIMEOUT))
+        printed, mode = probe_printed_executable(), SELF_PATH_VARIABLE
+        if printed != inside(wrapper):
+            mode = "deleted suffix"
+            del env[SELF_PATH_VARIABLE]
+            legacy = bin_dir / LEGACY_REAL_DDTEST
+            real_ddtest.rename(legacy)
+            real_ddtest = legacy
+            write_wrapper()
+            printed = probe_printed_executable()
+        manifest["ddtest_self_path"] = {"mode": mode, "wrapper": inside(wrapper), "real_binary": inside(real_ddtest),
+                                        "printed_executable": printed, "wrapper_printed": printed == inside(wrapper)}
+        if printed != inside(wrapper):
+            emit({"type": "diagnostic", "text": "ddtest's printed commands do not name the recording wrapper; "
+                                                "ddtest calls made through them are not recorded"})
         if getattr(args,"login_json",None) or getattr(args,"existing_login",False):
             manifest["failure_stage"] = "model_authentication"
             login.install()

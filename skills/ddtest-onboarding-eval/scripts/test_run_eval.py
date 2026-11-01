@@ -166,13 +166,28 @@ for event in events:
 '''
 
 
+# Prints next_command as ddtest does: DDTEST_SELF_PATH, or, for an older build
+# (FAKE_LEGACY_DDTEST), its own path with Go's " (deleted)" trimming. A stale
+# build (FAKE_STALE_DDTEST) prints its own path unchanged.
+FAKE_DDTEST = """#!/bin/sh
+if [ "$1" = testdrive ]; then
+  self=${0% (deleted)}
+  [ -n "$FAKE_LEGACY_DDTEST" ] || self=${DDTEST_SELF_PATH:-$self}
+  [ -z "$FAKE_STALE_DDTEST" ] || self=$0
+  printf '{"status":"needs_input","code":"consent_required","next_command":["%s","testdrive","--agent=true","--yes"]}\\n' "$self"
+  exit 1
+fi
+exit 0
+"""
+
+
 class RunnerTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
         self.binary = self.root / "ddtest"
-        self.binary.write_text("#!/bin/sh\nexit 0\n")
+        self.binary.write_text(FAKE_DDTEST)
         self.binary.chmod(0o755)
         for agent in ("codex", "claude"):
             executable = self.root / agent
@@ -450,18 +465,18 @@ class RunnerTests(unittest.TestCase):
                     self.assertEqual(observed["agent_environment"]["CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"], "1")
                     self.assertEqual(observed["agent_environment"]["BASH_MAX_TIMEOUT_MS"], "30000")
                 self.assertNotIn("--model", observed["argv"])
-                # The folder the prompt names holds the recording wrapper and
-                # the real binary, whose /proc/self/exe path Go's os.Executable
-                # reports as the wrapper's, so ddtest's printed commands are
-                # recorded too.
+                # The folder the prompt names holds only the recording wrapper;
+                # DDTEST_SELF_PATH makes ddtest's printed commands name it.
                 wrapper = checkout.parent / "bin" / "ddtest"
-                copied = wrapper.with_name("ddtest (deleted)")
+                copied = checkout.parent / "harness" / "ddtest"
                 self.assertEqual(copied.read_bytes(), self.binary.read_bytes())
                 self.assertFalse(copied.is_symlink())
-                self.assertEqual(sorted(wrapper.parent.iterdir()), [wrapper, copied])
-                self.assertEqual(str(copied).removesuffix(" (deleted)"), str(wrapper))
+                self.assertEqual(sorted(wrapper.parent.iterdir()), [wrapper])
                 self.assertIn(shlex.quote(str(copied)), wrapper.read_text())
-                self.assertFalse((checkout.parent / "harness" / "ddtest").exists())
+                self.assertEqual(manifest["ddtest_self_path"], {
+                    "mode": "DDTEST_SELF_PATH", "wrapper": str(wrapper), "real_binary": str(copied),
+                    "printed_executable": str(wrapper), "wrapper_printed": True})
+                self.assertEqual(observed["environment"]["DDTEST_SELF_PATH"], str(wrapper))
                 activity = (self.args.output / "activity.jsonl").read_text()
                 self.assertNotIn("PRIVATE_REASONING", activity)
                 self.assertEqual((self.args.output / "final-response.md").read_text(), "Done\n")
@@ -469,6 +484,37 @@ class RunnerTests(unittest.TestCase):
                 self.assertIn("Fake agent changed", (self.args.output / "changes.patch").read_text())
                 self.assertIn("observed.json", (self.args.output / "status.txt").read_text())
         self.assertNotEqual(*checkouts)
+
+    def test_builds_without_self_path_use_the_deleted_suffix(self):
+        for name, extra, printed in (("legacy", {"FAKE_LEGACY_DDTEST": "1"}, True),
+                                     ("stale", {"FAKE_STALE_DDTEST": "1"}, False)):
+            with self.subTest(name=name):
+                self.args.output = self.root / f"{name}-evidence"
+                self.args.setup_command = ["sh -c 'echo \"setup:${DDTEST_SELF_PATH-unset}\"'"]
+                code, manifest = self.trial(extra)
+                self.assertEqual(code, 0, manifest)
+                trial = Path(manifest["trial_directory"])
+                wrapper, copied = trial / "bin" / "ddtest", trial / "bin" / "ddtest (deleted)"
+                self.assertEqual(sorted(wrapper.parent.iterdir()), [wrapper, copied])
+                self.assertEqual(copied.read_bytes(), self.binary.read_bytes())
+                self.assertFalse((trial / "harness" / "ddtest").exists())
+                self.assertIn(shlex.quote(str(copied)), wrapper.read_text())
+                record = manifest["ddtest_self_path"]
+                self.assertEqual((record["mode"], record["real_binary"], record["wrapper_printed"]),
+                                 ("deleted suffix", str(copied), printed))
+                self.assertEqual(record["printed_executable"], str(wrapper if printed else copied))
+                observed = json.loads((Path(manifest["checkout"]) / "observed.json").read_text())
+                self.assertNotIn("DDTEST_SELF_PATH", observed["environment"])
+                setup = next(c for c in manifest["commands"] if c["argv"][:2] == ["sh", "-c"] and "setup:" in c["argv"][2])
+                self.assertIn("setup:unset", setup["output_excerpt"])
+                diagnostics = [json.loads(line) for line in (self.args.output / "activity.jsonl").read_text().splitlines()]
+                self.assertEqual(any("not recorded" in event.get("text", "") for event in diagnostics), not printed)
+
+    def test_printed_executable_reads_the_first_next_command(self):
+        self.assertEqual(run_eval.printed_executable('noise\n{"code":"x"}\n{"next_command":["/trial/bin/ddtest","testdrive"]}\n'),
+                         "/trial/bin/ddtest")
+        for output in ("", "not json", '{"next_command":[]}', '["/trial/bin/ddtest"]', '{"next_command":[1]}'):
+            self.assertIsNone(run_eval.printed_executable(output))
 
     def test_selected_node_survives_login_path_reset_without_prompt_changes(self):
         selected = self.selected_node()
