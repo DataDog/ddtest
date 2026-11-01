@@ -100,6 +100,10 @@ type jenkinsScope struct {
 	// ddtest cannot tell, such as env[name] = …: no variable of the build's
 	// environment is known after it.
 	envUnknown string
+	// process, when set, is the scope whose environment a shell step starts
+	// with while the Groovy around it reads this one: an environment
+	// directive's value runs before Jenkins sets the directive's variables.
+	process *jenkinsScope
 }
 
 func (s jenkinsScope) with(change func(*jenkinsScope)) jenkinsScope {
@@ -579,7 +583,11 @@ func jenkinsNeverWhen(body *groovyBlock) bool {
 // environment reads an environment directive. Its values run what they
 // call, such as X = sh(script: 'git rev-parse HEAD', returnStdout: true),
 // to slot, in order; the value read from a command's output is unknown.
+// Jenkins evaluates the values before it sets them with withEnv, so what
+// they run starts with the environment around the directive, while their
+// Groovy references read the directive's earlier values.
 func (r *jenkinsReader) environment(body *groovyBlock, scope *jenkinsScope, top bool, slot *jenkinsSlot) {
+	inherited := scope.with(func(*jenkinsScope) {})
 	for _, statement := range body.Statements {
 		assign, ok := statement.(*groovyAssign)
 		if !ok {
@@ -590,7 +598,9 @@ func (r *jenkinsReader) environment(body *groovyBlock, scope *jenkinsScope, top 
 			continue
 		}
 		if call, isCall := assign.Value.(*groovyCall); !isCall || call.Name != "credentials" {
+			scope.process = &inherited
 			r.expression(assign.Value, scope, slot)
+			scope.process = nil
 		}
 		r.assignEnvironment(name.Path[0], assign.Value, scope, "the environment directive at "+r.where(assign), !top)
 		scope.shadow[name.Path[0]] = true
@@ -2139,6 +2149,11 @@ func (r *jenkinsReader) shell(call *groovyCall, scope jenkinsScope, slot *jenkin
 		}
 		r.add(slot, call, runtimeStep{Run: run, ResolutionError: "its sh script reads " + problem + ", so ddtest cannot resolve it: " + r.text(node)})
 		return
+	}
+	if scope.process != nil {
+		// The script's Groovy read scope; its shell starts with process's
+		// environment.
+		scope = *scope.process
 	}
 	reason := scope.problem
 	switch {

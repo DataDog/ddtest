@@ -1583,3 +1583,32 @@ pipeline {
 		require.Equal(t, 1, tests)
 	}
 }
+
+// Jenkins evaluates an environment directive's values before it enters the
+// directive's withEnv: a shell an environment value runs starts with the
+// environment around the directive, while the value's Groovy references
+// read the directive's earlier values, and the steps after it read them all.
+func TestJenkinsEnvironmentValueShellsStartWithTheInheritedEnvironment(t *testing.T) {
+	jobs := jenkinsJobs(t, `pipeline {
+  agent { label 'linux' }
+  environment {
+    SKIP = 'yes'
+    RUN_TESTS = 'false'
+    OUTPUT = sh(script: 'if [ "$RUN_TESTS" != false ]; then npm test; fi', returnStdout: true)
+    SUITE = 'unit'
+    NAMED = sh(script: "npm run ${SUITE}", returnStdout: true)
+  }
+  stages {
+    stage('Unit') {
+      environment {
+        SKIP = 'no'
+        STAGE = sh(script: 'if [ "$SKIP" = yes ]; then npm run skipped; else npm run stage; fi', returnStdout: true)
+        INHERITED = sh(script: 'if [ "$RUN_TESTS" != false ]; then npm run inherited; fi', returnStdout: true)
+      }
+      steps { sh 'if [ "$RUN_TESTS" != false ]; then npm run steps; fi; if [ "$SKIP" = no ]; then npm run after; fi' }
+    }
+  }
+}`)
+	require.Equal(t, []string{`if [ "$RUN_TESTS" != false ]; then npm test; fi`, "npm run unit"}, jenkinsRuns(jobs["environment"]), "the pipeline's environment shells start without its RUN_TESTS, so its test branch stays, and Groovy reads its SUITE")
+	require.Equal(t, []string{"npm run skipped", "npm run after"}, jenkinsRuns(jobs["Unit"]), "the stage's environment shells start with the pipeline's environment, and its steps with the stage's")
+}

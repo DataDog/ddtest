@@ -537,7 +537,10 @@ order; `credentials()` and computed values are unknown; what a value runs,
 such as `X = sh(script: 'git show …', returnStdout: true).trim()` or an `sh`
 in its GString, is read like any expression's, at the point Jenkins runs it:
 before a stage's steps, in its job, and for the pipeline, a stage of stages or
-a matrix cell, in a job of its own, `environment` or `<stage> (environment)`), `withEnv` with a literal
+a matrix cell, in a job of its own, `environment` or `<stage> (environment)`;
+its shell starts with the environment around the directive, as Jenkins sets
+the directive's variables only after evaluating them, while the value's
+Groovy reads the directive's earlier values), `withEnv` with a literal
 list, `withCredentials` (its variables are unknown), `dir` with a literal path
 inside the checkout, `when { expression { false } }` or `return false` (the
 stage never runs; any other `when` is a possible path), `post` conditions that
