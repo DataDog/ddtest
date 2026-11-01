@@ -488,6 +488,7 @@ func rubyGemspecAllowlist(gemspec string) bool {
 func (rubyDiscovery) stepMayStartTests(string, ciWorkflow, runtimeJob, runtimeStep) (bool, bool) {
 	return false, false
 }
+
 func (rubyDiscovery) preloadVariable(name string) bool { return name == "RUBYOPT" }
 
 // The Ruby CI check reads hand-written datadog-ci setups (see

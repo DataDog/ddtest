@@ -1067,6 +1067,14 @@ dd-trace's documented `NODE_OPTIONS="-r dd-trace/ci/init" DD_ENV=ci yarn
 test`, are that command's environment, also after the provider's setup
 (`NODE_OPTIONS="$NODE_OPTIONS …" npx jest`).
 
+For Cucumber, `onboard --apply` wraps the selected package scripts with NYC
+and keeps the hand-written setup. A Cucumber command that CI runs directly,
+without a package script, and without NYC gets the exact NYC-wrapped command
+to write instead (an edit-then-apply gap); native ESM Cucumber needs
+`--experimental-loader @istanbuljs/esm-loader-hook` in the hand-written
+`NODE_OPTIONS` (or in every selected script), and `onboard --apply` stops with
+a setup gap before any edit until it is there.
+
 Python and Java hand-written setups are recognized but not validated yet:
 their CI checks read only the provider's setup. Where no provider setup
 precedes the test command, ddtest recognizes:

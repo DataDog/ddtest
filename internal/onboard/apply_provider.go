@@ -63,10 +63,6 @@ func planProviderJavaScriptSetup(root string, provider ciProvider, workflows []c
 			// which each shell that runs the tests needs.
 			var testSteps, shellSetups []int
 			// Direct invocations (no package script) of a scoped framework.
-			type directLeaf struct {
-				step runtimeStep
-				test TestCommand
-			}
 			var direct []directLeaf
 			for i, step := range job.Steps {
 				if setup, ok := datadogSetup(step); ok {
@@ -219,6 +215,11 @@ func planProviderJavaScriptSetup(root string, provider ciProvider, workflows []c
 			if handWritten != nil {
 				if problem := handWritten.problem(); problem != "" {
 					return nil, &SetupGap{location, problem + " Then rerun onboard --apply."}
+				}
+				if framework == "cucumber" {
+					if gap := handWrittenCucumberGap(provider, location, workflow, job, job.Steps[first], tests, direct, options); gap != nil {
+						return nil, gap
+					}
 				}
 				configured++
 				continue
@@ -552,14 +553,56 @@ func existingScopedSetupGap(provider ciProvider, workflow ciWorkflow, job runtim
 	if options == "" {
 		return ""
 	}
+	if cucumberLoaderReached(workflow, job, step, tests) {
+		return ""
+	}
+	return "The existing " + provider.setupName() + " leaves the tracer's preload in NODE_OPTIONS without the " + options + " native ESM coverage needs. Add " + provider.setupTerms().Persist(command) + " right after it, then rerun onboard --apply; or review it manually without adding a second setup."
+}
+
+// directLeaf is a direct invocation, without a package script, of a scoped
+// framework (Cucumber or WebdriverIO), and the CI step that runs it.
+type directLeaf struct {
+	step runtimeStep
+	test TestCommand
+}
+
+// cucumberLoaderReached reports whether native ESM Cucumber tests get the
+// Istanbul ESM loader without the scoped variable carrying it, as validation
+// accepts (see checkCucumberBootstrap): every selected command loads it in its
+// own scoped prefix, or step's NODE_OPTIONS does.
+func cucumberLoaderReached(workflow ciWorkflow, job runtimeJob, step runtimeStep, tests []TestCommand) bool {
 	inline := len(tests) > 0
 	for _, test := range tests {
 		inline = inline && test.cucumberInlineIstanbul
 	}
-	if current, err := effectiveBootstrapOptions(workflow, job, step, nil, true); inline || err == nil && nodeOptionsLoad(current, "@istanbuljs/esm-loader-hook") {
-		return ""
+	current, err := effectiveBootstrapOptions(workflow, job, step, nil, true)
+	return inline || err == nil && nodeOptionsLoad(current, "@istanbuljs/esm-loader-hook")
+}
+
+// handWrittenCucumberGap explains what a job whose hand-written setup is
+// otherwise complete still lacks for Cucumber, or is nil. onboard --apply
+// adds NYC and the Istanbul ESM loader only to the selected package scripts,
+// through the scoped variable the provider's setup exports, so a direct
+// invocation needs NYC in the CI command itself, and native ESM (options)
+// needs the loader in the hand-written NODE_OPTIONS.
+func handWrittenCucumberGap(provider ciProvider, location string, workflow ciWorkflow, job runtimeJob, step runtimeStep, tests []TestCommand, direct []directLeaf, options string) error {
+	for _, leaf := range direct {
+		if leaf.test.usesNYC {
+			continue
+		}
+		command, err := directScopedCommand(leaf.step, leaf.test, "cucumber")
+		if err != nil {
+			return &SetupGap{location, err.Error()}
+		}
+		if _, ok := provider.(buildkite); ok {
+			command = buildkiteEscape(command) // pipeline upload would replace each $.
+		}
+		return &EditThenApplyGap{SetupGap{directLeafLocation(location, leaf.step), CucumberCoverageGap + " CI runs " + leaf.test.Command + " directly, not through a package script, so onboard --apply cannot wrap it with NYC. Change this CI command to exactly: " + command + ". Then rerun onboard --apply; the job's hand-written setup stays."}}
 	}
-	return "The existing " + provider.setupName() + " leaves the tracer's preload in NODE_OPTIONS without the " + options + " native ESM coverage needs. Add " + provider.setupTerms().Persist(command) + " right after it, then rerun onboard --apply; or review it manually without adding a second setup."
+	if options != "" && !cucumberLoaderReached(workflow, job, step, tests) {
+		return &SetupGap{location, "The job's hand-written setup leaves the tracer's preload in NODE_OPTIONS without the " + options + " native ESM coverage needs. Add it to the NODE_OPTIONS that preloads dd-trace/ci/init, then rerun onboard --apply; the job's hand-written setup stays."}
+	}
+	return nil
 }
 
 // directLeafLocation names a direct invocation's CI step by its source

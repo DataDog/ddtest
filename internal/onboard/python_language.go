@@ -106,6 +106,7 @@ func (pythonDiscovery) outsideFrameworkJob(string, ciWorkflow, runtimeJob, map[s
 func (pythonDiscovery) stepMayStartTests(string, ciWorkflow, runtimeJob, runtimeStep) (bool, bool) {
 	return false, false
 }
+
 // A hand-written setup's PYTEST_ADDOPTS prefix stays in the pytest command,
 // which pythonHandWrittenSetup reads with its environment.
 func (pythonDiscovery) preloadVariable(string) bool { return false }

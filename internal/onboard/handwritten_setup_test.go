@@ -7,6 +7,7 @@ package onboard
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -214,6 +215,58 @@ func TestHandWrittenJavaScriptSetupApply(t *testing.T) {
 			data, err := os.ReadFile(filepath.Join(root, provider.file))
 			require.NoError(t, err)
 			require.NotContains(t, string(data), "install_test_visibility")
+		})
+	}
+}
+
+// onboard --apply adds NYC and the Istanbul ESM loader only to the selected
+// Cucumber package scripts, so a job with a complete hand-written setup is
+// not configured while a direct Cucumber command lacks NYC, or native ESM
+// Cucumber lacks the loader: apply prescribes each edit, keeps the
+// hand-written setup, and the result validates.
+func TestHandWrittenCucumberSetupApply(t *testing.T) {
+	const cucumberPackage = `{%s"scripts": {"test": "cucumber-js"}, "devDependencies": {"@cucumber/cucumber": "11.0.1", "nyc": "17.1.0", "@istanbuljs/esm-loader-hook": "0.3.0", "dd-trace": "5.40.0"}}`
+	agentless := handWrittenAgentless("-r dd-trace/ci/init --import dd-trace/register.js")
+	for _, provider := range handWrittenProviders {
+		t.Run(provider.name+"/direct", func(t *testing.T) {
+			root := handWrittenRepository(t, provider, fmt.Sprintf(cucumberPackage, ""), provider.config(agentless, []string{"npm ci"}, "npx cucumber-js"), nil)
+			_, err := PlanJavaScriptSetup(root, "cucumber", "5.133.0", "datadoghq.com", ">=18")
+			var gap *EditThenApplyGap
+			require.ErrorAs(t, err, &gap)
+			require.Contains(t, gap.Reason, CucumberCoverageGap)
+			require.Contains(t, gap.Reason, "the job's hand-written setup stays")
+			_, after, ok := strings.Cut(gap.Reason, "Change this CI command to exactly: ")
+			require.True(t, ok, gap.Reason)
+			written, _, _ := strings.Cut(after, ". Then rerun onboard --apply")
+			require.Contains(t, written, "npx --no-install nyc -- cucumber-js")
+
+			writeFile(t, root, provider.file, provider.config(agentless, []string{"npm ci"}, written))
+			plan, err := PlanJavaScriptSetup(root, "cucumber", "5.133.0", "datadoghq.com", ">=18")
+			require.NoError(t, err)
+			require.True(t, plan.Configured(), "the hand-written setup stays")
+			require.Equal(t, StatusCompatible, handWrittenRuntime(t, root, "cucumber").Status)
+		})
+		t.Run(provider.name+"/native ESM", func(t *testing.T) {
+			pkg := fmt.Sprintf(cucumberPackage, `"type": "module", `)
+			root := handWrittenRepository(t, provider, pkg, provider.config(agentless, []string{"npm ci"}, "npm test"), nil)
+			_, err := PlanJavaScriptSetup(root, "cucumber", "5.133.0", "datadoghq.com", ">=18")
+			var gap *SetupGap
+			require.ErrorAs(t, err, &gap)
+			require.Contains(t, gap.Reason, "hand-written setup leaves the tracer's preload in NODE_OPTIONS without the "+cucumberESMLoaderHook)
+			data, err := os.ReadFile(filepath.Join(root, "package.json"))
+			require.NoError(t, err)
+			require.Equal(t, pkg, string(data), "apply stops before any edit")
+
+			loaded := with(agentless, "NODE_OPTIONS", agentless["NODE_OPTIONS"]+" "+cucumberESMLoaderHook)
+			writeFile(t, root, provider.file, provider.config(loaded, []string{"npm ci"}, "npm test"))
+			plan, err := PlanJavaScriptSetup(root, "cucumber", "5.133.0", "datadoghq.com", ">=18")
+			require.NoError(t, err)
+			_, err = plan.apply(true, os.Rename)
+			require.NoError(t, err)
+			require.Equal(t, StatusCompatible, handWrittenRuntime(t, root, "cucumber").Status)
+			config, err := os.ReadFile(filepath.Join(root, provider.file))
+			require.NoError(t, err)
+			require.NotContains(t, string(config), "DD_CUCUMBER_NODE_OPTIONS=", "no provider setup is added")
 		})
 	}
 }

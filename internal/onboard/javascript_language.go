@@ -242,6 +242,7 @@ func (javascriptDiscovery) unsupportedImage(string) string { return "" }
 func (javascriptDiscovery) stepMayStartTests(string, ciWorkflow, runtimeJob, runtimeStep) (bool, bool) {
 	return false, false
 }
+
 func (javascriptDiscovery) preloadVariable(name string) bool { return name == "NODE_OPTIONS" }
 
 // The JavaScript CI check reads hand-written dd-trace setups (see
