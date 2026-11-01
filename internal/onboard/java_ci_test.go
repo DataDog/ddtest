@@ -152,6 +152,58 @@ func TestJavaScopeFollowsTheMatrix(t *testing.T) {
 	require.Len(t, scope.Commands[0].Locations, 2, "one location per matrix row")
 }
 
+func TestJavaReadsUnreadValuesAsPossibleTests(t *testing.T) {
+	// Goals a matrix row fills in may run tests, though the job is read
+	// before its rows.
+	root := javaWorkflowFixture(t, `jobs:
+  tests:
+    strategy:
+      matrix:
+        goals: [verify]
+    steps:
+      - run: ./mvnw -B ${{ matrix.goals }}
+`, nil)
+	scope, err := DiscoverValidationScope(root, "junit5")
+	require.NoError(t, err)
+	require.Len(t, scope.Commands, 1)
+	require.Equal(t, "./mvnw -B verify", scope.Commands[0].Command)
+
+	for text, runs := range map[string]bool{
+		"mvn $GOALS":       true,
+		"./gradlew $TASKS": true,
+		"$BUILD_COMMAND":   true,
+		"MAVEN_ARGS=test mvn help:evaluate -Dexpression=project.version -q -DforceStdout":         true,
+		"export MAVEN_ARGS=test\nmvn help:evaluate -Dexpression=project.version -q -DforceStdout": true,
+		"mvn help:evaluate -Dexpression=project.version -q -DforceStdout":                         false,
+		"mvn versions:set -DnewVersion=${TAG/v}":                                                  false,
+		"git tag $VERSION && git push origin $VERSION":                                            false,
+	} {
+		require.Equal(t, runs, javaMayRunTests(text, false), text)
+	}
+	require.True(t, javaConfigGoals(t.TempDir(), "/tmp"), "a directory outside the checkout may hold any configuration, and the search ends")
+}
+
+func TestJavaReleaseGoalsWithUnreadValuesRunNoTests(t *testing.T) {
+	// As WriteThemFirst/approvals-java's release job does, before its deploy.
+	root := javaWorkflowFixture(t, `jobs:
+  release:
+    steps:
+      - run: mvn versions:set -DnewVersion=${GITHUB_REF_NAME/v}
+      - run: mvn -B verify
+`, nil)
+	scope, err := DiscoverValidationScope(root, "junit5")
+	require.NoError(t, err)
+	require.Empty(t, scope.Unresolved, "versions:set runs no tests whatever its version")
+	require.Contains(t, strings.Join(scope.Review, "\n"), "release / step 1 (mvn versions:set -DnewVersion=${GITHUB_REF_NAME/v}): Maven goals outside the test lifecycle")
+	require.Len(t, scope.Commands, 1)
+
+	// Goals the shell fills in may still run tests.
+	root = javaWorkflowFixture(t, "jobs:\n  release:\n    steps:\n      - run: mvn ${GOALS/x/y}\n      - run: mvn -B verify\n", nil)
+	scope, err = DiscoverValidationScope(root, "junit5")
+	require.NoError(t, err)
+	require.NotEmpty(t, scope.Unresolved)
+}
+
 func TestJavaCIConfigurationInventoriesJDKAndTracer(t *testing.T) {
 	root := javaWorkflowFixture(t, `jobs:
   tests:

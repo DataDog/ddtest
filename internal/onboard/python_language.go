@@ -100,6 +100,11 @@ func (pythonDiscovery) outsideFrameworkJob(string, ciWorkflow, runtimeJob, map[s
 	return false
 }
 
+// The shared scan follows this language's package and repository scripts.
+func (pythonDiscovery) stepMayStartTests(string, ciWorkflow, runtimeJob, runtimeStep) (bool, bool) {
+	return false, false
+}
+
 func (pythonDiscovery) runtimeVariable(name string) bool {
 	return name == "PYTHONPATH" || name == "PYTHONHOME"
 }

@@ -84,6 +84,9 @@ func (t *Testdrive) javaBuild(args []string) (javaBuild, error) {
 	}
 	build := newMavenBuild(root, projects)
 	build.options, build.userHome = t.mavenUserHome(args)
+	if build.reportSwitches, err = maven.ReportSwitches(root, projects); err != nil {
+		return nil, err
+	}
 	return build, nil
 }
 
@@ -126,6 +129,9 @@ type mavenBuild struct {
 	// userHome is the user home validation runs set, extending the
 	// MAVEN_OPTS options the configuration has, when nothing else selects one.
 	options, userHome string
+	// reportSwitches are the properties that turn off the XML reports
+	// validation reads, and nothing else.
+	reportSwitches []string
 }
 
 func (b *mavenBuild) tool() string      { return "Maven" }
@@ -157,11 +163,16 @@ func (b *mavenBuild) clean() error {
 
 // arguments narrow a probe run to Surefire: checks after the test phase, such
 // as license headers or coverage gates, would judge the probe file itself.
+// Every run turns back on the XML reports a property turns off.
 func (b *mavenBuild) arguments(args []string, probe *javaProbe) []string {
-	if probe == nil {
-		return args
+	if probe != nil {
+		args = append(maven.UpToTest(args), probe.args...)
 	}
-	return append(maven.UpToTest(args), probe.args...)
+	args = slices.Clone(args)
+	for _, property := range b.reportSwitches {
+		args = append(args, "-D"+property+"=false")
+	}
+	return args
 }
 
 // ~/.mavenrc and /etc/mavenrc may attach agents or change options between

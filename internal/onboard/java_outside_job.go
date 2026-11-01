@@ -30,14 +30,35 @@ func (javaDiscovery) outsideFrameworkJob(root string, workflow ciWorkflow, job r
 		if step.ResolutionError != "" {
 			return false
 		}
-		implicitGoals := workflow.Env["MAVEN_ARGS"] != "" || job.Env["MAVEN_ARGS"] != "" || step.Env["MAVEN_ARGS"] != "" ||
-			javaExportsMavenArgs(job) || javaConfigGoals(root, filepath.Clean(stepDirectory(workflow, job, step)))
-		if strings.TrimSpace(step.Run) != "" && javaMayRunTests(workflowExpression.ReplaceAllString(step.Run, "expression"), implicitGoals) {
+		if strings.TrimSpace(step.Run) != "" && javaStepMayRunTests(root, workflow, job, step) {
 			return false
 		}
 	}
 	return true
 }
+
+// A step ddtest did not resolve may start Java tests only when its commands
+// may: an action or unreadable configuration may run anything, and a shell
+// step's commands are read as outsideFrameworkJob reads them.
+func (javaDiscovery) stepMayStartTests(root string, workflow ciWorkflow, job runtimeJob, step runtimeStep) (bool, bool) {
+	if strings.TrimSpace(step.Run) == "" {
+		return step.Uses != "" || step.ResolutionError != "", true
+	}
+	return javaStepMayRunTests(root, workflow, job, step), true
+}
+
+// javaStepMayRunTests reports whether a shell step's commands may start Java
+// tests, with Maven goals MAVEN_ARGS or .mvn/maven.config may add.
+func javaStepMayRunTests(root string, workflow ciWorkflow, job runtimeJob, step runtimeStep) bool {
+	implicitGoals := workflow.Env["MAVEN_ARGS"] != "" || job.Env["MAVEN_ARGS"] != "" || step.Env["MAVEN_ARGS"] != "" ||
+		javaExportsMavenArgs(job) || javaConfigGoals(root, filepath.Clean(stepDirectory(workflow, job, step)))
+	return javaMayRunTests(workflowExpression.ReplaceAllString(step.Run, javaUnreadValue), implicitGoals)
+}
+
+// javaUnreadValue stands for a value ddtest does not read, such as a CI
+// expression a matrix row fills in or a shell expansion: it may name a test
+// goal, a test task or a command that runs tests.
+const javaUnreadValue = "verify"
 
 // javaReleaseTools never start Maven, Gradle or a repository script: shell
 // builtins and control, text utilities, and the signing, download, version
@@ -60,6 +81,14 @@ func javaMayRunTests(text string, implicitGoals bool) bool {
 	// A shell that reads a downloaded installer from a pipe, as in
 	// curl -s https://get.sdkman.io | bash, runs no repository code.
 	installers := map[*syntax.CallExpr]bool{}
+	// MAVEN_ARGS set in the script, inline or exported, adds goals to every
+	// later Maven command.
+	syntax.Walk(file, func(node syntax.Node) bool {
+		if assign, ok := node.(*syntax.Assign); ok && assign.Name != nil && assign.Name.Value == "MAVEN_ARGS" {
+			implicitGoals = true
+		}
+		return !implicitGoals
+	})
 	runs := false
 	syntax.Walk(file, func(node syntax.Node) bool {
 		if runs {
@@ -95,7 +124,7 @@ func pipeCall(statement *syntax.Stmt) *syntax.CallExpr {
 }
 
 // shellWord is a word's text with every expansion, such as $HOME or $(date),
-// read as x: it may choose a value, never a literal command or task.
+// read as javaUnreadValue.
 func shellWord(word *syntax.Word) string {
 	var text strings.Builder
 	var write func(parts []syntax.WordPart)
@@ -109,7 +138,7 @@ func shellWord(word *syntax.Word) string {
 			case *syntax.DblQuoted:
 				write(part.Parts)
 			default:
-				text.WriteString("x")
+				text.WriteString(javaUnreadValue)
 			}
 		}
 	}

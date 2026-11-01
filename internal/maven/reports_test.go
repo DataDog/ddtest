@@ -87,6 +87,47 @@ func TestReadReportsDistinguishesMissingAndEmptyResults(t *testing.T) {
 	require.ErrorIs(t, err, ErrNoTestCases)
 }
 
+func TestReportSwitches(t *testing.T) {
+	root := t.TempDir()
+	// As javamoney/jsr354-api's POM does.
+	writePOM(t, root, "pom.xml", `<project><properties><closeTestReports>true</closeTestReports><quiet>true</quiet></properties>
+		<modules><module>api</module></modules>
+		<build><pluginManagement><plugins><plugin><artifactId>maven-surefire-plugin</artifactId>
+		<configuration><disableXmlReport>${closeTestReports}</disableXmlReport></configuration></plugin></plugins></pluginManagement></build></project>`)
+	// A property the build also reads elsewhere is left as it is.
+	writePOM(t, root, "api/pom.xml", `<project><build><plugins>
+		<plugin><artifactId>maven-failsafe-plugin</artifactId><configuration><disableXmlReport>${quiet}</disableXmlReport></configuration></plugin>
+		<plugin><artifactId>maven-surefire-plugin</artifactId><configuration><disableXmlReport> ${closeTestReports} </disableXmlReport></configuration></plugin>
+		<plugin><artifactId>maven-javadoc-plugin</artifactId><configuration><quiet>${quiet}</quiet></configuration></plugin>
+		</plugins></build></project>`)
+	projects := []Project{{Directory: ".", POM: "pom.xml"}, {Directory: "api", POM: filepath.Join("api", "pom.xml")}}
+	properties, err := ReportSwitches(root, projects)
+	require.NoError(t, err)
+	require.Equal(t, []string{"closeTestReports"}, properties)
+
+	// A profile activated by the property's presence would turn on with false too.
+	writePOM(t, root, "pom.xml", `<project><modules><module>api</module></modules>
+		<build><plugins><plugin><artifactId>maven-surefire-plugin</artifactId><configuration><disableXmlReport>${closeTestReports}</disableXmlReport></configuration></plugin></plugins></build>
+		<profiles><profile><id>ci</id><activation><property><name>closeTestReports</name></property></activation></profile></profiles></project>`)
+	properties, err = ReportSwitches(root, projects)
+	require.NoError(t, err)
+	require.Empty(t, properties, "the property also activates a profile")
+
+	// Tests that read the user property, which Surefire passes on, see the value too.
+	writePOM(t, root, "pom.xml", `<project><modules><module>api</module></modules>
+		<build><plugins><plugin><artifactId>maven-surefire-plugin</artifactId><configuration><disableXmlReport>${closeTestReports}</disableXmlReport></configuration></plugin></plugins></build></project>`)
+	writePOM(t, root, "api/src/test/java/example/ReportsTest.java", `class ReportsTest { boolean quiet = Boolean.getBoolean("closeTestReports"); }`)
+	properties, err = ReportSwitches(root, projects)
+	require.NoError(t, err)
+	require.Empty(t, properties, "a test reads the property")
+	require.NoError(t, os.RemoveAll(filepath.Join(root, "api", "src")))
+
+	writePOM(t, root, "api/pom.xml", `<project><build><plugins><plugin><artifactId>maven-surefire-plugin</artifactId><configuration><disableXmlReport>true</disableXmlReport></configuration></plugin></plugins></build></project>`)
+	properties, err = ReportSwitches(root, projects[1:])
+	require.NoError(t, err)
+	require.Empty(t, properties, "a literal setting has no property to override")
+}
+
 func TestReadReportsRejectsUnusableReports(t *testing.T) {
 	for name, contents := range map[string]string{
 		"unnamed test": `<testsuite><testcase classname="example.Test"/></testsuite>`,
