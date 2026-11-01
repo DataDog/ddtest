@@ -186,6 +186,12 @@ type runtimeJob struct {
 	// Jenkins agent label, for the user who knows its runtime; empty uses
 	// the provider's generic description.
 	Host string `yaml:"-"`
+	// FloatingTagStated marks a job whose runtime image's floating tag
+	// (node:lts, ruby:latest, an untagged node) runs the release its agent
+	// keeps, which only the user can tell, so it takes the user's statement
+	// as a host's runtime does: a Jenkins container, whose Docker pulls an
+	// image only when the agent has none (unless alwaysPull is set).
+	FloatingTagStated bool `yaml:"-"`
 	// Stated holds the runtime versions the user stated for this job, by
 	// installer token, when its image selects none (see --ci-runtime). They
 	// apply only on matrix rows whose runtimeHost is not empty.

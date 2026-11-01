@@ -153,6 +153,69 @@ func TestJenkinsUnreadContainerImagesTakeTheStatedRuntime(t *testing.T) {
 	require.Nil(t, RequiredCIConfirmations(root, "javascript", "jest"), "the snippet needs no plugin facts")
 }
 
+// A Jenkins container's floating image tag runs the release the agent kept
+// (Docker Pipeline pulls an image only when the agent has none), so, unlike
+// a GitLab or Buildkite image's, its runtime is the user's to state, as a
+// host agent's; a numeric tag still selects its own.
+func TestJenkinsFloatingImageTagsTakeTheStatedRuntime(t *testing.T) {
+	snippet := jenkinsTestSnippet("js", "5.134.0", false)
+	stage := func(name, agent string) string {
+		return "    stage('" + name + "') {\n      agent { " + agent + " }\n      steps {\n        withCredentials([string(credentialsId: 'datadog-api-key', variable: 'DD_API_KEY')]) {\n          sh '''\n      " + snippet + "\n      npm test\n          '''\n        }\n      }\n    }\n"
+	}
+	inside := "    stage('Inside') {\n      agent any\n      steps {\n        script {\n          docker.image('node:current').inside {\n            withCredentials([string(credentialsId: 'datadog-api-key', variable: 'DD_API_KEY')]) {\n              sh '''\n      " + snippet + "\n      npm test\n              '''\n            }\n          }\n        }\n      }\n    }\n"
+	root := jenkinsRepository(t, "pipeline {\n  agent none\n  stages {\n"+stage("LTS", "docker { image 'node:lts'\n        args '-u root:sudo' }")+stage("Latest", "docker { image 'node:latest' }")+stage("Untagged", "docker { image 'node' }")+stage("Pinned", "docker { image 'node:22' }")+inside+"  }\n}\n")
+	required := RequiredCIRuntimes(t.Context(), root, "javascript", "jest")
+	require.NotNil(t, required)
+	require.Equal(t, []string{"Jenkinsfile / Inside (docker.image('node:current').inside)", "Jenkinsfile / LTS", "Jenkinsfile / Latest", "Jenkinsfile / Untagged"}, required.Jobs)
+	require.Equal(t, "image node:lts, whose name selects no Node version", required.Hosts[1])
+	result := CIRuntimeRequiredResult(required)
+	require.Equal(t, "ci_runtime_required", result.Code)
+	require.Equal(t, "ask_user", result.NextAction)
+	require.Contains(t, result.RequiredInput, "ci_runtime:Jenkinsfile / LTS")
+
+	resolve := func(_ context.Context, action, version string) (tracerRequirement, error) {
+		return tracerRequirement{Version: "5.134.0", Node: ">=18"}, nil
+	}
+	findings := func() map[string]RuntimeFinding {
+		found := map[string]RuntimeFinding{}
+		for _, finding := range checkCIRuntimes(t.Context(), root, nil, resolve, "jest").Jobs {
+			found[finding.Job] = finding
+		}
+		return found
+	}
+	require.Equal(t, CodeRuntimeUnknown, findings()["LTS"].Code, "unstated, it stays unknown")
+
+	// A statement for the job is not a conflict with its floating tag.
+	useCIStatements(t, []string{"LTS:node=24", "node=22"})
+	require.NoError(t, CheckCIRuntimeStatements(root))
+	require.Nil(t, RequiredCIRuntimes(t.Context(), root, "javascript", "jest"))
+	stated := findings()
+	require.Equal(t, StatusCompatible, stated["LTS"].Status, stated["LTS"])
+	require.Equal(t, "24", stated["LTS"].Node)
+	require.True(t, stated["LTS"].UserStated)
+	require.Equal(t, "22", stated["Untagged"].Node)
+	require.True(t, stated["Untagged"].UserStated)
+	require.False(t, stated["Pinned"].UserStated, "node:22 selects its own runtime")
+	useCIStatements(t, []string{"Pinned:node=24"})
+	require.ErrorContains(t, CheckCIRuntimeStatements(root), "contradicts Node 22, which image node:22 selects")
+}
+
+// The same holds for a Ruby image's floating tag in a Jenkins container.
+func TestJenkinsFloatingRubyImageTagTakesTheStatedRuntime(t *testing.T) {
+	root := jenkinsApplyRepository(t, "rspec", "pipeline {\n  agent { docker { image 'ruby:latest' } }\n  stages {\n    stage('Test') {\n      steps {\n        sh 'bundle exec rake spec'\n      }\n    }\n  }\n}\n")
+	required := RequiredCIRuntimes(t.Context(), root, "ruby", "rspec")
+	require.NotNil(t, required)
+	require.Equal(t, []string{"Jenkinsfile / Test"}, required.Jobs)
+	require.Equal(t, []string{"image ruby:latest, whose name selects no Ruby version"}, required.Hosts)
+	useCIStatements(t, []string{"ruby=3.3"})
+	require.NoError(t, CheckCIRuntimeStatements(root))
+	require.Nil(t, RequiredCIRuntimes(t.Context(), root, "ruby", "rspec"))
+	for _, finding := range RubyCIConfiguration(root, "rspec").Jobs {
+		require.Equal(t, "3.3", finding.Runtime, finding)
+		require.True(t, finding.UserStated)
+	}
+}
+
 // Ruby with the plugin on host stages and the snippet in container stages:
 // the plugin's bundle add would change the release the installer uses, so
 // Gemfile.lock must pin datadog-ci, at the snippet's release.
