@@ -34,9 +34,103 @@ func scopedEnvironment(framework string) string {
 	return "NODE_OPTIONS"
 }
 
+// readScopedPrefix removes the prefix that makes a direct Cucumber or
+// WebdriverIO invocation read its scoped variable,
+// NODE_OPTIONS="${NODE_OPTIONS:-} ${DD_CUCUMBER_NODE_OPTIONS:-}" (or
+// DD_WDIO_NODE_OPTIONS), from the start of a provider step's command, and
+// records that variable. This is the CI command directScopedCommand
+// prescribes, with Cucumber's impacted-tests workaround after it. The shell
+// sets them for that command alone, so the rest is the step's command, and
+// its leaf consumes the variable as a scoped package script's does (see
+// markScopedLeaf). Only a command whose first
+// call carries the prefix, alone or piped into others, qualifies.
+func (s *runtimeStep) readScopedPrefix() {
+	command := strings.TrimSpace(s.Run)
+	variable := ""
+	for _, candidate := range []string{"DD_CUCUMBER_NODE_OPTIONS", "DD_WDIO_NODE_OPTIONS"} {
+		if strings.HasPrefix(command, scopedPrefix(candidate)+" ") {
+			variable = candidate
+		}
+	}
+	if variable == "" {
+		return
+	}
+	rest := strings.TrimSpace(strings.TrimPrefix(command, scopedPrefix(variable)))
+	if variable == "DD_CUCUMBER_NODE_OPTIONS" {
+		// As in a scoped package script, the impacted-tests workaround
+		// follows the prefix; discovery reads the command after it.
+		rest = strings.TrimSpace(strings.TrimPrefix(rest, cucumberImpactedWorkaround+" "))
+	}
+	file, ok := parseCIShell(rest)
+	if !ok || len(file.Stmts) != 1 {
+		return
+	}
+	first := file.Stmts[0]
+	for {
+		binary, ok := first.Cmd.(*syntax.BinaryCmd)
+		if !ok || (binary.Op != syntax.Pipe && binary.Op != syntax.PipeAll) {
+			break
+		}
+		first = binary.X
+	}
+	if call, ok := first.Cmd.(*syntax.CallExpr); !ok || len(call.Args) == 0 {
+		return
+	}
+	s.Run, s.scopedVariable = rest, variable
+}
+
+// scopedPrefix is the prefix with which a command reads variable on top of
+// the NODE_OPTIONS it inherits.
+func scopedPrefix(variable string) string {
+	return `NODE_OPTIONS="${NODE_OPTIONS:-} ${` + variable + `:-}"`
+}
+
+// markScopedLeaf marks the direct leaf of a step whose reader removed its
+// scoped prefix as consuming that variable.
+func markScopedLeaf(result *commandResolution, variable, framework string) {
+	if variable != scopedEnvironment(framework) || result.Reason != "" || result.OtherFramework || len(result.Tests) != 1 || len(result.Tests[0].packageScripts) > 0 {
+		return
+	}
+	if framework == "cucumber" {
+		result.Tests[0].cucumberScoped = true
+	} else {
+		result.Tests[0].webdriverIOScoped = true
+	}
+}
+
+// directScopedCommand is the CI command that runs a direct Cucumber or
+// WebdriverIO invocation (no package script) with the scoped setup: the
+// step's command after the scoped prefix and, for Cucumber, the
+// impacted-tests workaround, with cucumber-js wrapped by NYC, as onboard
+// --apply writes a package-script leaf. It is "" when the step already has
+// that form.
+func directScopedCommand(step runtimeStep, test TestCommand, framework string) (string, error) {
+	command := strings.TrimSpace(step.Run)
+	if framework == "webdriverio" {
+		if step.scopedVariable == scopedEnvironment(framework) {
+			return "", nil
+		}
+		return scopedPrefix(scopedEnvironment(framework)) + " " + command, nil
+	}
+	if step.scopedVariable == scopedEnvironment(framework) && test.usesNYC {
+		return "", nil
+	}
+	command = strings.TrimSpace(strings.TrimPrefix(command, cucumberImpactedWorkaround+" "))
+	if !test.usesNYC {
+		start, end, insertion, err := cucumberCoverageEdit(command)
+		if err != nil {
+			return "", err
+		}
+		command = command[:start] + insertion + command[end:]
+	}
+	return scopedPrefix(scopedEnvironment(framework)) + " " + cucumberImpactedWorkaround + " " + command, nil
+}
+
 // Only literal package-script leaves are changed. Framework configs, profiles,
 // imports, reporters, services and other framework consumers remain untouched.
-func scopedSetupEdits(root, framework string) ([]setupEdit, string, error) {
+// With directLeaves, the caller handles direct invocations itself (see
+// directScopedCommand); otherwise they need explicit initialization.
+func scopedSetupEdits(root, framework string, directLeaves bool) ([]setupEdit, string, error) {
 	if framework != "cucumber" && framework != "webdriverio" {
 		return nil, "", nil
 	}
@@ -47,6 +141,9 @@ func scopedSetupEdits(root, framework string) ([]setupEdit, string, error) {
 	selected := map[string]bool{}
 	for _, entry := range scope.Commands {
 		if len(entry.packageScripts) == 0 {
+			if directLeaves {
+				continue
+			}
 			return nil, "", &SetupGap{entry.Command, "Scoped initialization requires an identified package-script consumer; initialize this direct invocation explicitly."}
 		}
 		for _, script := range entry.packageScripts {

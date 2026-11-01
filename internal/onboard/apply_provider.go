@@ -28,7 +28,7 @@ func planProviderJavaScriptSetup(root string, provider ciProvider, workflows []c
 	// leaves, as on GitHub Actions: the scripts consume the scoped variable
 	// the setup's following command exports (see providerScopedCommand).
 	scoped := scopedEnvironment(framework)
-	edits, _, err := scopedSetupEdits(root, framework)
+	edits, _, err := scopedSetupEdits(root, framework, true)
 	if err != nil {
 		return nil, err
 	}
@@ -62,6 +62,12 @@ func planProviderJavaScriptSetup(root string, provider ciProvider, workflows []c
 			// the later commands of their own shell (see ciSetup.shellLocal),
 			// which each shell that runs the tests needs.
 			var testSteps, shellSetups []int
+			// Direct invocations (no package script) of a scoped framework.
+			type directLeaf struct {
+				step runtimeStep
+				test TestCommand
+			}
+			var direct []directLeaf
 			for i, step := range job.Steps {
 				if setup, ok := datadogSetup(step); ok {
 					if languages := setup.Inputs["languages"]; strings.Contains(languages, "$") {
@@ -90,6 +96,11 @@ func planProviderJavaScriptSetup(root string, provider ciProvider, workflows []c
 				// Every selected test command decides the loader and coverage.
 				tests = append(tests, current.Tests...)
 				testSteps = append(testSteps, i)
+				for _, test := range current.Tests {
+					if scoped != "NODE_OPTIONS" && len(test.packageScripts) == 0 {
+						direct = append(direct, directLeaf{step, test})
+					}
+				}
 				if first < 0 {
 					first, resolution = i, current
 				}
@@ -180,6 +191,29 @@ func planProviderJavaScriptSetup(root string, provider ciProvider, workflows []c
 						return nil, runtimeGap
 					}
 					return nil, &SetupGap{location, err.Error()}
+				}
+			}
+			// A direct invocation reads the scoped variable the setup's
+			// following command exports only through the scoped prefix, which
+			// the CI command itself must carry; a setup that leaves the preload
+			// in NODE_OPTIONS, or a CI server plugin's, reaches it without one.
+			for _, leaf := range direct {
+				if _, exported := leaf.step.Env[scoped]; handWritten != nil || provider.setupTerms().Plugin || setupIndex >= 0 && !exported {
+					break
+				}
+				if framework == "webdriverio" {
+					if local, err := localWDIOLeaf(root, leaf.test.Command); err != nil {
+						return nil, &SetupGap{location, err.Error()}
+					} else if !local {
+						continue // Explicit browser runner remains outside instrumentation.
+					}
+				}
+				command, err := directScopedCommand(leaf.step, leaf.test, framework)
+				if err != nil {
+					return nil, &SetupGap{location, err.Error()}
+				}
+				if command != "" {
+					return nil, &EditThenApplyGap{SetupGap{directLeafLocation(location, leaf.step), directLeafReason(provider, framework, leaf.test.Command, command, setupIndex >= 0)}}
 				}
 			}
 			if handWritten != nil {
@@ -526,6 +560,29 @@ func existingScopedSetupGap(provider ciProvider, workflow ciWorkflow, job runtim
 		return ""
 	}
 	return "The existing " + provider.setupName() + " leaves the tracer's preload in NODE_OPTIONS without the " + options + " native ESM coverage needs. Add " + provider.setupTerms().Persist(command) + " right after it, then rerun onboard --apply; or review it manually without adding a second setup."
+}
+
+// directLeafLocation names a direct invocation's CI step by its source
+// line, when the provider records one.
+func directLeafLocation(location string, step runtimeStep) string {
+	if step.Source != "" {
+		return location + " (" + step.Source + ")"
+	}
+	return location
+}
+
+// directLeafReason prescribes the CI command a direct Cucumber or
+// WebdriverIO invocation needs (see directScopedCommand), written as the
+// provider's configuration holds it, and what onboard --apply does next.
+func directLeafReason(provider ciProvider, framework, leaf, command string, configured bool) string {
+	if _, ok := provider.(buildkite); ok {
+		command = buildkiteEscape(command) // pipeline upload would replace each $.
+	}
+	edit := "it adds the " + provider.setupName() + " before this command, with the command that exports " + scopedEnvironment(framework) + "."
+	if configured {
+		edit = "the job's " + provider.setupName() + " already exports " + scopedEnvironment(framework) + "."
+	}
+	return "CI runs " + leaf + " directly, not through a package script, so the command itself must read the tracer's preload from " + scopedEnvironment(framework) + ", as a scoped package script does. Change this CI command to exactly: " + command + ". Then rerun onboard --apply: " + edit
 }
 
 // providerSetupConfigured reports whether, on a provider without the shared

@@ -640,8 +640,11 @@ func (c *buildkiteConfig) steps(name string, scope buildkiteScope, commands *yam
 			}
 			if consumed := strings.TrimSpace(command) == "" || state.apply(command, mergeEnvironment(env, state.env)); consumed {
 				step.Run = ""
-			} else if run, assigned, ok := foldCommandEnvironment(command, mergeEnvironment(mergeEnvironment(env, state.env), state.references), state.dialect.projectVariable); ok {
-				step.Run, step.Env = run, mergeEnvironment(step.Env, assigned)
+			} else {
+				step.readScopedPrefix()
+				if run, assigned, ok := foldCommandEnvironment(step.Run, mergeEnvironment(mergeEnvironment(env, state.env), state.references), state.dialect.projectVariable); ok {
+					step.Run, step.Env = run, mergeEnvironment(step.Env, assigned)
+				}
 			}
 		}
 	}

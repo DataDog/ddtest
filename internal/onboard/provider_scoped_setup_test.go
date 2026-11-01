@@ -245,6 +245,7 @@ func TestProviderScopedSetupInstructions(t *testing.T) {
 				}
 				require.Contains(t, text, command)
 				require.Contains(t, text, "Start each ")
+				require.Contains(t, text, "directly, not through a package script, starts with "+scopedPrefix(scopedEnvironment(framework)))
 				require.Contains(t, text, scopedEnvironment(framework)+":-}")
 				require.NotContains(t, text, esmImportCommand)
 			})
@@ -359,7 +360,7 @@ func TestScopedCucumberLoaderFollowsSelectedESMInputs(t *testing.T) {
 	writeFile(t, root, "package.json", string(data))
 	writeFile(t, root, "features/steps.mjs", "export {}\n")
 	writeFile(t, root, ".github/workflows/test.yml", "jobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: npm test\n")
-	_, options, err := scopedSetupEdits(root, "cucumber")
+	_, options, err := scopedSetupEdits(root, "cucumber", false)
 	require.NoError(t, err)
 	require.Contains(t, options, cucumberESMLoaderHook, "GitHub Actions' scoped options carry the loader too")
 }
@@ -411,4 +412,67 @@ func TestProviderApplyRefusesASetupWhosePreloadAnotherFrameworkMoved(t *testing.
 	require.Contains(t, gap.Reason, "no longer leaves the tracer's preload in NODE_OPTIONS")
 	require.Contains(t, gap.Reason, "DD_WDIO_NODE_OPTIONS")
 	require.Equal(t, "wdio run wdio.conf.js", appliedScripts(t, root)["e2e"], "WebdriverIO's scripts stay unscoped")
+}
+
+// A CI command that runs Cucumber or WebdriverIO directly, without a package
+// script, gets the exact scoped command to write; onboard --apply then adds
+// the setup before it, reads that command as consuming the scoped variable,
+// and a second apply changes nothing. The same command without the prefix,
+// after a setup that exports the scoped variable, gets it prescribed again.
+func TestProviderDirectInvocationGetsTheScopedCommand(t *testing.T) {
+	for _, provider := range scopedProviders {
+		for _, framework := range scopedFrameworks {
+			t.Run(provider.name+"/"+framework.name, func(t *testing.T) {
+				direct, scoped := "./node_modules/.bin/cucumber-js ./features --format json",
+					cucumberScopedOptions+" "+cucumberImpactedWorkaround+" npx --no-install nyc -- ./node_modules/.bin/cucumber-js ./features --format json"
+				if framework.name == "webdriverio" {
+					direct, scoped = "npx wdio run wdio.conf.js", webdriverIOScopedOptions+" npx wdio run wdio.conf.js"
+				}
+				written := scoped
+				if provider.name == buildkiteProvider {
+					written = buildkiteEscape(scoped)
+				}
+				root := scopedRepository(t, provider, provider.config("npm ci", direct), framework.pkg, framework.files)
+				_, err := PlanJavaScriptSetup(root, framework.name, "5.133.0", "datadoghq.com", ">=18")
+				var gap *EditThenApplyGap
+				require.ErrorAs(t, err, &gap)
+				require.Contains(t, gap.Reason, "Change this CI command to exactly: "+written+". Then rerun onboard --apply: it adds the")
+				require.Contains(t, gap.Location, provider.file+":")
+
+				writeFile(t, root, provider.file, provider.config("npm ci", written))
+				scope, err := DiscoverValidationScope(root, framework.name)
+				require.NoError(t, err)
+				require.Empty(t, scope.Unresolved)
+				require.Len(t, scope.Commands, 1)
+				require.Equal(t, framework.name == "cucumber", scope.Commands[0].cucumberScoped)
+				require.Equal(t, framework.name == "webdriverio", scope.Commands[0].webdriverIOScoped)
+				plan, err := PlanJavaScriptSetup(root, framework.name, "5.133.0", "datadoghq.com", ">=18")
+				require.NoError(t, err)
+				config := plannedFile(t, plan, provider.file)
+				require.Less(t, strings.Index(config, provider.persisted(providerScopedCommand(framework.name, ""))), strings.Index(config, written))
+				_, err = plan.apply(true, os.Rename)
+				require.NoError(t, err)
+				require.Equal(t, framework.pkg["scripts"], appliedScripts(t, root), "no package script runs these tests")
+				check := checkCIRuntimes(t.Context(), root, nil, scopedRequirement, framework.name)
+				require.Equal(t, StatusCompatible, check.Status, check.Jobs)
+				require.True(t, javascriptDiscovery{}.ciSetupConfigured(root, framework.name, "datadoghq.com"))
+				again, err := PlanJavaScriptSetup(root, framework.name, "5.133.0", "datadoghq.com", ">=18")
+				require.NoError(t, err)
+				require.True(t, again.Configured(), "a second apply changes nothing")
+
+				// The setup alone does not reach a command without the prefix.
+				data, err := os.ReadFile(filepath.Join(root, provider.file))
+				require.NoError(t, err)
+				writeFile(t, root, provider.file, strings.Replace(string(data), written, direct, 1))
+				check = checkCIRuntimes(t.Context(), root, nil, scopedRequirement, framework.name)
+				require.Equal(t, StatusInconclusive, check.Status, check.Jobs)
+				if framework.name == "cucumber" {
+					require.Contains(t, check.Jobs[0].Reason, "runs directly, not through a package script")
+				}
+				_, err = PlanJavaScriptSetup(root, framework.name, "5.133.0", "datadoghq.com", ">=18")
+				require.ErrorAs(t, err, &gap)
+				require.Contains(t, gap.Reason, "Change this CI command to exactly: "+written+". Then rerun onboard --apply: the job's ")
+			})
+		}
+	}
 }

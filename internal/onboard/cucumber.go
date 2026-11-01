@@ -297,6 +297,9 @@ func checkCucumberBootstrap(root string, workflow ciWorkflow, job runtimeJob, st
 			return "Cannot identify a Cucumber leaf consuming DD_CUCUMBER_NODE_OPTIONS"
 		}
 		for _, command := range commands {
+			if !command.cucumberScoped && len(command.packageScripts) == 0 {
+				return "Selected Cucumber leaf " + command.Command + " runs directly, not through a package script, and does not consume scoped DD_CUCUMBER_NODE_OPTIONS: start the CI command with " + cucumberScopedOptions + " " + cucumberImpactedWorkaround + " and wrap cucumber-js with npx --no-install nyc --, as onboard --apply prescribes"
+			}
 			if !command.cucumberScoped {
 				return "Selected Cucumber leaf does not consume scoped DD_CUCUMBER_NODE_OPTIONS while preserving existing NODE_OPTIONS"
 			}

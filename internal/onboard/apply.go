@@ -123,7 +123,7 @@ func PlanJavaScriptSetup(root, framework, version, site, nodeRequirement string)
 	if !provider.sharedSyntax() {
 		return planProviderJavaScriptSetup(root, provider, workflows, framework, version, site, nodeRequirement)
 	}
-	edits, scopedOptions, err := scopedSetupEdits(root, framework)
+	edits, scopedOptions, err := scopedSetupEdits(root, framework, false)
 	if err != nil {
 		return nil, err
 	}
