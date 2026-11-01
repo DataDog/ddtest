@@ -70,7 +70,7 @@ var jenkinsFacts = []ciFactDefinition{
 	{
 		Key:      jenkinsRuntimeMatches,
 		Question: "The plugin installs the tracer with the build agent's default toolchain (the one on the agent's PATH without the Jenkinsfile's tools, nodejs(…), PATH changes or version managers such as nvm use or rbenv). Is that the same runtime and package manager the tests run with in the listed jobs?",
-		Remedy:   "If not, the tracer would be installed for another runtime: put the tests' runtime first on the agent's default PATH, or set up Test Optimization for those jobs manually (ddtest cannot validate that).",
+		Remedy:   "If not, the tracer would be installed for another runtime: put the tests' runtime first on the agent's default PATH, or set up Test Optimization for those jobs by hand instead of with the plugin (ddtest checks such setups for " + handWrittenValidatedLanguages() + ", and does not validate them for other languages yet).",
 		Statement: func(string) string {
 			return "The Jenkins agents' default toolchain, which the Datadog Jenkins plugin installs the tracer with, is the one the tests run with"
 		},

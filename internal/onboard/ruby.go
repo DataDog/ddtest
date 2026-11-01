@@ -756,7 +756,7 @@ func RubyCIConfigurationFrom(root, source, framework, site string) RuntimeCheck 
 					}
 					finding := RuntimeFinding{Location: (commandLocation{Workflow: workflow.Path, Job: name, Matrix: row, Step: stepNumber(step, i), Command: step.Run}).String(), Workflow: workflow.Path, Job: name, Step: stepNumber(step, i), Command: resolved.Run, Runtime: ruby, Action: action, TracerRequested: tracer, setupInputs: inputs, setupProvider: provider, Status: "inconclusive", Reason: rubyMissingSetupReason(provider)}
 					if job.SetupUnsupported != "" && setup == nil {
-						finding.Reason = unsupportedSetupReason(provider, job)
+						finding.Reason = unsupportedSetupReason(provider, job, "ruby")
 					}
 					if setup == nil && expired != "" {
 						finding.Reason = "The " + provider.setupName() + " at " + expired + " runs in another shell than this test command, and its exports reach only the later commands of its own shell; run it in the same shell, before the test command."

@@ -712,7 +712,7 @@ func evaluateRuntimeTest(ctx context.Context, root string, workflow ciWorkflow, 
 		if provider := setupProviderFor(activeOrDefaultCIProvider(), job); !provider.sharedSyntax() {
 			finding.Reason = "No " + provider.setupName() + " selecting JavaScript runs before this test command. It is not validated as instrumented."
 			if job.SetupUnsupported != "" {
-				finding.Reason = unsupportedSetupReason(provider, job)
+				finding.Reason = unsupportedSetupReason(provider, job, "javascript")
 			}
 		}
 		return finding
@@ -812,17 +812,17 @@ func evaluateRuntimeTest(ctx context.Context, root string, workflow ciWorkflow, 
 	return finding
 }
 
-// unsupportedSetupReason explains a test job the provider's setup
-// mechanism cannot instrument (runtimeJob.SetupUnsupported).
-func unsupportedSetupReason(provider ciProvider, job runtimeJob) string {
-	return "This job cannot use the " + provider.setupName() + ": " + job.SetupUnsupported + ". It is not validated as instrumented: the user's options are to run its tests where the " + provider.setupName() + " works, or to set up Test Optimization for it by hand, outside ddtest, which ddtest cannot validate."
+// unsupportedSetupReason explains a test job of language the provider's
+// setup mechanism cannot instrument (runtimeJob.SetupUnsupported).
+func unsupportedSetupReason(provider ciProvider, job runtimeJob, language string) string {
+	return "This job cannot use the " + provider.setupName() + ": " + job.SetupUnsupported + ". It is not validated as instrumented: the user's options are to run its tests where the " + provider.setupName() + " works, or " + handWrittenSetupOption(language, provider.setupName()) + "."
 }
 
 // floatingTracerNodeProblem explains why a setup that installs the latest
 // dd-trace whatever the CI Node is (the Datadog Jenkins plugin) cannot work
 // on node: the latest release's engines exclude it.
 func floatingTracerNodeProblem(setup string, latest tracerRequirement, node string) string {
-	return "The " + setup + " installs the latest dd-trace release (" + latest.Version + ") on every build, whatever Node the CI runs, and that release requires Node " + latest.Node + " (its package.json engines), which Node " + node + " does not satisfy; the " + setup + " cannot install an older release. Run these tests on a Node version the latest dd-trace supports, or set up Test Optimization for them by hand; ddtest then checks the hand-written setup where it can."
+	return "The " + setup + " installs the latest dd-trace release (" + latest.Version + ") on every build, whatever Node the CI runs, and that release requires Node " + latest.Node + " (its package.json engines), which Node " + node + " does not satisfy; the " + setup + " cannot install an older release. The user's options are to run these tests on a Node version the latest dd-trace supports, or " + handWrittenSetupOption("javascript", setup) + "."
 }
 
 // floatingTracerRequirement is the latest dd-trace release and its Node

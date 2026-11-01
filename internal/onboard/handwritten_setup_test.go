@@ -393,10 +393,16 @@ func TestHandWrittenJenkinsContainerSetup(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			root := jenkinsRepository(t, pipeline(tc.environment))
 			writeFile(t, root, "package.json", handWrittenPackage)
+			// The stage's own setup is what ddtest reads, whatever the
+			// provider's setup can do in a container.
+			setup := firstJobHandWrittenSetup(t, root, "javascript", "jest", "")
+			require.NotNil(t, setup)
+			require.Equal(t, "hand-written dd-trace@5.40.0 setup (NODE_OPTIONS)", setup.Reference)
 			require.NoError(t, CheckCIProviderSupport(root, "javascript", "jest"))
 			require.Equal(t, tc.configured, javascriptDiscovery{}.ciSetupConfigured(root, "jest", ""))
 			result := handWrittenRuntime(t, root, "jest")
 			require.Equal(t, tc.status, result.Status, "%+v", result)
+			require.Equal(t, setup.Reference, result.Jobs[0].Action)
 			if tc.reason != "" {
 				require.Contains(t, result.Jobs[0].Reason, tc.reason)
 			}
@@ -406,12 +412,15 @@ func TestHandWrittenJenkinsContainerSetup(t *testing.T) {
 	root := jenkinsRepository(t, strings.Replace(pipeline("    DD_API_KEY = credentials('datadog-api-key')\n"), "sh 'npx jest'", "sh 'NODE_OPTIONS=\"-r dd-trace/ci/init\" DD_CIVISIBILITY_AGENTLESS_ENABLED=true npx jest'", 1))
 	writeFile(t, root, "package.json", handWrittenPackage)
 	require.True(t, javascriptDiscovery{}.ciSetupConfigured(root, "jest", ""))
-	require.Equal(t, StatusCompatible, handWrittenRuntime(t, root, "jest").Status)
-	// Without a hand-written setup the provider's setup alone decides: a
-	// stage it cannot instrument stays unsupported.
+	check := handWrittenRuntime(t, root, "jest")
+	require.Equal(t, StatusCompatible, check.Status)
+	require.Equal(t, "hand-written dd-trace@5.40.0 setup (NODE_OPTIONS)", check.Jobs[0].Action)
+	// Without a hand-written setup ddtest reads none, and the provider's
+	// setup alone decides: a stage it cannot instrument stays unsupported.
 	source := pipeline("    DD_SITE = 'datadoghq.com'\n")
 	root = jenkinsRepository(t, source)
 	writeFile(t, root, "package.json", handWrittenPackage)
+	require.Nil(t, firstJobHandWrittenSetup(t, root, "javascript", "jest", ""))
 	if jenkinsJobs(t, source)["Test"].SetupUnsupported != "" {
 		var unsupported *CIProviderUnsupportedError
 		require.ErrorAs(t, CheckCIProviderSupport(root, "javascript", "jest"), &unsupported)

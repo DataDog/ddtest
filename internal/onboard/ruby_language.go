@@ -41,6 +41,8 @@ type rubyDiscovery struct{}
 
 func (rubyDiscovery) name() string { return "ruby" }
 
+func (rubyDiscovery) displayName() string { return "Ruby" }
+
 func (rubyDiscovery) actionLanguage() string { return "ruby" }
 
 func (rubyDiscovery) bootstrap(string) string { return rubyBootstrap }
@@ -487,6 +489,10 @@ func (rubyDiscovery) stepMayStartTests(string, ciWorkflow, runtimeJob, runtimeSt
 	return false, false
 }
 func (rubyDiscovery) preloadVariable(name string) bool { return name == "RUBYOPT" }
+
+// The Ruby CI check reads hand-written datadog-ci setups (see
+// RubyCIConfiguration).
+func (rubyDiscovery) validatesHandWrittenSetup() bool { return true }
 
 func (rubyDiscovery) runtimeVariable(name string) bool {
 	return slices.Contains([]string{"RUBYOPT", "RUBYLIB", "GEM_HOME", "GEM_PATH"}, name) || strings.HasPrefix(name, "BUNDLE_")

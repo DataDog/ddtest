@@ -22,6 +22,8 @@ type javascriptDiscovery struct{}
 
 func (javascriptDiscovery) name() string { return "javascript" }
 
+func (javascriptDiscovery) displayName() string { return "JavaScript" }
+
 func (javascriptDiscovery) actionLanguage() string { return "js" }
 
 func (javascriptDiscovery) bootstrap(framework string) string {
@@ -238,6 +240,10 @@ func (javascriptDiscovery) stepMayStartTests(string, ciWorkflow, runtimeJob, run
 	return false, false
 }
 func (javascriptDiscovery) preloadVariable(name string) bool { return name == "NODE_OPTIONS" }
+
+// The JavaScript CI check reads hand-written dd-trace setups (see
+// checkRuntimeJob).
+func (javascriptDiscovery) validatesHandWrittenSetup() bool { return true }
 
 func (javascriptDiscovery) runtimeVariable(name string) bool {
 	return slices.Contains([]string{"NODE_OPTIONS", "NODE_PATH", "NODE_ENV"}, name) || strings.HasPrefix(strings.ToLower(name), "npm_config_")

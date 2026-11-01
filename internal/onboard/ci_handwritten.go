@@ -43,6 +43,11 @@ type handWrittenSetup struct {
 	// through; pending explains each one the user has not stated.
 	Confirmations []string
 	pending       []string
+	// Unvalidated is why ddtest never certifies the setup, whatever it
+	// holds: its language's hand-written setups are recognized, but no CI
+	// check of that language reads them yet (see
+	// discoveryLanguage.validatesHandWrittenSetup).
+	Unvalidated string
 }
 
 // handWrittenAgent is the --ci-confirm fact a hand-written setup that
@@ -83,13 +88,13 @@ func handWrittenReference(tracer, mechanism string) string {
 
 // complete reports a setup ddtest can certify.
 func (s *handWrittenSetup) complete() bool {
-	return len(s.Problems)+len(s.Unresolved)+len(s.pending) == 0
+	return s.Unvalidated == "" && len(s.Problems)+len(s.Unresolved)+len(s.pending) == 0
 }
 
 // unconfirmed lists the facts the setup depends on that the user has not
 // stated, when they are all it lacks; nil otherwise.
 func (s *handWrittenSetup) unconfirmed() []string {
-	if len(s.Problems)+len(s.Unresolved) > 0 {
+	if s.Unvalidated != "" || len(s.Problems)+len(s.Unresolved) > 0 {
 		return nil
 	}
 	var keys []string
@@ -113,7 +118,7 @@ func (s *handWrittenSetup) problem() string {
 // code classifies an incomplete setup's finding: a missing piece, or only
 // what ddtest cannot verify statically.
 func (s *handWrittenSetup) code() string {
-	if len(s.Problems) == 0 {
+	if s.Unvalidated != "" || len(s.Problems) == 0 {
 		return CodeUnverifiedInitialization
 	}
 	return CodeIncompleteCISetup
@@ -121,6 +126,15 @@ func (s *handWrittenSetup) code() string {
 
 // gaps lists what the setup lacks and what ddtest cannot verify about it.
 func (s *handWrittenSetup) gaps() string {
+	if s.Unvalidated == "" {
+		return s.lacks()
+	}
+	return strings.TrimSpace(s.Unvalidated + " " + s.lacks())
+}
+
+// lacks lists what the setup lacks and what ddtest cannot verify about it,
+// apart from Unvalidated; empty when nothing is missing.
+func (s *handWrittenSetup) lacks() string {
 	var text []string
 	if len(s.Problems) > 0 {
 		text = append(text, "It is incomplete: "+strings.Join(s.Problems, " "))
@@ -295,7 +309,93 @@ func handWrittenCISetup(root string, workflow ciWorkflow, job runtimeJob, index 
 	if registered == nil {
 		return nil
 	}
-	return registered.handWrittenSetup(root, provider, workflow, job, index, row, framework, site)
+	setup := registered.handWrittenSetup(root, provider, workflow, job, index, row, framework, site)
+	if setup != nil && !registered.validatesHandWrittenSetup() {
+		setup.Unvalidated = handWrittenUnvalidated(language)
+	}
+	return setup
+}
+
+// handWrittenLanguageName names language in messages, such as Python.
+func handWrittenLanguageName(language string) string {
+	if registered := discoveryLanguageNamed(language); registered != nil {
+		return registered.displayName()
+	}
+	return language
+}
+
+// handWrittenUnvalidated explains why a hand-written setup of language is
+// never certified, when ddtest does not validate that language's
+// hand-written setups yet.
+func handWrittenUnvalidated(language string) string {
+	return "ddtest does not validate hand-written " + handWrittenLanguageName(language) + " setups yet: it recognizes this one and lists what it lacks, but never certifies it, and never replaces it with the provider's setup."
+}
+
+// validatesHandWrittenSetups reports whether ddtest validates language's
+// hand-written setups on providers without the shared workflow syntax.
+func validatesHandWrittenSetups(language string) bool {
+	registered := discoveryLanguageNamed(language)
+	return registered != nil && registered.validatesHandWrittenSetup()
+}
+
+// handWrittenValidatedLanguages names, in a sentence, the languages whose
+// hand-written setups ddtest validates, such as "JavaScript and Ruby".
+func handWrittenValidatedLanguages() string {
+	var names []string
+	for _, language := range discoveryLanguages {
+		if language.validatesHandWrittenSetup() {
+			names = append(names, language.displayName())
+		}
+	}
+	if len(names) < 2 {
+		return strings.Join(names, "")
+	}
+	return strings.Join(names[:len(names)-1], ", ") + " and " + names[len(names)-1]
+}
+
+// handWrittenSetupOption is the user's option, in a message about CI jobs
+// the provider's setup (named setup) cannot instrument, of setting Test
+// Optimization up by hand in those jobs, and whether ddtest then checks
+// that setup for language.
+func handWrittenSetupOption(language, setup string) string {
+	if validatesHandWrittenSetups(language) {
+		return "to set up Test Optimization for them by hand in the job itself (the tracer from the project's dependencies, loaded through the job's environment), which ddtest then checks like the " + setup
+	}
+	return "to set up Test Optimization for them by hand in the job itself, which ddtest does not validate for " + handWrittenLanguageName(language) + " yet"
+}
+
+// unvalidatedHandWrittenJobs lists the CI jobs that run framework's tests
+// and set up Test Optimization by hand in a way ddtest recognizes but does
+// not validate yet (see handWrittenSetup.Unvalidated), each with its setup
+// and what it lacks; empty when there are none. Such jobs are never
+// certified, and the provider's setup is never prescribed for them.
+func unvalidatedHandWrittenJobs(root string, provider ciProvider, language, framework string) []string {
+	if provider.sharedSyntax() || validatesHandWrittenSetups(language) {
+		return nil
+	}
+	workflows, err := readProviderWorkflows(provider, root)
+	if err != nil {
+		return nil
+	}
+	var jobs []string
+	for _, workflow := range workflows {
+		for _, name := range slices.Sorted(maps.Keys(workflow.Jobs)) {
+			job := workflow.Jobs[name]
+			if disabledCondition(job.If) {
+				continue
+			}
+			setup := firstHandWrittenSetup(root, workflow, job, language, framework, "")
+			if setup == nil || setup.Unvalidated == "" {
+				continue
+			}
+			entry := workflow.Path + " / " + name + " (" + setup.Reference + ")"
+			if lacks := setup.lacks(); lacks != "" {
+				entry += ": " + lacks
+			}
+			jobs = append(jobs, entry)
+		}
+	}
+	return jobs
 }
 
 // handWrittenSetupNote lists, for setup instructions, the CI jobs running

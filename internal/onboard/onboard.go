@@ -53,11 +53,8 @@ func run(output io.Writer, agent *agentHandoff) error {
 	if len(files) == 0 {
 		return fmt.Errorf("onboard: no supported CI provider detected in repository")
 	}
-	if !languageSupportsCIProvider(detectedPlatform.Name(), provider) {
-		return &CIProviderUnsupportedError{Language: detectedPlatform.Name(), Framework: frameworkName, Provider: provider.displayName()}
-	}
-	if reason := unsupportedTestJobs(repositoryRoot, provider, detectedPlatform.Name(), frameworkName); reason != "" {
-		return &CIProviderUnsupportedError{Language: detectedPlatform.Name(), Framework: frameworkName, Provider: provider.displayName(), Reason: reason, Setup: provider.setupName()}
+	if err := providerSupportError(repositoryRoot, provider, detectedPlatform.Name(), frameworkName); err != nil {
+		return err
 	}
 	return onboardCI(output, provider, repositoryRoot, detectedPlatform.Name(), frameworkName, agent)
 }
