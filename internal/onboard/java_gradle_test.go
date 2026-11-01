@@ -215,6 +215,32 @@ const publishJob = `
           curl -u ${{ secrets.SONATYPE_USER }}:${{ secrets.SONATYPE_PASSWORD }} -X POST https://example.com/upload
 `
 
+func TestJavaStepAfterTheTestsReadsOnlyItsCommands(t *testing.T) {
+	// A job that commits what its test generated, as lerocha/open-cambio does.
+	workflow := `jobs:
+  regenerate:
+    steps:
+      - uses: actions/setup-java@v4
+        with: {java-version: '21'}
+      - id: before
+        run: echo "rates=$(grep -o 'totalRates=[0-9]*' seed.sql | grep -o '[0-9]*')" >> $GITHUB_OUTPUT
+      - run: ./gradlew test
+      - run: |
+          NEW=$(grep -o 'totalRates=[0-9]*' seed.sql | grep -o '[0-9]*')
+          OLD=${{ steps.before.outputs.rates }}
+          if [ "$NEW" -gt "$OLD" ]; then
+            git add seed.sql
+            git commit -m "chore: regenerate seed data"
+            git push
+          fi
+`
+	scope, err := DiscoverValidationScope(javaWorkflowFixture(t, workflow, gradleFixture()), "junit5")
+	require.NoError(t, err)
+	require.Empty(t, scope.Unresolved, "grep and git after the test start no test")
+	require.Contains(t, strings.Join(scope.Review, "\n"), "regenerate / step 4 (NEW=")
+	require.Len(t, scope.Commands, 1)
+}
+
 func TestJavaPublishJobWithoutTheActionIsOutsideValidation(t *testing.T) {
 	workflow := "jobs:\n  test:\n    steps:\n      - uses: actions/setup-java@v4\n        with: {java-version: '21'}\n      - run: ./gradlew test\n" + publishJob
 	root := javaWorkflowFixture(t, workflow, gradleFixture())
@@ -222,7 +248,7 @@ func TestJavaPublishJobWithoutTheActionIsOutsideValidation(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, scope.Unresolved, "a job that only signs, downloads and publishes runs no tests")
 	require.Len(t, scope.Commands, 1)
-	require.Contains(t, strings.Join(scope.Caveats, "\n"), ".github/workflows/test.yml / publish: CI job without the Datadog setup that never runs junit5")
+	require.Contains(t, strings.Join(scope.Review, "\n"), "Not a junit5 test consumer: .github/workflows/test.yml / publish / step 2", "no step of the job can start a test")
 	// The CI runtime check scopes the job as discovery does.
 	ci := JavaCIConfiguration(root, "junit5", "")
 	require.False(t, slices.ContainsFunc(ci.Jobs, func(job RuntimeFinding) bool { return job.Job == "publish" }), "no runtime finding for a job outside validation: %+v", ci.Jobs)
@@ -241,16 +267,23 @@ func TestJavaPublishJobWithoutTheActionIsOutsideValidation(t *testing.T) {
 		"git rebase --exec './gradlew test' HEAD~3",
 		"curl -s https://example.com/install | bash -c \"$(cat ci/test.sh)\"",
 		"source ci/env.sh",
-		"make release",
 		"${{ inputs.command }}",
-		"find . -name '*.sh' -exec sh {} +",
 	} {
-		job := strings.Replace(publishJob, "      - uses: actions/checkout@v4\n", "      - uses: actions/checkout@v4\n      - run: "+step+"\n", 1)
+		// The step comes last, so the job's earlier gaps may feed it.
+		job := publishJob + "      - run: " + step + "\n"
 		scope, err := DiscoverValidationScope(javaWorkflowFixture(t, "jobs:\n  test:\n    steps:\n      - run: ./gradlew test\n"+job, gradleFixture()), "junit5")
 		require.NoError(t, err)
 		require.NotEmpty(t, scope.Unresolved, "%s may run tests", step)
 	}
 	require.False(t, javaMayRunTests("git fetch --tags && git tag -l", false), "other git commands run nothing")
+	// A command that may start tests in a job without the Datadog action is
+	// outside validation; the job's other steps start none, so only it is shown.
+	for _, step := range []string{"make test", "make release", "find . -name '*.sh' -exec sh {} +"} {
+		scope, err := DiscoverValidationScope(javaWorkflowFixture(t, "jobs:\n  test:\n    steps:\n      - run: ./gradlew test\n"+publishJob+"      - run: "+step+"\n", gradleFixture()), "junit5")
+		require.NoError(t, err)
+		require.Empty(t, scope.Unresolved, step)
+		require.Contains(t, strings.Join(scope.Review, "\n"), "publish / step 4 ("+step+"): Uninstrumented CI job with no recognized Maven or Gradle test step", step)
+	}
 
 	// Goals MAVEN_ARGS or .mvn/maven.config add may make a metadata command run tests.
 	metadata := strings.Replace(publishJob, "          VERSION=$(head -1 .version)\n", "          VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)\n", 1)

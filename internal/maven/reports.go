@@ -11,6 +11,7 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -59,6 +60,36 @@ var reportDirectories = []string{filepath.Join("target", "surefire-reports"), fi
 
 // karateReports is where Karate writes one *.karate-json.txt per feature.
 var karateReports = filepath.Join("target", "karate-reports")
+
+// reportSwitch is a Surefire or Failsafe disableXmlReport set from a
+// property, as <disableXmlReport>${closeTestReports}</disableXmlReport>.
+var reportSwitch = regexp.MustCompile(`<disableXmlReport>\s*\$\{([\w.-]+)\}\s*</disableXmlReport>`)
+
+// ReportSwitches are the properties the reactor's POMs turn Surefire or
+// Failsafe XML reports off with and read nowhere else, so setting them to
+// false writes the reports without changing anything else the build does.
+func ReportSwitches(root string, projects []Project) ([]string, error) {
+	var poms []string
+	for _, project := range projects {
+		data, err := os.ReadFile(filepath.Join(root, project.POM))
+		if err != nil {
+			return nil, err
+		}
+		poms = append(poms, string(data))
+	}
+	source := strings.Join(poms, "\n")
+	switches := map[string]int{}
+	for _, match := range reportSwitch.FindAllStringSubmatch(source, -1) {
+		switches[match[1]]++
+	}
+	var properties []string
+	for _, property := range slices.Sorted(maps.Keys(switches)) {
+		if strings.Count(source, "${"+property+"}") == switches[property] {
+			properties = append(properties, property)
+		}
+	}
+	return properties, nil
+}
 
 // ReadReports reads the native reports of every project under root. Call it
 // only on fresh build output: reports from an earlier build are read as well.

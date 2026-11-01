@@ -157,6 +157,11 @@ func (javascriptDiscovery) automaticProviderSetup(framework string) bool {
 // Node versions no tracer supports are skipped through skipsUnsupportedNode.
 func (javascriptDiscovery) unsupportedImage(string) string { return "" }
 
+// The shared scan follows this language's package and repository scripts.
+func (javascriptDiscovery) stepMayStartTests(string, ciWorkflow, runtimeJob, runtimeStep) (bool, bool) {
+	return false, false
+}
+
 func (javascriptDiscovery) runtimeVariable(name string) bool {
 	return slices.Contains([]string{"NODE_OPTIONS", "NODE_PATH", "NODE_ENV"}, name) || strings.HasPrefix(strings.ToLower(name), "npm_config_")
 }

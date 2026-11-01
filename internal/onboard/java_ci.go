@@ -152,8 +152,9 @@ func javaDefaultGoal(root, directory string, args []string) (string, error) {
 var mavenMention = regexp.MustCompile(`(^|[\s/;&|(])mvnw?(\.cmd)?(\s|$)`)
 
 // scriptMention finds a repository script inside shell syntax ddtest cannot
-// parse, such as ./ci/integration.sh | tee build.log.
-var scriptMention = regexp.MustCompile(`(^\s*|[;&|(]\s*)((\.\.?/)?[\w.-]+/[\w./-]+|[\w.-]+\.sh(\s|$)|(ba)?sh\s+[^-\s])`)
+// parse, such as ./ci/integration.sh | tee build.log, or one it sources, as
+// source ci/env.sh or . ci/env.sh.
+var scriptMention = regexp.MustCompile(`(?m)(^\s*|[;&|(]\s*)((\.\.?/)?[\w.-]+/[\w./-]+|[\w.-]+\.sh(\s|$)|(ba)?sh\s+[^-\s]|(source|\.)\s+[^-\s/"'$])`)
 
 // javaShellBuiltins only print, move or mark files executable around
 // maintenance goals, as chmod +x gradlew before a build.
@@ -185,11 +186,14 @@ func unresolvedJavaWrapper(root string, workflow ciWorkflow, job runtimeJob, ste
 	if gradleMention.MatchString(step.Run) && !slices.ContainsFunc(parts, gradle.Command) {
 		return unresolvedCommand("Gradle test entry point requires a single explicit command; ddtest cannot replay its environment or shell setup: " + step.Run)
 	}
-	if !strings.Contains(step.Run, "test") && !strings.Contains(step.Run, "verify") {
+	// In a job without the Datadog action, any command that may start tests
+	// is shown, since nothing there reports them.
+	uninstrumented := parts != nil && javaOutsideUninstrumentedJob(root, workflow, job, framework)
+	if namesTests := strings.Contains(step.Run, "test") || strings.Contains(step.Run, "verify"); !namesTests && (!uninstrumented || !javaStepMayRunTests(root, workflow, job, step)) {
 		return commandResolution{}
 	}
-	if parts != nil && javaOutsideUninstrumentedJob(root, workflow, job, framework) {
-		return commandResolution{Review: true, Code: CodeUninstrumentedJob, Reason: "Uninstrumented CI job with no recognized Maven test step: this command is outside validation and its tests, if any, are not reported to Datadog. If it runs " + framework + " tests, add the Datadog action to this job and rerun validation: " + step.Run}
+	if uninstrumented {
+		return commandResolution{Review: true, Code: CodeUninstrumentedJob, Reason: "Uninstrumented CI job with no recognized Maven or Gradle test step: this command is outside validation and its tests, if any, are not reported to Datadog. If it runs " + framework + " tests, add the Datadog action to this job and rerun validation: " + step.Run}
 	}
 	return unresolvedCommand("Test wrapper was not resolved; ddtest cannot tell which " + framework + " tests it runs: " + step.Run)
 }
@@ -271,14 +275,16 @@ func javaConfigGoals(root, directory string) bool {
 }
 
 // javaRepositoryScript reports a command that runs a script from the
-// repository, such as ./ci/test.sh or ci/test.sh, which may start Maven itself.
+// repository, such as ./ci/test.sh, ci/test.sh or bash ci/test.sh, or sources
+// one, as source ci/env.sh, which may start Maven itself.
 func javaRepositoryScript(words []string) bool {
 	if len(words) == 0 {
 		return false
 	}
 	command := words[0]
 	return strings.Contains(command, "/") && !filepath.IsAbs(command) || strings.HasSuffix(command, ".sh") ||
-		slices.Contains([]string{"bash", "sh"}, command) && len(words) > 1 && !strings.HasPrefix(words[1], "-")
+		slices.Contains([]string{"bash", "sh"}, command) && len(words) > 1 && !strings.HasPrefix(words[1], "-") ||
+		slices.Contains([]string{"source", "."}, command) && len(words) > 1 && !filepath.IsAbs(words[1])
 }
 
 // javaOutsideUninstrumentedJob reports a job that neither runs the Datadog

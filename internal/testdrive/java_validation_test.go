@@ -181,6 +181,20 @@ func TestJavaReactorIncludesMavenConfig(t *testing.T) {
 	require.ErrorContains(t, err, ".mvn/jvm.config attaches dd-java-agent")
 }
 
+func TestJavaRunsWriteTheXMLReportsAPropertyTurnsOff(t *testing.T) {
+	root := t.TempDir()
+	requireWriteFile(t, filepath.Join(root, "pom.xml"), `<project><artifactId>root</artifactId><properties><closeTestReports>true</closeTestReports></properties>
+		<build><plugins><plugin><artifactId>maven-surefire-plugin</artifactId><configuration><disableXmlReport>${closeTestReports}</disableXmlReport></configuration></plugin></plugins></build></project>`)
+	drive := &Testdrive{repositoryRoot: root, configurationRoot: root, command: "mvn", args: []string{"verify"}}
+	build, err := drive.javaBuild([]string{"verify"})
+	require.NoError(t, err)
+	args := []string{"verify"}
+	require.Equal(t, []string{"verify", "-DcloseTestReports=false"}, build.arguments(args, nil), "validation reads the reports")
+	require.Equal(t, []string{"verify"}, args)
+	probe := &javaProbe{args: []string{"-Dtest=" + javaProbeClass}}
+	require.Equal(t, []string{"test", "-Dtest=" + javaProbeClass, "-DcloseTestReports=false"}, build.arguments(args, probe), "probe runs read them too")
+}
+
 func TestJavaRefusesADatadogAgentInJVMConfig(t *testing.T) {
 	root := t.TempDir()
 	requireWriteFile(t, filepath.Join(root, "pom.xml"), `<project><artifactId>root</artifactId></project>`)

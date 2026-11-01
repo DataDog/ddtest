@@ -430,6 +430,11 @@ func rubyGemspecAllowlist(gemspec string) bool {
 	return len(paths) > 0
 }
 
+// The shared scan follows this language's package and repository scripts.
+func (rubyDiscovery) stepMayStartTests(string, ciWorkflow, runtimeJob, runtimeStep) (bool, bool) {
+	return false, false
+}
+
 func (rubyDiscovery) runtimeVariable(name string) bool {
 	return slices.Contains([]string{"RUBYOPT", "RUBYLIB", "GEM_HOME", "GEM_PATH"}, name) || strings.HasPrefix(name, "BUNDLE_")
 }

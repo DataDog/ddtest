@@ -30,13 +30,29 @@ func (javaDiscovery) outsideFrameworkJob(root string, workflow ciWorkflow, job r
 		if step.ResolutionError != "" {
 			return false
 		}
-		implicitGoals := workflow.Env["MAVEN_ARGS"] != "" || job.Env["MAVEN_ARGS"] != "" || step.Env["MAVEN_ARGS"] != "" ||
-			javaExportsMavenArgs(job) || javaConfigGoals(root, filepath.Clean(stepDirectory(workflow, job, step)))
-		if strings.TrimSpace(step.Run) != "" && javaMayRunTests(workflowExpression.ReplaceAllString(step.Run, "expression"), implicitGoals) {
+		if strings.TrimSpace(step.Run) != "" && javaStepMayRunTests(root, workflow, job, step) {
 			return false
 		}
 	}
 	return true
+}
+
+// A step ddtest did not resolve may start Java tests only when its commands
+// may: an action or unreadable configuration may run anything, and a shell
+// step's commands are read as outsideFrameworkJob reads them.
+func (javaDiscovery) stepMayStartTests(root string, workflow ciWorkflow, job runtimeJob, step runtimeStep) (bool, bool) {
+	if strings.TrimSpace(step.Run) == "" {
+		return step.Uses != "" || step.ResolutionError != "", true
+	}
+	return javaStepMayRunTests(root, workflow, job, step), true
+}
+
+// javaStepMayRunTests reports whether a shell step's commands may start Java
+// tests, with Maven goals MAVEN_ARGS or .mvn/maven.config may add.
+func javaStepMayRunTests(root string, workflow ciWorkflow, job runtimeJob, step runtimeStep) bool {
+	implicitGoals := workflow.Env["MAVEN_ARGS"] != "" || job.Env["MAVEN_ARGS"] != "" || step.Env["MAVEN_ARGS"] != "" ||
+		javaExportsMavenArgs(job) || javaConfigGoals(root, filepath.Clean(stepDirectory(workflow, job, step)))
+	return javaMayRunTests(workflowExpression.ReplaceAllString(step.Run, "expression"), implicitGoals)
 }
 
 // javaReleaseTools never start Maven, Gradle or a repository script: shell

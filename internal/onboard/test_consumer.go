@@ -52,7 +52,13 @@ func mayStartTests(step runtimeStep, framework string) bool {
 
 // stepMayStartTests is mayStartTests with the step's package scripts readable,
 // so a known script whose body can't start a test is not a possible wrapper.
+// A language that reads its steps more precisely answers for its frameworks.
 func stepMayStartTests(root string, workflow ciWorkflow, job runtimeJob, step runtimeStep, framework string) bool {
+	if language := discoveryLanguageFor(framework); language != nil {
+		if may, handled := language.stepMayStartTests(root, workflow, job, step); handled {
+			return may
+		}
+	}
 	directory, err := repositoryDirectory(root, root, stepDirectory(workflow, job, step))
 	if err != nil {
 		directory = ""

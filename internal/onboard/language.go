@@ -82,6 +82,10 @@ type discoveryLanguage interface {
 	// setup and without a recognized test is reported, not a blocker.
 	// Languages without a static answer return false.
 	outsideFrameworkJob(root string, workflow ciWorkflow, job runtimeJob, row map[string]any, framework string) bool
+	// stepMayStartTests reports whether a CI step ddtest did not resolve may
+	// still start the language's tests, when the language reads its steps
+	// more precisely than the shared scan; handled is false otherwise.
+	stepMayStartTests(root string, workflow ciWorkflow, job runtimeJob, step runtimeStep) (may, handled bool)
 	// unsupportedImage names the runtime a CI job's container image selects
 	// when the language's tracer cannot instrument it, such as another
 	// language engine; empty otherwise. Such a job without the setup keeps

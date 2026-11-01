@@ -180,11 +180,12 @@ func discoverValidationScope(root, framework string, allowSetupFacts bool) (Vali
 					}
 					consumer = true
 				}
-				var outside []string
+				var outside, reviewed []string
 				for i, step := range job.Steps {
 					resolution := resolveTestStep(root, workflow, job, step, language, framework)
 					switch {
 					case resolution.Review:
+						reviewed = append(reviewed, commandLocation{Workflow: workflow.Path, Job: name, Step: stepNumber(step, i), Command: step.Run}.String()+": "+resolution.Reason)
 					case resolution.Matched:
 						consumer, lastTest = true, i
 					case resolution.Reason != "" && stepMayStartTests(root, workflow, job, step, framework):
@@ -202,6 +203,7 @@ func discoverValidationScope(root, framework string, allowSetupFacts bool) (Vali
 					for _, reason := range outside {
 						scope.Review = append(scope.Review, "Not a "+framework+" test consumer: "+reason)
 					}
+					scope.Review = append(scope.Review, reviewed...)
 					continue
 				}
 			}
