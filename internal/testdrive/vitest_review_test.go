@@ -67,6 +67,16 @@ func TestVitestValidationArgumentsIntegration(t *testing.T) {
   assert.throws(()=>validationArguments(['--config','ci.ts',mode,'--run'],parseCLI),/mode is not supported/)
  }
  assert.throws(()=>validationArguments(['run','--watch'],parseCLI),/watch mode/)
+ // Validation adds its own --run and --no-cache; Vitest rejects a repeated --run.
+ for (const original of [['--run','--coverage','--run'],['--run=true','--coverage','--no-cache'],['--no-run','--coverage','--cache'],['--run','true','--coverage','--run=false']]) {
+  const result=validationArguments(original,parseCLI)
+  assert.deepEqual(result.arguments,['--coverage'])
+  assert.equal(result.runCommand,false)
+ }
+ const explicit=validationArguments(['run','--run','--coverage','--','src'],parseCLI)
+ assert.deepEqual(explicit.arguments,['run','--coverage','--','src'])
+ assert.equal(explicit.runCommand,true)
+ assert.equal(validationArguments(['--config','run.ts','src'],parseCLI).runCommand,false)
  assert.deepEqual(validationCoverage('reports',true),{reportsDirectory:'reports',thresholds:false})
  assert.deepEqual(validationCoverage('reports',false),{reportsDirectory:'reports',thresholds:{autoUpdate:false}})
  `
@@ -76,6 +86,26 @@ func TestVitestValidationArgumentsIntegration(t *testing.T) {
 	_, _, _, err = drive.inspectVitest(t.Context(), t.TempDir())
 	require.ErrorContains(t, err, "bench mode is not supported")
 	require.NotContains(t, err.Error(), "mode rejection must happen")
+}
+
+func TestVitestRepeatedRunOptionIsNormalizedIntegration(t *testing.T) {
+	root := vitestIntegrationRoot(t)
+	requireWriteFile(t, filepath.Join(root, "vitest.config.mjs"), `export default {}`)
+	requireWriteFile(t, filepath.Join(root, "a.test.js"), `import {test} from 'vitest'; test('a', () => {})`)
+	for _, tc := range []struct {
+		args       []string
+		resolved   []string
+		runCommand bool
+	}{
+		{[]string{"vitest", "--run", "--coverage", "--run"}, []string{"vitest", "--coverage"}, false},
+		{[]string{"vitest", "run", "--run=true", "--no-cache"}, []string{"vitest", "run"}, true},
+	} {
+		drive := &Testdrive{framework: framework.NewVitest(platform.NewJavaScript()), command: "npx", args: tc.args, executor: &ext.DefaultCommandExecutor{}}
+		_, _, _, err := drive.inspectVitest(t.Context(), t.TempDir())
+		require.NoError(t, err)
+		require.Equal(t, tc.resolved, drive.vitestArguments)
+		require.Equal(t, tc.runCommand, drive.vitestRunCommand)
+	}
 }
 
 func TestJestDDTestCommandDoesNotUseVitestRunner(t *testing.T) {

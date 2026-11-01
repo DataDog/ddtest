@@ -31,6 +31,7 @@ try {
   console.log('__DDTEST_VITEST_CONFIG__' + JSON.stringify({
     version,
     arguments: normalized.arguments,
+    runCommand: normalized.runCommand,
     reporters: normalized.reporters ?? vitest.config.reporters,
     node: process.version,
     executable: process.execPath,

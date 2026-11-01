@@ -97,6 +97,7 @@ type Testdrive struct {
 	vitestProbeArguments []string
 	// Inspection may legitimately resolve no options (a bare vitest).
 	vitestInspected, vitestProbeInspected bool
+	vitestRunCommand                      bool
 	vitestNode                            string
 	vitestExecutable                      string
 	vitestRunner                          bool

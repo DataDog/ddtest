@@ -6,6 +6,7 @@
 // second CLI grammar. parseCLI mutates argv, so every parse gets a fresh array.
 export function validationArguments(args, parseCLI, probe = '') {
   const parse = values => parseCLI(['vitest', ...values])
+  args = withoutRunOptions(args)
   const parsed = parse(args)
   const marker = '\0ddtest positional filter\0'
   const separator = args.indexOf('--')
@@ -33,7 +34,8 @@ export function validationArguments(args, parseCLI, probe = '') {
   for (let i = 0; i < before.length; i++) {
     const argument = before[i]
     const key = argument.split('=', 1)[0]
-    const owned = key === '--reporter' || key === '--outputFile' || key.startsWith('--outputFile.') ||
+    // Validation always adds --no-cache; keep a single cache option.
+    const owned = key === '--cache' || key === '--no-cache' || key === '--reporter' || key === '--outputFile' || key.startsWith('--outputFile.') ||
       key === '--coverage.reportsDirectory' || key === '--coverage.thresholds.autoUpdate' ||
       probe && (key === '--shard' || key === '--retry' || key === '--project' || key === '--testNamePattern' || key === '-t' ||
         key.startsWith('--coverage.thresholds') || key === '--no-coverage.thresholds')
@@ -54,7 +56,25 @@ export function validationArguments(args, parseCLI, probe = '') {
   }
   if (probe) result.push(probe)
   else if (separator >= 0) result.push(...args.slice(separator))
-  return { arguments: result, reporters: parsed.options.reporter }
+  return { arguments: result, reporters: parsed.options.reporter, runCommand: commandIndex >= 0 }
+}
+
+// Vitest rejects a repeated --run, even in different forms such as --run and
+// --run=true. Validation always runs once and adds --run unless the run command
+// is explicit, so drop the command's own forms before the first parse.
+function withoutRunOptions(args) {
+  const result = []
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '--') return result.concat(args.slice(i))
+    const key = args[i].split('=', 1)[0]
+    if (key !== '--run' && key !== '--no-run') {
+      result.push(args[i])
+      continue
+    }
+    // The boolean parser takes a following literal true or false as its value.
+    if (args[i] === '--run' && (args[i + 1] === 'true' || args[i + 1] === 'false')) i++
+  }
+  return result
 }
 
 // Validation must never let Vitest rewrite a customer's coverage gate. false
