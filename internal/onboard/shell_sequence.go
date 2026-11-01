@@ -96,6 +96,11 @@ func discoverCommands(command string) ([]commandFragment, error) {
 	return result, nil
 }
 
+// subshellStateBuiltins change the shell's own state. Every command of a
+// pipeline runs in a subshell, so in cd app | tee cd.log the change is lost
+// and later commands run where they were; such a pipeline is not split.
+var subshellStateBuiltins = []string{"cd", "pushd", "popd", "export", "unset", "set", "shopt", "source", ".", "eval", "exec", "alias", "unalias", "read", "trap", "declare", "typeset", "local", "readonly", "umask", "ulimit", "hash", "enable"}
+
 // outputPipeline splits a pipeline whose later commands only format or save
 // the output of its first (see outputFilter), as in
 // cucumber-js | cucumber-junit > report.xml or npx jest 2>&1 | tee jest.log:
@@ -122,7 +127,8 @@ func outputPipeline(stmt *syntax.Stmt) (head *syntax.Stmt, filters string, ok bo
 	}
 	first := *elements[0]
 	first.Redirs = slices.DeleteFunc(slices.Clone(first.Redirs), joinsErrorOutput)
-	if _, isCall := first.Cmd.(*syntax.CallExpr); !isCall || len(first.Redirs) > 0 {
+	call, isCall := first.Cmd.(*syntax.CallExpr)
+	if !isCall || len(first.Redirs) > 0 || len(call.Args) == 0 || slices.Contains(subshellStateBuiltins, call.Args[0].Lit()) {
 		return nil, "", false
 	}
 	var written []string

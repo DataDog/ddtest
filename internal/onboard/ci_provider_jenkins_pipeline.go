@@ -2187,7 +2187,7 @@ func (r *jenkinsReader) shell(call *groovyCall, scope jenkinsScope, slot *jenkin
 			r.add(slot, call, step)
 			continue
 		}
-		command := gitLabResolveBranches(statement, known)
+		command := state.dialect.resolveBranches(statement, known)
 		if jenkinsChangesPath(stmt) {
 			pathChange = "the PATH the sh script at " + r.where(call) + " sets"
 		}

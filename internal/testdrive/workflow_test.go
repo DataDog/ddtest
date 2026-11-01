@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -36,7 +37,8 @@ func (e workflowCheckExecutor) CombinedOutput(_ context.Context, name string, ar
 	switch filepath.Base(name) {
 	case "git":
 		if args[0] == "check-ignore" {
-			return []byte(".testoptimization/testdrive.json\n.testoptimization/report.html\n"), nil
+			// The repository ignores .testoptimization/: every path is ignored.
+			return []byte(strings.Join(args[slices.Index(args, "--")+1:], "\n") + "\n"), nil
 		}
 		return nil, nil
 	case "npm":

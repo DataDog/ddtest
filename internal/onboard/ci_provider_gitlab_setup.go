@@ -377,10 +377,12 @@ func (g gitLabCI) setupInstructions(request ciSetupRequest) string {
 	return strings.TrimSpace(text.String())
 }
 
-// gitLabResolveBranches replaces a script entry that is one if clause on
-// known values with the branch it runs, so the job's commands are those of
-// its matrix entry, as in if [ "$RUBY_IMAGE" = "ruby:3.0" ]; then ...; fi.
-func gitLabResolveBranches(command string, known map[string]string) string {
+// resolveBranches replaces a script entry that is one if clause on known
+// values with the branch it runs, so the job's commands are those of its
+// matrix entry, as in if [ "$RUBY_IMAGE" = "ruby:3.0" ]; then ...; fi. Bash
+// [[ ]] conditions are decided only in a Bash dialect: a POSIX sh, such as a
+// dash-backed Jenkins sh, rejects them and runs the else branch.
+func (d ciShellDialect) resolveBranches(command string, known map[string]string) string {
 	file, ok := parseCIShell(command)
 	if !ok || len(file.Stmts) != 1 {
 		return command
@@ -389,7 +391,7 @@ func gitLabResolveBranches(command string, known map[string]string) string {
 	if !ok || file.Stmts[0].Background || len(file.Stmts[0].Redirs) > 0 {
 		return command
 	}
-	branch, ok := ciStaticBranch(clause, known, "CI_PROJECT_DIR", true)
+	branch, ok := ciStaticBranch(clause, known, d.projectVariable, !d.posix)
 	if !ok {
 		return command
 	}

@@ -521,17 +521,29 @@ func imageWithoutDownloader(image string) bool {
 // ${REGISTRY}/ or CircleCI's << parameters.registry >>/.
 var registryVariablePrefix = regexp.MustCompile(`^(?:\$\{[A-Za-z_][A-Za-z0-9_]*\}|\$[A-Za-z_][A-Za-z0-9_]*|<<\s*[A-Za-z0-9_.-]+\s*>>)+/?`)
 
+// dependencyProxyPrefix matches one read of a variable naming a dependency
+// proxy, such as ${GITLAB_DEPENDENCY_PROXY}, whose value ends in the
+// registry path's separator. Case-insensitive: some callers lowercase the
+// image first.
+var dependencyProxyPrefix = regexp.MustCompile(`(?i)^(?:\$\{[A-Za-z0-9_]*DEPENDENCY_PROXY[A-Za-z0-9_]*\}|\$[A-Za-z0-9_]*DEPENDENCY_PROXY[A-Za-z0-9_]*)$`)
+
 // mirroredImage is the image a registry mirror or dependency proxy serves
 // for a reference whose registry prefix is only variables ddtest cannot
 // resolve, such as ${GITLAB_DEPENDENCY_PROXY}ruby:3.3 or
-// ${REGISTRY}/library/node:22: the literal rest names it. Any other
-// reference is returned as written, including one whose name or tag reads a
-// variable ($RUBY_IMAGE, ruby:$VERSION), so readers never guess an image.
+// ${REGISTRY}/library/node:22: the literal rest names it. The prefix must
+// end in a / of its own, so it fills whole registry path segments, or be a
+// single dependency proxy variable; ${IMAGE_PREFIX}node:22 may name
+// custom-node:22. Any other reference is returned as written, including one
+// whose name or tag reads a variable ($RUBY_IMAGE, ruby:$VERSION), so
+// readers never guess an image.
 func mirroredImage(image string) string {
 	image = strings.TrimSpace(image)
 	prefix := registryVariablePrefix.FindString(image)
 	rest := image[len(prefix):]
 	if prefix == "" || rest == "" || strings.ContainsAny(rest, "${}<>") || strings.ContainsAny(rest[:1], "/:@.-_") {
+		return image
+	}
+	if !strings.HasSuffix(prefix, "/") && !dependencyProxyPrefix.MatchString(prefix) {
 		return image
 	}
 	return rest

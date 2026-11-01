@@ -43,13 +43,13 @@ type WorkflowEvidence struct {
 }
 
 func (t *Testdrive) verifyReportExclusions(ctx context.Context) []onboard.WorkflowCheck {
-	reports := []string{".testoptimization/testdrive.json", ".testoptimization/report.html"}
+	reports := slices.Clone(retainedReports)
 	git := onboard.WorkflowCheck{Name: "git_report_exclusions", Status: "passed", Command: append([]string{"git", "check-ignore", "--no-index", "--"}, reports...)}
 	data, err := t.executor.CombinedOutput(ctx, "git", git.Command[1:], map[string]string{"NODE_OPTIONS": ""})
 	ignored := strings.Fields(string(data))
-	if err != nil || !slices.Contains(ignored, reports[0]) || !slices.Contains(ignored, reports[1]) {
+	if err != nil || slices.ContainsFunc(reports, func(report string) bool { return !slices.Contains(ignored, report) }) {
 		git.Status = "failed"
-		git.Reason = "Both retained reports must be ignored; add /.testoptimization/ to the repository .gitignore."
+		git.Reason = "Every retained report (" + strings.Join(reports, ", ") + ") must be ignored; add /.testoptimization/ to the repository .gitignore."
 	}
 	tracked, trackErr := t.executor.CombinedOutput(ctx, "git", append([]string{"ls-files", "--"}, reports...), nil)
 	if trackErr != nil || len(strings.TrimSpace(string(tracked))) > 0 {

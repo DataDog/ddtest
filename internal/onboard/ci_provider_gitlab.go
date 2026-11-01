@@ -1420,7 +1420,7 @@ func gitLabShell(entries []gitLabStep, env map[string]string, offset int, image 
 			steps = append(steps, step)
 			continue
 		}
-		command = gitLabResolveBranches(command, mergeEnvironment(current, state.references))
+		command = state.dialect.resolveBranches(command, mergeEnvironment(current, state.references))
 		state.curl = state.curl || installsCurl(command)
 		step.Run = command
 		if consumed := strings.TrimSpace(command) == "" || state.apply(command, current); consumed {

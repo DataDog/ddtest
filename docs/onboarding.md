@@ -202,9 +202,9 @@ exports or assigns may or may not be set. Only what reads it is unresolved:
 a test step whose command line expands it, a value computed from it, or a
 variable the shell, runtime, package tools, test runner or tracer read
 (`RUBYOPT`, `NODE_OPTIONS`, `SPEC_OPTS`, `PYTEST_ADDOPTS` and the like).
-Otherwise the configuration is validated without it, and the report says so
-as a caveat. A `cd` inside such control flow still makes the later entries
-unresolved. The checkout, `$CI_PROJECT_DIR`, is a CI path too: a variable
+Otherwise the configuration is validated without it, unset even when this
+machine sets it, and the report says so as a caveat. A `cd` inside such
+control flow still makes the later entries unresolved. The checkout, `$CI_PROJECT_DIR`, is a CI path too: a variable
 holding a path in it is left out of local runs in the same way, and findings
 write it as `$CI_PROJECT_DIR`.
 `parallel: matrix` entries that differ only by the variable selecting the
@@ -273,8 +273,11 @@ as the dependency proxy's `${GITLAB_DEPENDENCY_PROXY}ruby:3.3`,
 `${REGISTRY}/library/node:22`, is read as the literal image after the prefix;
 CircleCI `docker` images (an unresolved `<< parameters.registry >>/` prefix),
 Buildkite step, `docker` plugin and Compose images and Jenkins `docker`
-agents read the same way. An image whose name or tag reads a variable
-(`${RUBY_IMAGE}:3.3`, `${REGISTRY}/ruby:${VERSION}`) is never guessed.
+agents read the same way. The prefix must end in its own `/` or be one
+dependency proxy variable (a name containing `DEPENDENCY_PROXY`), since
+`${IMAGE_PREFIX}node:22` may name `custom-node:22`. An image whose name or tag
+reads a variable (`${RUBY_IMAGE}:3.3`, `${REGISTRY}/ruby:${VERSION}`) is never
+guessed.
 
 `onboard --apply` inserts the script entry, as a block scalar, before the first
 JavaScript test command of each test job, plus the `--import` loader export for

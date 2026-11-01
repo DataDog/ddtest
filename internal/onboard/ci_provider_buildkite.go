@@ -614,7 +614,7 @@ func (c *buildkiteConfig) steps(name string, scope buildkiteScope, commands *yam
 				continue
 			}
 			statement := buildkiteStatementText(text, file.Stmts, i, i+1)
-			command := gitLabResolveBranches(statement, known)
+			command := state.dialect.resolveBranches(statement, known)
 			state.curl = state.curl || installsCurl(command)
 			problem := ""
 			if reads := buildkiteReads(statement, unknown); len(reads) > 0 {

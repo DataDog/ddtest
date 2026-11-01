@@ -6,6 +6,7 @@
 package onboard
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -52,6 +53,13 @@ func TestOutputPipelinesResolveToTheirFirstCommand(t *testing.T) {
 				require.NotEqual(t, "npx jest", strings.Join(fragment.Words, " "), command)
 			}
 		}
+	}
+	// Each pipeline command runs in a subshell: a piped cd changes nothing
+	// for the commands after it, so it is never read as a directory change.
+	for _, command := range []string{"cd app | tee cd.log && npx jest", "cd app 2>&1 | tee cd.log && npx jest", "export CI=1 | tee x && npx jest", "pushd app | tee x && npx jest"} {
+		fragments, err := discoverCommands(command)
+		require.Error(t, err, command)
+		require.Empty(t, fragments, command)
 	}
 	fragments, err := discoverCommands("npm ci && npx jest | tee out.txt")
 	require.NoError(t, err)
@@ -116,6 +124,20 @@ func TestPipedCITestCommandsAreValidatedWithAnExitStatusCaveat(t *testing.T) {
 		require.Len(t, scope.Commands, 1)
 		require.Equal(t, "bundle exec rspec --format progress", scope.Commands[0].Command)
 		require.Equal(t, []string{note("bundle exec rspec --format progress", "tee rspec.log")}, scope.Commands[0].StepScopeNotes)
+	})
+	t.Run("a piped cd keeps the step's directory", func(t *testing.T) {
+		root := newJestRepository(t, "jobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: cd app | tee cd.log && npx jest\n")
+		writeFile(t, root, "app/package.json", `{"devDependencies":{"jest":"29.7.0"}}`)
+		scope, err := DiscoverValidationScope(root, "jest")
+		require.NoError(t, err)
+		require.NotEmpty(t, scope.Unresolved)
+		for _, entry := range scope.Commands {
+			require.NotEqual(t, "app", entry.Directory)
+			require.NotEmpty(t, entry.UnvalidatedSetup)
+		}
+		app := filepath.Join(root, "app")
+		resolution := resolveJestSequence(root, root, "cd app | tee cd.log && jest", nil, &scriptBudget{left: 16})
+		require.False(t, resolution.SingleJest, "a package script's piped cd does not move jest into %s", app)
 	})
 	t.Run("an unknown filter stays unresolved", func(t *testing.T) {
 		root := newJestRepository(t, "jobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: npx jest | ./filter.sh\n")

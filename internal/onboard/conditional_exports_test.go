@@ -60,6 +60,7 @@ func TestConditionalExportsBlockOnlyTheirReaders(t *testing.T) {
 		require.Empty(t, scope.Unresolved)
 		require.Len(t, scope.Commands, 1)
 		require.NotContains(t, scope.Commands[0].Environment, "SIMPLECOV")
+		require.Equal(t, []string{"SIMPLECOV"}, scope.Commands[0].WithoutVariables, "validation unsets a value this host sets")
 		require.Contains(t, strings.Join(scope.Caveats, "\n"), "validated without the CI variable SIMPLECOV (set only on some paths of the CI script, under conditions ddtest cannot decide): it has no local value")
 	})
 	for name, script := range map[string]string{
@@ -111,4 +112,30 @@ func TestBashTestClausesOnlyInBash(t *testing.T) {
 		truth, decided := ciStaticTest(file.Stmts[0].Cmd.(*syntax.IfClause).Cond, known, "", true)
 		require.Equal(t, want, [2]bool{truth, decided}, condition)
 	}
+}
+
+// A script entry that is one if clause runs its branch only when the job's
+// shell decides the condition as ddtest does: a POSIX Jenkins sh (dash)
+// rejects [[ ]] and runs the else branch, so the clause stays as written;
+// GitLab and Buildkite run Bash and take the then branch.
+func TestEntryBranchesFollowTheShellDialect(t *testing.T) {
+	clause := `if [[ "$V" == 1 ]]; then npm test; else npm run lint; fi`
+	posix := `if [ "$V" = 1 ]; then npm test; else npm run lint; fi`
+	known := map[string]string{"V": "1"}
+	require.Equal(t, clause, jenkinsShellDialect.resolveBranches(clause, known))
+	require.Equal(t, "npm test", jenkinsShellDialect.resolveBranches(posix, known))
+	require.Equal(t, "npm test", gitLabShellDialect.resolveBranches(clause, known))
+	require.Equal(t, "npm test", buildkiteShellDialect.resolveBranches(clause, known))
+
+	jobs := jenkinsJobs(t, `pipeline {
+  agent any
+  environment { V = '1' }
+  stages {
+    stage('Bash test') { steps { sh '''`+clause+`''' } }
+    stage('POSIX test') { steps { sh '''`+posix+`''' } }
+  }
+}`)
+	require.NotEmpty(t, jenkinsRuns(jobs["Bash test"]))
+	require.NotContains(t, jenkinsRuns(jobs["Bash test"]), "npm test", "Jenkins sh is not Bash")
+	require.Equal(t, []string{"npm test"}, jenkinsRuns(jobs["POSIX test"]))
 }

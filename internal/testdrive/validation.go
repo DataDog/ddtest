@@ -334,6 +334,16 @@ const (
 	focusedReportFilename     = "report-command.html"
 )
 
+// retainedReports are every report a run can leave, relative to the
+// repository root: the saved pair and the focused pair beside it. Git and
+// package exclusion checks cover all of them.
+var retainedReports = []string{
+	constants.PlanDirectory + "/" + validationFilename,
+	constants.PlanDirectory + "/" + reportFilename,
+	constants.PlanDirectory + "/" + focusedValidationFilename,
+	constants.PlanDirectory + "/" + focusedReportFilename,
+}
+
 // keepsSavedReport reports whether result, a run of one command, goes beside
 // the saved report instead of replacing it: that report is an --all run of
 // the same framework that executed tests. Another --all run, a configuration

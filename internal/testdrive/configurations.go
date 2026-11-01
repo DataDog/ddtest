@@ -153,6 +153,7 @@ func matchingConfigurationPreparation(scope onboard.ValidationScope, scopeErr er
 		candidate := entry
 		if found != nil {
 			candidate.WithoutSecrets = slices.Compact(slices.Sorted(slices.Values(append(slices.Clone(found.WithoutSecrets), entry.WithoutSecrets...))))
+			candidate.WithoutVariables = slices.Compact(slices.Sorted(slices.Values(append(slices.Clone(found.WithoutVariables), entry.WithoutVariables...))))
 		}
 		found = &candidate
 	}
@@ -164,7 +165,8 @@ func matchingConfigurationPreparation(scope onboard.ValidationScope, scopeErr er
 
 // adoptConfigurationPreparation gives a selected command the preparation of
 // the one CI configuration it is: preparation and tests run with that
-// configuration's environment, and without its omitted secrets.
+// configuration's environment, and without its omitted secrets and
+// variables.
 func adoptConfigurationPreparation(plan *onboard.TestCommand, entry onboard.TestCommand) {
 	if plan.Command == "" {
 		plan.Command, plan.Directory = entry.Command, entry.Directory
@@ -172,11 +174,12 @@ func adoptConfigurationPreparation(plan *onboard.TestCommand, entry onboard.Test
 	plan.Prerequisites = entry.Prerequisites
 	plan.Environment = mergeConfigurationEnvironment(entry.Environment, plan.Environment)
 	plan.WithoutSecrets = slices.Compact(slices.Sorted(slices.Values(append(slices.Clone(plan.WithoutSecrets), entry.WithoutSecrets...))))
+	plan.WithoutVariables = slices.Compact(slices.Sorted(slices.Values(append(slices.Clone(plan.WithoutVariables), entry.WithoutVariables...))))
 }
 
 // Never guess between two CI variants with different environments. Omitted
-// secrets are collected from every matching variant either way: the command
-// runs without each of them.
+// secrets and variables are collected from every matching variant either
+// way: the command runs without each of them.
 func matchingConfigurationEnvironment(scope onboard.ValidationScope, scopeErr error, root, framework, command string) (map[string]string, []string) {
 	if scopeErr != nil {
 		return nil, nil
@@ -189,7 +192,7 @@ func matchingConfigurationEnvironment(scope onboard.ValidationScope, scopeErr er
 			if !sameConfiguration(selected, entry) || !hostConfiguration(entry) || len(entry.UnvalidatedSetup) > 0 {
 				continue
 			}
-			without = slices.Compact(slices.Sorted(slices.Values(append(without, entry.WithoutSecrets...))))
+			without = slices.Compact(slices.Sorted(slices.Values(append(without, entry.Unset()...))))
 			candidate := mergeConfigurationEnvironment(entry.Environment, selected.Environment)
 			if matched && !maps.Equal(result, candidate) {
 				ambiguous = true

@@ -36,6 +36,13 @@ func TestMirroredImageReadsTheLiteralImageAfterAVariablePrefix(t *testing.T) {
 		"  ${REGISTRY}/node:22.11.0   ":  "node:22.11.0",
 		"${REGISTRY}/myteam/ruby:3.3":    "myteam/ruby:3.3",
 		"$CI_REGISTRY/group/project:tag": "group/project:tag",
+		// Without its own /, only a dependency proxy variable is a
+		// registry: IMAGE_PREFIX=custom- makes custom-node:22.
+		"${IMAGE_PREFIX}node:22":                      "${IMAGE_PREFIX}node:22",
+		"$IMAGE_PREFIX" + "node:22-alpine":            "$IMAGE_PREFIX" + "node:22-alpine",
+		"${REGISTRY}${GITLAB_DEPENDENCY_PROXY}ruby:3": "${REGISTRY}${GITLAB_DEPENDENCY_PROXY}ruby:3",
+		"<< parameters.prefix >>node:22":              "<< parameters.prefix >>node:22",
+		"${GITLAB_DEPENDENCY_PROXY_ADDRESS}node:22":   "node:22",
 	} {
 		require.Equal(t, want, mirroredImage(image), image)
 	}
@@ -47,6 +54,7 @@ func TestMirroredImageReadsTheLiteralImageAfterAVariablePrefix(t *testing.T) {
 		"${NODE_IMAGE}":                                           "",
 		"${REGISTRY}/myteam/node:22":                              "",
 		"$CI_DEPENDENCY_PROXY_DIRECT_GROUP_IMAGE_PREFIX/node:lts": "",
+		"${IMAGE_PREFIX}node:22":                                  "",
 	} {
 		require.Equal(t, node, imageNode(image), image)
 	}

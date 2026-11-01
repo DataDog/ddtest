@@ -35,7 +35,11 @@ type TestCommand struct {
 	// WithoutSecrets name the CI secret variables the entry's job sets for it
 	// or its setup. They never exist locally, so validation runs without them
 	// and reports each as a caveat.
-	WithoutSecrets                  []string          `json:"without_secrets,omitempty"`
+	WithoutSecrets []string `json:"without_secrets,omitempty"`
+	// WithoutVariables name the CI variables validation runs without because
+	// their CI value has no local equivalent (see ciOnlyValue); a caveat
+	// names each. Like WithoutSecrets, a value this host sets is unset too.
+	WithoutVariables                []string          `json:"without_variables,omitempty"`
 	LocalOverrides                  []string          `json:"local_overrides,omitempty"`
 	ID                              string            `json:"id,omitempty"`
 	Services                        []ServiceCommand  `json:"services,omitempty"`
@@ -81,6 +85,13 @@ type TestCommand struct {
 	cucumberInlineIstanbul  bool
 	cucumberLoaders         string // Source loaders the scoped script keeps after the inherited options.
 	cucumberLoaderReason    string // Set when an in-script NODE_OPTIONS loader still replaces preloads.
+}
+
+// Unset names the CI secrets and variables the entry runs without: every
+// command validating it unsets them, so a value this host sets is not used
+// instead.
+func (c TestCommand) Unset() []string {
+	return slices.Compact(slices.Sorted(slices.Values(append(slices.Clone(c.WithoutSecrets), c.WithoutVariables...))))
 }
 
 // BuildCommand is a statically resolved build preceding a test in the same
@@ -406,6 +417,11 @@ func discoverValidationScope(root, framework string, allowSetupFacts bool) (Vali
 							}
 						}
 						if len(resolved.LeftOut) > 0 {
+							for _, leftOut := range resolved.LeftOut {
+								name, _, _ := strings.Cut(leftOut, " (")
+								entry.WithoutVariables = append(entry.WithoutVariables, name)
+							}
+							entry.WithoutVariables = slices.Compact(slices.Sorted(slices.Values(entry.WithoutVariables)))
 							caveat := location.String() + ": validated without the CI variables " + strings.Join(resolved.LeftOut, "; ") + ": they have no local value and the step's command line does not read them, so tests that read them ran locally without them; CI runs the tests with their CI values."
 							if len(resolved.LeftOut) == 1 {
 								caveat = location.String() + ": validated without the CI variable " + resolved.LeftOut[0] + ": it has no local value and the step's command line does not read it, so tests that read it ran locally without it; CI runs the tests with its CI value."
@@ -519,6 +535,9 @@ func discoverValidationScope(root, framework string, allowSetupFacts bool) (Vali
 						// Each merged location's omitted secrets stay disclosed.
 						if len(entry.WithoutSecrets) > 0 {
 							scope.Commands[index].WithoutSecrets = slices.Compact(slices.Sorted(slices.Values(append(slices.Clone(scope.Commands[index].WithoutSecrets), entry.WithoutSecrets...))))
+						}
+						if len(entry.WithoutVariables) > 0 {
+							scope.Commands[index].WithoutVariables = slices.Compact(slices.Sorted(slices.Values(append(slices.Clone(scope.Commands[index].WithoutVariables), entry.WithoutVariables...))))
 						}
 						// Steps merged into one configuration keep every shared-step note.
 						for _, note := range entry.StepScopeNotes {

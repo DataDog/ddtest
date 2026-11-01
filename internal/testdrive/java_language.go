@@ -414,9 +414,6 @@ func (javaLanguage) initialization(root, _ string) string {
 	return "Add the Datadog action with an exact java-tracer-version after JDK setup; it attaches dd-java-agent through " + strings.Join(carriers, " and ") + ", which later steps must extend with " + strings.Join(extensions, " and ") + ". Keep the " + strings.Join(tools, " and ") + " commands and the reports excluded from Git."
 }
 
-// javaReports are the retained reports, relative to the repository root.
-var javaReports = []string{".testoptimization/testdrive.json", ".testoptimization/report.html"}
-
 // javaPackageExclusions checks that no Maven artifact packages the reports.
 // Maven packages only declared resources, so the reports at the repository
 // root are packaged only by a resource directory that contains them and
@@ -433,7 +430,7 @@ func javaPackageExclusions(root string, poms []string) onboard.WorkflowCheck {
 			check.Status, check.Reason = "failed", resource.POM+" declares the resource directory "+resource.Directory+", which ddtest cannot resolve; check that Maven does not package .testoptimization/."
 			return check
 		}
-		for _, report := range javaReports {
+		for _, report := range retainedReports {
 			relative, err := filepath.Rel(resource.Directory, report)
 			if err == nil && filepath.IsLocal(relative) && mavenResourceSelects(resource, filepath.ToSlash(relative)) {
 				check.Status, check.Reason = "failed", resource.POM+" packages "+resource.Directory+" as a resource, including .testoptimization/; add <exclude>.testoptimization/**</exclude> to that resource."
