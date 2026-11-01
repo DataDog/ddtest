@@ -213,7 +213,7 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 	if t.selectedSite == "" {
 		t.selectedSite = os.Getenv("DD_SITE")
 	}
-	lock, err := workspace.AcquireLock(t.repositoryRoot)
+	lock, err := lockReports(t.repositoryRoot)
 	if err != nil {
 		if errors.Is(err, workspace.ErrBusy) {
 			return fail("blocked_environment", "workflow_busy", err.Error(), "Wait for the running validation; do not start another one or delete lock files.")
@@ -1131,7 +1131,7 @@ func RenderReport(ctx context.Context, output io.Writer, format string) error {
 		return renderReportFailure(output, format, err)
 	}
 	root = workspace.CanonicalRoot(root)
-	lock, err := workspace.AcquireLock(root)
+	lock, err := lockReports(root)
 	if err != nil {
 		result := onboard.AgentResult{Status: "blocked_environment", Phase: "report", Code: "coordination_unavailable", Reason: "A validation is active or coordination storage is unavailable; wait before rendering saved evidence.", NextAction: "wait"}
 		if errors.Is(err, workspace.ErrBusy) {
@@ -1160,12 +1160,15 @@ func RenderReport(ctx context.Context, output io.Writer, format string) error {
 		validation = validation.Retained.Result
 	}
 	result := onboard.AgentResult{Status: "validation_failed", Phase: "report", NextAction: "report_result", JSONReport: validationPath(root)}
-	current, err := workflowFingerprint(ctx, root, validation.Framework)
+	// A focused run in a package below the root bound its evidence to the
+	// package: check the inputs it validated.
+	runRoot := reportRunRoot(root, *validation)
+	current, err := workflowFingerprint(ctx, runRoot, validation.Framework)
 	if err != nil {
 		return renderReportFailure(output, format, err)
 	}
 	receiptValid := verifyWorkflowReceipt(root, *validation) == nil
-	if validation.CheckOnly || validation.Workflow == nil || validation.Workflow.Fingerprint != current || !languageOrUnsupported(validation.Framework).reportRuntimeCurrent(root, *validation.Workflow) || !receiptValid {
+	if validation.CheckOnly || validation.Workflow == nil || validation.Workflow.Fingerprint != current || !languageOrUnsupported(validation.Framework).reportRuntimeCurrent(runRoot, *validation.Workflow) || !receiptValid {
 		result.Code = "stale_report"
 		plain := !validation.CheckOnly && validation.Workflow == nil
 		result.NextAction = "run_command"

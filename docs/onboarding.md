@@ -134,7 +134,13 @@ does the same, wherever it starts:
 
 A package with CI configuration of its own (for example its own Jenkinsfile),
 or a repository without CI configuration at the Git root, is onboarded in the
-current directory as before. Ruby, Python and Java projects in a subdirectory
+current directory as before. With `--ci-provider`, only that provider's
+configuration counts, in the package and at the root: a package's own
+Jenkinsfile does not keep `--ci-provider github` from the root's workflows.
+A focused run in the package and a run at the root share the root's reports,
+so they never run at the same time, and `testdrive --report` at the root
+checks a focused run's report against the package inputs it validated.
+A relative `--facts` path is read from where the command started. Ruby, Python and Java projects in a subdirectory
 are not moved to the root.
 
 ### Runtimes and facts only the user can state

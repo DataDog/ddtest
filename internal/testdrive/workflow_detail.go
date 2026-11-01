@@ -24,18 +24,21 @@ func RenderWorkflowDetail(ctx context.Context, output io.Writer, runID, detail s
 		return err
 	}
 	root = workspace.CanonicalRoot(root)
-	lock, err := workspace.AcquireLock(root)
+	lock, err := lockReports(root)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = lock.Close() }()
 	var plan *onboard.ExecutionPlan
+	// A focused run in a package below the root keeps its reports here but
+	// binds its plan to the package inputs.
+	runRoot := root
 	if runID != "" {
 		checkpoint, err := readCheckpoint(runID)
 		if err != nil {
 			return err
 		}
-		if checkpoint.Root != root {
+		if runRoot = runRootWithin(root, checkpoint.Root); runRoot != workspace.CanonicalRoot(checkpoint.Root) {
 			return fmt.Errorf("checkpoint belongs to a different repository")
 		}
 		plan = checkpoint.Plan
@@ -54,7 +57,7 @@ func RenderWorkflowDetail(ctx context.Context, output io.Writer, runID, detail s
 			if err := verifyWorkflowReceipt(root, *validation); err != nil {
 				return fmt.Errorf("saved plan is not certified by this ddtest binary: %w; rerun the workflow", err)
 			}
-			plan = validation.Workflow.Plan
+			plan, runRoot = validation.Workflow.Plan, reportRunRoot(root, *validation)
 		} else if validation != nil {
 			return fmt.Errorf("the saved report comes from a plain testdrive run, which has no workflow plan; run the agent workflow to create one")
 		}
@@ -62,7 +65,7 @@ func RenderWorkflowDetail(ctx context.Context, output io.Writer, runID, detail s
 	if plan == nil {
 		return fmt.Errorf("no saved workflow plan")
 	}
-	fingerprint, err := workflowFingerprint(ctx, root, plan.Framework)
+	fingerprint, err := workflowFingerprint(ctx, runRoot, plan.Framework)
 	if err != nil {
 		return err
 	}

@@ -584,7 +584,7 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
 		// recovery would delete that live storage.
 		return t.runLocked(ctx, output, false)
 	}
-	lock, err := workspace.AcquireLock(t.repositoryRoot)
+	lock, err := lockReports(t.repositoryRoot)
 	if err != nil {
 		return err
 	}

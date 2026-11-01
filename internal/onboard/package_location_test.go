@@ -1,6 +1,7 @@
 package onboard
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -53,13 +54,13 @@ func TestLocatePackageAnchorsASubdirectoryAtTheCIRoot(t *testing.T) {
 	resetLocationSettings(t)
 	root := subdirectoryRepository(t, map[string]string{".buildkite/pipeline.yml": buildkiteCompose})
 	t.Chdir(filepath.Join(root, "test"))
-	location, ok := LocatePackage(filepath.Join(root, "test"))
+	location, ok := LocatePackage(filepath.Join(root, "test"), "")
 	require.True(t, ok)
 	require.Equal(t, PackageLocation{Root: root, Package: "test"}, location)
 
 	nested := filepath.Join(root, "test", "valid-pipelines")
 	require.NoError(t, os.MkdirAll(nested, 0o755))
-	_, ok = LocatePackage(nested)
+	_, ok = LocatePackage(nested, "")
 	require.False(t, ok, "a directory without a package.json is not a package")
 }
 
@@ -67,31 +68,82 @@ func TestLocatePackageKeepsAPackageWithItsOwnCIOrWithoutRootCI(t *testing.T) {
 	resetLocationSettings(t)
 	own := subdirectoryRepository(t, map[string]string{".buildkite/pipeline.yml": buildkiteCompose, "test/Jenkinsfile": "pipeline { agent any\n stages { stage('t') { steps { sh 'npm test' } } } }\n"})
 	t.Chdir(filepath.Join(own, "test"))
-	_, ok := LocatePackage(filepath.Join(own, "test"))
+	_, ok := LocatePackage(filepath.Join(own, "test"), "")
 	require.False(t, ok, "a package with its own pipeline is onboarded where it is")
 
 	bare := subdirectoryRepository(t, nil)
 	t.Chdir(filepath.Join(bare, "test"))
-	_, ok = LocatePackage(filepath.Join(bare, "test"))
+	_, ok = LocatePackage(filepath.Join(bare, "test"), "")
 	require.False(t, ok, "without CI at the root the package is the project")
 
 	settings.Get().Platform = "ruby"
 	ruby := subdirectoryRepository(t, map[string]string{".buildkite/pipeline.yml": buildkiteCompose})
 	t.Chdir(filepath.Join(ruby, "test"))
-	_, ok = LocatePackage(filepath.Join(ruby, "test"))
+	_, ok = LocatePackage(filepath.Join(ruby, "test"), "")
 	require.False(t, ok, "another explicit platform keeps the current directory")
+}
+
+// With --ci-provider, only that provider's configuration counts: a package's
+// own Jenkinsfile does not keep GitHub Actions onboarding away from the root
+// workflow, and the root's Jenkins pipeline doesn't anchor a GitHub package.
+func TestLocatePackageHonorsTheRequestedCIProvider(t *testing.T) {
+	resetLocationSettings(t)
+	root := subdirectoryRepository(t, map[string]string{
+		".github/workflows/ci.yml": "on: push\njobs:\n  t:\n    runs-on: ubuntu-latest\n    steps:\n      - run: npm test\n        working-directory: test\n",
+		"test/Jenkinsfile":         "pipeline { agent any\n stages { stage('t') { steps { sh 'npm test' } } } }\n",
+	})
+	t.Chdir(filepath.Join(root, "test"))
+	_, ok := LocatePackage(filepath.Join(root, "test"), "")
+	require.False(t, ok, "without a request, the package's own pipeline keeps it where it is")
+	location, ok := LocatePackage(filepath.Join(root, "test"), "github")
+	require.True(t, ok)
+	require.Equal(t, PackageLocation{Root: root, Package: "test"}, location)
+	_, ok = LocatePackage(filepath.Join(root, "test"), "jenkins")
+	require.False(t, ok, "the requested provider's configuration is the package's own")
+
+	bare := subdirectoryRepository(t, map[string]string{"Jenkinsfile": "pipeline { agent any\n stages { stage('t') { steps { dir('test') { sh 'npm test' } } } } }\n"})
+	t.Chdir(bare)
+	location, ok = LocatePackage(bare, "jenkins")
+	require.True(t, ok)
+	require.Equal(t, "test", location.Package)
+	location, ok = LocatePackage(bare, "github")
+	require.True(t, ok)
+	require.Empty(t, location.Package, "another provider's references select no package")
+}
+
+// CI references are matched against every package, however many there are:
+// the cap applies only to the names the hint lists.
+func TestLocatePackageMatchesEveryCandidate(t *testing.T) {
+	resetLocationSettings(t)
+	files := map[string]string{".gitlab-ci.yml": "a:\n  script:\n    - cd zz-last && npm test\n"}
+	for i := range 80 {
+		files[fmt.Sprintf("pkg%02d/package.json", i)] = `{}`
+	}
+	files["zz-last/package.json"] = `{}`
+	root := subdirectoryRepository(t, files)
+	t.Chdir(root)
+	location, ok := LocatePackage(root, "")
+	require.True(t, ok)
+	require.Equal(t, "zz-last", location.Package)
+
+	writeTree(t, root, map[string]string{".gitlab-ci.yml": "a:\n  script:\n    - cd pkg00 && npm test\nb:\n  script:\n    - cd zz-last && npm test\n"})
+	location, ok = LocatePackage(root, "")
+	require.True(t, ok)
+	require.Empty(t, location.Package, "two referenced packages are a choice, not the first one")
+	require.Contains(t, location.Hint, "pkg00 (referenced by .gitlab-ci.yml), zz-last (referenced by .gitlab-ci.yml), ")
+	require.Contains(t, location.Hint, "and 74 more")
 }
 
 func TestLocatePackageSelectsTheRootPackageCIReferences(t *testing.T) {
 	resetLocationSettings(t)
 	root := subdirectoryRepository(t, map[string]string{".buildkite/pipeline.yml": buildkiteCompose, "docs/package.json": `{"scripts":{"build":"vite"}}`, "test/node_modules/mocha/package.json": `{}`})
 	t.Chdir(root)
-	location, ok := LocatePackage(root)
+	location, ok := LocatePackage(root, "")
 	require.True(t, ok)
 	require.Equal(t, PackageLocation{Root: root, Package: "test"}, location, "only test/ is referenced by CI; installed dependencies are not packages")
 
 	writeTree(t, root, map[string]string{"package.json": `{}`})
-	_, ok = LocatePackage(root)
+	_, ok = LocatePackage(root, "")
 	require.False(t, ok, "a root with its own manifest is the project")
 }
 
@@ -99,13 +151,13 @@ func TestLocatePackageNamesCandidatesWhenCIReferencesNoSinglePackage(t *testing.
 	resetLocationSettings(t)
 	root := subdirectoryRepository(t, map[string]string{".gitlab-ci.yml": "a:\n  script:\n    - cd test && npm test\nb:\n  script:\n    - npm --prefix web test\n", "web/package.json": `{}`, "docs/package.json": `{}`})
 	t.Chdir(root)
-	location, ok := LocatePackage(root)
+	location, ok := LocatePackage(root, "")
 	require.True(t, ok)
 	require.Empty(t, location.Package)
 	require.Equal(t, "the repository root has no project manifest; JavaScript packages below it: test (referenced by .gitlab-ci.yml), web (referenced by .gitlab-ci.yml), docs. Run ddtest onboard in the package directory CI tests (for example cd test && ddtest onboard), or pass --platform javascript --framework <framework> here", location.Hint)
 
 	empty := CanonicalDirectory(t.TempDir())
-	_, ok = LocatePackage(empty)
+	_, ok = LocatePackage(empty, "")
 	require.False(t, ok, "without candidates the generic detection error applies")
 }
 
@@ -154,7 +206,7 @@ func TestCIDiscoveryFromASubdirectoryMapsStepsToThePackage(t *testing.T) {
 			resetLocationSettings(t)
 			root := subdirectoryRepository(t, files)
 			t.Chdir(filepath.Join(root, "test"))
-			location, ok := LocatePackage(filepath.Join(root, "test"))
+			location, ok := LocatePackage(filepath.Join(root, "test"), "")
 			require.True(t, ok)
 			require.Equal(t, PackageLocation{Root: root, Package: "test"}, location)
 			t.Chdir(location.Root)

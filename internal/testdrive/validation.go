@@ -337,6 +337,36 @@ func UseReportRoot(from, to string) {
 	}
 }
 
+// reportLock holds the locks of a run's report root and of its own root.
+type reportLock struct{ locks []*workspace.Lock }
+
+// Close releases every lock, the run root's first.
+func (lock *reportLock) Close() error {
+	var errs []error
+	for i := len(lock.locks) - 1; i >= 0; i-- {
+		errs = append(errs, lock.locks[i].Close())
+	}
+	return errors.Join(errs...)
+}
+
+// lockReports excludes other ddtest invocations that read or write the
+// reports of a run rooted at root, or use its owned storage: invocations
+// rooted at the same report root, which a focused run in a package shares
+// with onboarding and CI-wide runs at the repository root (see
+// UseReportRoot), and invocations rooted at root itself.
+func lockReports(root string) (*reportLock, error) {
+	lock := &reportLock{}
+	for _, directory := range slices.Compact([]string{workspace.CanonicalRoot(reportRoot(root)), workspace.CanonicalRoot(root)}) {
+		held, err := workspace.AcquireLock(directory)
+		if err != nil {
+			_ = lock.Close()
+			return nil, err
+		}
+		lock.locks = append(lock.locks, held)
+	}
+	return lock, nil
+}
+
 // reportRoot is the directory whose .testoptimization holds the reports of a
 // run rooted at root. An empty root names the relative report location the
 // working directory displays.

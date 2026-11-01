@@ -37,16 +37,17 @@ type PackageLocation struct {
 	Hint string
 }
 
-// maxPackageCandidates bounds the package manifests read below a root
-// without a manifest of its own.
-const maxPackageCandidates = 64
-
-// anyCIConfigurationFiles lists, relative to root, the configuration files
-// of every supported CI provider. A provider whose files cannot be listed
-// contributes none.
-func anyCIConfigurationFiles(root string) []string {
+// ciConfigurationFiles lists, relative to root, the configuration files of
+// the requested CI provider, or of every supported provider when none (or an
+// unknown one, which the command rejects later) is requested. A provider
+// whose files cannot be listed contributes none.
+func ciConfigurationFiles(root, requested string) []string {
+	providers := ciProviders
+	if provider := ciProviderNamed(requested); provider != nil {
+		providers = []ciProvider{provider}
+	}
 	var files []string
-	for _, provider := range ciProviders {
+	for _, provider := range providers {
 		if found, err := provider.configurationFiles(root); err == nil {
 			files = append(files, found...)
 		}
@@ -64,9 +65,12 @@ func anyCIConfigurationFiles(root string) []string {
 //     below it that the CI configuration references; otherwise Hint lists
 //     the candidates.
 //
-// directory is the working directory, which platform detection reads. ok is
-// false when the current directory is the project, as before.
-func LocatePackage(directory string) (location PackageLocation, ok bool) {
+// directory is the working directory, which platform detection reads.
+// provider is the --ci-provider the command requests: when set, only its
+// configuration counts, so a package's pipeline for another provider does not
+// keep onboarding away from the requested provider's root configuration. ok
+// is false when the current directory is the project, as before.
+func LocatePackage(directory, provider string) (location PackageLocation, ok bool) {
 	if hint := settings.GetPlatform(); hint != "" && hint != "javascript" {
 		return PackageLocation{}, false
 	}
@@ -82,7 +86,7 @@ func LocatePackage(directory string) (location PackageLocation, ok bool) {
 		}
 		// Jenkins and Buildkite can read a pipeline from any directory: a
 		// package with its own CI configuration is onboarded where it is.
-		if len(anyCIConfigurationFiles(directory)) > 0 || len(anyCIConfigurationFiles(top)) == 0 {
+		if len(ciConfigurationFiles(directory, provider)) > 0 || len(ciConfigurationFiles(top, provider)) == 0 {
 			return PackageLocation{}, false
 		}
 		if detected, err := platform.DetectPlatform(); err != nil || detected.Name() != "javascript" {
@@ -97,7 +101,7 @@ func LocatePackage(directory string) (location PackageLocation, ok bool) {
 	if len(candidates) == 0 {
 		return PackageLocation{}, false
 	}
-	references := ciPackageReferences(directory, candidates)
+	references := ciPackageReferences(directory, provider, candidates)
 	var referenced []string
 	for _, candidate := range candidates {
 		if len(references[candidate]) > 0 {
@@ -174,28 +178,33 @@ func packageCandidates(root string) []string {
 		if path.Base(manifest) != "package.json" || directory == "." || slices.Contains(strings.Split(directory, "/"), "node_modules") || slices.Contains(candidates, directory) {
 			continue
 		}
+		// Every candidate is matched against CI; only the hint is abridged.
 		candidates = append(candidates, directory)
-		if len(candidates) == maxPackageCandidates {
-			break
-		}
 	}
 	slices.Sort(candidates)
 	return candidates
 }
 
 // ciPackageReferences maps each candidate directory to the CI configuration
-// files that name it as a path (test/docker-compose.yml) or a working
-// directory (cd test, npm --prefix test, working-directory: test, dir('test')).
-func ciPackageReferences(root string, candidates []string) map[string][]string {
+// files of the requested provider (see ciConfigurationFiles) that name it as
+// a path (test/docker-compose.yml) or a working directory (cd test, npm
+// --prefix test, working-directory: test, dir('test')).
+func ciPackageReferences(root, provider string, candidates []string) map[string][]string {
 	references := map[string][]string{}
-	for _, file := range anyCIConfigurationFiles(root) {
+	var contents [][]byte
+	files := ciConfigurationFiles(root, provider)
+	for _, file := range files {
 		data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(file)))
 		if err != nil {
-			continue
+			data = nil
 		}
-		for _, candidate := range candidates {
-			if packageReference(candidate).Match(data) {
-				references[candidate] = append(references[candidate], file)
+		contents = append(contents, data)
+	}
+	for _, candidate := range candidates {
+		pattern := packageReference(candidate)
+		for i, data := range contents {
+			if data != nil && pattern.Match(data) {
+				references[candidate] = append(references[candidate], files[i])
 			}
 		}
 	}

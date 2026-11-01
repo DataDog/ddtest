@@ -45,6 +45,8 @@ func locationCommand(t *testing.T, name string, args ...string) (*cobra.Command,
 	command := &cobra.Command{Use: name}
 	command.Flags().Bool("all", false, "")
 	command.Flags().Bool("report", false, "")
+	command.Flags().String("facts", "", "")
+	command.Flags().String("ci-provider", "", "")
 	require.NoError(t, command.Flags().Parse(args))
 	var stderr bytes.Buffer
 	command.SetErr(&stderr)
@@ -103,4 +105,41 @@ func TestOnboardAtARootWithoutManifestSelectsTheCIPackage(t *testing.T) {
 	require.Equal(t, ".", platform.PackageDirectory())
 	_, err = platform.DetectPlatform()
 	require.ErrorContains(t, err, "JavaScript packages below it: test. Run ddtest onboard in the package directory CI tests (for example cd test && ddtest onboard)")
+}
+
+// A relative --facts path names a file relative to where the command
+// started, not to the repository root it moves to.
+func TestRelativeFactsResolveBeforeMovingToTheRoot(t *testing.T) {
+	root := packageRepository(t)
+	t.Chdir(filepath.Join(root, "test"))
+	command, _ := locationCommand(t, "testdrive", "--all", "--facts", "../../facts.json")
+	require.NoError(t, locatePackage(command))
+	require.Equal(t, root, workingDirectory(t))
+	facts, err := command.Flags().GetString("facts")
+	require.NoError(t, err)
+	require.Equal(t, filepath.Join(filepath.Dir(root), "facts.json"), facts)
+
+	t.Chdir(filepath.Join(root, "test"))
+	absolute := filepath.Join(t.TempDir(), "facts.json")
+	command, _ = locationCommand(t, "onboard", "--facts", absolute)
+	require.NoError(t, locatePackage(command))
+	facts, err = command.Flags().GetString("facts")
+	require.NoError(t, err)
+	require.Equal(t, absolute, facts, "an absolute path is kept")
+}
+
+// --ci-provider selects which configuration anchors the package: a package's
+// own pipeline for another provider doesn't keep onboarding in the package.
+func TestRequestedCIProviderAnchorsThePackage(t *testing.T) {
+	root := packageRepository(t)
+	require.NoError(t, os.WriteFile(filepath.Join(root, "test", "Jenkinsfile"), []byte("pipeline { agent any\n stages { stage('t') { steps { sh 'npm test' } } } }\n"), 0o644))
+	t.Chdir(filepath.Join(root, "test"))
+	command, _ := locationCommand(t, "onboard")
+	require.NoError(t, locatePackage(command))
+	require.Equal(t, filepath.Join(root, "test"), workingDirectory(t), "its own Jenkinsfile keeps an unqualified run in the package")
+
+	command, _ = locationCommand(t, "onboard", "--ci-provider", "buildkite")
+	require.NoError(t, locatePackage(command))
+	require.Equal(t, root, workingDirectory(t))
+	require.Equal(t, "test", platform.PackageDirectory())
 }

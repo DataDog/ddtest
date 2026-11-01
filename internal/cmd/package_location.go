@@ -8,6 +8,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/DataDog/ddtest/internal/platform"
@@ -29,7 +30,10 @@ func locatePackage(cmd *cobra.Command) error {
 	if err != nil {
 		return nil
 	}
-	location, ok := onboard.LocatePackage(directory)
+	// An explicitly requested provider decides which CI configuration
+	// anchors the package, before resolveCIProvider reads it.
+	provider, _ := cmd.Flags().GetString("ci-provider")
+	location, ok := onboard.LocatePackage(directory, provider)
 	switch {
 	case !ok:
 		return nil
@@ -46,6 +50,10 @@ func locatePackage(cmd *cobra.Command) error {
 		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "ddtest: the CI configuration is at the repository root %s; this run executes in %s/ and keeps its reports in %s/.testoptimization.\n", location.Root, location.Package, location.Root)
 		return nil
 	}
+	// Paths the user typed are relative to where the command started.
+	if err := absoluteFlagPath(cmd, "facts"); err != nil {
+		return err
+	}
 	if err := os.Chdir(location.Root); err != nil {
 		return fmt.Errorf("change to the repository root %s: %w", location.Root, err)
 	}
@@ -61,4 +69,18 @@ func focusedTestdrive(cmd *cobra.Command) bool {
 	all, _ := cmd.Flags().GetBool("all")
 	report, _ := cmd.Flags().GetBool("report")
 	return !all && !report
+}
+
+// absoluteFlagPath resolves a relative path flag against the current
+// directory, before the command changes it.
+func absoluteFlagPath(cmd *cobra.Command, name string) error {
+	flag := cmd.Flags().Lookup(name)
+	if flag == nil || flag.Value.String() == "" || filepath.IsAbs(flag.Value.String()) {
+		return nil
+	}
+	absolute, err := filepath.Abs(flag.Value.String())
+	if err != nil {
+		return fmt.Errorf("resolve --%s: %w", name, err)
+	}
+	return cmd.Flags().Set(name, absolute)
 }

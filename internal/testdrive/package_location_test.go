@@ -126,3 +126,72 @@ func TestPackageConfigurationCopiesTheWholeCheckout(t *testing.T) {
 	require.NoError(t, err, output.String())
 	require.GreaterOrEqual(t, size, schemaSize, "the copy includes files outside the package")
 }
+
+// A focused run in a package keeps its report at the repository root; the
+// receipt it saves is the one a --report reader at that root verifies, bound
+// to the package inputs the run validated.
+func TestReceiptOfAPackageRunVerifiesFromTheRepositoryRoot(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir())
+	root := workspace.CanonicalRoot(t.TempDir())
+	pkg := filepath.Join(root, "test")
+	require.NoError(t, os.MkdirAll(pkg, 0o700))
+	requireWriteFile(t, filepath.Join(pkg, "source.js"), "original")
+	useReportRoot(t, pkg, root)
+	public := certifiedWorkflowReport(t, pkg, "jest")
+	require.FileExists(t, filepath.Join(root, ".testoptimization", "testdrive.json"))
+
+	// The reader runs at the root without a redirect.
+	UseReportRoot("", "")
+	t.Chdir(root)
+	require.NoError(t, verifyWorkflowReceipt(root, *public))
+	var out bytes.Buffer
+	require.NoError(t, RenderWorkflowDetail(t.Context(), &out, "", "plan"))
+	require.Contains(t, out.String(), `"tracer":"6.20.1"`)
+	out.Reset()
+	_ = RenderReport(t.Context(), &out, "json")
+	require.NotContains(t, out.String(), "stale_report", "fresh package evidence is not stale from the root")
+
+	// A changed package input still makes it stale.
+	requireWriteFile(t, filepath.Join(pkg, "source.js"), "changed")
+	out.Reset()
+	_ = RenderReport(t.Context(), &out, "json")
+	require.Contains(t, out.String(), "stale_report")
+
+	// The receipt binds the run root: another working directory doesn't verify.
+	edited := *public
+	edited.WorkingDirectory = root
+	require.Error(t, verifyWorkflowReceipt(root, edited))
+	edited.WorkingDirectory = filepath.Dir(root)
+	require.Equal(t, root, reportRunRoot(root, edited), "a directory outside the root is never the run root")
+}
+
+// A focused run in a package shares the root's reports, so it takes the
+// root's lock as well as its own: runs at the root and in the package exclude
+// each other.
+func TestPackageRunsLockTheSharedReportRoot(t *testing.T) {
+	root := workspace.CanonicalRoot(t.TempDir())
+	pkg := filepath.Join(root, "test")
+	require.NoError(t, os.MkdirAll(pkg, 0o700))
+	useReportRoot(t, pkg, root)
+
+	held, err := workspace.AcquireLock(root)
+	require.NoError(t, err)
+	_, err = lockReports(pkg)
+	require.ErrorIs(t, err, workspace.ErrBusy, "a root run excludes the package run")
+	require.NoError(t, held.Close())
+
+	held, err = workspace.AcquireLock(pkg)
+	require.NoError(t, err)
+	_, err = lockReports(pkg)
+	require.ErrorIs(t, err, workspace.ErrBusy, "a run rooted in the package excludes it too")
+	require.NoError(t, held.Close())
+
+	lock, err := lockReports(pkg)
+	require.NoError(t, err)
+	_, err = lockReports(root)
+	require.ErrorIs(t, err, workspace.ErrBusy, "the package run excludes a root run")
+	require.NoError(t, lock.Close())
+	lock, err = lockReports(root)
+	require.NoError(t, err)
+	require.NoError(t, lock.Close())
+}
