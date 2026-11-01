@@ -73,6 +73,14 @@ func TestVitestValidationArgumentsIntegration(t *testing.T) {
   assert.deepEqual(result.arguments,['--coverage'])
   assert.equal(result.runCommand,false)
  }
+ // A boolean option consumes a following true or false; dropping the option
+ // drops its value too, never leaving it as a file filter.
+ for (const [original,expected] of [[['--cache','false','--coverage'],['--coverage']],[['run','--cache','true','src'],['run','src']],[['--coverage.thresholds.autoUpdate','false','src'],['src']],[['run','--cache','src'],['run','src']],[['--no-cache','false'],['false']]]) {
+  assert.deepEqual(validationArguments(original,parseCLI).arguments,expected,JSON.stringify(original))
+ }
+ // Nor is such a value a command or a filter the probe replaces.
+ assert.deepEqual(validationArguments(['--globals','false','src'],parseCLI).arguments,['--globals','false','src'])
+ assert.deepEqual(validationArguments(['run','--globals','false','src'],parseCLI,'probe.test.js').arguments,['run','--globals','false','probe.test.js'])
  const explicit=validationArguments(['run','--run','--coverage','--','src'],parseCLI)
  assert.deepEqual(explicit.arguments,['run','--coverage','--','src'])
  assert.equal(explicit.runCommand,true)

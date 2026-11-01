@@ -9,6 +9,20 @@ export function validationArguments(args, parseCLI, probe = '') {
   args = withoutRunOptions(args)
   const parsed = parse(args)
   const marker = '\0ddtest positional filter\0'
+  // positional reports whether values[i] is a positional word rather than an
+  // option's value. A marker in its place tells them apart, except for a
+  // literal true or false: a boolean option takes it as its value
+  // (--cache false), but not a marker, which would read as a filter.
+  const positional = (values, i) => {
+    const value = values[i]
+    if (value === 'true' || value === 'false') {
+      const count = prefix => parse(prefix).filter.filter(word => word === value).length
+      return count(values.slice(0, i + 1)) > count(values.slice(0, i))
+    }
+    const candidate = [...values]
+    candidate[i] = marker
+    return parse(candidate).filter.includes(marker)
+  }
   const separator = args.indexOf('--')
   const before = separator < 0 ? args : args.slice(0, separator)
   let commandIndex = -1
@@ -16,9 +30,7 @@ export function validationArguments(args, parseCLI, probe = '') {
   for (let i = 0; i < before.length; i++) {
     if (before[i].startsWith('-')) continue
     const prefix = before.slice(0, i + 1)
-    const candidate = [...prefix]
-    candidate[i] = marker
-    if (!parse(candidate).filter.includes(marker)) continue
+    if (!positional(prefix, i)) continue
     firstPositional = i
     if (!parse(prefix).filter.includes(before[i])) commandIndex = i
     break
@@ -40,18 +52,10 @@ export function validationArguments(args, parseCLI, probe = '') {
       probe && (key === '--shard' || key === '--retry' || key === '--project' || key === '--testNamePattern' || key === '-t' ||
         key.startsWith('--coverage.thresholds') || key === '--no-coverage.thresholds')
     if (owned) {
-      if (!argument.includes('=') && i + 1 < before.length && !before[i + 1].startsWith('-')) {
-        const candidate = [...before]
-        candidate[i + 1] = marker
-        if (!parse(candidate).filter.includes(marker)) i++
-      }
+      if (!argument.includes('=') && i + 1 < before.length && !before[i + 1].startsWith('-') && !positional(before, i + 1)) i++
       continue
     }
-    if (probe && i !== commandIndex && !argument.startsWith('-')) {
-      const candidate = [...before]
-      candidate[i] = marker
-      if (parse(candidate).filter.includes(marker)) continue
-    }
+    if (probe && i !== commandIndex && !argument.startsWith('-') && positional(before, i)) continue
     result.push(argument)
   }
   if (probe) result.push(probe)
