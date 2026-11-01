@@ -58,6 +58,11 @@ func resolveJavaStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 		return commandResolution{}
 	}
 	if parseErr != nil {
+		// Literal goals that run no tests, as in mvn versions:set
+		// -DnewVersion=${CI_COMMIT_TAG/v}, run none whatever the values.
+		if mavenMention.MatchString(step.Run) && !gradleMention.MatchString(step.Run) && !javaStepMayRunTests(root, workflow, job, step) {
+			return commandResolution{Review: true, Reason: "Maven goals outside the test lifecycle, such as documentation, lint or release goals, are outside " + framework + " test scope."}
+		}
 		if mavenMention.MatchString(step.Run) {
 			return unresolvedCommand("Maven command could not be resolved statically; ddtest cannot tell which tests it runs: " + step.Run)
 		}
@@ -254,6 +259,10 @@ func javaExportsMavenArgs(job runtimeJob) bool {
 // javaConfigGoals reports goals in the .mvn/maven.config that Maven reads for
 // a command run in directory: the nearest one up to the repository root.
 func javaConfigGoals(root, directory string) bool {
+	// A directory outside the checkout may hold any configuration.
+	if !filepath.IsLocal(directory) {
+		return true
+	}
 	for current := directory; ; current = filepath.Dir(current) {
 		if info, err := os.Stat(filepath.Join(root, current, ".mvn")); err == nil && info.IsDir() {
 			data, err := os.ReadFile(filepath.Join(root, current, ".mvn", "maven.config"))

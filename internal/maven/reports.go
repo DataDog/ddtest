@@ -11,6 +11,7 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"io/fs"
 	"maps"
 	"os"
 	"path/filepath"
@@ -66,8 +67,10 @@ var karateReports = filepath.Join("target", "karate-reports")
 var reportSwitch = regexp.MustCompile(`<disableXmlReport>\s*\$\{([\w.-]+)\}\s*</disableXmlReport>`)
 
 // ReportSwitches are the properties the reactor's POMs turn Surefire or
-// Failsafe XML reports off with and read nowhere else, so setting them to
-// false writes the reports without changing anything else the build does.
+// Failsafe XML reports off with, so setting them to false writes the reports.
+// A property the POMs name anywhere else, as a profile's activation does, or
+// that a project's sources mention, as filtered resources or tests reading
+// the user property do, may change the build too and is left alone.
 func ReportSwitches(root string, projects []Project) ([]string, error) {
 	var poms []string
 	for _, project := range projects {
@@ -78,17 +81,51 @@ func ReportSwitches(root string, projects []Project) ([]string, error) {
 		poms = append(poms, string(data))
 	}
 	source := strings.Join(poms, "\n")
-	switches := map[string]int{}
+	switches := map[string]bool{}
 	for _, match := range reportSwitch.FindAllStringSubmatch(source, -1) {
-		switches[match[1]]++
+		switches[match[1]] = true
 	}
 	var properties []string
 	for _, property := range slices.Sorted(maps.Keys(switches)) {
-		if strings.Count(source, "${"+property+"}") == switches[property] {
+		name := regexp.QuoteMeta(property)
+		// The report switches and the property's literal definitions are
+		// the only mentions that leave the build as it is.
+		rest := regexp.MustCompile(`<disableXmlReport>\s*\$\{`+name+`\}\s*</disableXmlReport>|<`+name+`>[^<$]*</`+name+`>`).ReplaceAllString(source, "")
+		if regexp.MustCompile(`(^|[^\w.-])` + name + `([^\w.-]|$)`).MatchString(rest) {
+			continue
+		}
+		mentioned, err := sourcesMention(root, projects, property)
+		if err != nil {
+			return nil, err
+		}
+		if !mentioned {
 			properties = append(properties, property)
 		}
 	}
 	return properties, nil
+}
+
+// sourcesMention reports whether any file under a project's src directory
+// contains text.
+func sourcesMention(root string, projects []Project, text string) (bool, error) {
+	found := false
+	for _, project := range projects {
+		err := filepath.WalkDir(filepath.Join(root, project.Directory, "src"), func(path string, entry fs.DirEntry, err error) error {
+			if err != nil || found || !entry.Type().IsRegular() {
+				return err
+			}
+			data, err := os.ReadFile(path)
+			found = err == nil && strings.Contains(string(data), text)
+			return err
+		})
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return false, err
+		}
+		if found {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // ReadReports reads the native reports of every project under root. Call it
