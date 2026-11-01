@@ -661,6 +661,7 @@ belongs to the after-stack refactor.
 Prepare the same Python environment and project dependencies used by CI, then run:
 
 ```bash
+ddtest onboard --framework pytest
 ddtest testdrive --framework pytest --command "python -m pytest" --yes
 ```
 
@@ -697,6 +698,21 @@ the result. Owned copies, tracer installations, and probes are removed after the
 run. Validation uses a local intake and needs no Datadog credentials. Python
 coding-agent onboarding coordination is a separate follow-up; standalone paired
 testdrive does not enable `--agent`, `--apply`, or `--resume`.
+
+Without `--command`, pytest validates the selected environment's default local
+command. A standalone command can pass independently of CI readiness: unresolved
+CI setup and other unexecuted configurations are reported as advisories, and do
+not certify CI. This selected-command policy also applies to explicit `--command`
+runs for the other paired-validation frameworks. `--all`, `--check-only` and
+coordinated onboarding retain their CI gates. Removing pytest CI matrix entries
+after the first local check blocks validation; an unreadable inventory retains
+the baseline and is advisory only for a standalone command.
+
+`ddtest testdrive --report` reads saved pytest evidence without executing Python
+or changing reports. It returns `historical_report` with `freshness_unverified`;
+source, dependencies and runtime have not been revalidated. Rerun the original
+testdrive invocation with the same command, environment and validation options
+before claiming current success.
 
 ### Vitest testdrive validation
 

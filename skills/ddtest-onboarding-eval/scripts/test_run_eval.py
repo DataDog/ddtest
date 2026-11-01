@@ -4,6 +4,7 @@ import contextlib
 import io
 import json
 import os
+import platform
 import getpass
 from pathlib import Path
 import shlex
@@ -114,7 +115,12 @@ if os.environ.get("FAKE_LONG_VERDICT"):
             event["result"] = response
 if os.environ.get("FAKE_REPORT_JSON"):
     pathlib.Path(".testoptimization").mkdir(exist_ok=True)
-    pathlib.Path(".testoptimization/testdrive.json").write_text(os.environ["FAKE_REPORT_JSON"])
+    encoded = os.environ["FAKE_REPORT_JSON"]
+    if os.environ.get("FAKE_REPORT_PYTHON_ENVIRONMENT"):
+        report = json.loads(encoded)
+        report["preflight"].update(executable=sys.executable, prefix=sys.prefix)
+        encoded = json.dumps(report)
+    pathlib.Path(".testoptimization/testdrive.json").write_text(encoded)
     for event in events:
         if event.get("item", {}).get("type") == "agent_message":
             event["item"]["text"] = os.environ.get("FAKE_RESPONSE", "Done")
@@ -217,6 +223,172 @@ class RunnerTests(unittest.TestCase):
                             f"print(json.dumps({{'executable':str(pathlib.Path(__file__).resolve()), 'version':'v{version}', 'requested_executable':str(pathlib.Path(__file__).resolve())}}) if '-p' in sys.argv else 'v{version}')\n")
         selected.chmod(0o755)
         return selected
+
+    def test_pytest_uses_private_python_and_audits_the_final_report(self):
+        for agent in ("codex", "claude"):
+            with self.subTest(agent=agent):
+                self.args.agent = agent
+                self.args.python = Path(sys.executable)
+                self.args.framework = "pytest"
+                self.args.output = self.root / (agent + "-python-evidence")
+                report = {"summary": {"status": "INCOMPLETE"},
+                          "preflight": {"runtime": platform.python_version()},
+                          "runs": [{"role": "baseline", "command": "python -m pytest", "exit_code": 0}],
+                          "retained_execution": {"result": {"preflight": {"runtime": "0.0.0"}}}}
+                code, manifest = self.trial({"FAKE_REPORT_JSON": json.dumps(report), "FAKE_REPORT_PYTHON_ENVIRONMENT": "1"})
+                self.assertEqual(code, 0, manifest)
+                venv = str(Path(manifest["trial_directory"]) / "venv")
+                self.assertEqual(manifest["python_runtime"]["prefix"], venv)
+                self.assertEqual(manifest["ddtest_python_runtime"]["status"], "matched")
+                observed = json.loads((Path(manifest["checkout"]) / "observed.json").read_text())
+                self.assertEqual(observed["environment"]["VIRTUAL_ENV"], venv)
+                self.assertEqual(observed["environment"]["UV_PROJECT_ENVIRONMENT"], venv)
+                self.assertIn(venv + "/bin", observed["environment"]["PATH"].split(os.pathsep))
+                self.assertIn("for pytest only", observed["prompt"])
+                for key in ("PIP_CACHE_DIR", "UV_CACHE_DIR"):
+                    self.assertTrue(Path(manifest["private_caches"][key]).is_dir())
+                if agent == "codex":
+                    self.assertIn('shell_environment_policy.set.VIRTUAL_ENV=' + json.dumps(venv), observed["argv"])
+
+    def test_pytest_requested_version_is_frozen_before_setup(self):
+        self.args.framework = "pytest"
+        self.args.python = Path(sys.executable)
+        self.args.setup_command = [shlex.join(["python", "-c",
+            "import os, pathlib; pathlib.Path(os.environ['VIRTUAL_ENV'], 'setup-finished').touch()"])]
+        execute = FakeContainer.execute
+        for changed in (True, False):
+            with self.subTest(changed=changed):
+                self.args.output = self.root / ("changed-version" if changed else "same-version")
+                version = "0.0.0" if changed else platform.python_version()
+                def replace_runtime(container, argv, cwd, env, timeout, on_line, prompt, executor):
+                    if changed and argv[:2] == ["python", "-c"] and "platform.python_version()" in argv[2] and (Path(env["VIRTUAL_ENV"]) / "setup-finished").exists():
+                        on_line(json.dumps({"executable": str(Path(env["VIRTUAL_ENV"]) / "bin/python"),
+                                            "prefix": env["VIRTUAL_ENV"], "version": version}))
+                        return 0
+                    return execute(container, argv, cwd, env, timeout, on_line, prompt, executor)
+                report = {"summary": {"status": "INCOMPLETE"}, "preflight": {"runtime": version},
+                          "runs": [{"role": "baseline", "command": "python -m pytest", "exit_code": 0}]}
+                with patch.object(FakeContainer, "execute", replace_runtime):
+                    code, manifest = self.trial({"FAKE_REPORT_JSON": json.dumps(report), "FAKE_REPORT_PYTHON_ENVIRONMENT": "1"})
+                self.assertEqual(code, 1 if changed else 0)
+                self.assertEqual(manifest["python_runtime"]["requested_version"], platform.python_version())
+                self.assertEqual(manifest["python_runtime"]["version"], version)
+                if changed:
+                    self.assertEqual(manifest["failure_kind"], "evaluator_environment")
+                    self.assertEqual(manifest["failure_stage"], "python_environment")
+                    self.assertFalse(manifest["retry_recommended"])
+                    self.assertFalse((Path(manifest["checkout"]) / "observed.json").exists())
+                else:
+                    self.assertEqual(manifest["ddtest_python_runtime"]["status"], "matched")
+
+    def test_pytest_same_version_other_environment_fails_the_trial(self):
+        self.args.framework = "pytest"
+        self.args.python = Path(sys.executable)
+        other = self.root / "other-venv"
+        subprocess.run([sys.executable, "-m", "venv", str(other)], check=True, capture_output=True)
+        runtime = json.loads(subprocess.check_output([str(other / "bin/python"), "-c",
+            "import json, platform, sys; print(json.dumps({'runtime': platform.python_version(), 'executable': sys.executable, 'prefix': sys.prefix}))"], text=True))
+        self.assertEqual(runtime["runtime"], platform.python_version())
+        base = {"runtime": platform.python_version(), "executable": sys.executable, "prefix": sys.prefix}
+        for name, preflight, configurations in (("base", base, []), ("other-venv", runtime, []),
+                ("mixed-configurations", {"runtime": platform.python_version()}, [{"preflight": runtime}])):
+            with self.subTest(name=name):
+                self.args.output = self.root / (name + "-evidence")
+                report = {"summary": {"status": "INCOMPLETE"}, "preflight": preflight,
+                          "configurations": configurations,
+                          "runs": [{"role": "baseline", "command": "python -m pytest", "exit_code": 0}]}
+                env = {"FAKE_REPORT_JSON": json.dumps(report)}
+                if configurations:
+                    env["FAKE_REPORT_PYTHON_ENVIRONMENT"] = "1"
+                code, manifest = self.trial(env)
+                self.assertEqual(code, 1)
+                self.assertEqual(manifest["ddtest_python_runtime"]["observed_versions"], [platform.python_version()])
+                self.assertEqual(manifest["ddtest_python_runtime"]["status"], "mismatch")
+                self.assertEqual(manifest["failure_kind"], "evaluator_environment")
+                self.assertEqual(manifest["failure_stage"], "ddtest_python_runtime")
+                self.assertFalse(manifest["retry_recommended"])
+
+    def test_pytest_partial_environment_identity_fails_the_trial(self):
+        self.args.framework = "pytest"
+        self.args.python = Path(sys.executable)
+        for field, value in (("executable", sys.executable), ("prefix", sys.prefix)):
+            with self.subTest(field=field):
+                self.args.output = self.root / (field + "-evidence")
+                report = {"summary": {"status": "INCOMPLETE"},
+                          "preflight": {"runtime": platform.python_version(), field: value},
+                          "runs": [{"role": "baseline", "command": "python -m pytest", "exit_code": 0}]}
+                code, manifest = self.trial({"FAKE_REPORT_JSON": json.dumps(report)})
+                self.assertEqual(code, 1)
+                self.assertEqual(manifest["ddtest_python_runtime"]["status"], "not observed")
+                self.assertEqual(manifest["failure_kind"], "evaluator_environment")
+
+    def test_python_runtime_paths_keep_interpreter_aliases_and_venv_identity(self):
+        selected = {"version": "3.12.8", "executable": "/trial/venv/bin/python", "prefix": "/trial/venv"}
+        for executable, prefix, status in (("/trial/venv/bin/python3", "/trial/venv/", "matched"),
+                ("/usr/bin/python3", "/usr", "mismatch"),
+                ("/usr/bin/python3", "/trial/venv", "mismatch"),
+                ("/trial/venv/bin/python", "/usr", "mismatch"),
+                ("/trial/venv/bin/../../other/bin/python", "/trial/venv", "mismatch")):
+            with self.subTest(executable=executable, prefix=prefix):
+                report = {"preflight": {"runtime": "3.12.8", "executable": executable, "prefix": prefix},
+                          "configurations": [{"preflight": {"verdict": {"status": "not exercised"}}}]}
+                audit = run_eval.report_python_runtime(report, selected)
+                self.assertEqual(audit["status"], status)
+                self.assertEqual(audit["requested_prefix"], selected["prefix"])
+                self.assertEqual(audit["observed_environments"][0]["executable"], executable)
+
+    def test_pytest_runtime_mismatch_fails_the_trial(self):
+        self.args.framework = "pytest"
+        self.args.python = Path(sys.executable)
+        code, manifest = self.trial({"FAKE_REPORT_JSON": json.dumps({"summary": {"status": "INCOMPLETE"}, "preflight": {"runtime": "0.0.0"}})})
+        self.assertEqual(code, 1)
+        self.assertEqual(manifest["failure_stage"], "ddtest_python_runtime")
+        self.assertFalse(manifest["retry_recommended"])
+
+    def test_pytest_execution_without_runtime_fails_the_trial(self):
+        self.args.framework = "pytest"
+        self.args.python = Path(sys.executable)
+        handoff = "Local validation: PASSED."
+        for name, preflight in (("missing", None), ("empty", {"runtime": ""})):
+            with self.subTest(name=name):
+                self.args.output = self.root / (name + "-runtime-evidence")
+                report = {"summary": {"status": "PASSED", "local_validation": "PASSED", "final_response": handoff},
+                          "preflight": preflight,
+                          "runs": [{"role": "baseline", "command": "python -m pytest", "exit_code": 0}],
+                          "retained_execution": {"result": {"preflight": {"runtime": platform.python_version()}}}}
+                code, manifest = self.trial({"FAKE_REPORT_JSON": json.dumps(report), "FAKE_RESPONSE": handoff})
+                self.assertEqual(code, 1, manifest)
+                self.assertEqual(manifest["agent_reporting"]["status"], "pass")
+                self.assertEqual(manifest["ddtest_python_runtime"]["status"], "not observed")
+                self.assertEqual(manifest["status"], "failed")
+                self.assertEqual(manifest["failure_kind"], "evaluator_environment")
+                self.assertEqual(manifest["failure_stage"], "ddtest_python_runtime")
+                self.assertIn("missing", manifest["error"])
+                self.assertFalse(manifest["retry_recommended"])
+
+    def test_pytest_without_current_execution_does_not_require_runtime(self):
+        self.args.framework = "pytest"
+        self.args.python = Path(sys.executable)
+        runs = [{"role": "baseline", "command": "python -m pytest", "exit_code": 0}]
+        for name, evidence in (("not run", {}), ("check only", {"check_only": True, "runs": runs}),
+                               ("historical", {"runs": runs, "last_execution": {"current": False}})):
+            with self.subTest(name=name):
+                self.args.output = self.root / (name.replace(" ", "-") + "-runtime-evidence")
+                report = {"summary": {"status": "INCOMPLETE"}, **evidence,
+                          "retained_execution": {"result": {"preflight": {"runtime": platform.python_version()}, "runs": runs}}}
+                code, manifest = self.trial({"FAKE_REPORT_JSON": json.dumps(report)})
+                self.assertEqual(code, 0, manifest)
+                self.assertEqual(manifest["status"], "completed")
+                self.assertEqual(manifest["ddtest_python_runtime"]["status"], "not observed")
+
+    def test_python_selection_rejects_ambiguous_or_non_image_paths(self):
+        for python, framework, node in ((Path("python"), "pytest", None), (Path("/usr/../bin/python"), "pytest", None),
+                                        (Path(sys.executable), "jest", None), (Path(sys.executable), "pytest", Path("/usr/bin/node"))):
+            with self.subTest(python=python, framework=framework, node=node):
+                self.args.python, self.args.framework, self.args.node = python, framework, node
+                with self.assertRaisesRegex(ValueError, "--python"):
+                    run_eval.run(self.args)
+                self.assertFalse(self.args.output.exists())
 
     def test_fresh_trials_minimal_prompt_and_independent_evaluation(self):
         checkouts = []
@@ -527,6 +699,39 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(manifest["status"], "failed")
         self.assertEqual(manifest["commands"][-1]["exit_code"], 7)
         self.assertFalse((Path(manifest["checkout"]) / "observed.json").exists())
+
+    def test_selected_python_setup_failures_preserve_durable_evidence(self):
+        self.args.framework = "pytest"
+        self.args.python = Path(sys.executable)
+        execute = FakeContainer.execute
+        for stage in ("venv", "dependencies"):
+            with self.subTest(stage=stage):
+                self.args.output = self.root / (stage + "-failure")
+                self.args.setup_command = [shlex.join(["python", "-c", "import sys; sys.exit(7)"])]
+                def fail_venv(container, argv, cwd, env, timeout, on_line, prompt, executor):
+                    if argv[1:3] == ["-m", "venv"]:
+                        self.addCleanup(shutil.rmtree, Path(env["VIRTUAL_ENV"]).parent, ignore_errors=True)
+                        if stage == "venv":
+                            on_line("venv creation failed")
+                            return 7
+                    return execute(container, argv, cwd, env, timeout, on_line, prompt, executor)
+                with patch.object(FakeContainer, "execute", fail_venv):
+                    code, manifest = self.trial()
+                self.assertEqual(code, 1)
+                self.assertEqual(manifest["status"], "failed")
+                self.assertEqual(manifest["failure_kind"], "evaluator_environment")
+                self.assertEqual(manifest["failure_stage"], "python_environment")
+                self.assertFalse(manifest["retry_recommended"])
+                self.assertIn("Command exited 7:", manifest["error"])
+                self.assertEqual(manifest["commands"][-1]["exit_code"], 7)
+                self.assertEqual(manifest["python_runtime"], {
+                    "requested": sys.executable, "requested_version": platform.python_version()})
+                self.assertNotIn("ddtest_python_runtime", manifest)
+                self.assertNotIn("collection_errors", manifest)
+                self.assertEqual(manifest["isolation"]["cleanup"], "removed")
+                self.assertFalse((Path(manifest["checkout"]) / "observed.json").exists())
+                for name in ("activity.jsonl", "changes.patch", "status.txt"):
+                    self.assertTrue((self.args.output / name).is_file(), name)
 
     def test_dirty_setup_does_not_contaminate_trial(self):
         self.args.setup_command = [f"{shlex.quote(sys.executable)} -c 'open(\"setup-file\", \"w\").close()'"]

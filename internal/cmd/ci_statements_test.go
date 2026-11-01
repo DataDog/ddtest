@@ -76,3 +76,21 @@ func TestCIStatementsAreForwardedOnce(t *testing.T) {
 	require.NoError(t, testdrive.ParseFlags([]string{"--ci-runtime", "node=22", "--ci-runtime", "ruby=3.3", "--all"}))
 	require.Equal(t, "ddtest testdrive --all --ci-runtime node=22 --ci-runtime ruby=3.3 --yes", rerunWithYes(testdrive))
 }
+
+// onboard --apply never edits a Jenkinsfile: JavaScript gets the same setup
+// handoff Ruby gets, here first the runtime question.
+func TestOnboardApplyOnJenkinsHandsOffTheSetup(t *testing.T) {
+	ciProviderFixture(t)
+	t.Cleanup(func() { _ = onboard.UseCIStatements(nil, nil) })
+	require.NoError(t, os.RemoveAll(".github"))
+	require.NoError(t, os.WriteFile("Jenkinsfile", []byte("pipeline {\n  agent { label 'linux' }\n  stages { stage('Test') { steps { sh 'npx vitest run' } } }\n}\n"), 0600))
+	result, err := runProtocolCommand(t, newOnboardCommand(nil), "--apply", "--yes", "--format", "json")
+	require.Error(t, err)
+	require.Equal(t, "ci_runtime_required", result.Code)
+	result, err = runProtocolCommand(t, newOnboardCommand(nil), "--apply", "--yes", "--format", "json", "--ci-runtime", "node=22")
+	require.Error(t, err)
+	require.Equal(t, "ci_setup_required", result.Code)
+	require.Equal(t, "apply_source_edit", result.NextAction)
+	require.Contains(t, result.Instruction, "datadog(testOptimization: [enabled: true, serviceName: '<service>', languages: ['JAVASCRIPT']])")
+	require.NoDirExists(t, ".testoptimization")
+}

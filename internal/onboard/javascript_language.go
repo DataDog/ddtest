@@ -8,6 +8,7 @@ package onboard
 import (
 	"context"
 	"errors"
+	"path"
 	"regexp"
 	"slices"
 	"strings"
@@ -36,9 +37,9 @@ func (javascriptDiscovery) coordinated() bool { return true }
 func (javascriptDiscovery) automaticCISetup() bool { return true }
 
 // JavaScript setup edits and checks GitHub Actions workflows, GitLab CI,
-// CircleCI and Buildkite.
+// CircleCI and Buildkite, and checks Jenkinsfiles.
 func (javascriptDiscovery) supportsCIProvider(provider string) bool {
-	return provider == gitHubActionsProvider || provider == gitLabCIProvider || provider == circleCIProvider || provider == buildkiteProvider
+	return provider == gitHubActionsProvider || provider == gitLabCIProvider || provider == circleCIProvider || provider == buildkiteProvider || provider == jenkinsProvider
 }
 
 // Outside GitHub Actions the installer appends its require preload to the
@@ -100,7 +101,15 @@ const javascriptBootstrap = "Use Node.js 22 or newer. GitHub Actions cannot set 
 // or after a failed install, a bare --import would stop Node.
 const esmImportCommand = `if [ -n "${DD_TRACE_ESM_IMPORT:-}" ]; then export NODE_OPTIONS="${NODE_OPTIONS:-} --import $DD_TRACE_ESM_IMPORT"; fi`
 
+// pluginESMImportCommand registers the ESM loader of the dd-trace the
+// Datadog Jenkins plugin installs, which exports its package path as
+// DD_TRACE_PATH; without the plugin's setup it adds nothing.
+const pluginESMImportCommand = `if [ -n "${DD_TRACE_PATH:-}" ]; then export NODE_OPTIONS="${NODE_OPTIONS:-} --import $DD_TRACE_PATH/register.js"; fi`
+
 func (javascriptDiscovery) ciSetupRequest(root, framework, site string, terms ciSetupTerms) ciSetupRequest {
+	if terms.Plugin {
+		return javascriptPluginSetupRequest(root, framework, site, terms)
+	}
 	request := ciSetupRequest{Language: "js", Site: site, TracerInput: "js-tracer-version", TracerVersion: "<exact dd-trace release>"}
 	if setupImportsESM(framework) || framework == "mocha" {
 		request.After = []string{esmImportCommand}
@@ -110,6 +119,27 @@ func (javascriptDiscovery) ciSetupRequest(root, framework, site string, terms ci
 		request.Notes = append(request.Notes, "Keep the export after "+terms.Entry+" only for Mocha ESM test files; CommonJS suites need only the preload.")
 	}
 	if note := setupImageNote(root, "javascript", framework); note != "" {
+		request.Notes = append(request.Notes, note)
+	}
+	if framework == "cucumber" {
+		request.Notes = append(request.Notes, "For Cucumber, also set DD_CIVISIBILITY_IMPACTED_TESTS_DETECTION_ENABLED=false in "+terms.Variables+". This avoids a tracer crash on Cucumber Background/Rule nodes; basic reporting is unaffected.")
+	}
+	return request
+}
+
+// javascriptPluginSetupRequest is the JavaScript part of a CI server plugin's
+// setup: the plugin installs the latest dd-trace and sets NODE_OPTIONS itself.
+func javascriptPluginSetupRequest(root, framework, site string, terms ciSetupTerms) ciSetupRequest {
+	request := ciSetupRequest{Language: "js", Site: site}
+	if setupImportsESM(framework) || framework == "mocha" {
+		request.After = []string{pluginESMImportCommand}
+	}
+	request.Notes = append(request.Notes, "The "+terms.Installer+" installs the latest dd-trace release with the build agent's default npm when each build runs (it cannot pin a release) and prepends its dd-trace preload to NODE_OPTIONS for "+terms.Later+". ddtest validates locally with the latest release and reports that it floats. The agents need npm on their default PATH, and the tests Node.js 18 or newer.",
+		"Set Node options inside the sh script that runs the tests (export NODE_OPTIONS=\"$NODE_OPTIONS ...\" before the test command): the "+terms.Installer+" sets NODE_OPTIONS once per build, so a NODE_OPTIONS in a stage's environment directive or withEnv is overwritten.")
+	if framework == "mocha" {
+		request.Notes = append(request.Notes, "Keep the ESM line only for Mocha ESM test files; CommonJS suites need only the preload.")
+	}
+	if note := setupUnsupportedNote(root, "javascript", framework); note != "" {
 		request.Notes = append(request.Notes, note)
 	}
 	if framework == "cucumber" {
@@ -138,11 +168,14 @@ func (javascriptDiscovery) cacheVariable(name string) bool {
 // setupNodeSource is the source of a Node actions/setup-node selects.
 const setupNodeSource = "actions/setup-node"
 
+// javascriptStatedVersion is a stated Node version.
+var javascriptStatedVersion = regexp.MustCompile(`^[0-9]+(?:\.[0-9]+){0,2}$`)
+
 // A stated Node is compared like a node:<version> image tag's.
 var javascriptStatedRuntime = &statedRuntime{
 	Names:   []string{"node", "js"},
 	Display: "Node",
-	Version: regexp.MustCompile(`^[0-9]+(?:\.[0-9]+){0,2}$`),
+	Version: javascriptStatedVersion,
 	Example: "22, 22.11 or 22.11.0",
 	base:    javascriptImageRuntime,
 	// setup-node (also through a node-version-file) takes node-semver
@@ -186,10 +219,121 @@ var javascriptStatedRuntime = &statedRuntime{
 			return tracerRequirement{}, errors.New("tracer metadata is not read offline")
 		}, framework)
 	},
-	runtime: func(finding RuntimeFinding) string { return finding.Node },
+	runtime:        func(finding RuntimeFinding) string { return finding.Node },
+	testStep:       javascriptTestStep,
+	shellSelection: javascriptShellSelection,
+	fileVersion: func(line string) string {
+		if version := strings.TrimPrefix(line, "v"); javascriptStatedVersion.MatchString(version) {
+			return version
+		}
+		return ""
+	},
+}
+
+// javascriptShellSelection reads a Node version manager's selection: nvm,
+// fnm or nodenv's use, install or shell, n <version>, and the scripts and
+// init commands that load a manager, which select its default.
+func javascriptShellSelection(words []string) (version, versionFile string, ok bool) {
+	if len(words) == 0 {
+		return "", "", false
+	}
+	var flags, positional []string
+	for _, word := range words[min(2, len(words)):] {
+		if strings.HasPrefix(word, "-") {
+			flags = append(flags, word)
+		} else {
+			positional = append(positional, word)
+		}
+	}
+	named := func(file string) (string, string, bool) {
+		if slices.ContainsFunc(flags, func(flag string) bool { return strings.HasPrefix(flag, "--lts") }) {
+			return "", "", true
+		}
+		switch {
+		case len(positional) == 0:
+			return "", file, true
+		case len(positional) == 1 && javascriptStatedVersion.MatchString(strings.TrimPrefix(positional[0], "v")):
+			return strings.TrimPrefix(positional[0], "v"), "", true
+		}
+		// An alias, such as default or lts/*: a version ddtest cannot tell.
+		return "", "", true
+	}
+	sub := ""
+	if len(words) > 1 {
+		sub = words[1]
+	}
+	switch path.Base(words[0]) {
+	case "nvm":
+		if sub == "use" || sub == "install" {
+			return named(".nvmrc")
+		}
+	case "fnm":
+		if sub == "use" || sub == "install" {
+			return named("")
+		}
+		if sub == "env" {
+			return "", "", true
+		}
+	case "nodenv":
+		if sub == "shell" || sub == "local" || sub == "global" {
+			return named("")
+		}
+		if sub == "init" {
+			return "", ".node-version", true
+		}
+	case "n":
+		if len(words) == 2 && !strings.HasPrefix(sub, "-") && !slices.Contains([]string{"run", "exec", "which", "rm", "ls", "lsr", "prune", "uninstall", "doctor", "help"}, sub) {
+			positional, flags = []string{sub}, nil
+			return named("")
+		}
+	case "source", ".":
+		if sub != "" && path.Base(sub) == "nvm.sh" && len(words) == 2 {
+			return "", "", true
+		}
+	}
+	return "", "", false
 }
 
 func (javascriptDiscovery) statedRuntime() *statedRuntime { return javascriptStatedRuntime }
+
+func (javascriptDiscovery) ciPluginLanguage() string { return "JAVASCRIPT" }
+
+// The Datadog Jenkins plugin prepends its dd-trace preload to NODE_OPTIONS
+// and exports DD_TRACE_PATH, the installed dd-trace package, whose
+// register.js is the ESM loader.
+// The Datadog Jenkins plugin's JavascriptConfigurator prepends its preload
+// to the NODE_OPTIONS of the first step it configures on an agent, and
+// DatadogTracerConfigurator reuses that value for every later step there.
+func (javascriptDiscovery) ciPluginComposes(key string) string {
+	if key != "NODE_OPTIONS" {
+		return ""
+	}
+	return "on each agent it sets NODE_OPTIONS for every step to its preload followed by the NODE_OPTIONS of the first step it configures there, so this value is lost, or, when its step is that first one, it reaches every later step on the agent. ddtest validates with the pipeline's NODE_OPTIONS"
+}
+
+// Node version managers: n 20, nvm use, fnm use, volta, nodenv, and
+// sourcing nvm.sh, which selects nvm's default.
+func (javascriptDiscovery) selectsShellRuntime(words []string) bool {
+	if len(words) == 0 {
+		return false
+	}
+	switch name := path.Base(words[0]); name {
+	case "n":
+		return len(words) > 1 // n alone opens an interactive menu.
+	case "nvm", "fnm":
+		return len(words) > 1 && slices.Contains([]string{"use", "install", "exec", "run", "env", "alias"}, words[1])
+	case "volta", "nodenv":
+		return true
+	case "source", ".":
+		return len(words) > 1 && path.Base(words[1]) == "nvm.sh"
+	}
+	return false
+}
+
+func (javascriptDiscovery) ciPluginExports(current map[string]string) (map[string]string, map[string]string) {
+	options := strings.TrimSpace("-r ${{ env.DD_TRACE_PACKAGE }} " + current["NODE_OPTIONS"])
+	return map[string]string{"NODE_OPTIONS": options}, map[string]string{"DD_TRACE_PATH": "${{ env.DD_TRACE_PATH }}"}
+}
 
 // javascriptTestStep reports whether step may start a test of any JavaScript
 // framework on a matrix row, as checkCIRuntimes identifies test steps: a

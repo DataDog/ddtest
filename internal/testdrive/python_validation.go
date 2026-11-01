@@ -38,7 +38,7 @@ test_ddtest_validation_probe.__test__ = True
 `
 
 func (t *Testdrive) checkPytestPreflight(ctx context.Context, output io.Writer, result *validationResult) error {
-	check := &preflightCheck{Runtime: t.environmentInfo.Version, Command: shellquote.Join(append([]string{t.command}, t.args...)...), Verdict: verdict{Status: "inconclusive", Reason: "Python tracer selection was not resolved."}}
+	check := &preflightCheck{Runtime: t.environmentInfo.Version, Executable: t.environmentInfo.Executable, Command: shellquote.Join(append([]string{t.command}, t.args...)...), Verdict: verdict{Status: "inconclusive", Reason: "Python tracer selection was not resolved."}}
 	result.Preflight = check
 	if t.environmentFailure != nil {
 		check.Verdict = verdict{Status: "incompatible", Reason: t.environmentFailure.Context}
@@ -62,14 +62,14 @@ func (t *Testdrive) checkPytestPreflight(ctx context.Context, output io.Writer, 
 		return err
 	}
 	var metadata struct {
-		Pytest, Python, Tracer, RequiresPython, Executable, Directory string
-		EditablePaths                                                 []string
+		Pytest, Python, Tracer, RequiresPython, Executable, Prefix, Directory string
+		EditablePaths                                                         []string
 	}
 	const script = `import importlib.metadata as m, json, os, pathlib, platform, site, sys
 from urllib.parse import urlsplit
 from urllib.request import url2pathname
 import pytest
-result = {"pytest": m.version("pytest"), "python": platform.python_version(), "executable": sys.executable, "directory": os.getcwd()}
+result = {"pytest": m.version("pytest"), "python": platform.python_version(), "executable": sys.executable, "prefix": sys.prefix, "directory": os.getcwd()}
 try:
     result.update(tracer=m.version("ddtrace"), requiresPython=m.metadata("ddtrace").get("Requires-Python", ""))
 except m.PackageNotFoundError:
@@ -112,6 +112,7 @@ pathlib.Path(sys.argv[1]).write_text(json.dumps(result))
 		return fmt.Errorf("inspect pytest: %w", err)
 	}
 	check.Version, check.Runtime = metadata.Pytest, metadata.Python
+	check.Executable, check.Prefix = metadata.Executable, metadata.Prefix
 	if t.configurationSourceRoot != "" {
 		source := workspace.CanonicalRoot(t.configurationSourceRoot)
 		for _, path := range metadata.EditablePaths {

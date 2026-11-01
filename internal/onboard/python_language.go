@@ -6,9 +6,13 @@
 package onboard
 
 import (
+	_ "embed"
 	"slices"
 	"strings"
 )
+
+//go:embed instructions/pytest.md
+var pytestInstructions string
 
 // pythonDiscovery onboards pytest with ddtrace.
 type pythonDiscovery struct{}
@@ -59,11 +63,9 @@ func (pythonDiscovery) variantValue(workflow ciWorkflow, job runtimeJob, step ru
 
 func (pythonDiscovery) skipsUnsupportedNode() bool { return false }
 
-// Onboarding output stays unchanged until pytest testdrive can run what the
-// discovered scope and pytest guidance would ask for.
-func (pythonDiscovery) instructions(string) string { return "" }
+func (pythonDiscovery) instructions(string) string { return pytestInstructions }
 
-func (pythonDiscovery) onboardingScope(string) (bool, bool) { return false, false }
+func (pythonDiscovery) onboardingScope(string) (bool, bool) { return true, true }
 
 func (pythonDiscovery) jobConsumer(root string, workflow ciWorkflow, job runtimeJob, _ string) (bool, bool) {
 	return pythonJobCandidate(root, workflow, job), true
@@ -111,3 +113,15 @@ func (pythonDiscovery) ciComponents(string) []ciComponent { return nil }
 
 // No CI runtime statements yet.
 func (pythonDiscovery) statedRuntime() *statedRuntime { return nil }
+
+func (pythonDiscovery) ciPluginLanguage() string { return "PYTHON" }
+
+// Python has no CI plugin setup yet.
+func (pythonDiscovery) ciPluginExports(map[string]string) (map[string]string, map[string]string) {
+	return nil, nil
+}
+
+func (pythonDiscovery) ciPluginComposes(string) string { return "" }
+
+// No shell runtime selection is modeled for this language.
+func (pythonDiscovery) selectsShellRuntime([]string) bool { return false }

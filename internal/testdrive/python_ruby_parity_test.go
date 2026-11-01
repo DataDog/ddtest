@@ -66,7 +66,7 @@ func TestPythonRubyAndCypressPreviewsDoNotPromiseUnsupportedChecks(t *testing.T)
 	}
 }
 
-func TestPythonReportsDoNotEnterAgentValidation(t *testing.T) {
+func TestPythonReportsExposeHistoricalEvidence(t *testing.T) {
 	for _, name := range []string{"pytest"} {
 		t.Run(name, func(t *testing.T) {
 			root := t.TempDir()
@@ -75,11 +75,12 @@ func TestPythonReportsDoNotEnterAgentValidation(t *testing.T) {
 			require.NoError(t, err)
 			require.NoError(t, writeValidation(validationPath(root), data))
 			var output bytes.Buffer
-			require.Error(t, RenderReport(t.Context(), &output, "json"))
+			require.NoError(t, RenderReport(t.Context(), &output, "json"))
 			var result onboard.AgentResult
 			require.NoError(t, json.Unmarshal(output.Bytes(), &result))
-			require.Equal(t, "unsupported", result.Status)
-			require.Empty(t, result.NextCommand)
+			require.Equal(t, "historical_report", result.Status)
+			require.Equal(t, "freshness_unverified", result.Code)
+			require.Empty(t, result.NextCommand, "missing command metadata must not fall back to a default test selection")
 			require.NotContains(t, output.String(), "INCOMPLETE")
 		})
 	}

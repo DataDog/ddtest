@@ -3,6 +3,7 @@ package testdrive
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -95,6 +96,26 @@ func feedbackPython(t *testing.T) string {
 		t.Skip("pytest and ddtrace required")
 	}
 	return python
+}
+
+func TestPytestPreflightReportsSelectedEnvironment(t *testing.T) {
+	python := feedbackPython(t)
+	root := t.TempDir()
+	t.Chdir(root)
+	requireWriteFile(t, "pytest.ini", "[pytest]\n")
+	output, err := exec.CommandContext(t.Context(), python, "-c", `import json, sys; print(json.dumps({"executable": sys.executable, "prefix": sys.prefix}))`).Output()
+	require.NoError(t, err)
+	var expected map[string]any
+	require.NoError(t, json.Unmarshal(output, &expected))
+	drive := &Testdrive{repositoryRoot: root, command: python, args: []string{"-m", "pytest"}, checkOnly: true}
+	var result validationResult
+	require.NoError(t, drive.checkPytestPreflight(t.Context(), io.Discard, &result))
+	data, err := json.Marshal(result.Preflight)
+	require.NoError(t, err)
+	var preflight map[string]any
+	require.NoError(t, json.Unmarshal(data, &preflight))
+	require.Equal(t, expected["executable"], preflight["executable"])
+	require.Equal(t, expected["prefix"], preflight["prefix"])
 }
 
 func TestPytestObserverKeepsDuplicateExecutions(t *testing.T) {

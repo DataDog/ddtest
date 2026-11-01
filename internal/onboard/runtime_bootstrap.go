@@ -21,6 +21,19 @@ import (
 // matrix values so only a known action reference can produce these symbols.
 const actionPreload = "\x00DD_ACTION_PRELOAD\x00"
 
+// actionImport is the setup's ESM loader: the action's DD_TRACE_ESM_IMPORT,
+// or register.js in the package DD_TRACE_PATH names, which only a setup
+// that exports it (the Datadog Jenkins plugin) sets.
+const (
+	actionImport      = "\x00DD_ACTION_IMPORT\x00"
+	actionPackagePath = "\x00DD_ACTION_PATH\x00"
+)
+
+// isActionImport reports a module that is the setup's ESM loader.
+func isActionImport(module string) bool {
+	return module == actionImport || module == actionPackagePath+"/register.js"
+}
+
 func symbolicConditionValue(value any) bool {
 	text, ok := value.(string)
 	return ok && strings.ContainsRune(text, 0)
@@ -68,7 +81,7 @@ func checkTestBootstrap(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 				}
 				module = words[i]
 			}
-			if (key == "-r" || key == "--require") && module == actionPreload || key == "--import" && module == "\x00DD_ACTION_IMPORT\x00" {
+			if (key == "-r" || key == "--require") && module == actionPreload || key == "--import" && isActionImport(module) {
 				continue
 			}
 			return "Custom ddtest worker preload requires review. Use the action's DD_TRACE_PACKAGE/DD_TRACE_ESM_IMPORT exports; local replacement does not prove this CI module resolves: " + module
@@ -96,6 +109,34 @@ func checkTestBootstrap(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 	return ""
 }
 
+// javascriptInstrumentationDisabled explains a test step whose environment
+// turns the tracer, or the framework's integration, off: DD_TRACE_ENABLED or
+// DD_TRACE_<FRAMEWORK>_ENABLED set to false.
+func javascriptInstrumentationDisabled(workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any, frameworks ...string) string {
+	env := map[string]string{}
+	for _, layer := range []map[string]string{workflow.Env, job.Env, step.Env} {
+		maps.Copy(env, layer)
+	}
+	keys := []string{"DD_TRACE_ENABLED"}
+	if len(frameworks) > 0 {
+		keys = append(keys, "DD_TRACE_"+strings.ToUpper(frameworks[0])+"_ENABLED")
+	}
+	for _, key := range keys {
+		raw, set := env[key]
+		if !set {
+			continue
+		}
+		value, err := runtimeValue(raw, row)
+		if err != nil {
+			return "JavaScript CI instrumentation setting " + key + " needs review: " + err.Error()
+		}
+		if value = strings.ToLower(strings.TrimSpace(value)); value == "false" || value == "0" {
+			return "JavaScript CI instrumentation is explicitly disabled by " + key
+		}
+	}
+	return ""
+}
+
 // MochaCoverageGap starts the finding for a Mocha command without NYC or
 // recognized Istanbul instrumentation; automatic setup can add the NYC wrapper.
 const MochaCoverageGap = "Cannot verify Istanbul/NYC coverage setup for Mocha CI command: "
@@ -109,7 +150,7 @@ func checkJestBootstrap(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 		if err == nil {
 			requireFound, importFound := false, false
 			for i, word := range words {
-				if word == "--import=\x00DD_ACTION_IMPORT\x00" || (word == "--import" && i+1 < len(words) && words[i+1] == "\x00DD_ACTION_IMPORT\x00") {
+				if value, ok := strings.CutPrefix(word, "--import="); ok && isActionImport(value) || word == "--import" && i+1 < len(words) && isActionImport(words[i+1]) {
 					importFound = true
 				}
 				if word == "--require="+actionPreload || ((word == "-r" || word == "--require") && i+1 < len(words) && words[i+1] == actionPreload) {
@@ -224,11 +265,26 @@ func (p *conditionParser) format() (any, error) {
 	return result.String(), nil
 }
 
+// setupExports reports whether a setup before step in its job exports
+// variable, such as the Datadog Jenkins plugin's DD_TRACE_PATH.
+func setupExports(job runtimeJob, step runtimeStep, variable string) bool {
+	return slices.ContainsFunc(job.Steps, func(previous runtimeStep) bool {
+		return previous.Number < step.Number && previous.Setup != nil && slices.Contains(previous.Setup.Exports, variable)
+	})
+}
+
 // Resolve expressions with action outputs present only on instrumented entries.
 func effectiveBootstrapOptions(workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any, actionRan bool) (string, error) {
-	known := map[string]string{"NODE_OPTIONS": "", "DD_TRACE_PACKAGE": actionPreload, "DD_TRACE_ESM_IMPORT": "\x00DD_ACTION_IMPORT\x00"}
+	known := map[string]string{"NODE_OPTIONS": "", "DD_TRACE_PACKAGE": actionPreload, "DD_TRACE_ESM_IMPORT": actionImport}
+	trusted := []string{"DD_TRACE_PACKAGE", "DD_TRACE_ESM_IMPORT"}
+	if setupExports(job, step, "DD_TRACE_PATH") {
+		known["DD_TRACE_PATH"] = actionPackagePath
+		trusted = append(trusted, "DD_TRACE_PATH")
+	}
 	if !actionRan {
-		known["DD_TRACE_PACKAGE"], known["DD_TRACE_ESM_IMPORT"] = "", ""
+		for _, key := range trusted {
+			known[key] = ""
+		}
 	}
 	var options string
 	for _, env := range []map[string]string{workflow.Env, job.Env, step.Env} {
@@ -243,13 +299,13 @@ func effectiveBootstrapOptions(workflow ciWorkflow, job runtimeJob, step runtime
 				continue
 			}
 			delete(known, key)
-			if key != "DD_TRACE_PACKAGE" && key != "DD_TRACE_ESM_IMPORT" && !strings.Contains(value, "${{") && !strings.ContainsRune(value, 0) {
+			if !slices.Contains(trusted, key) && !strings.Contains(value, "${{") && !strings.ContainsRune(value, 0) {
 				known[key] = value
 			}
 		}
 	}
 	for key, value := range conditionEnvironment(workflow, job, step, row) {
-		if key != "NODE_OPTIONS" && key != "DD_TRACE_PACKAGE" && key != "DD_TRACE_ESM_IMPORT" {
+		if key != "NODE_OPTIONS" && !slices.Contains(trusted, key) {
 			known[key] = value
 		}
 	}

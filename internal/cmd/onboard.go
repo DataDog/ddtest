@@ -88,9 +88,10 @@ func newOnboardCommand(run func(io.Writer) error) *cobra.Command {
 				if err != nil {
 					return fail("validation_preparation", err)
 				}
-				if detected.Name() != "javascript" && testdrive.Coordinated(detected.Name()) {
-					// ddtest writes no CI setup for this language; the agent applies
-					// it from the handoff, which then resumes coordinated validation.
+				if detected.Name() != "javascript" && testdrive.Coordinated(detected.Name()) || detected.Name() == "javascript" && !onboard.CIProviderEditsSetup() {
+					// ddtest writes no CI setup for this language, or on this
+					// provider; the agent applies it from the handoff, which then
+					// resumes coordinated validation.
 					return start()
 				}
 				if detected.Name() != "javascript" {

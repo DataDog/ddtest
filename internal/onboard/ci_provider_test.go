@@ -81,6 +81,7 @@ func (p testCI) findTestWorkflows(root, language, framework string) ([]string, [
 }
 
 // testCI uses the shared workflow syntax and has no setup mechanism.
+func (testCI) editsSetup() bool                        { return true }
 func (testCI) sharedSyntax() bool                      { return true }
 func (testCI) setupStep(runtimeStep) (ciSetup, bool)   { return ciSetup{}, false }
 func (testCI) setupName() string                       { return "test setup" }
@@ -128,7 +129,7 @@ func TestGitHubActionsConfigurationFiles(t *testing.T) {
 		github     bool
 	}{
 		{"no CI", "", false},
-		{"an unregistered provider", "Jenkinsfile", false},
+		{"an unregistered provider", ".travis.yml", false},
 		{"GitHub metadata only", ".github/CODEOWNERS", false},
 		{"workflow documentation", ".github/workflows/README.md", false},
 		{"yml workflow", ".github/workflows/test.yml", true},
@@ -177,7 +178,7 @@ func TestSelectCIProvider(t *testing.T) {
 		{name: "unresolved steps are candidates", github: jestWorkflow, testci: "jobs:\n  test:\n    steps:\n      - uses: ./templates/test.yml\n", choice: []string{"github", "testci"}},
 		{name: "explicit provider skips the choice", github: jestWorkflow, testci: jestWorkflow, requested: "testci", want: "testci"},
 		{name: "explicit provider is never parsed", github: "jobs: [", requested: "github", want: "github"},
-		{name: "unknown provider", github: jestWorkflow, requested: "jenkins", err: `unsupported --ci-provider "jenkins"; supported CI providers: github, gitlab, circleci, buildkite, testci`},
+		{name: "unknown provider", github: jestWorkflow, requested: "travis", err: `unsupported --ci-provider "travis"; supported CI providers: github, gitlab, circleci, buildkite, jenkins, testci`},
 		{name: "a disabled job is not a test path", github: jestWorkflow, testci: "jobs:\n  test:\n    if: ${{ false }}\n    steps:\n      - run: npm test\n", want: "github"},
 		{name: "a disabled step is not a test path", github: jestWorkflow, testci: "jobs:\n  test:\n    steps:\n      - if: ${{ false }}\n        run: npm test\n", want: "github"},
 		{name: "an unresolved condition may still run", github: jestWorkflow, testci: "jobs:\n  test:\n    if: ${{ github.event_name == 'push' }}\n    steps:\n      - run: npm test\n", choice: []string{"github", "testci"}},
@@ -263,7 +264,7 @@ func TestSelectedProviderDrivesDiscovery(t *testing.T) {
 
 func TestGitHubActionsIsTheDefaultProvider(t *testing.T) {
 	UseCIProvider("")
-	require.Equal(t, []string{"github", "gitlab", "circleci", "buildkite"}, CIProviderNames())
+	require.Equal(t, []string{"github", "gitlab", "circleci", "buildkite", "jenkins"}, CIProviderNames())
 	require.Equal(t, "GitHub Actions", CIProviderDisplayName())
 	require.Equal(t, map[string]string{"CI": "true", "GITHUB_ACTIONS": "true"}, WithCIProviderDefaults(nil))
 }
@@ -333,8 +334,9 @@ func TestEveryLanguageSupportsGitHubActions(t *testing.T) {
 func TestUnparseableOtherCIFilesNeverAbortOnboarding(t *testing.T) {
 	registerTestCI(t)
 	for _, tc := range []struct{ name, path, contents string }{
-		// A Groovy slashy string that a Jenkinsfile reader could not tokenize.
-		{"Jenkinsfile", "Jenkinsfile", "def re = ~/it's/\npipeline { stages { stage('test') { steps { sh 'npx jest' } } } }\n"},
+		// Jenkins reads its Jenkinsfiles; one it cannot tokenize (an
+		// unterminated string) is not a candidate.
+		{"unparseable Jenkinsfile", "Jenkinsfile", "pipeline { stages { stage('test') { steps { sh 'npx jest } } } }\n"},
 		// Buildkite reads its pipelines; one it cannot parse is not a candidate.
 		{"unparseable Buildkite pipeline", ".buildkite/pipeline.yml", "steps: [npx jest\n"},
 		{"registered unselected provider", testCIFile, "jobs: [npx jest\n"},
@@ -392,9 +394,9 @@ func TestFollowUpCommandsKeepTheSelectedProvider(t *testing.T) {
 }
 
 func TestUnknownActiveProviderFails(t *testing.T) {
-	useCIProvider(t, "jenkins")
+	useCIProvider(t, "travis")
 	_, err := readWorkflows(t.TempDir())
-	require.EqualError(t, err, `unsupported --ci-provider "jenkins"; supported CI providers: github, gitlab, circleci, buildkite`)
+	require.EqualError(t, err, `unsupported --ci-provider "travis"; supported CI providers: github, gitlab, circleci, buildkite, jenkins`)
 }
 
 // Provider files parse CI configuration into neutral facts; language decisions

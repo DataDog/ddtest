@@ -51,6 +51,7 @@ type jestPreflight struct {
 	Command             string                       `json:"command"`
 	Node                string                       `json:"node"`
 	Executable          string                       `json:"executable,omitempty"`
+	Prefix              string                       `json:"prefix,omitempty"`
 	Arguments           []string                     `json:"arguments,omitempty"`
 	Version             string                       `json:"version"`
 	Projects            []jestProject                `json:"projects"`

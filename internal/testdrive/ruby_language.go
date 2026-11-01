@@ -22,6 +22,10 @@ import (
 // rubyLanguage observes RSpec and Minitest suites with datadog-ci.
 type rubyLanguage struct{}
 
+func (rubyLanguage) standaloneReport(string, *validationResult) (onboard.AgentResult, bool) {
+	return onboard.AgentResult{}, false
+}
+
 func (rubyLanguage) name() string         { return "ruby" }
 func (rubyLanguage) frameworks() []string { return []string{"rspec", "minitest"} }
 func (rubyLanguage) displayNames() map[string]string {

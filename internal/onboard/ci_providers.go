@@ -8,4 +8,4 @@ package onboard
 // ciProviders registers every CI provider onboarding reads, in selection
 // order; the first is the default for a repository without CI configuration.
 // Everything else goes through ciProvider (see ci_provider.go).
-var ciProviders = []ciProvider{gitHubActions{}, gitLabCI{}, circleCI{}, buildkite{}}
+var ciProviders = []ciProvider{gitHubActions{}, gitLabCI{}, circleCI{}, buildkite{}, jenkins{}}

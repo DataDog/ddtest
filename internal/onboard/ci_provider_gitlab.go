@@ -41,6 +41,8 @@ func (gitLabCI) environment() map[string]string {
 	return map[string]string{"CI": "true", "GITLAB_CI": "true"}
 }
 
+func (gitLabCI) editsSetup() bool { return true }
+
 func (gitLabCI) sharedSyntax() bool { return false }
 
 func (gitLabCI) configurationFiles(root string) ([]string, error) {

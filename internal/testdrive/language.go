@@ -89,6 +89,9 @@ type validationLanguage interface {
 	// coordinated reports whether the agent coordinator and automatic CI
 	// setup support the language.
 	coordinated() bool
+	// standaloneReport exposes saved evidence without coordinator certification.
+	// handled is false when the normal coordinated report applies.
+	standaloneReport(root string, validation *validationResult) (result onboard.AgentResult, handled bool)
 	// defaultsToCITracer reports whether a tracer every CI job pins becomes
 	// the default release.
 	defaultsToCITracer() bool
@@ -136,6 +139,10 @@ type validationLanguage interface {
 // sharedWorkflowHooks is the coordinated-validation behavior every language
 // gets unless it binds its own runtime, inputs or packaging checks.
 type sharedWorkflowHooks struct{}
+
+func (sharedWorkflowHooks) standaloneReport(string, *validationResult) (onboard.AgentResult, bool) {
+	return onboard.AgentResult{}, false
+}
 
 func (sharedWorkflowHooks) workflowRuntime(*Testdrive, onboard.ValidationScope) (string, error) {
 	return "", nil

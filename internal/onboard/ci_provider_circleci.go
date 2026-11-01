@@ -46,6 +46,8 @@ func (circleCI) environment() map[string]string {
 	return map[string]string{"CI": "true", "CIRCLECI": "true"}
 }
 
+func (circleCI) editsSetup() bool { return true }
+
 func (circleCI) sharedSyntax() bool { return false }
 
 func (circleCI) configurationFiles(root string) ([]string, error) {

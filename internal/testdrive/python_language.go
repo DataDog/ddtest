@@ -171,7 +171,22 @@ func (pythonLanguage) prepareConfiguration(t *Testdrive, item *configurationResu
 	}
 	return t.rebasePytestConfiguration(directory)
 }
-func (pythonLanguage) coordinated() bool        { return false }
+func (pythonLanguage) coordinated() bool { return false }
+
+func (pythonLanguage) standaloneReport(root string, validation *validationResult) (onboard.AgentResult, bool) {
+	if (validation.CheckOnly || !hasValidationExecution(*validation)) && validation.Retained != nil && validation.Retained.Result != nil {
+		validation = validation.Retained.Result
+	}
+	result := onboard.AgentResult{Status: "historical_report", Phase: "report", Code: "freshness_unverified",
+		Reason:     "Saved pytest evidence is historical. Source, dependencies and the Python runtime have not been revalidated; rerun the original testdrive invocation with the same command, environment and validation options before claiming current success.",
+		NextAction: "report_result", JSONReport: validationPath(root),
+		FinalResponse: fmt.Sprintf("Historical pytest evidence: saved execution %s; %d recorded runs. No tests or configuration checks were rerun.", executionStatus(validation), len(validation.Runs))}
+	if info, err := os.Stat(htmlReportPath(root)); validation.HTMLReportCurrent && err == nil && info.Mode().IsRegular() {
+		result.HTMLReport = htmlReportPath(root)
+	}
+	return result, true
+}
+
 func (pythonLanguage) defaultsToCITracer() bool { return false }
 func (pythonLanguage) ciRuntimes(ctx context.Context, root, framework string) onboard.RuntimeCheck {
 	return onboard.CheckCIRuntimes(ctx, root, framework)
@@ -190,7 +205,7 @@ func (pythonLanguage) mergeCIRuntime(_, next *onboard.RuntimeCheck) *onboard.Run
 func (pythonLanguage) labelsTracerWithoutSelection() bool { return true }
 
 func init() {
-	frameworkFeaturePolicies["pytest"] = frameworkPolicy{SourceCoverage: true, ProbeBodyCounts: true, Paired: true, CheckOnly: true, ProbeRecovery: true, Preflight: true, Configurations: true, ConfigurationFiles: []string{"pytest.ini", ".pytest.ini", "pyproject.toml", "tox.ini", "setup.cfg"}, ConfigurationOptions: []string{"-c", "--config-file"}, Features: []featurePolicy{
+	frameworkFeaturePolicies["pytest"] = frameworkPolicy{DefaultFocusedCommand: true, PreserveCIMatrix: true, SourceCoverage: true, ProbeBodyCounts: true, Paired: true, CheckOnly: true, ProbeRecovery: true, Preflight: true, Configurations: true, ConfigurationFiles: []string{"pytest.ini", ".pytest.ini", "pyproject.toml", "tox.ini", "setup.cfg"}, ConfigurationOptions: []string{"-c", "--config-file"}, Features: []featurePolicy{
 		{Name: "auto-retries", Status: "required"}, {Name: "early-flake-detection", Status: "required"}, {Name: "skipping", Status: "required"}, {Name: "quarantine", Status: "required"}, {Name: "disabled", Status: "required"}, {Name: "attempt-to-fix", Status: "required"},
 	}}
 }

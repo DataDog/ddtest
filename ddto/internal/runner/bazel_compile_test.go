@@ -52,15 +52,25 @@ func TestBazelEditsDispatch(t *testing.T) {
 		t.Error("-race edits Mini's packages, and only them")
 	}
 	// The runtime follows the SDK's configuration, which must be readable.
-	for _, config := range []string{"", `{"contract":1`, `{"contract":1,"panicHook":false}`, `{"contract":1,"panicHook":true}`} {
-		if config != "" {
-			if err := os.WriteFile(filepath.Join(dir, bazelCompilerConfig), []byte(config), 0600); err != nil {
+	for _, c := range []struct {
+		config      string
+		valid, edit bool
+	}{
+		{"", false, false},
+		{`{"contract":1`, false, false},
+		{`{"contract":2,"panicHook":true}`, false, true},
+		{`{"panicHook":true}`, false, true},
+		{`{"contract":1,"panicHook":false}`, true, false},
+		{`{"contract":1,"panicHook":true}`, true, true},
+	} {
+		if c.config != "" {
+			if err := os.WriteFile(filepath.Join(dir, bazelCompilerConfig), []byte(c.config), 0600); err != nil {
 				t.Fatal(err)
 			}
 		}
 		runtime, err := bazelEdits("runtime", false, compiler)
-		if (err == nil) != strings.HasSuffix(config, "}") || runtime != strings.Contains(config, `"panicHook":true`) {
-			t.Errorf("%q: edits the runtime %v, error %v", config, runtime, err)
+		if (err == nil) != c.valid || err == nil && runtime != c.edit {
+			t.Errorf("%q: edits the runtime %v, error %v", c.config, runtime, err)
 		}
 	}
 }

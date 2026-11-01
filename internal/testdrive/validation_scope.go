@@ -2,6 +2,23 @@ package testdrive
 
 import "fmt"
 
+// A selected local command validates its own execution. CI inventory remains
+// advisory; --all, check-only and the onboarding coordinator keep CI gates.
+func (result validationResult) focusedLocalCommand() bool {
+	return result.FocusedCommand && !result.CheckOnly && result.Workflow == nil
+}
+
+func (result validationResult) runtimeSubstitutionBlocking(sub runtimeSubstitution) bool {
+	return !sub.Accepted && (!result.focusedLocalCommand() || !sub.CIOnly)
+}
+
+func (result validationResult) ciPreservationBlocking() bool {
+	// Unknown CI inventory is advisory for local execution. Keep the saved
+	// baseline so actual matrix removal still blocks when CI can be compared.
+	return result.CIPreservation != nil && result.CIPreservation.Status != "passed" &&
+		(!result.focusedLocalCommand() || result.CIPreservation.Status != "inconclusive")
+}
+
 func hasValidationPair(result validationResult) bool {
 	if result.CheckOnly {
 		return false
@@ -51,7 +68,7 @@ func hasValidationExecution(result validationResult) bool {
 // A focused pass certifies only the requested command. Repository completeness
 // and every unexecuted configuration retain their independent verdicts.
 func selectedValidation(result validationResult) verdict {
-	check := verdict{Status: "INCOMPLETE", Reason: "The selected command needs a current paired comparison, every supported feature, static CI checks and cleanup. Other configurations remain unvalidated."}
+	check := verdict{Status: "INCOMPLETE", Reason: "The selected command needs a current paired comparison, every supported feature, applicable configuration checks and cleanup. Other configurations remain unvalidated."}
 	if result.CheckOnly {
 		check.Status = "NOT EXERCISED"
 		return check
@@ -63,7 +80,7 @@ func selectedValidation(result validationResult) verdict {
 		return check
 	}
 	check.Status = "PASSED"
-	check.Reason = "The selected command's paired comparison, all supported features, static CI checks and cleanup passed. Other configurations and actual CI execution remain unvalidated."
+	check.Reason = "The selected command's paired comparison, all supported features, applicable configuration checks and cleanup passed. Other configurations and actual CI execution remain unvalidated."
 	for _, policy := range featurePolicies(result.Framework) {
 		if policy.Status != "required" {
 			check.Reason += " Policy exception: " + policy.Name + " (" + policy.Status + ")."
@@ -137,7 +154,7 @@ func summarizeConfigurationCoverage(result validationResult) (*configurationCove
 		if executed.Passed == executed.Configurations {
 			executed.Status = "PASSED"
 		}
-		executed.Reason = fmt.Sprintf("%d/%d executed configurations passed paired comparison, supported features, static checks, cleanup and report publication. Unvalidated configurations and actual CI execution remain separate.", executed.Passed, executed.Configurations)
+		executed.Reason = fmt.Sprintf("%d/%d executed configurations passed paired comparison, supported features, applicable configuration checks, cleanup and report publication. Unvalidated configurations and actual CI execution remain separate.", executed.Passed, executed.Configurations)
 	}
 	return coverage, executed
 }

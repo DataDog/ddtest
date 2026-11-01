@@ -131,3 +131,39 @@ func TestBootstrapFormatEscapesAndBounds(t *testing.T) {
 	_, err := bootstrapOptions("${{ matrix.large }}"+strings.Repeat("x", 2000), map[string]any{"large": strings.Repeat("x", 3000)}, nil)
 	require.Error(t, err)
 }
+
+// Only a setup that exports DD_TRACE_PATH (the Datadog Jenkins plugin) makes
+// it a trusted loader path: the GitHub action sets no such variable, so
+// GitHub expands it to nothing.
+func TestBootstrapTrustsOnlyTheSetupsExports(t *testing.T) {
+	check := func(options string) RuntimeFinding {
+		root := newJestRepository(t, `jobs:
+  test:
+    steps:
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+      - uses: datadog/test-visibility-github-action@v3
+        with: {languages: js, js-tracer-version: '5.128.0'}
+      - run: npm test
+        env:
+          NODE_OPTIONS: `+options+`
+`)
+		writeFile(t, root, "package.json", `{"scripts": {"test": "vitest run"}, "devDependencies": {"vitest": "3.2.4"}}`)
+		result := checkCIRuntimes(t.Context(), root, nil, func(context.Context, string, string) (tracerRequirement, error) {
+			return tracerRequirement{Version: "5.128.0", Node: ">=18"}, nil
+		}, "vitest")
+		require.Len(t, result.Jobs, 1)
+		return result.Jobs[0]
+	}
+	require.Equal(t, StatusCompatible, check("-r ${{ env.DD_TRACE_PACKAGE }} --import ${{ env.DD_TRACE_ESM_IMPORT }}").Status)
+	finding := check("-r ${{ env.DD_TRACE_PACKAGE }} --import ${{ env.DD_TRACE_PATH }}/register.js")
+	require.Equal(t, StatusInconclusive, finding.Status)
+	require.Equal(t, CodeUnverifiedInitialization, finding.Code)
+
+	options := "-r ${{ env.DD_TRACE_PACKAGE }} --import ${{ env.DD_TRACE_PATH }}/register.js"
+	test := runtimeStep{Number: 2, Env: map[string]string{"NODE_OPTIONS": options}}
+	plugin := runtimeJob{Steps: []runtimeStep{{Number: 1, Setup: &ciSetup{Exports: []string{"DD_TRACE_PATH"}}}, test}}
+	require.Empty(t, checkJestBootstrap(ciWorkflow{}, plugin, test, nil, true), "the plugin exports DD_TRACE_PATH")
+	other := runtimeJob{Steps: []runtimeStep{{Number: 1, Setup: &ciSetup{}}, test}}
+	require.Equal(t, unverifiedPreloadReason, checkJestBootstrap(ciWorkflow{}, other, test, nil, true))
+}

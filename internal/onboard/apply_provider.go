@@ -19,6 +19,9 @@ import (
 // is already complete keep it; a different one is left for review.
 func planProviderJavaScriptSetup(root string, provider ciProvider, workflows []ciWorkflow, framework, version, site, nodeRequirement string) (*SetupPlan, error) {
 	language := javascriptDiscovery{}
+	if !provider.editsSetup() {
+		return nil, &SetupGap{provider.displayName(), "onboard --apply does not edit the " + provider.displayName() + " configuration. Add the " + provider.setupName() + " from onboard --agent instructions, then validate with testdrive --all."}
+	}
 	if !language.automaticProviderSetup(framework) {
 		return nil, &SetupGap{"CI initialization", framework + " initializes the tracer through package scripts, which onboard --apply does not edit on " + provider.displayName() + ". Add the setup from onboard --instructions manually, then validate with testdrive --all."}
 	}
@@ -183,6 +186,91 @@ func providerSetupConfigured(root string, provider ciProvider, language, framewo
 		}
 	}
 	return instrumented
+}
+
+// existingSetupProblems lists, on a provider without the shared workflow
+// syntax, why the setup that already precedes framework's tests in a job is
+// not complete, as the provider read it (see ciProvider.setupProblem, with
+// the selected site), one line per job; nil when none is incomplete.
+func existingSetupProblems(root, language, framework, site string) []string {
+	provider, err := currentCIProvider(root)
+	if err != nil || provider.sharedSyntax() {
+		return nil
+	}
+	workflows, err := readProviderWorkflows(provider, root)
+	if err != nil {
+		return nil
+	}
+	token := setupActionLanguage(language)
+	var problems []string
+	jobs := map[string][]string{}
+	for _, workflow := range workflows {
+		for _, name := range slices.Sorted(maps.Keys(workflow.Jobs)) {
+			job := workflow.Jobs[name]
+			if disabledCondition(job.If) {
+				continue
+			}
+			var setup *ciSetup
+			for _, step := range job.Steps {
+				if current, ok := datadogSetup(step); ok {
+					if selected, err := setupSelectsLanguage(current, nil, token); err == nil && selected {
+						setup = &current
+					}
+				}
+				resolution := resolveTestStep(root, workflow, job, step, language, framework)
+				if resolution.Review || !resolution.Matched && (resolution.Reason == "" || !stepMayStartTests(root, workflow, job, step, framework)) {
+					continue
+				}
+				if setup == nil {
+					break
+				}
+				if problem := provider.setupProblem(*setup, "", func(string) bool { return true }, "", site); problem != "" {
+					if _, seen := jobs[problem]; !seen {
+						problems = append(problems, problem)
+					}
+					jobs[problem] = append(jobs[problem], workflow.Path+" / "+name)
+				}
+				break
+			}
+		}
+	}
+	for i, problem := range problems {
+		problems[i] = strings.Join(jobs[problem], ", ") + ": " + problem
+	}
+	return problems
+}
+
+// setupUnsupportedNote names the CI jobs running the framework's tests that
+// the provider's setup mechanism cannot instrument (see
+// runtimeJob.SetupUnsupported), so the person learns it before the setup is
+// written; empty when there are none.
+func setupUnsupportedNote(root, language, framework string) string {
+	provider, err := currentCIProvider(root)
+	if err != nil {
+		return ""
+	}
+	workflows, err := readProviderWorkflows(provider, root)
+	if err != nil {
+		return ""
+	}
+	var problems []string
+	for _, workflow := range workflows {
+		for _, name := range slices.Sorted(maps.Keys(workflow.Jobs)) {
+			job := workflow.Jobs[name]
+			if job.SetupUnsupported == "" || disabledCondition(job.If) {
+				continue
+			}
+			if slices.ContainsFunc(job.Steps, func(step runtimeStep) bool {
+				return resolveTestStep(root, workflow, job, step, language, framework).Matched
+			}) {
+				problems = append(problems, workflow.Path+" / "+name+": "+job.SetupUnsupported+".")
+			}
+		}
+	}
+	if len(problems) == 0 {
+		return ""
+	}
+	return "The " + provider.setupName() + " cannot instrument these CI jobs, so ddtest reports them as unsupported and does not validate them; tell the user, and do not move their tests to other agents without the user's approval:\n" + strings.Join(problems, "\n")
 }
 
 // setupImageNote names the CI jobs running the framework's tests whose

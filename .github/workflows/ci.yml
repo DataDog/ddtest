@@ -291,7 +291,7 @@ jobs:
           DDTEST_PYTHON_PLATFORM_INTEGRATION=1 \
             go test -v ./internal/compatibility -run '^TestPythonPlatformIntegration$'
           DDTEST_PYTEST_PYTHON="$(command -v python)" \
-            go test -v ./internal/testdrive -run '^TestPytest(RealValidation|CoverageExecutesOnlyInsideCopy|LoggingExecutesOnlyInsideCopy|RejectsEditableImportsFromOriginalCheckout|CoverageDataExecutesOnlyInsideCopy|IgnoredConfigurationUsesRoot|ObserverKeepsConcurrentDuplicateExecutions)$'
+            go test -v ./internal/testdrive -run '^TestPytest(RealValidation|CoverageExecutesOnlyInsideCopy|LoggingExecutesOnlyInsideCopy|RejectsEditableImportsFromOriginalCheckout|CoverageDataExecutesOnlyInsideCopy|IgnoredConfigurationUsesRoot|ObserverKeepsConcurrentDuplicateExecutions|PreflightReportsSelectedEnvironment)$'
 
   javascript-platform-compatibility:
     runs-on: ubuntu-latest

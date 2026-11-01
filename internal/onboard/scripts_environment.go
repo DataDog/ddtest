@@ -117,11 +117,14 @@ func joinDiagnostic(a, b string) string {
 // Tracer preloads are checked independently. Keep ordinary literal runtime
 // options; unknown expansions or custom module hooks require review.
 func ordinaryNodeOptions(value string, modules ...string) (string, error) {
-	for _, reference := range []string{"DD_TRACE_PACKAGE", "DD_TRACE_ESM_IMPORT"} {
+	for _, reference := range []string{"DD_TRACE_PACKAGE", "DD_TRACE_ESM_IMPORT", "DD_TRACE_PATH"} {
 		pattern := regexp.MustCompile(`\$\{\{\s*env\.` + reference + `\s*\}\}`)
 		module := "dd-trace/ci/init"
-		if reference == "DD_TRACE_ESM_IMPORT" {
+		switch reference {
+		case "DD_TRACE_ESM_IMPORT":
 			module = "dd-trace/register.js"
+		case "DD_TRACE_PATH":
+			module = "dd-trace"
 		}
 		value = pattern.ReplaceAllString(value, module)
 	}
@@ -202,7 +205,7 @@ func resolveNodeOptions(value string, row map[string]any, env map[string]string,
 	if known == nil {
 		known = map[string]string{}
 	}
-	for key, module := range map[string]string{"DD_TRACE_PACKAGE": "dd-trace/ci/init", "DD_TRACE_ESM_IMPORT": "dd-trace/register.js"} {
+	for key, module := range map[string]string{"DD_TRACE_PACKAGE": "dd-trace/ci/init", "DD_TRACE_ESM_IMPORT": "dd-trace/register.js", "DD_TRACE_PATH": "dd-trace"} {
 		if _, exists := known[key]; !exists {
 			known[key] = module
 		}

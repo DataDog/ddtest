@@ -31,9 +31,9 @@ func (e *localRuntimeError) Capability() string {
 // local runtime that differs from the one CI uses.
 const AcceptSubstituteRuntimeFlag = "--accept-substitute-runtime"
 
-// runtimeSubstitution records validation that ran on a compatible local Node
-// in place of the major a CI path uses. The evidence is real, but it is not the
-// CI runtime, so completion needs explicit acceptance.
+// runtimeSubstitution records validation on a compatible local runtime in
+// place of the version a CI or framework path uses. Completion of that path
+// needs explicit acceptance; CI-only differences are advisory for local commands.
 type runtimeSubstitution struct {
 	Source string `json:"source"`
 	// CI and Local are runtime versions; the names predate other runtimes.
@@ -41,6 +41,9 @@ type runtimeSubstitution struct {
 	Local    string `json:"local_node"`
 	Reason   string `json:"reason"`
 	Accepted bool   `json:"accepted"`
+	// CIOnly compares against CI's runtime rather than a runtime required by
+	// the selected framework's execution path.
+	CIOnly bool `json:"ci_only,omitempty"`
 	// Runtime names the runtime, and Remedy how to provide CI's version instead
 	// of the substitute; empty means Node on PATH.
 	Runtime string `json:"runtime,omitempty"`
