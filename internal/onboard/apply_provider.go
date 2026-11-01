@@ -348,6 +348,17 @@ func planProviderSetup(root, framework, site, release string) (*SetupPlan, error
 	return &SetupPlan{root: root, edits: edits, impact: impact}, nil
 }
 
+// ciShellOrigin is a step origin that names the shell the step runs in,
+// such as a Jenkinsfile sh step's.
+type ciShellOrigin interface{ shell() int }
+
+// sameShell reports two steps a provider read from one shell.
+func sameShell(a, b runtimeStep) bool {
+	first, ok := a.origin.(ciShellOrigin)
+	second, same := b.origin.(ciShellOrigin)
+	return ok && same && first.shell() == second.shell()
+}
+
 // providerJobSetupProblem explains why a job of workflow does not run a
 // complete setup for language (see ciProvider.setupProblem, with site)
 // before every command that runs framework's tests; empty when it does, or
@@ -359,10 +370,11 @@ func providerJobSetupProblem(root string, provider ciProvider, workflow ciWorkfl
 	}
 	token := setupActionLanguage(language)
 	var setup, other *ciSetup
+	var setupStep runtimeStep
 	for _, step := range job.Steps {
 		if current, ok := datadogSetup(step); ok {
 			if selected, err := setupSelectsLanguage(current, nil, token); err == nil && selected {
-				setup = &current
+				setup, setupStep = &current, step
 			} else if current.Problem != "" {
 				other = &current
 			}
@@ -378,6 +390,9 @@ func providerJobSetupProblem(root string, provider ciProvider, workflow ciWorkfl
 			return other.Problem
 		case setup == nil:
 			return "no " + setupProviderFor(provider, job).setupName() + " for the language runs before its tests."
+		case setup.shellLocal && !sameShell(setupStep, step):
+			// Its exports reach only the shell it runs in.
+			return "the " + setupProviderFor(provider, job).setupName() + " at " + setupStep.Source + " runs in another shell than the test command at " + step.Source + ", and its exports reach only the later commands of its own shell; each shell that runs the tests needs it before its test command."
 		}
 		if problem := provider.setupProblem(*setup, "", func(string) bool { return true }, "", site); problem != "" {
 			return problem

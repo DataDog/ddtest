@@ -104,6 +104,11 @@ type ciSetup struct {
 	// before are shell statements a setup snippet runs before itself,
 	// whether or not it installs anything (see snippetSetupAt).
 	before []string
+	// shellLocal reports a setup whose exports reach only the later
+	// commands of the shell it runs in, such as a setup snippet in a
+	// Jenkinsfile sh step: a step of its job in another shell does not have
+	// them (see ciShellOrigin).
+	shellLocal bool
 	// Inputs are the installer inputs keyed by the setup action's input
 	// names: languages, api_key, site and <language>-tracer-version. Values
 	// are verbatim; unresolved references stay as written.

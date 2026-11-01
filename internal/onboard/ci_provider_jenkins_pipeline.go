@@ -2177,6 +2177,9 @@ type jenkinsShellStep struct {
 	statement int
 }
 
+// Each sh step runs a shell of its own.
+func (s jenkinsShellStep) shell() int { return s.call }
+
 // jenkinsShellDialect is how sh scripts read: WORKSPACE is the checkout.
 var jenkinsShellDialect = ciShellDialect{label: "Jenkins sh script", projectVariable: "WORKSPACE"}
 
@@ -2304,6 +2307,8 @@ func (r *jenkinsReader) shell(call *groovyCall, scope jenkinsScope, slot *jenkin
 				setup.Caveats = append(setup.Caveats, jenkinsPluginOutsideCaveat)
 			}
 			step.ResolutionError = stepReason
+			// Its exports reach only the later statements of this sh script.
+			setup.shellLocal = true
 			step.Setup = &setup
 			r.add(slot, call, step)
 			r.snippets = append(r.snippets, &setup)

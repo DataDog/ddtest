@@ -86,8 +86,8 @@ type jenkinsShTarget struct {
 	after           []string
 }
 
-// jenkinsSnippetTarget is the sh step that runs a container job's first
-// test command, where the setup snippet goes: lines before the statement at
+// jenkinsSnippetTarget is an sh step that runs a container job's tests,
+// where the setup snippet goes before its first test command: lines before the statement at
 // statement (an offset in its script), and wrap reports a step DD_API_KEY
 // does not reach yet, which withCredentials then encloses.
 type jenkinsSnippetTarget struct {
@@ -114,21 +114,33 @@ func (j jenkins) planSetupEdits(root string, workflows []ciWorkflow, targets []c
 		return ok && !jenkinsContainerJob(job)
 	})
 	for _, target := range targets {
-		job, step, ok := gitLabTarget(workflows, target)
+		job, _, ok := gitLabTarget(workflows, target)
 		workflow := jenkinsWorkflowAt(workflows, target.Workflow)
 		if !ok {
 			return nil, nil, &SetupGap{target.Workflow + " / " + target.Job, "The test step is not a Jenkinsfile sh step ddtest can edit."}
 		}
 		if jenkinsContainerJob(job) {
 			jobs[target.Workflow] = append(jobs[target.Workflow], target.Job)
-			if jenkinsSnippetBefore(job, target.Step) {
-				continue // Its setup is checked with the others below.
+			// The snippet's exports reach only its own sh step's shell, so
+			// every sh step that runs the tests gets one, before its first
+			// test statement.
+			planned := map[int]bool{}
+			for i := target.Step; i < len(job.Steps); i++ {
+				current := job.Steps[i]
+				if i > target.Step && !resolveTestStep(root, workflow, job, current, language, request.Framework).Matched {
+					continue
+				}
+				origin, located := current.origin.(jenkinsShellStep)
+				if located && planned[origin.call] || jenkinsSnippetBefore(job, i) {
+					continue // That shell's setup is checked with the others below.
+				}
+				planned[origin.call] = true
+				snippet, err := jenkinsContainerTarget(root, workflows, target, job, current, request, plugin)
+				if err != nil {
+					return nil, nil, err
+				}
+				snippets[target.Workflow] = append(snippets[target.Workflow], snippet)
 			}
-			snippet, err := jenkinsContainerTarget(root, workflows, target, job, step, request, plugin)
-			if err != nil {
-				return nil, nil, err
-			}
-			snippets[target.Workflow] = append(snippets[target.Workflow], snippet)
 			continue
 		}
 		after := request.After
@@ -207,7 +219,7 @@ func jenkinsStepAfter(after []string, workflow ciWorkflow, job runtimeJob, step 
 }
 
 // jenkinsContainerTarget plans the setup snippet for a container job's
-// first test step: the snippet for request's language in the Jenkins form,
+// test step, the first of its sh step: the snippet for request's language in the Jenkins form,
 // installing request's tracer release (or the one the project's
 // dependencies pin), with the language's commands that follow the setup.
 // plugin reports host stages the plugin sets up beside it, whose own
@@ -254,12 +266,13 @@ func jenkinsContainerTarget(root string, workflows []ciWorkflow, target ciSetupT
 	return jenkinsSnippetTarget{job: target.Job, call: origin.call, statement: origin.statement, lines: strings.Split(jenkinsSnippet(snippet, container.reset).shell(), "\n"), wrap: key == ""}, nil
 }
 
-// jenkinsSnippetBefore reports a setup snippet among a container job's
-// steps before step: the job is set up already, completely or not, which
-// the edit then checks without adding a second one.
+// jenkinsSnippetBefore reports a setup snippet before step among a
+// container job's steps in step's own shell (its sh step): that shell is set
+// up already, completely or not, which the edit then checks without adding a
+// second one. A snippet in another sh step does not reach it.
 func jenkinsSnippetBefore(job runtimeJob, step int) bool {
 	return slices.ContainsFunc(job.Steps[:step], func(current runtimeStep) bool {
-		return current.Setup != nil && jenkinsSnippetSetup(*current.Setup)
+		return current.Setup != nil && jenkinsSnippetSetup(*current.Setup) && sameShell(current, job.Steps[step])
 	})
 }
 
