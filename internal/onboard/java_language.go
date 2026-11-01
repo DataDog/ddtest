@@ -193,6 +193,10 @@ func (javaDiscovery) runtimeVariable(name string) bool {
 	return name == "JAVA_HOME" || name == "JAVA_TOOL_OPTIONS"
 }
 
+func (javaDiscovery) toolVariable(name string) bool {
+	return slices.Contains([]string{"MAVEN_ARGS", "MAVEN_OPTS", "MAVEN_CONFIG", "GRADLE_OPTS", "JAVA_OPTS", "JDK_JAVA_OPTIONS", "_JAVA_OPTIONS"}, name)
+}
+
 func (javaDiscovery) cacheVariable(name string) bool {
 	return name == "GRADLE_USER_HOME"
 }

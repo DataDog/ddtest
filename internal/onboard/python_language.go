@@ -104,6 +104,10 @@ func (pythonDiscovery) runtimeVariable(name string) bool {
 	return name == "PYTHONPATH" || name == "PYTHONHOME"
 }
 
+func (pythonDiscovery) toolVariable(name string) bool {
+	return slices.Contains([]string{"PYTEST_ADDOPTS", "PYTEST_PLUGINS", "TOX_ENV", "TOXENV"}, name)
+}
+
 func (pythonDiscovery) cacheVariable(name string) bool {
 	return name == "PIP_TARGET" || name == "POETRY_VIRTUALENVS_PATH"
 }

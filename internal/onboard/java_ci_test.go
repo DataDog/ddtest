@@ -381,10 +381,12 @@ func TestJavaDeployCredentialsDoNotBlockValidation(t *testing.T) {
 	require.Equal(t, "mvn --batch-mode verify --file pom.xml", scope.Commands[0].Command)
 	require.Empty(t, scope.Commands[0].Environment["MAVEN_PASSWORD"], "no secret reaches validation")
 
-	// Without a server-id, setup-java writes no credentials: a secret may feed the tests.
+	// Without a server-id, setup-java writes no credentials: the secrets may
+	// feed the tests, which are validated without them and reported.
 	scope, err = DiscoverValidationScope(javaWorkflowFixture(t, strings.Replace(workflow, "server-id: central, ", "", 1), nil), "junit5")
 	require.NoError(t, err)
-	require.NotEmpty(t, scope.Unresolved)
+	require.Empty(t, scope.Unresolved)
+	require.Equal(t, []string{"MAVEN_PASSWORD", "MAVEN_USERNAME"}, scope.Commands[0].WithoutCIValues)
 	// A token under the action's default names, such as GITHUB_TOKEN, is a
 	// credential: the tests are validated without it and the report says so.
 	defaults := strings.NewReplacer("server-username: MAVEN_USERNAME, server-password: MAVEN_PASSWORD", "gpg-private-key: '${{ secrets.GPG_KEY }}'", "MAVEN_USERNAME: ${{ secrets.MAVEN_USERNAME }}\n          ", "", "MAVEN_PASSWORD: ${{ secrets.MAVEN_PASSWORD }}", "GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}").Replace(workflow)
@@ -392,8 +394,8 @@ func TestJavaDeployCredentialsDoNotBlockValidation(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, scope.Unresolved)
 	require.Len(t, scope.Commands, 1)
-	require.Equal(t, []string{"GITHUB_TOKEN"}, scope.Commands[0].WithoutSecrets)
-	require.Contains(t, strings.Join(scope.Caveats, "\n"), "validated without the CI secrets GITHUB_TOKEN")
+	require.Equal(t, []string{"GITHUB_TOKEN"}, scope.Commands[0].WithoutCIValues)
+	require.Contains(t, strings.Join(scope.Caveats, "\n"), "validated without the CI values of GITHUB_TOKEN")
 }
 
 func TestJavaCIConfigurationKeepsJavaSetupAcrossOtherDatadogActions(t *testing.T) {

@@ -749,7 +749,12 @@ func (c *circleConfig) environment(node *yaml.Node, scope *circleScope, job *cir
 		if key == "DD_API_KEY" && job != nil {
 			job.keyProblem = true
 		}
-		if circleReads(text) || gitLabReadsUnknown(text) && !strings.HasPrefix(key, "DD_") {
+		switch {
+		case circleReads(text):
+			text = unresolvedCIValue(text)
+		case gitLabReadsUnknown(text) && !strings.HasPrefix(key, "DD_") && ciPredefinedReads(text, "CIRCLE_"):
+			text = unresolvedCIProvidedValue(text)
+		case gitLabReadsUnknown(text) && !strings.HasPrefix(key, "DD_"):
 			text = unresolvedCIValue(text)
 		}
 		env[key] = text
