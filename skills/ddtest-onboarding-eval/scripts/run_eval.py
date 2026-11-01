@@ -16,6 +16,7 @@ import shlex
 import shutil
 import selectors
 import signal
+import stat
 import subprocess
 import sys
 import tempfile
@@ -67,6 +68,12 @@ SECRET_ASSIGNMENT = re.compile(r"(?i)((?:\b[\w-]{0,80}(?:token|secret|password|a
 # value; the other operands replace, test, trim or slice it.
 SECRET_EXPANSION = re.compile(r"(\$\{[#!]?(?i:[A-Za-z_]\w*(?:token|secret|password|api_?key)|authorization))"
                               r"(:?[-=]|:?[?+]|##?|%%?|//?|\^\^?|,,?|@|:)?([^}]*)\}")
+# A secret-named assignment's value is the expansion's, whatever variable it
+# expands: DD_API_KEY=${VAULT_VALUE:-word} assigns a literal default word.
+# Without its closing brace (a truncated line) the word ends at the line.
+SECRET_ASSIGNED_EXPANSION = re.compile(r"(?i)((?:\b[\w-]{0,80}(?:token|secret|password|api[_-]?key)|\bauthorization)"
+                                       r"[\"']?\s*[:=]\s*[\"']?)(\$\{[#!]?[A-Za-z_]\w*)"
+                                       r"(:?[-=]|:?[?+]|##?|%%?|//?|\^\^?|,,?|@|:)?([^}\n]*)(\}|$)", re.M)
 
 
 def literal_default(operator, word):
@@ -77,6 +84,11 @@ def literal_default(operator, word):
 def redact_expansion(match):
     head, operator, word = match.groups()
     return head + operator + "[REDACTED]}" if literal_default(operator, word) else match[0]
+
+
+def redact_assigned_expansion(match):
+    prefix, head, operator, word, end = match.groups()
+    return prefix + head + operator + "[REDACTED]" + end if literal_default(operator, word) else match[0]
 
 
 # Values a secret-named key can hold that are clearly not secrets: an object or
@@ -135,6 +147,7 @@ def redact(value):
     # ${DD_API_KEY:+set} name a secret without containing it, so the CI
     # evidence keeps them intact.
     value = SECRET_EXPANSION.sub(redact_expansion, value)
+    value = SECRET_ASSIGNED_EXPANSION.sub(redact_assigned_expansion, value)
     return SECRET_ASSIGNMENT.sub(redact_assignment, value)
 
 
@@ -164,20 +177,68 @@ REAL_DDTEST = "ddtest (deleted)"
 # all trial storage, and the Docker VM's mount cannot hide a folder from it.)
 
 
+def binstub_names(directory):
+    """The binstub folder's file names. Setup code may replace the folder, so
+    it is listed without following a symlink out of the trial."""
+    try:
+        fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    except OSError as error:
+        raise RuntimeError(f"Dependency setup replaced the binstub folder {directory.name}; it must stay a folder") from error
+    try:
+        return sorted(os.listdir(fd))
+    finally:
+        os.close(fd)
+
+
+# The most of one record the runner reads; ddtest's results are far smaller.
+RECORD_LIMIT = 4 * 1024 * 1024
+
+
+def read_record(name, directory_fd):
+    """A record's text, or "" for one that is not a regular file. Code in the
+    trial can write the records folder, so a record is opened without
+    following a symlink or blocking on a FIFO, and read up to RECORD_LIMIT."""
+    try:
+        fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory_fd)
+    except OSError:
+        return ""
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            return ""
+        chunks, size = [], 0
+        while size < RECORD_LIMIT:
+            chunk = os.read(fd, min(1024 * 1024, RECORD_LIMIT - size))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            size += len(chunk)
+        return b"".join(chunks).decode(errors="replace")
+    finally:
+        os.close(fd)
+
+
 def harvest_ddtest_records(directory):
     """Completed ddtest invocations' standard output, oldest first, removed
-    from the trial. A record still being written is left for later."""
+    from the trial. A record still being written is left for later; a record
+    that is not a regular file is removed and kept as an empty record."""
     try:
-        entries = sorted((entry for entry in os.scandir(directory) if entry.name.endswith(".done")),
-                         key=lambda entry: (entry.stat().st_mtime_ns, entry.name))
+        directory_fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    except OSError:
+        return []
+    try:
+        with os.scandir(directory_fd) as scan:
+            entries = sorted((entry.stat(follow_symlinks=False).st_mtime_ns, entry.name)
+                             for entry in scan if entry.name.endswith(".done"))
         records = []
-        for entry in entries:
-            path = Path(entry.path)
-            records.append(path.read_bytes().decode(errors="replace"))
-            path.unlink()
+        for _, name in entries:
+            records.append(read_record(name, directory_fd))
+            with contextlib.suppress(OSError):
+                os.unlink(name, dir_fd=directory_fd)
         return records
     except OSError:
         return []
+    finally:
+        os.close(directory_fd)
 
 
 class LineRedactor:
@@ -435,8 +496,9 @@ def reporting_verdict(text, report):
             sentence = re.split(r"[.!?\n]", prose[:match.start()])[-1] + re.split(r"[.!?\n]", prose[match.start():])[0]
             if len(sentence.strip()) >= 12 and sentence.strip() in quoted:
                 continue
-            # "Onboarded once CI runs" states a condition, not completion.
-            if re.search(r"\b(?:once|when|after|until|unless|if|as soon as)\b", sentence):
+            # "Onboarded once CI runs" states a condition, not completion;
+            # "after updating the Jenkinsfile" describes a completed action.
+            if COMPLETION_CONDITION.search(sentence):
                 continue
             claim = match[0].strip(" \t.!—–-")
             unsupported.append(f"Success claim \"{claim}\" while the report status is {summary.get('status') or 'unavailable'}.")
@@ -512,6 +574,13 @@ SUCCESS_CLAIM = re.compile(
     r"|(?:this|the)\s+(?:repo|repository|project|codebase)\s+(?:is|has\s+been|was)\s+(?:now\s+)?(?:fully\s+|successfully\s+)?(?:onboarded|set\s+up)"
     r"|(?:datadog\s+)?test[\s-]+optimization\s+(?:is|has\s+been|was)\s+(?:now\s+)?(?:fully\s+|successfully\s+)?(?:onboarded|set\s+up|complete|done|in\s+place)"
     r"|(?:i|we)(?:'ve|\s+have)?\s+(?:now\s+)?(?:fully\s+|successfully\s+)?(?:onboarded|finished\s+(?:the\s+)?onboarding|completed\s+(?:the\s+)?onboarding|set\s+up\s+test[\s-]+optimization))\b")
+
+
+# A condition that qualifies completion: once, when, until, unless, if, as soon
+# as, or after a pending event. "After updating the Jenkinsfile" or "after I
+# updated it" describes an action done, not a condition.
+COMPLETION_CONDITION = re.compile(r"\b(?:once|when|until|unless|if|as soon as"
+                                  r"|after(?!\s+(?:\w+?(?<!th)ing|(?:i|we)(?:'ve|\s+have|\s+had)?\s+\w+ed)\b))\b")
 
 
 def unquoted(text):
@@ -695,7 +764,8 @@ def run(args):
     excerpt_limit = selected_limit
     # Scripted answers are validated before any clone or model session.
     answers = user_answers.load_answers(getattr(args, "user_answer", None), getattr(args, "user_answers", None))
-    max_user_turns = getattr(args, "max_user_turns", None) or 5
+    max_user_turns = getattr(args, "max_user_turns", None)
+    max_user_turns = 5 if max_user_turns is None else max_user_turns
     if max_user_turns < 1:
         raise ValueError("--max-user-turns must be at least 1")
     binstubs = list(getattr(args, "bundle_binstubs", None) or [])
@@ -1071,7 +1141,7 @@ def run(args):
             manifest["failure_stage"] = "bundle_binstubs"
             command(["env", f"BUNDLE_BIN={bundle_bin}", "bundle", "binstubs", *binstubs], cwd=checkout)
             manifest["bundle_binstubs"] = {"directory": inside(bundle_bin), "gems": binstubs,
-                                           "executables": sorted(path.name for path in bundle_bin.iterdir())}
+                                           "executables": binstub_names(bundle_bin)}
             manifest.pop("failure_stage", None)
         if framework == "pytest":
             manifest["failure_stage"] = "python_environment"

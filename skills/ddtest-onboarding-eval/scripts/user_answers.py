@@ -13,7 +13,12 @@ import re
 
 KINDS = ("ci_runtime", "ci_confirm", "ci_provider")
 _NAME = r"[a-z0-9][a-z0-9_-]*"
-_VERSION = r"[0-9A-Za-z][0-9A-Za-z.+_-]*"
+# The versions ddtest's --ci-runtime takes (after an optional v): Node 22,
+# 22.11 or 22.11.0; Ruby 3.3 or 3.3.6, with a minor version.
+_NODE_VERSION = (r"v?[0-9]+(?:\.[0-9]+){0,2}", "22, 22.11 or 22.11.0")
+_RUNTIME_VERSIONS = {"node": _NODE_VERSION, "js": _NODE_VERSION,
+                     "ruby": (r"v?[0-9]+\.[0-9]+(?:\.[0-9]+)?", "3.3 or 3.3.6")}
+_VERSION = (r"v?[0-9]+(?:\.[0-9]+)*", "3.12")
 
 
 def parse_answer(text):
@@ -27,8 +32,11 @@ def parse_answer(text):
     if kind == "ci_runtime":
         selector, separator, version = value.rpartition("=")
         job, _, runtime = selector.rpartition(":")
-        if not separator or not re.fullmatch(_NAME, runtime) or not re.fullmatch(_VERSION, version):
+        if not separator or not re.fullmatch(_NAME, runtime):
             raise ValueError(f"User answer {text!r} must be ci_runtime=<runtime>=<version> or ci_runtime=<workflow / job>:<runtime>=<version>")
+        pattern, example = _RUNTIME_VERSIONS.get(runtime, _VERSION)
+        if not re.fullmatch(pattern, version):
+            raise ValueError(f"User answer {text!r} must state a numeric {runtime} version, such as {example}")
         answer.update(job=job.strip() or None, runtime=runtime, version=version)
     elif kind == "ci_confirm":
         fact, valued, stated = value.partition("=")
@@ -98,6 +106,19 @@ def question(result):
     return asked
 
 
+def offered(values, value):
+    """Whether value has one of the forms a ci_confirm input lists, such as
+    agentless:<site>|agent: literal text, with <placeholder> for any word."""
+    if not value:
+        return False
+    for form in values.split("|"):
+        pattern = "".join(r"[^\s|<>]+" if part.startswith("<") else re.escape(part)
+                          for part in re.split(r"(<[^<>]*>)", form) if part)
+        if pattern and re.fullmatch(pattern, value):
+            return True
+    return False
+
+
 def reply(asked, answers):
     """Compose the user's reply from the answers that cover the question.
 
@@ -129,10 +150,11 @@ def reply(asked, answers):
                     answered(item, chosen, f"{subject} runs {asked.get('runtime_name') or chosen['runtime']} {chosen['version']}.")
                     continue
             elif code == "ci_setup_confirmation_required" and kind == "ci_confirm":
-                fact, valued, _ = subject.partition("=")
+                fact, valued, values = subject.partition("=")
                 chosen = next((answer for answer in answers if answer["kind"] == "ci_confirm" and answer["fact"] == fact), None)
-                # A fact with values needs one; a yes/no fact takes yes (implied) or no.
-                if chosen and (bool(chosen["value"]) if valued else chosen["value"] in (None, "yes", "no")):
+                # A fact with values needs one of the forms it lists; a yes/no
+                # fact takes yes (implied) or no.
+                if chosen and (offered(values, chosen["value"]) if valued else chosen["value"] in (None, "yes", "no")):
                     answered(item, chosen, f"{fact}: {chosen['value'] or 'yes'}.")
                     continue
             missing.append(item)

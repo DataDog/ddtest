@@ -1100,7 +1100,10 @@ class VerdictTests(unittest.TestCase):
         for claim in ("Onboarded. ddtest reports Python has no coordinator.", "Done!", "All set.", "Success.",
                       "Fully onboarded — see below.", "The repository is now onboarded to Test Optimization.",
                       "This project has been set up.", "Test Optimization is set up in CI.",
-                      "I've onboarded the repository.", "We have finished onboarding.", "Successfully set up Test Optimization."):
+                      "I've onboarded the repository.", "We have finished onboarding.", "Successfully set up Test Optimization.",
+                      # A completed action before the claim is not a condition on it.
+                      "After updating Jenkinsfile, I successfully onboarded the repository.",
+                      "I onboarded the repository after I updated the Jenkinsfile."):
             with self.subTest(claim=claim):
                 result = run_eval.reporting_verdict(self.compact_answer() + "\n" + claim, self.compact_report())
                 self.assertEqual(result["status"], "review")
@@ -1121,6 +1124,7 @@ class VerdictTests(unittest.TestCase):
                      "Setup complete for the release job; the test job needs review.",
                      "Not onboarded yet.", "I have not onboarded the repository.", "Workflow edits are complete.",
                      "Once CI runs, the repository is onboarded.", "Test Optimization is set up when the secret is added.",
+                     "After the first CI run, the repository will be onboarded.",
                      "CI is set up to skip forks.", "Onboarded, except the testwheel job."):
             with self.subTest(text=text):
                 result = run_eval.reporting_verdict(self.compact_answer() + "\n" + text, report)

@@ -182,7 +182,9 @@ Forms: `ci_runtime=<runtime>=<version>` (every asked job) or
 `ci_runtime=<workflow / job>:<runtime>=<version>`; `ci_confirm=<fact>` (yes),
 `ci_confirm=<fact>=no` or `ci_confirm=<fact>=<value>`; `ci_provider=<provider>`.
 `--user-answers FILE` takes the same values, one per line (`#` comments).
-Invalid values stop before cloning.
+Invalid values stop before cloning: versions are numeric as ddtest takes them
+(Ruby with a minor version, such as 3.4), and a `<value>` answers a question
+only in one of the forms it lists, such as `agent` or `agentless:<site>`.
 
 The `ddtest` in the prompt's folder is a wrapper that runs the real binary
 unchanged and copies its standard output to a record outside the checkout. The

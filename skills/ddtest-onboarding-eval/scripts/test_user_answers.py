@@ -37,8 +37,11 @@ class ParseTests(unittest.TestCase):
         self.assertEqual((mode["fact"], mode["value"]), ("jenkins-plugin-mode", "agentless:datadoghq.com"))
         self.assertIsNone(user_answers.parse_answer("ci_confirm=jenkins-plugin")["value"])
         self.assertEqual(user_answers.parse_answer("ci_provider=jenkins")["provider"], "jenkins")
+        self.assertEqual(user_answers.parse_answer("ci_runtime=ruby=v3.3.6")["version"], "v3.3.6")
+        # ddtest takes only numeric versions, and a Ruby version with its minor.
         for invalid in ("node=22", "ci_runtime=22", "ci_runtime=node=", "ci_confirm=", "ci_confirm=fact=",
-                        "ci_provider=Jenkins CI", "unknown=value"):
+                        "ci_provider=Jenkins CI", "unknown=value", "ci_runtime=ruby=banana", "ci_runtime=ruby=3",
+                        "ci_runtime=node=lts", "ci_runtime=node=22.1.2.3", "ci_runtime=python=latest"):
             with self.subTest(invalid=invalid), self.assertRaises(ValueError):
                 user_answers.parse_answer(invalid)
 
@@ -92,6 +95,13 @@ class QuestionTests(unittest.TestCase):
         valueless = user_answers.reply(asked, user_answers.load_answers(
             ["ci_confirm=jenkins-plugin", "ci_confirm=jenkins-plugin-mode", "ci_confirm=jenkins-agent-runtime-matches"]))
         self.assertEqual(valueless["missing"], ["ci_confirm:jenkins-plugin-mode=agentless:<site>|agent"])
+        # A value must have one of the listed forms.
+        for value, covered in (("agent", True), ("agentless:datadoghq.eu", True), ("bogus", False),
+                               ("agentless:", False), ("agents", False), ("agentless", False)):
+            with self.subTest(value=value):
+                composed = user_answers.reply(asked, [complete[0], complete[2]] + user_answers.load_answers(
+                    ["ci_confirm=jenkins-plugin-mode=" + value]))
+                self.assertEqual(composed["reply"] is not None, covered, composed)
 
     def test_provider_and_unknown_questions(self):
         provider = {"code": "ci_provider_required", "required_input": ["github", "jenkins"]}
@@ -125,7 +135,8 @@ class EvidenceTests(unittest.TestCase):
                 "${DD_API_KEY:0:4}", "${DD_API_KEY: -4}", "${DD_API_KEY/abc/x}", "${DD_API_KEY//a/b}",
                 "${DD_API_KEY^^}", "${DD_API_KEY,,}", "${DD_API_KEY@Q}", "${GITHUB_TOKEN:+-H x}",
                 "${DD_API_KEY:-$OTHER}", "${DD_API_KEY:=${OTHER}}", '${DD_API_KEY:-""}', "${DD_API_KEY-}",
-                "api_key: ${DD_API_KEY:+set}", "DD_API_KEY=${DD_API_KEY:+set}", "${DD_API_KEY:+set")
+                "api_key: ${DD_API_KEY:+set}", "DD_API_KEY=${DD_API_KEY:+set}", "${DD_API_KEY:+set",
+                "DD_API_KEY=${KEY}", "DD_API_KEY=${KEY:-$OTHER}", "DD_API_KEY=${KEY:+set}", "DD_API_KEY=${KEY:-}")
         for text in kept:
             self.assertEqual(run_eval.redact(text), text)
         for text, expected in (("${DD_API_KEY-abc123}", "${DD_API_KEY-[REDACTED]}"),
@@ -133,6 +144,11 @@ class EvidenceTests(unittest.TestCase):
                                ("${DD_API_KEY:=abc123}", "${DD_API_KEY:=[REDACTED]}"),
                                ('${DD_API_KEY:-"abc123"}', "${DD_API_KEY:-[REDACTED]}"),
                                ("DD_API_KEY=${DD_API_KEY:-abc123}", "DD_API_KEY=${DD_API_KEY:-[REDACTED]}"),
+                               # A secret-named assignment's literal default, whatever variable it expands.
+                               ("DD_API_KEY=${VAULT_VALUE:-actual-secret}", "DD_API_KEY=${VAULT_VALUE:-[REDACTED]}"),
+                               ('export DD_API_KEY="${KEY:=abc def}"', 'export DD_API_KEY="${KEY:=[REDACTED]}"'),
+                               ("api_key: ${KEY-abc123}", "api_key: ${KEY-[REDACTED]}"),
+                               ("DD_API_KEY=${KEY:-abc123\nnext}", "DD_API_KEY=${KEY:-[REDACTED]\nnext}"),
                                # Without its closing brace (a truncated line), a default is still a value.
                                ("${DD_API_KEY:-abc123", "${DD_API_KEY:-[REDACTED]"),
                                ("${DD_API_KEY=abc123", "${DD_API_KEY=[REDACTED]"),
@@ -207,6 +223,31 @@ class RecorderTests(unittest.TestCase):
             self.assertEqual(run_eval.harvest_ddtest_records(records), ["out:a b:typed\n"])
             self.assertEqual(run_eval.harvest_ddtest_records(records), [])
             self.assertEqual(list(records.iterdir()), [])
+
+    def test_special_records_are_removed_unread_and_large_records_are_bounded(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            records = root / "records"
+            records.mkdir()
+            outside = root / "outside.txt"
+            outside.write_text("host file")
+            # A FIFO would block a plain read; a symlink would read outside the trial.
+            os.mkfifo(records / "a.done")
+            (records / "b.done").symlink_to(outside)
+            (records / "c.done").write_bytes(b"x" * (run_eval.RECORD_LIMIT + 10))
+            (records / "d").write_text("still being written")
+            harvested = run_eval.harvest_ddtest_records(records)
+            self.assertEqual(sorted(len(record) for record in harvested), [0, 0, run_eval.RECORD_LIMIT])
+            self.assertEqual([path.name for path in records.iterdir()], ["d"])
+            self.assertEqual(outside.read_text(), "host file")
+            # A records folder replaced by a symlink is not followed.
+            target = root / "target"
+            target.mkdir()
+            (target / "e.done").write_text("elsewhere")
+            linked = root / "linked"
+            linked.symlink_to(target)
+            self.assertEqual(run_eval.harvest_ddtest_records(linked), [])
+            self.assertTrue((target / "e.done").exists())
 
 
 class TrialTests(unittest.TestCase):
@@ -328,6 +369,12 @@ class TrialTests(unittest.TestCase):
             run_eval.run(self.args)
         self.assertFalse(self.args.output.exists())
 
+    def test_zero_reply_limit_is_rejected_before_any_trial(self):
+        self.args.max_user_turns = 0
+        with self.assertRaisesRegex(ValueError, "max-user-turns"):
+            run_eval.run(self.args)
+        self.assertFalse(self.args.output.exists())
+
     def test_bundle_binstubs_are_private_and_on_path(self):
         bundle = self.case.root / "bundle"
         bundle.write_text("#!/bin/sh\n[ \"$1\" = binstubs ] || exit 0\nshift\nfor gem in \"$@\"; do echo stub > \"$BUNDLE_BIN/${gem%-core}\"; done\n")
@@ -343,6 +390,21 @@ class TrialTests(unittest.TestCase):
         self.assertIn(str(directory), observed["environment"]["PATH"].split(os.pathsep))
         # The folder the prompt names still holds only ddtest.
         self.assertEqual(sorted(path.name for path in (directory.parent / "bin").iterdir()), ["ddtest", run_eval.REAL_DDTEST])
+
+    def test_binstub_folder_replaced_by_a_symlink_is_not_listed(self):
+        outside = self.case.root / "host-folder"
+        outside.mkdir()
+        (outside / "host-only-file").write_text("")
+        bundle = self.case.root / "bundle"
+        bundle.write_text(f"#!/bin/sh\n[ \"$1\" = binstubs ] || exit 0\nrmdir \"$BUNDLE_BIN\" && ln -s {outside} \"$BUNDLE_BIN\"\n")
+        bundle.chmod(0o755)
+        self.args.bundle_binstubs = ["rspec-core"]
+        self.args.output = self.case.root / "binstubs-link"
+        code, manifest = self.case.trial()
+        self.assertEqual(code, 1)
+        self.assertEqual(manifest["failure_stage"], "bundle_binstubs")
+        self.assertNotIn("bundle_binstubs", manifest)
+        self.assertNotIn("host-only-file", (self.args.output / "run.json").read_text())
 
     def test_activity_excerpt_limit_is_configurable_and_recorded(self):
         self.args.excerpt_limit = 1000
