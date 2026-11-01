@@ -623,8 +623,10 @@ reported, naming the job it splits from. When every job that runs the tests
 is unsupported, onboarding returns `status: unsupported` with
 `code: ci_setup_unsupported`, naming the jobs and the user's options (run the
 tests on a host agent, or set up Test Optimization in the container by hand,
-which ddtest then checks as described in [Hand-written setups outside GitHub
-Actions](#hand-written-setups-outside-github-actions)), with an instruction for the coding agent to
+which ddtest then checks for JavaScript and Ruby as described in [Hand-written
+setups outside GitHub Actions](#hand-written-setups-outside-github-actions)
+and does not validate for other languages yet), with an instruction for the
+coding agent to
 report it and stop; otherwise the instructions name them and validation keeps
 them as blockers. An installer fallback for containers is not part of
 this provider.
@@ -796,7 +798,34 @@ configuration shows every test file loads. Assignments of tracer variables
 (`NODE_OPTIONS`, `RUBYOPT`, `DD_*`) that prefix a test command, as in
 dd-trace's documented `NODE_OPTIONS="-r dd-trace/ci/init" DD_ENV=ci yarn
 test`, are that command's environment, also after the provider's setup
-(`NODE_OPTIONS="$NODE_OPTIONS …" npx jest`). Python and Java set up Test Optimization on GitHub Actions only.
+(`NODE_OPTIONS="$NODE_OPTIONS …" npx jest`).
+
+Python and Java hand-written setups are recognized but not validated yet:
+their CI checks read only the provider's setup. Where no provider setup
+precedes the test command, ddtest recognizes:
+
+- Python: pytest runs with the ddtrace plugin enabled, through `--ddtrace` in
+  the command, `PYTEST_ADDOPTS` (also as a prefix of the command) or the
+  pytest configuration's `addopts`. ddtrace comes from an exact `pip install
+  ddtrace==<release>` in the job, a requirements file the job installs (`-r`,
+  following its `-r`/`-c` includes), a lockfile (`uv.lock`, `poetry.lock`,
+  `pdm.lock`, `Pipfile.lock`), or the project's `pyproject.toml` or
+  `requirements.txt`.
+- Java: `-javaagent:` with a `dd-java-agent` JAR in `JAVA_TOOL_OPTIONS`,
+  `MAVEN_OPTS` or `GRADLE_OPTS`, `-Dorg.gradle.jvmargs` or
+  `gradle.properties`, with `DD_CIVISIBILITY_ENABLED=true` (or the matching
+  `-Ddd.*` system properties). The release is the one the JAR's file name
+  carries or the job downloads (Maven Central or a GitHub release; the
+  latest-release link is reported as floating). `-DargLine` and
+  `.mvn/jvm.config` stay unresolved.
+
+ddtest checks the same rules as above and lists what each setup lacks, but
+never certifies such a setup and never replaces it with the provider's
+setup: onboarding and testdrive return `status: unsupported` with
+`code: ci_setup_unsupported`, naming each job, its setup and what it lacks,
+and tell the coding agent to keep the setup as it is and report the result.
+This applies on every provider without the shared workflow syntax, even where
+ddtest does not set up the language yet.
 
 The GitLab setup script, the CircleCI orb and the Buildkite snippet run the
 installer outside GitHub Actions, where it appends its preload to

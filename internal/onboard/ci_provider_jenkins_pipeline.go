@@ -2446,7 +2446,7 @@ func (r *jenkinsReader) finish(slot *jenkinsSlot) {
 		current := setup.ciSetup()
 		problem := scope.setupProblem
 		if result.SetupUnsupported != "" {
-			problem = joinDiagnostic(problem, "This stage cannot use the Datadog Jenkins plugin: "+result.SetupUnsupported+". The user's options are to run its tests on a host agent (agent { label … }), or, without the plugin, to set up Test Optimization in the container by hand (the tracer from the project's dependencies, loaded through the stage's environment), which ddtest then checks.")
+			problem = joinDiagnostic(problem, "This stage cannot use the Datadog Jenkins plugin: "+result.SetupUnsupported+". The user's options are to run its tests on a host agent (agent { label … }), or, without the plugin, to set up Test Optimization in the container by hand (the tracer from the project's dependencies, loaded through the stage's environment), which ddtest then checks for "+handWrittenValidatedLanguages()+" and does not validate for other languages yet.")
 		}
 		if problem != "" && current.Problem == "" {
 			current.Problem = problem

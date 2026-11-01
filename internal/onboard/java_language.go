@@ -20,6 +20,8 @@ type javaDiscovery struct{}
 
 func (javaDiscovery) name() string { return "java" }
 
+func (javaDiscovery) displayName() string { return "Java" }
+
 func (javaDiscovery) actionLanguage() string { return "java" }
 
 func (javaDiscovery) bootstrap(string) string { return javaBootstrap }
@@ -139,12 +141,6 @@ func (javaDiscovery) setupShellExports(map[string]string) (map[string]string, ma
 }
 
 // Setup runs on GitHub Actions only.
-// Python and Java set up Test Optimization on GitHub Actions only, where
-// the setup is the Datadog action: there is no hand-written setup to read.
-func (javaDiscovery) handWrittenSetup(string, ciProvider, ciWorkflow, runtimeJob, int, map[string]any, string, string) *handWrittenSetup {
-	return nil
-}
-
 func (javaDiscovery) ciSetupRequest(string, string, string, ciSetupTerms) ciSetupRequest {
 	return ciSetupRequest{}
 }
@@ -153,7 +149,18 @@ func (javaDiscovery) automaticProviderSetup(string) bool { return false }
 
 func (javaDiscovery) unsupportedImage(string) string { return "" }
 
+// A hand-written setup's JVM option prefixes stay in the build command,
+// which javaHandWrittenSetup reads with its environment.
 func (javaDiscovery) preloadVariable(string) bool { return false }
+
+func (javaDiscovery) handWrittenSetup(root string, provider ciProvider, workflow ciWorkflow, job runtimeJob, index int, _ map[string]any, framework, site string) *handWrittenSetup {
+	return javaHandWrittenSetup(root, provider, workflow, job, index, framework, site)
+}
+
+// The Java CI check reads only the Datadog setup (see JavaCIConfiguration):
+// a hand-written dd-java-agent setup is recognized, kept and reported, never
+// certified, until it reads that setup too.
+func (javaDiscovery) validatesHandWrittenSetup() bool { return false }
 
 func (javaDiscovery) runtimeVariable(name string) bool {
 	return name == "JAVA_HOME" || name == "JAVA_TOOL_OPTIONS"
