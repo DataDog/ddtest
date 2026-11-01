@@ -224,7 +224,10 @@ redacted. Every shell parameter expansion of a secret-named variable is kept
 (`${DD_API_KEY:+set}`, `${DD_API_KEY:?message}`, `${DD_API_KEY#prefix}`,
 `${#DD_API_KEY}` and so on) except a literal default (`-`, `:-`, `=`, `:=`),
 the only operand that supplies the value; recognized token shapes are redacted
-anywhere. Treat
+anywhere. Values that are clearly not secrets stay: an object or array opener
+(`"token": {`), a boolean or null, a version or range (`^9.0.2`), or a package
+path or specifier. A lockfile package key such as `"node_modules/jsonwebtoken"`
+is not a secret name. Treat
 redaction as a precaution: inspect evidence before sharing it, and do not archive
 credentials, raw telemetry streams or dependency trees.
 

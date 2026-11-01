@@ -79,8 +79,27 @@ def redact_expansion(match):
     return head + operator + "[REDACTED]}" if literal_default(operator, word) else match[0]
 
 
+# Values a secret-named key can hold that are clearly not secrets: an object or
+# array opener (`"token": {` in a JSON file), a boolean or null, a version or
+# version range, or a package path or specifier.
+NON_SECRET_VALUE = re.compile(r"[\[\]{]+|(?i:true|false|null|none|nil|undefined|~)"
+                              r"|(?:(?:[~^]|[<>]=?|=)v?\d+(?:\.(?:\d+|[xX*]))*|v?\d+(?:\.(?:\d+|[xX*]))+)"
+                              r"(?:-[0-9A-Za-z.]+)?(?:\+[0-9A-Za-z.]+)?"
+                              r"|(?:node_modules/|npm:|workspace:|file:|link:)\S*")
+# A lockfile package key such as "node_modules/jsonwebtoken" names a package.
+LOCKFILE_PACKAGE = re.compile(r"node_modules/(?:@[\w.-]+/)?[\w.-]*$")
+SECRET_NAME = re.compile(r"(?i)(password|secret|token|api.?key|authorization|credential|private.?key)")
+
+
+def lockfile_package_key(key):
+    return "node_modules/" in key
+
+
 def redact_assignment(match):
     prefix, bearer, value = match.groups()
+    if not bearer and (NON_SECRET_VALUE.fullmatch(value) or
+                       LOCKFILE_PACKAGE.search(match.string[max(0, match.start() - 300):match.start()])):
+        return match[0]
     if not bearer and (SECRET_REFERENCE.match(value) or
                        SECRET_LOOKUP.fullmatch(value) and match.string[match.end():match.end() + 1] in ("'", '"')):
         return match[0]
@@ -97,7 +116,8 @@ def redact_assignment(match):
 def redact(value):
     """Redact before truncation, so truncation cannot expose half a token."""
     if isinstance(value, dict):
-        return {key: "[REDACTED]" if re.search(r"(?i)(password|secret|token|api.?key|authorization|credential|private.?key)", key)
+        return {key: "[REDACTED]" if SECRET_NAME.search(key) and not lockfile_package_key(key)
+                and not (item is None or isinstance(item, bool))
                 else redact(item) for key, item in value.items()
                 if key not in ("reasoning", "thinking", "signature", "encrypted_content")}
     if isinstance(value, list):

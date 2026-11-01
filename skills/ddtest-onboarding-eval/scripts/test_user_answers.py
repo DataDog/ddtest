@@ -140,6 +140,34 @@ class EvidenceTests(unittest.TestCase):
                                ("${DD_API_KEY:+sk-1234567890abcdefghijk}", "${DD_API_KEY:+[REDACTED]}")):
             self.assertEqual(run_eval.redact(text), expected)
 
+    def test_lockfile_keys_and_non_secret_values_survive_redaction(self):
+        # B02's changes.patch lost '"node_modules/jsonwebtoken": {' to [REDACTED].
+        lockfile = ('     "node_modules/jsonwebtoken": {\n'
+                    '       "version": "9.0.2",\n'
+                    '+    "node_modules/@scope/auth-token": {"version": "1.0.0"},\n'
+                    '+    "node_modules/a/node_modules/csrf-token": [\n'
+                    '+        "jsonwebtoken": "^9.0.2",\n'
+                    '+        "github-token": "workspace:*",\n'
+                    '+  jsonwebtoken: ">=8 <10"\n')
+        self.assertEqual(run_eval.redact(lockfile), lockfile)
+        kept = ("token: {", "api_key: [", "secrets: []", "token: null", "password: false", "use_token: true",
+                "token: ~", "api_key: 1.2.3", "token: v2.0.0-rc.1", "token: ^9.0.2", "token: ~1.2.x", "token: >=6",
+                '"auth-token": "npm:jsonwebtoken@9"', "token: node_modules/jsonwebtoken/index.js")
+        for text in kept:
+            self.assertEqual(run_eval.redact(text), text)
+        for text, expected in (("token: real-token-value", "token: [REDACTED]"),
+                               ("token={abc123", "token=[REDACTED]"),
+                               ("api_key: [abc123", "api_key: [REDACTED]"),
+                               ("password: 123456", "password: [REDACTED]"),
+                               ("password=truest", "password=[REDACTED]"),
+                               ('"node_modules/x": {"api_key": "realvalue"}', '"node_modules/x": {"api_key": "[REDACTED]"}'),
+                               ("node_modules/x token=realvalue", "node_modules/x token=[REDACTED]")):
+            self.assertEqual(run_eval.redact(text), expected)
+        structured = run_eval.redact({"node_modules/jsonwebtoken": {"version": "9.0.2"}, "has_token": True, "token": None,
+                                      "api_key": "abc123", "tokens": {"refresh_token": "abc123"}})
+        self.assertEqual(structured, {"node_modules/jsonwebtoken": {"version": "9.0.2"}, "has_token": True, "token": None,
+                                      "api_key": "[REDACTED]", "tokens": "[REDACTED]"})
+
     def test_excerpt_keeps_start_and_end_within_the_limit(self):
         text = "START" + "x" * 100_000 + "END"
         kept = run_eval.excerpt(text, 1000)
