@@ -184,7 +184,13 @@ Forms: `ci_runtime=<runtime>=<version>` (every asked job) or
 `--user-answers FILE` takes the same values, one per line (`#` comments).
 Invalid values stop before cloning.
 
-When the agent's turn ends and the last ddtest result it received asks the user,
+The `ddtest` in the prompt's folder is a wrapper that runs the real binary
+unchanged and copies its standard output to a record outside the checkout. The
+runner moves each completed record out of the trial when the agent reports a
+tool result, into `ddtest-results.jsonl` in the evidence (`turn` and the
+redacted ddtest result, or null). So a result the agent redirected to a file or
+reformatted still counts; without a record, the agent's tool output is used.
+When the agent's turn ends and the last ddtest result of that turn asks the user,
 the runner reads that result's `required_input` and, only if the script covers
 every item, replies in the same conversation (`claude --resume`, `codex exec
 resume`) as the user's next message. The reply states only the asked facts in
@@ -192,7 +198,8 @@ plain words (`Jenkinsfile / Run Tests runs Ruby 3.4.`, `jenkins-plugin: yes.`):
 no flags, commands or other guidance, and nothing that was not asked. Otherwise
 the trial stops as without a script. `run.json` `user_answers` records the
 scripted values, `status` (`not requested`, `answered` or `unanswered`) and each
-turn: the ddtest question, the agent's message, the answers used, the reply, the
+turn: the ddtest question and its `source` (`ddtest log` or `tool output`), the
+agent's message, the answers used, the reply, the
 missing items or the reason it stopped, and timestamps. `activity.jsonl` has
 `user_question`, `user_reply` and `user_question_unanswered` events in order.
 `--max-user-turns` (default 5) bounds the replies; `--timeout` applies to each
@@ -213,7 +220,7 @@ Neither inherits the evaluator's CLI profile. Flag references:
 
 ## Grade independently
 
-Read `run.json`, `activity.jsonl`, `changes.patch`, `status.txt`, the final answer,
+Read `run.json`, `activity.jsonl`, `ddtest-results.jsonl`, `changes.patch`, `status.txt`, the final answer,
 and both retained ddtest reports. Public tool activity includes file, web and MCP
 targets; reasoning is excluded. Text is redacted before bounded excerpts: each
 keeps its start and end, up to `--excerpt-limit` characters (default 64000), and

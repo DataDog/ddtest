@@ -76,6 +76,14 @@ if os.environ.get("FAKE_ASK_USER"):
         stream.write(json.dumps({"argv": sys.argv[1:], "stdin": prompt}) + "\\n")
     if not resumed or os.environ.get("FAKE_ASK_AGAIN"):
         asked = "Exit code 1\\n" + os.environ["FAKE_ASK_USER"]
+        if os.environ.get("FAKE_REDIRECT_DDTEST"):
+            # Run the ddtest the prompt names, keep its JSON in a private file,
+            # and show only a reformatted summary.
+            ddtest = os.path.join(prompt.split("Use ddtest in ", 1)[1].split(" and onboard", 1)[0], "ddtest")
+            saved = os.path.join(os.environ["TMPDIR"], "onboard.json")
+            status = subprocess.run(ddtest + " onboard > " + saved, shell=True).returncode
+            result = json.loads(pathlib.Path(saved).read_text())
+            asked = "exit " + str(status) + "\\n" + "\\n".join("== " + key + " ==\\n" + str(value) for key, value in result.items())
         question = "Which Ruby version does the Jenkinsfile / Run Tests job run?"
         if pathlib.Path(sys.argv[0]).name == "codex":
             events = [{"type": "thread.started", "thread_id": "thread-1"},
@@ -442,10 +450,13 @@ class RunnerTests(unittest.TestCase):
                     self.assertEqual(observed["agent_environment"]["CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"], "1")
                     self.assertEqual(observed["agent_environment"]["BASH_MAX_TIMEOUT_MS"], "30000")
                 self.assertNotIn("--model", observed["argv"])
-                copied = checkout.parent / "bin" / "ddtest"
+                copied = checkout.parent / "harness" / "ddtest"
                 self.assertEqual(copied.read_bytes(), self.binary.read_bytes())
                 self.assertFalse(copied.is_symlink())
-                self.assertEqual(list(copied.parent.iterdir()), [copied])
+                # The folder the prompt names holds only the recording wrapper.
+                wrapper = checkout.parent / "bin" / "ddtest"
+                self.assertEqual(list(wrapper.parent.iterdir()), [wrapper])
+                self.assertIn(str(copied), wrapper.read_text())
                 activity = (self.args.output / "activity.jsonl").read_text()
                 self.assertNotIn("PRIVATE_REASONING", activity)
                 self.assertEqual((self.args.output / "final-response.md").read_text(), "Done\n")

@@ -138,6 +138,41 @@ def redact(value):
     return SECRET_ASSIGNMENT.sub(redact_assignment, value)
 
 
+# The folder the prompt names holds this wrapper. It runs the real ddtest with
+# unchanged arguments, input, error output and exit status, and copies its
+# standard output to a record outside the checkout. The scripted-answer check
+# then sees ddtest's result even when the agent redirects or reformats it.
+DDTEST_WRAPPER = """#!/bin/sh
+record=$(mktemp {records}/XXXXXXXXXX 2>/dev/null) || exec {real} "$@"
+exec 4>&1
+status=$( {{ {{ {real} "$@" 3>&- 4>&-; echo "$?" >&3; }} | tee "$record" >&4 3>&-; }} 3>&1 )
+exec 4>&-
+mv -f "$record" "$record.done" 2>/dev/null
+exit "${{status:-1}}"
+"""
+# The runner moves each completed record out of the trial, into evidence the
+# container does not mount, as soon as the agent reports a tool result. The
+# harness log is therefore never in the checkout or in the agent's later view,
+# and a record cannot change after it is collected. (The container user owns
+# all trial storage, and the Docker VM's mount cannot hide a folder from it.)
+
+
+def harvest_ddtest_records(directory):
+    """Completed ddtest invocations' standard output, oldest first, removed
+    from the trial. A record still being written is left for later."""
+    try:
+        entries = sorted((entry for entry in os.scandir(directory) if entry.name.endswith(".done")),
+                         key=lambda entry: (entry.stat().st_mtime_ns, entry.name))
+        records = []
+        for entry in entries:
+            path = Path(entry.path)
+            records.append(path.read_bytes().decode(errors="replace"))
+            path.unlink()
+        return records
+    except OSError:
+        return []
+
+
 class LineRedactor:
     """Keep multiline private keys redacted across streamed setup output."""
     def __init__(self):
@@ -686,7 +721,11 @@ def run(args):
     checkout = trial / "repo"
     bin_dir = trial / "bin"
     bin_dir.mkdir()
-    shutil.copy2(binary, bin_dir / "ddtest")
+    harness = trial / "harness"
+    ddtest_records = harness / "records"
+    ddtest_records.mkdir(parents=True)
+    real_ddtest = harness / "ddtest"
+    shutil.copy2(binary, real_ddtest)
     env = environment(home)
     env["PATH"] = container.path
     env["SHELL"] = "/bin/bash"
@@ -730,6 +769,9 @@ def run(args):
     pnpm_store.mkdir()
     pnpm_cache.mkdir()
     inside = container.inside if hasattr(container,"inside") else str
+    wrapper = bin_dir / "ddtest"
+    wrapper.write_text(DDTEST_WRAPPER.format(records=shlex.quote(inside(ddtest_records)), real=shlex.quote(inside(real_ddtest))))
+    wrapper.chmod(0o755)
     pnpm_config.write_text(f"store-dir={inside(pnpm_store)}\ncache-dir={inside(pnpm_cache)}\n")
     pnpm_config.with_name("config.yaml").write_text(
         f"storeDir: {json.dumps(inside(pnpm_store))}\ncacheDir: {json.dumps(inside(pnpm_cache))}\n")
@@ -799,6 +841,9 @@ def run(args):
     # The agent's conversation, and the last ddtest result of the current turn.
     session_id = None
     last_result = None
+    # The last ddtest result of the current turn in the harness log.
+    logged_result = None
+    ddtest_log = (output / "ddtest-results.jsonl").open("w")
     agent_argvs = []
     activity_bytes = 0
     background = BackgroundCommands()
@@ -835,6 +880,17 @@ def run(args):
             manifest["activity_excerpts"]["reduced_after_bytes"] = activity_bytes
         print(encoded, flush=True)
 
+    def collect_ddtest_results(turn):
+        """Move completed ddtest records to the host-side log; return the last result."""
+        found = None
+        for record in harvest_ddtest_records(ddtest_records):
+            result = user_answers.agent_result(record)
+            ddtest_log.write(json.dumps({"turn": turn, "collected_at": time.time(), "result": redact(result)}) + "\n")
+            ddtest_log.flush()
+            if result is not None:
+                found = result
+        return found
+
     def command(argv, cwd=trial, agent=False, stdin=None, timeout=None, destination=None):
         nonlocal agent_failed
         limit = args.timeout if timeout is None else min(args.timeout, timeout)
@@ -846,7 +902,7 @@ def run(args):
         line_redactor = LineRedactor()
 
         def line_received(line):
-            nonlocal tail, final_response, session_id, last_result
+            nonlocal tail, final_response, session_id, last_result, logged_result
             clean_line = line_redactor(line) if not agent else redact(line)
             tail = (tail + clean_line + "\n")[-COMMAND_TAIL_LIMIT:]
             if not agent:
@@ -872,7 +928,10 @@ def run(args):
                     background.observe(event)
                 session_id = observed_session(event, args.agent) or session_id
                 # Parse whole tool outputs, before excerpts can cut a ddtest result.
-                result = user_answers.agent_result(tool_output(event, args.agent))
+                output_text = tool_output(event, args.agent)
+                if output_text is not None:
+                    logged_result = collect_ddtest_results(len(agent_argvs)) or logged_result
+                result = user_answers.agent_result(output_text)
                 if result is not None:
                     last_result = result
                 for public in public_events(event, args.agent):
@@ -891,9 +950,9 @@ def run(args):
             raise RuntimeError(f"Command exited {record['exit_code']}: {shlex.join(argv)}")
         return tail.strip()
 
-    def answer_question(asked):
+    def answer_question(asked, source):
         record = manifest["user_answers"]
-        turn = {"turn": len(record["turns"]) + 1, "asked_at": time.time(), "question": public_detail(asked),
+        turn = {"turn": len(record["turns"]) + 1, "asked_at": time.time(), "question": public_detail(asked), "source": source,
                 "agent_message": excerpt(redact(final_response))}
         record["turns"].append(turn)
         emit({"type": "user_question", "turn": turn["turn"], "code": asked["code"], "required_input": asked["required_input"]})
@@ -943,7 +1002,7 @@ def run(args):
         expected_cli = container.cli_versions[args.agent]
         if not re.search(r"(?<![\d.])"+re.escape(expected_cli)+r"(?![\d.])", manifest["cli_version"]):
             raise RuntimeError(f"Expected {args.agent} {expected_cli}; image CLI version differs")
-        manifest["ddtest_version"] = command([str(bin_dir/"ddtest"),"--version"],timeout=CLI_STARTUP_TIMEOUT)
+        manifest["ddtest_version"] = command([str(real_ddtest),"--version"],timeout=CLI_STARTUP_TIMEOUT)
         if getattr(args,"login_json",None) or getattr(args,"existing_login",False):
             manifest["failure_stage"] = "model_authentication"
             login.install()
@@ -1027,7 +1086,9 @@ def run(args):
         manifest["status"] = "agent_running"
         turn_argv, turn_input = agent_argv, prompt
         while True:
-            agent_completed, last_result = False, None
+            # Records from before this turn are logged but are not its result.
+            collect_ddtest_results(len(agent_argvs))
+            agent_completed, last_result, logged_result = False, None, None
             agent_argvs.append(turn_argv)
             command(turn_argv, cwd=checkout, agent=True, stdin=turn_input)
             if background.unfinished():
@@ -1041,8 +1102,11 @@ def run(args):
                 break
             # The turn ended at a question only the user can answer: reply in
             # the same conversation, or stop and record the question.
-            asked = user_answers.question(last_result)
-            turn_input = answer_question(asked) if asked else None
+            # The harness log holds every ddtest result, including one the agent
+            # redirected to a file or reformatted; a tool output is the fallback.
+            logged_result = collect_ddtest_results(len(agent_argvs)) or logged_result
+            asked = user_answers.question(logged_result or last_result)
+            turn_input = answer_question(asked, "ddtest log" if logged_result else "tool output") if asked else None
             if turn_input is None:
                 break
             turn_argv = resume_command(args.agent, agent_argv, session_id)
@@ -1097,6 +1161,9 @@ def run(args):
             manifest["status"] = "failed"
             manifest.setdefault("collection_errors",[]).append(str(error))
             code = 1
+        # The agent has stopped: log any remaining ddtest records.
+        collect_ddtest_results(len(agent_argvs))
+        ddtest_log.close()
         cleanup_confirmed = manifest["isolation"]["cleanup"] == "removed"
         if (agent_failed or agent_timed_out) and cleanup_confirmed:
             manifest["failure_kind"] = failure_kind(agent_errors, agent_timed_out)

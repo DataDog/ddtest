@@ -184,6 +184,30 @@ class EvidenceTests(unittest.TestCase):
         self.assertEqual(run_eval.resume_command("claude", claude, "session-1"), [*claude, "--resume", "session-1"])
 
 
+class RecorderTests(unittest.TestCase):
+    def test_wrapper_is_transparent_and_records_standard_output(self):
+        import shlex
+        import subprocess
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            records = root / "records"
+            records.mkdir()
+            real = root / "real"
+            real.write_text('#!/bin/sh\nread line\nprintf "out:%s:%s\\n" "$1" "$line"\necho err >&2\nexit 3\n')
+            real.chmod(0o755)
+            wrapper = root / "ddtest"
+            wrapper.write_text(run_eval.DDTEST_WRAPPER.format(records=shlex.quote(str(records)), real=shlex.quote(str(real))))
+            wrapper.chmod(0o755)
+            saved = root / "saved.txt"
+            result = subprocess.run(f"{shlex.quote(str(wrapper))} 'a b' > {shlex.quote(str(saved))}", shell=True,
+                                    input="typed\n", capture_output=True, text=True, timeout=30)
+            self.assertEqual((result.returncode, result.stdout, result.stderr), (3, "", "err\n"))
+            self.assertEqual(saved.read_text(), "out:a b:typed\n")
+            self.assertEqual(run_eval.harvest_ddtest_records(records), ["out:a b:typed\n"])
+            self.assertEqual(run_eval.harvest_ddtest_records(records), [])
+            self.assertEqual(list(records.iterdir()), [])
+
+
 class TrialTests(unittest.TestCase):
     def setUp(self):
         self.case = fixtures.RunnerTests()
@@ -229,6 +253,45 @@ class TrialTests(unittest.TestCase):
                 self.assertEqual(sum(1 for event in activity if event["type"] == "harness_command"
                                      and event["argv"][0] == agent and "--version" not in event["argv"]), 2)
                 self.assertEqual((self.args.output / "final-response.md").read_text(), "Done\n")
+
+    def test_question_is_detected_when_the_agent_redirects_ddtest_output(self):
+        # A11: the agent wrote ddtest's JSON to a file and printed a reformatted
+        # summary, so no tool output held the ask_user result.
+        question = json.dumps(CONFIRMATION_QUESTION)
+        self.case.binary.write_text('#!/bin/sh\n[ "$1" = --version ] && { echo "ddtest 1.0"; exit 0; }\n'
+                                    'printf "%s\\n" "$FAKE_DDTEST_RESULT"\nexit 1\n')
+        for agent in ("claude", "codex"):
+            with self.subTest(agent=agent):
+                self.args.agent = agent
+                self.args.output = self.case.root / f"{agent}-redirected"
+                code, manifest, turns, activity = self.trial(
+                    ["ci_confirm=jenkins-plugin", "ci_confirm=jenkins-plugin-mode=agentless:datadoghq.com",
+                     "ci_confirm=jenkins-agent-runtime-matches"],
+                    {"FAKE_DDTEST_RESULT": question, "FAKE_REDIRECT_DDTEST": "1"})
+                self.assertEqual(code, 0)
+                outputs = [event["output"] for event in activity if event["type"] in ("tool_result", "item.completed") and "output" in event]
+                self.assertTrue(outputs)
+                self.assertTrue(any("ci_setup_confirmation_required" in output for output in outputs))
+                self.assertTrue(all(user_answers.agent_result(output) is None for output in outputs))
+                self.assertEqual(len(turns), 2)
+                self.assertEqual(turns[1]["stdin"], "jenkins-plugin: yes.\njenkins-plugin-mode: agentless:datadoghq.com.\n"
+                                                    "jenkins-agent-runtime-matches: yes.")
+                record = manifest["user_answers"]
+                self.assertEqual(record["status"], "answered")
+                self.assertEqual(record["turns"][0]["source"], "ddtest log")
+                # The harness log is evidence on the host, not in the trial.
+                logged = [json.loads(line) for line in (self.args.output / "ddtest-results.jsonl").read_text().splitlines()]
+                self.assertEqual([entry["result"]["code"] if entry["result"] else None for entry in logged],
+                                 ["ci_setup_confirmation_required"])
+                self.assertEqual(logged[0]["turn"], 1)
+                records = Path(manifest["trial_directory"]) / "harness" / "records"
+                self.assertEqual(list(records.iterdir()), [])
+                self.assertNotIn("records", (self.args.output / "status.txt").read_text())
+
+    def test_tool_output_remains_the_fallback_without_a_ddtest_record(self):
+        code, manifest, turns, _ = self.trial(["ci_runtime=ruby=3.4"])
+        self.assertEqual(len(turns), 2)
+        self.assertEqual(manifest["user_answers"]["turns"][0]["source"], "tool output")
 
     def test_without_answers_the_trial_stops_and_records_the_question(self):
         code, manifest, turns, activity = self.trial()
