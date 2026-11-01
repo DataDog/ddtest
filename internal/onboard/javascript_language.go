@@ -158,9 +158,12 @@ func scopedProviderNote(framework string, terms ciSetupTerms) string {
 	prefix := cucumberScopedOptions
 	leaves := "Cucumber package script that runs cucumber-js"
 	edits := " It also wraps cucumber-js with npx --no-install nyc -- (NYC is a dev dependency) and adds " + cucumberImpactedWorkaround + "."
+	direct := " A CI command that runs cucumber-js directly, not through a package script, starts with " + prefix + " " + cucumberImpactedWorkaround + " and wraps cucumber-js the same way; onboard --apply names the exact command."
 	if framework == "webdriverio" {
 		prefix, leaves, edits = webdriverIOScopedOptions, "WebdriverIO package script that runs wdio with the local runner", ""
+		direct = " A CI command that runs wdio with the local runner directly, not through a package script, starts with " + prefix + "; onboard --apply names the exact command."
 	}
+	edits += direct
 	return "The " + terms.Installer + " appends its dd-trace preload to NODE_OPTIONS; the command after it moves that preload, with the ESM loader, into " + variable + ", so only the test processes load the tracer, not the job's other Node commands. Run the tests on Node.js 20.6 or newer, or 18.19 or a later 18 release (the job's image), which the ESM loader needs. Start each " + leaves + " with " + prefix + ", keeping its command after it; onboard --apply makes this package.json edit." + edits + " After " + terms.Entry + ", extend NODE_OPTIONS and " + variable + " instead of replacing them."
 }
 

@@ -744,6 +744,23 @@ that setup instead. A job that sets `DD_CUCUMBER_NODE_OPTIONS` or
 `DD_WDIO_NODE_OPTIONS` itself is left for review. Jenkins jobs keep the
 manual setup until `onboard --apply` edits Jenkinsfiles.
 
+A CI command that runs the framework directly, without a package script
+(`./node_modules/.bin/cucumber-js features --format json`,
+`npx wdio run wdio.conf.js`), has no script to edit, so `onboard --apply`
+returns `ci_edit_required` with the exact command to write instead: the same
+prefix, and for Cucumber `DD_CIVISIBILITY_IMPACTED_TESTS_DETECTION_ENABLED=false`
+and `npx --no-install nyc --` before `cucumber-js`. On Buildkite the command
+writes each `$` as `$$`:
+
+```sh
+NODE_OPTIONS="${NODE_OPTIONS:-} ${DD_CUCUMBER_NODE_OPTIONS:-}" DD_CIVISIBILITY_IMPACTED_TESTS_DETECTION_ENABLED=false npx --no-install nyc -- ./node_modules/.bin/cucumber-js features --format json
+```
+
+Once the command has that form, rerunning `onboard --apply` adds the setup
+before it, and validation reads the command as consuming the scoped
+variable. When the job already has a setup that exports the variable, the
+result names only the command.
+
 ### Hand-written setups outside GitHub Actions
 
 On GitLab CI, CircleCI, Buildkite and Jenkins, a JavaScript or Ruby job that

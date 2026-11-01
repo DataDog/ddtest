@@ -140,6 +140,10 @@ type runtimeStep struct {
 	// runner is known: rowWindows or rowOther. Empty means the job's runner
 	// as a whole decides.
 	rowRunner string
+	// scopedVariable is the scoped variable (DD_CUCUMBER_NODE_OPTIONS or
+	// DD_WDIO_NODE_OPTIONS) whose prefix the provider's reader removed from
+	// the start of Run (see readScopedPrefix).
+	scopedVariable string
 }
 
 // ciShellRuntime is a version manager's selection in a shell: the version
