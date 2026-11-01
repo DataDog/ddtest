@@ -33,6 +33,7 @@ func planProviderJavaScriptSetup(root string, provider ciProvider, workflows []c
 		return nil, err
 	}
 	impact, coverageAdded := scopedSetupImpact(edits, framework)
+	options := scopedProviderOptions(root, framework)
 	request := language.ciSetupRequest(root, framework, site, provider.setupTerms())
 	request.TracerVersion, request.Framework = version, framework
 	var targets, unsupported []ciSetupTarget
@@ -194,8 +195,10 @@ func planProviderJavaScriptSetup(root string, provider ciProvider, workflows []c
 				// A setup that leaves the preload in NODE_OPTIONS still reaches the
 				// scoped scripts; only the options the scoped variable adds, such
 				// as the Istanbul ESM loader, would be missing.
-				if _, exported := job.Steps[first].Env[scoped]; !exported && scopedProviderOptions(root, framework) != "" && !plugin {
-					return nil, &SetupGap{location, "The existing " + provider.setupName() + " leaves the tracer's preload in NODE_OPTIONS without the " + scopedProviderOptions(root, framework) + " native ESM coverage needs. Add " + provider.setupTerms().Persist(request.After[0]) + " right after it, then rerun onboard --apply; or review it manually without adding a second setup."}
+				if _, exported := job.Steps[first].Env[scoped]; !exported && scoped != "NODE_OPTIONS" && !plugin {
+					if gap := existingScopedSetupGap(provider, workflow, job, job.Steps[first], tests, framework, options, request.After[0]); gap != "" {
+						return nil, &SetupGap{location, gap}
+					}
 				}
 				configured++
 				continue
@@ -478,6 +481,32 @@ func providerJobSetupProblem(root string, provider ciProvider, workflow ciWorkfl
 		}
 	}
 	return ""
+}
+
+// existingScopedSetupGap explains why an existing provider setup that
+// exports no scoped variable for framework does not reach step's scoped
+// scripts, or is "". Its preload must still be in NODE_OPTIONS: another
+// framework's scoped command, such as Cucumber's in a job that also runs
+// WebdriverIO, may have moved it. Native ESM Cucumber also needs the Istanbul
+// ESM loader (options), which the selected scripts' scoped prefix or the
+// step's NODE_OPTIONS may already load, as validation accepts (see
+// checkCucumberBootstrap); command is the one that would add it.
+func existingScopedSetupGap(provider ciProvider, workflow ciWorkflow, job runtimeJob, step runtimeStep, tests []TestCommand, framework, options, command string) string {
+	scoped := scopedEnvironment(framework)
+	if checkJestBootstrap(workflow, job, step, nil, false) != "" {
+		return "The existing " + provider.setupName() + " no longer leaves the tracer's preload in NODE_OPTIONS for this " + framework + " step, and exports no " + scoped + ": a command after it, such as another framework's scoped command, moves the preload. Export " + scoped + " with the tracer's preload by hand after the setup, or review it manually without adding a second setup."
+	}
+	if options == "" {
+		return ""
+	}
+	inline := len(tests) > 0
+	for _, test := range tests {
+		inline = inline && test.cucumberInlineIstanbul
+	}
+	if current, err := effectiveBootstrapOptions(workflow, job, step, nil, true); inline || err == nil && nodeOptionsLoad(current, "@istanbuljs/esm-loader-hook") {
+		return ""
+	}
+	return "The existing " + provider.setupName() + " leaves the tracer's preload in NODE_OPTIONS without the " + options + " native ESM coverage needs. Add " + provider.setupTerms().Persist(command) + " right after it, then rerun onboard --apply; or review it manually without adding a second setup."
 }
 
 // providerSetupConfigured reports whether, on a provider without the shared

@@ -322,3 +322,93 @@ func TestProviderScopedFixtures(t *testing.T) {
 		})
 	}
 }
+
+// A CommonJS package whose Cucumber run selects native ESM inputs, such as
+// --import features/steps.mjs, needs the Istanbul ESM loader as a "type":
+// "module" package does: its dependency, and the loader in the scoped
+// variable on every provider and on GitHub Actions.
+func TestScopedCucumberLoaderFollowsSelectedESMInputs(t *testing.T) {
+	pkg := map[string]any{"scripts": map[string]string{"test": "cucumber-js --import features/steps.mjs"}, "devDependencies": map[string]string{"@cucumber/cucumber": "11.0.1", "nyc": "17.1.0"}}
+	files := map[string]string{"features/steps.mjs": "export {}\n"}
+	for _, provider := range scopedProviders {
+		t.Run(provider.name, func(t *testing.T) {
+			root := scopedRepository(t, provider, provider.config("npm test"), pkg, files)
+			_, err := PlanJavaScriptSetup(root, "cucumber", "5.133.0", "datadoghq.com", ">=18")
+			var dependency *SetupDependencyGap
+			require.ErrorAs(t, err, &dependency)
+			require.Equal(t, []string{"@istanbuljs/esm-loader-hook"}, dependency.Packages)
+
+			installed := map[string]any{"scripts": pkg["scripts"], "devDependencies": map[string]string{"@cucumber/cucumber": "11.0.1", "nyc": "17.1.0", "@istanbuljs/esm-loader-hook": "0.3.0"}}
+			data, err := json.Marshal(installed)
+			require.NoError(t, err)
+			writeFile(t, root, "package.json", string(data))
+			require.Equal(t, cucumberESMLoaderHook, scopedProviderOptions(root, "cucumber"))
+			plan, err := PlanJavaScriptSetup(root, "cucumber", "5.133.0", "datadoghq.com", ">=18")
+			require.NoError(t, err)
+			require.Contains(t, plannedFile(t, plan, provider.file), provider.persisted(providerScopedCommand("cucumber", cucumberESMLoaderHook)))
+			_, err = plan.apply(true, os.Rename)
+			require.NoError(t, err)
+			check := checkCIRuntimes(t.Context(), root, nil, scopedRequirement, "cucumber")
+			require.Equal(t, StatusCompatible, check.Status, check.Jobs)
+		})
+	}
+
+	root := t.TempDir()
+	data, err := json.Marshal(map[string]any{"scripts": pkg["scripts"], "devDependencies": map[string]string{"@cucumber/cucumber": "11.0.1", "nyc": "17.1.0", "@istanbuljs/esm-loader-hook": "0.3.0"}})
+	require.NoError(t, err)
+	writeFile(t, root, "package.json", string(data))
+	writeFile(t, root, "features/steps.mjs", "export {}\n")
+	writeFile(t, root, ".github/workflows/test.yml", "jobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: npm test\n")
+	_, options, err := scopedSetupEdits(root, "cucumber")
+	require.NoError(t, err)
+	require.Contains(t, options, cucumberESMLoaderHook, "GitHub Actions' scoped options carry the loader too")
+}
+
+// An existing provider setup that leaves the preload in NODE_OPTIONS is
+// kept for native ESM Cucumber when the selected scripts already carry the
+// Istanbul ESM loader in their scoped prefix, or the step's NODE_OPTIONS
+// loads it, as validation accepts.
+func TestProviderApplyKeepsAnExistingSetupWithItsIstanbulLoader(t *testing.T) {
+	provider := scopedProviders[0]
+	inline := cucumberInlineIstanbulOptions + " " + cucumberImpactedWorkaround + " npx --no-install nyc -- cucumber-js"
+	for name, setup := range map[string]struct{ script, extra string }{
+		"inline":       {inline, ""},
+		"NODE_OPTIONS": {"cucumber-js", `    - export NODE_OPTIONS="$NODE_OPTIONS ` + cucumberESMLoaderHook + `"` + "\n"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			config := "test:\n  image: node:22\n  script:\n" + gitLabSetupEntry(gitLabJestSetup) + "    - " + esmImportCommand + "\n" + setup.extra + "    - npm test\n"
+			pkg := map[string]any{"type": "module", "scripts": map[string]string{"test": setup.script}, "devDependencies": map[string]string{"@cucumber/cucumber": "11.0.1", "nyc": "17.1.0", "@istanbuljs/esm-loader-hook": "0.3.0"}}
+			root := scopedRepository(t, provider, config, pkg, nil)
+			plan, err := PlanJavaScriptSetup(root, "cucumber", "5.133.0", "datadoghq.com", ">=18")
+			require.NoError(t, err)
+			for _, edit := range plan.edits {
+				require.NotEqual(t, gitLabCIFile, edit.path, "the existing setup is kept")
+			}
+			_, err = plan.apply(true, os.Rename)
+			require.NoError(t, err)
+			check := checkCIRuntimes(t.Context(), root, nil, scopedRequirement, "cucumber")
+			require.Equal(t, StatusCompatible, check.Status, check.Jobs)
+		})
+	}
+}
+
+// A job that runs both Cucumber and WebdriverIO: once Cucumber's setup
+// moves the preload into DD_CUCUMBER_NODE_OPTIONS, the setup no longer
+// reaches WebdriverIO through NODE_OPTIONS, so apply stops instead of
+// scoping WebdriverIO's scripts to a variable nothing exports.
+func TestProviderApplyRefusesASetupWhosePreloadAnotherFrameworkMoved(t *testing.T) {
+	provider := scopedProviders[0]
+	pkg := map[string]any{"scripts": map[string]string{"features": "cucumber-js", "e2e": "wdio run wdio.conf.js"}, "devDependencies": map[string]string{"@cucumber/cucumber": "11.0.1", "nyc": "17.1.0", "@wdio/cli": "9.4.1", "@wdio/local-runner": "9.4.1", "@wdio/mocha-framework": "9.4.1"}}
+	root := scopedRepository(t, provider, provider.config("npm run features", "npm run e2e"), pkg, scopedFrameworks[1].files)
+	plan, err := PlanJavaScriptSetup(root, "cucumber", "5.133.0", "datadoghq.com", ">=18")
+	require.NoError(t, err)
+	_, err = plan.apply(true, os.Rename)
+	require.NoError(t, err)
+
+	_, err = PlanJavaScriptSetup(root, "webdriverio", "5.133.0", "datadoghq.com", ">=18")
+	var gap *SetupGap
+	require.ErrorAs(t, err, &gap)
+	require.Contains(t, gap.Reason, "no longer leaves the tracer's preload in NODE_OPTIONS")
+	require.Contains(t, gap.Reason, "DD_WDIO_NODE_OPTIONS")
+	require.Equal(t, "wdio run wdio.conf.js", appliedScripts(t, root)["e2e"], "WebdriverIO's scripts stay unscoped")
+}

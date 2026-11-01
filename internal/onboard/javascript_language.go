@@ -131,14 +131,24 @@ func providerScopedCommand(framework, options string) string {
 
 // scopedProviderOptions are the Node options framework's scoped variable
 // adds after the tracer's preload and ESM loader, as on GitHub Actions: the
-// Istanbul ESM loader for a native ESM Cucumber package.
+// Istanbul ESM loader for native ESM Cucumber, a "type": "module" package or
+// selected ESM inputs (see cucumberNativeESM).
 func scopedProviderOptions(root, framework string) string {
 	if framework != "cucumber" {
 		return ""
 	}
 	data, err := os.ReadFile(filepath.Join(root, "package.json"))
 	var pkg struct{ Type string }
-	if err != nil || json.Unmarshal(data, &pkg) != nil || pkg.Type != "module" {
+	if err != nil || json.Unmarshal(data, &pkg) != nil {
+		return ""
+	}
+	var commands []TestCommand
+	if pkg.Type != "module" {
+		if scope, err := DiscoverValidationScope(root, framework); err == nil {
+			commands = scope.Commands
+		}
+	}
+	if !cucumberNativeESM(root, pkg.Type, commands) {
 		return ""
 	}
 	return cucumberESMLoaderHook

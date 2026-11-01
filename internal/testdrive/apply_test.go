@@ -225,6 +225,27 @@ func TestSetupSelectionAcceptsMochaCoverageThatSetupWraps(t *testing.T) {
 	}
 }
 
+// An existing GitLab setup that leaves the preload in NODE_OPTIONS reaches a
+// Cucumber script without NYC, which onboard --apply wraps; c8 coverage needs
+// a manual switch.
+func TestSetupSelectionAcceptsCucumberCoverageThatSetupWraps(t *testing.T) {
+	onboard.UseCIProvider("gitlab")
+	t.Cleanup(func() { onboard.UseCIProvider("") })
+	setup := "    - |\n      LANGUAGES=\"js\" SITE=\"datadoghq.com\" API_KEY=\"$DD_API_KEY\" JS_TRACER_VERSION=\"5.133.0\" \\\n      SRC=$(curl -fsSL https://github.com/DataDog/test-optimization-gitlab-script/releases/download/v1.2.10/script.sh); \\\n      echo \"$SRC\" | sha256sum | grep -q '^c82030bdbc7cbbbb139751885ca0392a7191c858f5a080ae364e0ec16218b783' && \\\n        source <(echo \"$SRC\") || \\\n        echo \"ERROR: SHA256 mismatch.\" >&2\n"
+	esm := `if [ -n "${DD_TRACE_ESM_IMPORT:-}" ]; then export NODE_OPTIONS="${NODE_OPTIONS:-} --import $DD_TRACE_ESM_IMPORT"; fi`
+	for script, repairable := range map[string]bool{"cucumber-js": true, "c8 cucumber-js": false} {
+		root := t.TempDir()
+		t.Chdir(root)
+		requireWriteFile(t, filepath.Join(root, "package.json"), `{"scripts":{"test":"`+script+`"},"devDependencies":{"@cucumber/cucumber":"11.0.1","nyc":"17.1.0","c8":"10.1.3"}}`)
+		requireWriteFile(t, filepath.Join(root, ".gitlab-ci.yml"), "test:\n  image: node:22.11.0\n  script:\n"+setup+"    - '"+esm+"'\n    - npm test\n")
+		ci := onboard.CheckCIRuntimes(t.Context(), root, "cucumber")
+		require.Len(t, ci.Jobs, 1, script)
+		require.Equal(t, onboard.CodeUnverifiedInitialization, ci.Jobs[0].Code, "%s: %s", script, ci.Jobs[0].Reason)
+		require.Equal(t, repairable, repairableSetupFinding("cucumber", ci.Jobs[0]), "%s: %s", script, ci.Jobs[0].Reason)
+		require.False(t, repairableSetupFinding("jest", ci.Jobs[0]), "only Cucumber and Mocha setup add the NYC wrapper")
+	}
+}
+
 func TestSetupSelectionRefusesTracerThatAnUninstrumentedCIRowCannotRun(t *testing.T) {
 	drive := preflightFixture(t, "30.2.0", "jest-circus/runner.js")
 	root := drive.repositoryRoot

@@ -73,9 +73,12 @@ func scopedSetupEdits(root, framework string) ([]setupEdit, string, error) {
 	}
 	options := strings.TrimPrefix(setupPreload(framework), "${{ env.NODE_OPTIONS }} ")
 	if framework == "cucumber" {
+		// The loader follows the selected inputs, as validation does (see
+		// checkCucumberBootstrap).
+		esm := cucumberNativeESM(root, pkg.Type, scope.Commands)
 		packages := []string{}
 		for _, name := range []string{"nyc", "@istanbuljs/esm-loader-hook"} {
-			if name != "nyc" && pkg.Type != "module" {
+			if name != "nyc" && !esm {
 				continue
 			}
 			if pkg.Dependencies[name] == "" && pkg.DevDependencies[name] == "" {
@@ -86,7 +89,7 @@ func scopedSetupEdits(root, framework string) ([]setupEdit, string, error) {
 			return nil, "", setupDependencyGap(root, packages)
 		}
 
-		if pkg.Type == "module" {
+		if esm {
 			options += " " + cucumberESMLoaderHook
 		}
 	}

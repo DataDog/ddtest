@@ -983,7 +983,11 @@ step after the orb. A job whose setup already leaves the preload in
 `NODE_OPTIONS` keeps it, since the scoped scripts still receive it; only the
 package scripts are edited. For native ESM Cucumber, which needs the Istanbul
 loader in the scoped variable, `onboard --apply` names the command to add after
-that setup instead. A job that sets `DD_CUCUMBER_NODE_OPTIONS` or
+that setup instead, unless the selected scripts' scoped prefix or the step's
+`NODE_OPTIONS` already loads it. A setup whose preload a later command moved
+out of `NODE_OPTIONS`, such as Cucumber's scoped command in a job that also
+runs WebdriverIO, no longer reaches the other framework, so `onboard --apply`
+stops and leaves that job for review. A job that sets `DD_CUCUMBER_NODE_OPTIONS` or
 `DD_WDIO_NODE_OPTIONS` itself is left for review. Jenkins jobs keep the
 manual setup until `onboard --apply` edits Jenkinsfiles.
 
@@ -1002,7 +1006,9 @@ Manual setup (`onboard --instructions`) may set the variable on the CI test step
 instead; either place disables impacted-test detection in CI.
 Other feature controls and testdrive's isolated probes remain separate.
 
-Cucumber ESM coverage also needs `@istanbuljs/esm-loader-hook`. Missing coverage
+Cucumber ESM coverage (a `"type": "module"` package, or selected native ESM
+inputs such as `--import features/steps.mjs`) also needs
+`@istanbuljs/esm-loader-hook`. Missing coverage
 dependencies produce an exact install command for npm, pnpm or Yarn. Review and
 run that command separately, then rerun onboarding. For example:
 
