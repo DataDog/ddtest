@@ -150,6 +150,13 @@ exec 4>&-
 mv -f "$record" "$record.done" 2>/dev/null
 exit "${{status:-1}}"
 """
+# ddtest prints its own path, from os.Executable, in next_command and
+# resume_command. On Linux that is /proc/self/exe, which ignores argv[0] and
+# reads "<path> (deleted)" for a deleted file; Go trims that suffix. The real
+# binary is therefore named "ddtest (deleted)" beside the wrapper, and every
+# command ddtest prints names the wrapper, so an agent that follows them stays
+# recorded.
+REAL_DDTEST = "ddtest (deleted)"
 # The runner moves each completed record out of the trial, into evidence the
 # container does not mount, as soon as the agent reports a tool result. The
 # harness log is therefore never in the checkout or in the agent's later view,
@@ -359,15 +366,27 @@ def failure_kind(messages, timed_out=False):
 CLI_STARTUP_TIMEOUT = 15
 
 
+def canonical_handoff(text, canonical):
+    """The match of the product's handoff in the answer, or None. Agents quote
+    it in a fenced block or mark its lines or code spans with backticks; that
+    formatting is accepted, but any other change to its characters is not."""
+    if not isinstance(canonical, str) or not canonical.strip():
+        return None
+    characters = canonical.replace("`", "")
+    return re.search("`*" + "`*".join(map(re.escape, characters)) + "`*", text)
+
+
 def reporting_verdict(text, report):
     """Require the product's copyable handoff; audit extra claims independently."""
     report = report if isinstance(report, dict) else {}
     summary = report.get("summary") if isinstance(report.get("summary"),dict) else {}
     canonical = summary.get("final_response")
     missing, differences, checks, unsupported = [], [], [], []
-    if isinstance(canonical, str) and canonical and canonical in text:
-        remaining = text.replace(canonical, "")
-        checks.append("unchanged summary.final_response")
+    handoff = canonical_handoff(text, canonical)
+    if handoff:
+        remaining = text[:handoff.start()] + text[handoff.end():]
+        checks.append("unchanged summary.final_response" if handoff[0] == canonical
+                      else "summary.final_response unchanged apart from code formatting")
     else:
         remaining = text
         missing.append("unchanged summary.final_response")
@@ -475,7 +494,7 @@ def reporting_verdict(text, report):
             "Missing canonical handoff needs independent review." if missing else
             "Claims beyond the report need independent review." if unsupported else
             "Canonical handoff retained without direct contradictions; independent technical evaluation is still required.",
-            "canonical_handoff":bool(isinstance(canonical,str) and canonical and canonical in text),
+            "canonical_handoff":bool(handoff),
             "checks":checks, "differences":differences[:10], "missing":missing, "unsupported":unsupported[:10]}
 
 
@@ -724,7 +743,7 @@ def run(args):
     harness = trial / "harness"
     ddtest_records = harness / "records"
     ddtest_records.mkdir(parents=True)
-    real_ddtest = harness / "ddtest"
+    real_ddtest = bin_dir / REAL_DDTEST
     shutil.copy2(binary, real_ddtest)
     env = environment(home)
     env["PATH"] = container.path

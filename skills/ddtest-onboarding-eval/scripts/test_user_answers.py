@@ -192,7 +192,8 @@ class RecorderTests(unittest.TestCase):
             root = Path(directory)
             records = root / "records"
             records.mkdir()
-            real = root / "real"
+            # The runner's name for the real binary, beside the wrapper.
+            real = root / run_eval.REAL_DDTEST
             real.write_text('#!/bin/sh\nread line\nprintf "out:%s:%s\\n" "$1" "$line"\necho err >&2\nexit 3\n')
             real.chmod(0o755)
             wrapper = root / "ddtest"
@@ -341,7 +342,7 @@ class TrialTests(unittest.TestCase):
         observed = json.loads((Path(manifest["checkout"]) / "observed.json").read_text())
         self.assertIn(str(directory), observed["environment"]["PATH"].split(os.pathsep))
         # The folder the prompt names still holds only ddtest.
-        self.assertEqual([path.name for path in (directory.parent / "bin").iterdir()], ["ddtest"])
+        self.assertEqual(sorted(path.name for path in (directory.parent / "bin").iterdir()), ["ddtest", run_eval.REAL_DDTEST])
 
     def test_activity_excerpt_limit_is_configurable_and_recorded(self):
         self.args.excerpt_limit = 1000

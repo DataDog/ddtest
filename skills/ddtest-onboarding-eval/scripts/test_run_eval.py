@@ -450,13 +450,18 @@ class RunnerTests(unittest.TestCase):
                     self.assertEqual(observed["agent_environment"]["CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"], "1")
                     self.assertEqual(observed["agent_environment"]["BASH_MAX_TIMEOUT_MS"], "30000")
                 self.assertNotIn("--model", observed["argv"])
-                copied = checkout.parent / "harness" / "ddtest"
+                # The folder the prompt names holds the recording wrapper and
+                # the real binary, whose /proc/self/exe path Go's os.Executable
+                # reports as the wrapper's, so ddtest's printed commands are
+                # recorded too.
+                wrapper = checkout.parent / "bin" / "ddtest"
+                copied = wrapper.with_name("ddtest (deleted)")
                 self.assertEqual(copied.read_bytes(), self.binary.read_bytes())
                 self.assertFalse(copied.is_symlink())
-                # The folder the prompt names holds only the recording wrapper.
-                wrapper = checkout.parent / "bin" / "ddtest"
-                self.assertEqual(list(wrapper.parent.iterdir()), [wrapper])
-                self.assertIn(str(copied), wrapper.read_text())
+                self.assertEqual(sorted(wrapper.parent.iterdir()), [wrapper, copied])
+                self.assertEqual(str(copied).removesuffix(" (deleted)"), str(wrapper))
+                self.assertIn(shlex.quote(str(copied)), wrapper.read_text())
+                self.assertFalse((checkout.parent / "harness" / "ddtest").exists())
                 activity = (self.args.output / "activity.jsonl").read_text()
                 self.assertNotIn("PRIVATE_REASONING", activity)
                 self.assertEqual((self.args.output / "final-response.md").read_text(), "Done\n")
@@ -949,6 +954,25 @@ class VerdictTests(unittest.TestCase):
         self.assertIn("independent technical evaluation", result["reason"])
         paraphrase = answer.replace("5/8 validated", "5 / 8 fully validated")
         self.assertEqual(run_eval.reporting_verdict(paraphrase,self.compact_report())["status"],"review")
+
+    def test_canonical_handoff_in_code_formatting_is_unchanged(self):
+        answer = self.compact_answer()
+        code_spans = answer.replace("5/8 validated", "`5/8` validated").replace(
+            "Local validation: PASSED.", "`Local validation: PASSED.`")
+        lines = "".join(f"`{line}`\n" if line else "\n" for line in answer.splitlines())
+        for quoted in (code_spans, lines, "final_response\n\n```text\n" + answer + "```\n", "```\n" + code_spans + "```\n"):
+            with self.subTest(quoted=quoted):
+                result = run_eval.reporting_verdict(quoted + "\nSome owner setup is still required.\n", self.compact_report())
+                self.assertEqual(result["status"], "pass", result)
+                self.assertTrue(result["canonical_handoff"])
+                self.assertEqual(result["checks"], ["summary.final_response unchanged apart from code formatting"])
+        # Backticks never excuse a changed character.
+        for altered in (code_spans.replace("`5/8`", "`6/8`"), code_spans.replace("Local validation", "Local  validation"),
+                        "```\n" + answer.replace("\n[HTML", "\n\n[HTML") + "```\n"):
+            with self.subTest(altered=altered):
+                result = run_eval.reporting_verdict(altered, self.compact_report())
+                self.assertNotEqual(result["status"], "pass", result)
+                self.assertFalse(result["canonical_handoff"])
 
     def test_plain_language_verdicts_are_checked_but_canonical_handoff_is_required(self):
         answer = self.compact_answer().replace("Onboarding validation: INCOMPLETE. Local validation: PASSED.",

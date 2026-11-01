@@ -75,7 +75,7 @@ A Bundler `path` puts gem executables off `PATH`, so a CI command such as bare
 `rspec` fails where the CI image has it. Pass `--bundle-binstubs rspec-core`
 (repeatable, one gem each): after setup, the runner writes Bundler binstubs to
 a private `/trial/bundle-bin` on `PATH` for readiness and the agent, and records
-them under `bundle_binstubs` in `run.json`. `/trial/bin` keeps only ddtest.
+them under `bundle_binstubs` in `run.json`. `/trial/bin` keeps only ddtest (the wrapper and the real binary).
 For `--framework junit4`, `junit5`, `testng`, `spock`, `cucumber-java`, `karate`, `scalatest` or `munit`, build `--target java`: it adds a
 digest-pinned Temurin JDK 21 (select another with
 `--build-arg JDK_IMAGE=eclipse-temurin:<version>-jdk@sha256:<digest>`) and a
@@ -186,6 +186,9 @@ Invalid values stop before cloning.
 
 The `ddtest` in the prompt's folder is a wrapper that runs the real binary
 unchanged and copies its standard output to a record outside the checkout. The
+real binary sits beside it as `ddtest (deleted)`: ddtest takes the path it
+prints in `next_command` and `resume_command` from `/proc/self/exe`, and Go
+trims that suffix, so every printed command runs the wrapper. The
 runner moves each completed record out of the trial when the agent reports a
 tool result, into `ddtest-results.jsonl` in the evidence (`turn` and the
 redacted ddtest result, or null). So a result the agent redirected to a file or
