@@ -2631,6 +2631,9 @@ func (r *jenkinsReader) finish(slot *jenkinsSlot) {
 			result.Host = "the container of " + scope.agent.describe + ", " + reason
 		} else {
 			result.SetupImageProblem = jenkinsImageSetupProblem(scope.agent, false)
+			// Docker Pipeline pulls an image only when the agent has none,
+			// so a floating tag runs the release the agent kept.
+			result.FloatingTagStated = true
 		}
 	case "host":
 		result.Host = jenkinsHost(scope.agent, job.pathChange)

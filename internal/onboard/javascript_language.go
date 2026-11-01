@@ -411,12 +411,13 @@ var nodeImageTag = regexp.MustCompile(`^(?:(?:docker\.io/)?(?:library/)?node|cim
 
 // javascriptImageRuntime is the Node version a job's image selects, or a
 // Node image's floating tag (lts, current, or none): that image's runtime is
-// not the user's to state.
+// not the user's to state, unless the job's agent keeps the release the tag
+// selects (FloatingTagStated).
 func javascriptImageRuntime(job runtimeJob) string {
 	if node := imageNode(job.Image); node != "" {
 		return node
 	}
-	if match := nodeImageTag.FindStringSubmatch(withImplicitTag(job.Image)); match != nil {
+	if match := nodeImageTag.FindStringSubmatch(withImplicitTag(job.Image)); match != nil && !job.FloatingTagStated {
 		return match[1]
 	}
 	return ""

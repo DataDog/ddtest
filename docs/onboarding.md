@@ -103,7 +103,8 @@ never fail onboarding.
 
 Some CI jobs select no runtime ddtest can read: Jenkins stages on a host
 agent or in a container whose image ddtest does not read (a Kubernetes pod's,
-or `docker.build(…)`'s), Buildkite steps on the agent host, GitLab jobs without an `image`, CircleCI `machine` and `macos`
+or `docker.build(…)`'s) or whose Node or Ruby image has a floating tag
+(`node:lts`, `ruby:latest`; see [Jenkins](#jenkins)), Buildkite steps on the agent host, GitLab jobs without an `image`, CircleCI `machine` and `macos`
 executors, GitHub self-hosted runners (a `self-hosted` label in any `runs-on`
 form, including `{group, labels}` and a runner a matrix row selects, such as
 `runs-on: ${{ matrix.os }}` with `os: [self-hosted, ubuntu-latest]`) without
@@ -132,7 +133,8 @@ statement naming only that job is reported as unused. A statement only fills
 an unknown runtime:
 
 - A statement for a job whose configuration selects a different version (its
-  image, including a floating tag such as `node:lts`, a runtime installer step,
+  image, including a floating tag such as `node:lts` outside a Jenkins
+  container, a runtime installer step,
   `actions/setup-node` or nvm) stops with `ci_runtime_conflict`. A statement
   without a job never conflicts. An installer counts only when it runs on
   every matrix row the job runs, by the job's first test step: one whose
@@ -673,7 +675,12 @@ Dockerfile it builds (`filename`, `dir`; a build argument `additionalBuildArgs`
 overrides is unknown), as Buildkite's Compose builds do. For an image ddtest
 does not read (a Kubernetes pod's, or `docker.build(…)`'s), the runtime is the
 user's to state with `--ci-runtime`, as a host agent's, and `final_response`
-says ddtest could not check that the image has Bash and curl or wget. An image
+says ddtest could not check that the image has Bash and curl or wget. So is the
+runtime of a Node or Ruby image with a floating tag (`node:lts`,
+`node:latest`, an untagged `node`, `ruby:latest`): the agent's Docker pulls an
+image only when it has none (unless `alwaysPull` is set), so the tag runs the
+release that agent keeps. A GitLab, Buildkite or CircleCI image's floating tag
+stays inconclusive. An image
 known to lack Bash, or curl and wget (Alpine, an official `-slim` image without
 an install before the snippet), is a setup problem. `DD_API_KEY` must reach the
 `sh` step from a Jenkins credential, with

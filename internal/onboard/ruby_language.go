@@ -639,12 +639,13 @@ func rubyTestStep(root string, workflow ciWorkflow, job runtimeJob, step runtime
 
 // rubyImageSelection is the Ruby version or engine a job's image selects, or
 // a Ruby image's floating tag (latest, current, or none): that image's runtime
-// is not the user's to state.
+// is not the user's to state, unless the job's agent keeps the release the
+// tag selects (FloatingTagStated).
 func rubyImageSelection(job runtimeJob) string {
 	if version, engine := rubyImageRuntime(job.Image); version+engine != "" {
 		return version + engine
 	}
-	if match := rubyImage.FindStringSubmatch(withImplicitTag(job.Image)); match != nil {
+	if match := rubyImage.FindStringSubmatch(withImplicitTag(job.Image)); match != nil && !job.FloatingTagStated {
 		return match[2]
 	}
 	return ""
