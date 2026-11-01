@@ -163,6 +163,19 @@ func resolveVariantStep(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 			delete(env, key)
 			continue
 		}
+		// A setup for several languages, run in the job's shell, exports each
+		// tracer's options for later commands; another language's export only
+		// instruments that language, and holds values only CI knows. The job's
+		// own options in the variable are kept.
+		if len(frameworks) > 0 {
+			if exported, ok := otherLanguageSetupExport(discoveryLanguageFor(frameworks[0]), key); ok && strings.Contains(value, exported) {
+				value = strings.TrimSpace(strings.ReplaceAll(value, exported, ""))
+				if value == "" {
+					delete(env, key)
+					continue
+				}
+			}
+		}
 		resolved, err := runtimeValue(value, row)
 		if err != nil && len(frameworks) > 0 && frameworks[0] == "cypress" {
 			// Local comparison installs its own tracer and uses the same app
@@ -473,6 +486,21 @@ func keptRuntimeRead(parameter *syntax.ParamExp) bool {
 		_, ok := exported[parameter.Param.Value]
 		return ok
 	})
+}
+
+// otherLanguageSetupExport is what the Datadog installer exports into key
+// for a language other than current, without the job's own value.
+func otherLanguageSetupExport(current discoveryLanguage, key string) (string, bool) {
+	for _, language := range discoveryLanguages {
+		if current != nil && language.name() == current.name() {
+			continue
+		}
+		exported, _ := language.setupShellExports(map[string]string{})
+		if value, ok := exported[key]; ok && value != "" {
+			return value, true
+		}
+	}
+	return "", false
 }
 
 // readsKeptRuntimeVariable reports a word that reads such a variable.

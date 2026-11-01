@@ -175,7 +175,7 @@ func (javaLanguage) temporaryTracerSource() string                 { return "tem
 // plugin forks its own JVM, which inherits only JAVA_TOOL_OPTIONS, so a reactor
 // with any ScalaTest module uses that instead. A configuration's own options
 // are kept, as the baseline keeps them, except a Datadog agent already
-// attached, as in a CI job after the GitHub action, or through JAVA_OPTS,
+// attached, as in a CI job after the Datadog setup, or through JAVA_OPTS,
 // which the Gradle launcher also reads: the baseline must run without it and
 // the reporting run with the selected one only.
 func (javaLanguage) runEnvironment(t *Testdrive, path string) map[string]string {

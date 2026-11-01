@@ -192,7 +192,7 @@ func gradleLauncherProperties(configuration map[string]string) map[string]string
 // command line, in the launcher's JVM options, or in the build's or the user
 // home's gradle.properties. The baseline could not run without it.
 func gradleAgentProperties(directory, build string, args []string, configuration map[string]string) error {
-	const remedy = "so validation cannot run the build without it; remove that -javaagent option, as CI attaches the agent with the GitHub action"
+	const remedy = "so validation cannot run the build without it; remove that -javaagent option, as CI attaches the agent with the Datadog setup"
 	if value, ok := gradle.SystemProperties(args)["org.gradle.jvmargs"]; ok && withoutDatadogAgent(value) != value {
 		return errors.New("the command attaches dd-java-agent to the Gradle build through -Dorg.gradle.jvmargs, " + remedy)
 	}

@@ -529,9 +529,9 @@ func TestGitLabTestWorkflowsNeedTheSetupBeforeTests(t *testing.T) {
 	require.Equal(t, []string{".gitlab-ci.yml"}, configured)
 }
 
-// Python and Java keep GitHub Actions only.
+// Python keeps GitHub Actions only.
 func TestGitLabLanguageSupport(t *testing.T) {
-	for language, supported := range map[string]bool{"javascript": true, "ruby": true, "python": false, "java": false} {
+	for language, supported := range map[string]bool{"javascript": true, "ruby": true, "python": false, "java": true} {
 		require.Equal(t, supported, languageSupportsCIProvider(language, gitLabCI{}), language)
 	}
 	root := t.TempDir()
