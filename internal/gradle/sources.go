@@ -39,16 +39,34 @@ func TestSourceSet(root string, build, project Project, task string) (string, bo
 		`\btask\s+` + name + `\s*\(\s*type\s*:\s*Test\b[^{\n]*\{|` +
 		`\bval\s+` + name + `\s+by\s+(?:tasks\.)?(?:registering|creating|existing|getting)\s*\(\s*Test::class[^{\n]*\{|` +
 		`\btasks\.` + name + `\s*\{|(?m:^[ \t]*` + name + `\s*\{)`)
-	assigned := ""
+	// Configuration of every Test task, as tasks.withType<Test>() { … },
+	// may set this task's classes too.
+	for _, match := range typeWideTests.FindAllStringIndex(source, -1) {
+		if body, ok := block(source, match[1]-1); !ok || classesAssignment.MatchString(body) {
+			return "", false
+		}
+	}
+	// The last assignment decides; one build logic computes, as
+	// files(otherClasses), leaves the source set unknown.
+	assigned, computed := "", false
 	for _, match := range declaration.FindAllStringIndex(source, -1) {
 		body, ok := block(source, match[1]-1)
 		if !ok {
 			continue
 		}
-		if sets := classesSourceSet.FindAllStringSubmatch(body, -1); sets != nil {
-			set := sets[len(sets)-1]
-			assigned = set[1] + set[2] + set[3]
+		assignments := classesAssignment.FindAllStringIndex(body, -1)
+		if assignments == nil {
+			continue
 		}
+		last := body[assignments[len(assignments)-1][0]:]
+		if set := classesSourceSet.FindStringSubmatch(last); set != nil && strings.HasPrefix(last, set[0]) {
+			assigned, computed = set[1]+set[2]+set[3], false
+		} else {
+			assigned, computed = "", true
+		}
+	}
+	if computed {
+		return "", false
 	}
 	if assigned != "" {
 		return assigned, true
@@ -64,6 +82,13 @@ func TestSourceSet(root string, build, project Project, task string) (string, bo
 	}
 	return "", false
 }
+
+// typeWideTests opens a block that configures every Test task, as
+// tasks.withType<Test>().configureEach { or tasks.withType(Test) {.
+var typeWideTests = regexp.MustCompile(`withType\s*(?:<\s*Test\s*>|\(\s*Test(?:::class(?:\.java)?)?\s*\))[^{\n]*\{`)
+
+// classesAssignment assigns a Test task's testClassesDirs.
+var classesAssignment = regexp.MustCompile(`\btestClassesDirs\s*(?:=|\.from\(|\.setFrom\()`)
 
 // classesSourceSet is the source set of testClassesDirs = sourceSets.<name>.output.classesDirs,
 // in the spellings sourceSets["name"], sourceSets.getByName("name") and

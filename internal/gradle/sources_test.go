@@ -59,22 +59,40 @@ func TestTestSourceSets(t *testing.T) {
 		})
 	}
 	root := t.TempDir()
-	writeFile(t, root, "build.gradle", "tasks.register<Test>(\"ci\") { useJUnitPlatform() }\ntasks.register<Test>(\"computed\") { testClassesDirs = files(dirs) }\n")
 	build := Project{Path: ":", Directory: ".", BuildFile: "build.gradle"}
-	for _, task := range []string{"ci", "computed", "unknown"} {
+	writeFile(t, root, "build.gradle", "tasks.register<Test>(\"ci\") { useJUnitPlatform() }\ntasks.register<Test>(\"computed\") { testClassesDirs = files(dirs) }\n"+
+		"tasks.test {\n  testClassesDirs = sourceSets.it.output.classesDirs\n  testClassesDirs = files(otherClasses)\n}\n")
+	for _, task := range []string{"ci", "computed", "unknown", "test"} {
 		_, ok := TestSourceSet(root, build, build, task)
 		require.False(t, ok, "%s's classes are not a source set ddtest can read", task)
 	}
+
+	// Configuration of every Test task may set the test task's classes.
+	for _, build := range []string{
+		"tasks.withType<Test>().configureEach {\n  testClassesDirs = sourceSets[\"integrationTest\"].output.classesDirs\n}\n",
+		"tasks.withType(Test) { testClassesDirs = sourceSets.integrationTest.output.classesDirs }\n",
+	} {
+		root := t.TempDir()
+		writeFile(t, root, "build.gradle", build)
+		project := Project{Path: ":", Directory: ".", BuildFile: "build.gradle"}
+		_, ok := TestSourceSet(root, project, project, "test")
+		require.False(t, ok, build)
+	}
+	root = t.TempDir()
+	writeFile(t, root, "build.gradle", "tasks.withType<Test>().configureEach { useJUnitPlatform() }\n")
+	set, ok := TestSourceSet(root, build, build, "test")
+	require.True(t, ok, "type-wide configuration that leaves the classes alone")
+	require.Equal(t, "test", set)
 
 	// The root build may set a subproject's test classes.
 	root = t.TempDir()
 	writeFile(t, root, "app/build.gradle", "")
 	app := Project{Path: ":app", Directory: "app", BuildFile: filepath.Join("app", "build.gradle")}
 	writeFile(t, root, "build.gradle", "subprojects {\n  tasks.test { testClassesDirs = sourceSets.integrationTest.output.classesDirs }\n}\n")
-	_, ok := TestSourceSet(root, build, app, "test")
+	_, ok = TestSourceSet(root, build, app, "test")
 	require.False(t, ok, "the root build reconfigures the subproject's test task")
 	writeFile(t, root, "build.gradle", "subprojects { repositories { mavenCentral() } }\n")
-	set, ok := TestSourceSet(root, build, app, "test")
+	set, ok = TestSourceSet(root, build, app, "test")
 	require.True(t, ok)
 	require.Equal(t, "test", set)
 }

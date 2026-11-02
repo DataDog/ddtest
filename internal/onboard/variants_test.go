@@ -169,7 +169,7 @@ func TestUnresolvedCIValuesAreValidatedWithoutAndReported(t *testing.T) {
 }
 
 func TestCIControlVariables(t *testing.T) {
-	for _, name := range []string{"PATH", "HOME", "BASH_ENV", "ENV", "JDK_JAVA_OPTIONS", "_JAVA_OPTIONS", "LD_PRELOAD", "DD_SERVICE", "NODE_OPTIONS", "npm_config_registry", "PYTHONPATH", "PYTEST_ADDOPTS", "RUBYOPT", "BUNDLE_GEMFILE", "SPEC_OPTS", "JAVA_TOOL_OPTIONS", "MAVEN_ARGS", "GRADLE_OPTS", "GRADLE_USER_HOME", "ORG_GRADLE_PROJECT_testProfile"} {
+	for _, name := range []string{"PATH", "HOME", "BASH_ENV", "ENV", "JDK_JAVA_OPTIONS", "_JAVA_OPTIONS", "LD_PRELOAD", "DD_SERVICE", "NODE_OPTIONS", "npm_config_registry", "PYTHONPATH", "PYTHONWARNINGS", "PYTEST_ADDOPTS", "RUBYOPT", "BUNDLE_GEMFILE", "SPEC_OPTS", "JAVA_TOOL_OPTIONS", "MAVEN_ARGS", "GRADLE_OPTS", "GRADLE_USER_HOME", "ORG_GRADLE_PROJECT_testProfile"} {
 		require.True(t, ciControlVariable(name), name)
 	}
 	for _, name := range []string{"API_URL", "GITHUB_TOKEN", "CI_BRANCH", "MAVEN_CENTRAL_PASSWORD_NEW", "TEST_DB_URL", "AUTH_MODE"} {
