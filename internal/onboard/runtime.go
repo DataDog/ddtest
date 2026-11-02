@@ -790,7 +790,7 @@ func unsupportedSetupReason(provider ciProvider, job runtimeJob) string {
 // dd-trace whatever the CI Node is (the Datadog Jenkins plugin) cannot work
 // on node: the latest release's engines exclude it.
 func floatingTracerNodeProblem(setup string, latest tracerRequirement, node string) string {
-	return "The " + setup + " installs the latest dd-trace release (" + latest.Version + ") on every build, whatever Node the CI runs, and that release requires Node " + latest.Node + " (its package.json engines), which Node " + node + " does not satisfy; the " + setup + " cannot install an older release. Run these tests on a Node version the latest dd-trace supports, or set up Test Optimization for them manually (ddtest cannot validate that)."
+	return "The " + setup + " installs the latest dd-trace release (" + latest.Version + ") on every build, whatever Node the CI runs, and that release requires Node " + latest.Node + " (its package.json engines), which Node " + node + " does not satisfy; the " + setup + " cannot install an older release. Run these tests on a Node version the latest dd-trace supports, or set up Test Optimization for them by hand; ddtest then checks the hand-written setup where it can."
 }
 
 // floatingTracerRequirement is the latest dd-trace release and its Node

@@ -617,3 +617,20 @@ func TestJenkinsRubySnippetInEveryContainerTestShell(t *testing.T) {
 	require.Equal(t, "The Datadog setup snippet at Jenkinsfile:7 runs in another shell than this test command, and its exports reach only the later commands of its own shell; run it in the same shell, before the test command.", jobs[0].Reason)
 	require.False(t, rubyDiscovery{}.ciSetupConfigured(root, "rspec", "datadoghq.com"))
 }
+
+// A container stage's image note names the setup snippet, its setup
+// mechanism, not the Datadog Jenkins plugin of the host agents.
+func TestJenkinsContainerImageNoteNamesTheSnippet(t *testing.T) {
+	for _, tc := range []struct{ framework, language, image, command string }{
+		{"jest", "javascript", "node:22-slim", "npm test"},
+		{"rspec", "ruby", "ruby:3.2-slim", "bundle exec rspec"},
+	} {
+		t.Run(tc.framework, func(t *testing.T) {
+			root := jenkinsApplyRepository(t, tc.framework, jenkinsContainerStage("docker { image '"+tc.image+"' }", "", tc.command))
+			note := setupImageNote(root, tc.language, tc.framework)
+			require.Contains(t, note, "These CI steps cannot run the Datadog setup snippet in their current image, so their tests would stay untraced even with it in place; changing an image or Dockerfile is not part of this setup, so tell the user and ask before making it:\nJenkinsfile / Test: The step's image "+tc.image+" has neither curl nor wget")
+			require.NotContains(t, note, jenkinsPluginReference)
+			require.Equal(t, 1, strings.Count(note, "These CI steps cannot run"))
+		})
+	}
+}

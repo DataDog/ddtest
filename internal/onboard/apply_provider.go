@@ -593,9 +593,10 @@ func setupUnsupportedNote(root, language, framework string) string {
 }
 
 // setupImageNote names the CI jobs running the framework's tests whose
-// container cannot run the provider's setup as configured, such as an image
+// container cannot run their setup mechanism as configured, such as an image
 // without curl, so the person learns it before the setup is written; empty
-// when there are none. Fixing an image is not part of the prescribed setup.
+// when there are none. Each job is named under its own setup mechanism (see
+// setupProviderFor). Fixing an image is not part of the prescribed setup.
 func setupImageNote(root, language, framework string) string {
 	provider, err := currentCIProvider(root)
 	if err != nil {
@@ -605,7 +606,8 @@ func setupImageNote(root, language, framework string) string {
 	if err != nil {
 		return ""
 	}
-	var problems []string
+	var setups []string
+	problems := map[string][]string{}
 	for _, workflow := range workflows {
 		for _, name := range slices.Sorted(maps.Keys(workflow.Jobs)) {
 			job := workflow.Jobs[name]
@@ -615,12 +617,17 @@ func setupImageNote(root, language, framework string) string {
 			if slices.ContainsFunc(job.Steps, func(step runtimeStep) bool {
 				return resolveTestStep(root, workflow, job, step, language, framework).Matched
 			}) {
-				problems = append(problems, workflow.Path+" / "+name+": "+job.SetupImageProblem)
+				setup := setupProviderFor(provider, job).setupName()
+				if !slices.Contains(setups, setup) {
+					setups = append(setups, setup)
+				}
+				problems[setup] = append(problems[setup], workflow.Path+" / "+name+": "+job.SetupImageProblem)
 			}
 		}
 	}
-	if len(problems) == 0 {
-		return ""
+	notes := make([]string, 0, len(setups))
+	for _, setup := range setups {
+		notes = append(notes, "These CI steps cannot run the "+setup+" in their current image, so their tests would stay untraced even with it in place; changing an image or Dockerfile is not part of this setup, so tell the user and ask before making it:\n"+strings.Join(problems[setup], "\n"))
 	}
-	return "These CI steps cannot run the " + provider.setupName() + " in their current image, so their tests would stay untraced even with it in place; changing an image or Dockerfile is not part of this setup, so tell the user and ask before making it:\n" + strings.Join(problems, "\n")
+	return strings.Join(notes, "\n")
 }
