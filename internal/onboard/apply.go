@@ -443,7 +443,7 @@ func PlanJavaScriptSetup(root, framework, version, site, nodeRequirement string)
 }
 
 // ignoreSetupEdits excludes ddtest's report directory, NYC's output when
-// coverage was added, and extra (root patterns of what the CI setup leaves
+// coverage was added, and extra (patterns of what the CI setup leaves
 // in the workspace), from Git and npm packaging.
 func ignoreSetupEdits(root string, coverageAdded bool, extra ...string) ([]setupEdit, error) {
 	// ddtest writes .testoptimization/ at the root only. NYC writes
@@ -478,10 +478,7 @@ func ignoreEdits(root string, wanted []string) ([]setupEdit, error) {
 				case "/.testoptimization/":
 					return strings.Trim(line, "/") == ".testoptimization"
 				}
-				// A pattern that matches the entry's, such as
-				// /.datadog-ci-container* for /.datadog-ci-container.*/.
-				covered, err := path.Match(strings.Trim(line, "/"), strings.Trim(entry, "/"))
-				return line != "" && strings.HasPrefix(line, "/") == strings.HasPrefix(entry, "/") && err == nil && covered
+				return ignoreCovers(line, entry)
 			})
 		}
 		if len(entries) == 0 {
@@ -501,6 +498,32 @@ func ignoreEdits(root string, wanted []string) ([]setupEdit, error) {
 		edits = append(edits, edit)
 	}
 	return edits, nil
+}
+
+// ignoreCovers reports a .gitignore line whose pattern matches every folder
+// a single-name entry does: an entry anchored at the root (/name/) is
+// covered by a pattern for that name at the root or at any depth, and an
+// unanchored one (name/), which Git matches at any depth, only by a pattern
+// at any depth, such as .datadog-ci-container* or
+// **/.datadog-ci-container.*/ for .datadog-ci-container.*/.
+func ignoreCovers(line, entry string) bool {
+	if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "!") {
+		return false
+	}
+	pattern := strings.TrimSuffix(line, "/")
+	anchored := false
+	if rest, ok := strings.CutPrefix(pattern, "**/"); ok {
+		pattern = rest
+	} else if rest, ok := strings.CutPrefix(pattern, "/"); ok {
+		pattern, anchored = rest, true
+	}
+	// Git anchors a pattern with a slash in its middle at the root too, and
+	// it then names a path below a folder, not a single name.
+	if pattern == "" || strings.Contains(pattern, "/") || anchored && !strings.HasPrefix(entry, "/") {
+		return false
+	}
+	covered, err := path.Match(pattern, strings.Trim(entry, "/"))
+	return err == nil && covered
 }
 
 func setupMember(node *yaml.Node, key string) *yaml.Node {

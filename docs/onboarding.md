@@ -630,10 +630,13 @@ stages and, in a `parallel` section, only its branch; `final_response` states
 that as a caveat. The plugin caches its variables per build, build agent and
 set of languages, not per option, so on an agent where several options for the
 same languages run, the `serviceName` and `additionalVariables` of every one
-after the first it configures are ignored. ddtest cannot tell which stages
-share an agent, so every `datadog(…)` option of a Jenkinsfile with the same
-languages (top-level, stage-level or a scripted wrap) must have the same
-arguments; otherwise each is a setup problem naming the others. Each call
+after the first it configures are ignored, and so is the `NODE_OPTIONS` where
+it is, since the cached preload composes with the first one's. ddtest cannot
+tell which stages share an agent, so every `datadog(…)` option of a
+Jenkinsfile with the same languages (top-level, stage-level or a scripted
+wrap) must have the same arguments and compose with the same `NODE_OPTIONS`
+(set it in the pipeline's `environment`, not a stage's); otherwise each is a
+setup problem naming the others. Each call
 counts on its own, even with another on the same line, and so does each
 reading of one with other arguments (such as a matrix cell's); an option with
 `enabled: false` configures no tracer and is left out. A stage's
@@ -671,11 +674,13 @@ form differs from Buildkite's where Jenkins needs it:
   each container has its own PID namespace. It is not in the container's
   `/tmp`, which hardened images may mount `noexec`, stopping the tracer's
   native add-ons. When `mktemp` fails, the snippet logs that the installation
-  failed. The folders stay in the workspace: the instructions ask for
-  `/.datadog-ci-container.*/` in the repository's `.gitignore`, which
-  `onboard --apply` adds when it writes a snippet (unless a pattern such as
-  `/.datadog-ci-container*` already covers it), and a workspace cleanup such
-  as `cleanWs()` removes them.
+  failed. The folders stay in the workspace, in each `sh` step's working
+  directory, which `dir(…)` or a `cd` may put below the checkout root: the
+  instructions ask for `.datadog-ci-container.*/`, without a leading `/`, in
+  the repository's `.gitignore`, which `onboard --apply` adds when it writes a
+  snippet (unless a pattern for any depth such as `.datadog-ci-container*`
+  already covers it; a root-only `/.datadog-ci-container*` does not), and a
+  workspace cleanup such as `cleanWs()` removes them.
 - It tests the key with `[ "${DD_API_KEY:+set}" = set ]`, which Jenkins' shell
   trace (`sh -x`) prints without the key's value.
 - No `$` is escaped: the `sh` script is a single-quoted Groovy string.
@@ -690,7 +695,9 @@ the container's image. `agent { dockerfile … }` reads the base image of the
 Dockerfile it builds (`filename`, `dir`; the stage `additionalBuildArgs`'
 `--target` selects, or else the last one; a build argument it overrides is
 unknown; `additionalBuildArgs` that are not literal, read the shell's
-environment or select another Dockerfile leave the image unread), as
+environment, use shell quoting or escapes (which the shell removes before
+`docker build` reads the names) or select another Dockerfile leave the image
+unread), as
 Buildkite's Compose builds do. For an image ddtest
 does not read (a Kubernetes pod's, or `docker.build(…)`'s), the runtime is the
 user's to state with `--ci-runtime`, as a host agent's, and `final_response`
@@ -706,8 +713,12 @@ an install before the snippet), is a setup problem. `DD_API_KEY` must reach the
 `withCredentials([string(credentialsId: '…', variable: 'DD_API_KEY')]) { … }`
 around it or `DD_API_KEY = credentials('…')` in an `environment` directive: the
 plugin's own key reaches only the steps in its option's scope. A step the key
-does not reach, a literal key, or a key an earlier command of the script clears
-is a setup problem.
+does not reach, a literal key, a key an earlier command of the script clears,
+or a `withCredentials` binding that sets `DD_API_KEY` to something other than
+a credential's secret text (a `file(…)` or `sshUserPrivateKey(…)` binding's
+path, a user name, `usernameColonPassword(…)`'s `user:password`) is a setup
+problem; `string(…)` and `usernamePassword(…)`'s `passwordVariable` give the
+key. `credentials('…')` is taken as the Secret text the instructions ask for.
 
 The snippet must be the stage's only setup: a container stage within a
 `datadog(…)` option's scope is a setup problem (see below). When ddtest cannot
@@ -719,9 +730,12 @@ preload the plugin prepends to `NODE_OPTIONS`, located by its `DD_TRACE_PATH`;
 the plugin's `RUBYOPT`), which the instructions then write. Otherwise
 `final_response` notes, as a caveat, that Test Optimization enabled in the
 job's configuration page instead of the Jenkinsfile would reach the container
-stages too. Ruby: when the Jenkinsfile also enables the plugin for Ruby, the
-plugin's `bundle add datadog-ci` on the agent would put the latest release in
-the shared Gemfile, which the installer then uses, so Gemfile.lock must pin
+stages too. Ruby: when the Jenkinsfile also enables the plugin for Ruby, or
+has a `datadog(…)` call whose languages ddtest cannot read (which the reset
+does not help with: it removes the plugin's variables in the snippet's shell,
+not what the plugin changed in the workspace), the plugin's
+`bundle add datadog-ci` on the agent would put the latest release in the
+shared Gemfile, which the installer then uses, so Gemfile.lock must pin
 `datadog-ci` at the snippet's `DD_SET_TRACER_VERSION_RUBY` (a setup problem
 otherwise, and the instructions say so).
 

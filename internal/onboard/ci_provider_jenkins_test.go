@@ -1668,12 +1668,14 @@ func TestJenkinsStageLevelOptions(t *testing.T) {
       }
     }
     stage('Parent') {
+      environment { NODE_OPTIONS = '--max-old-space-size=4096' }
       `+stageOption("app")+`
       stages { stage('Child') { steps { sh 'npm test' } } }
     }
     stage('Split') {
       parallel {
-        stage('With') { `+stageOption("app")+`
+        stage('With') { environment { NODE_OPTIONS = '--max-old-space-size=4096' }
+          `+stageOption("app")+`
           steps { sh 'npm test' } }
         stage('Without') { steps { sh 'npm test' } }
       }
@@ -1712,6 +1714,27 @@ func TestJenkinsStageLevelOptions(t *testing.T) {
 		require.Contains(t, problem, "the serviceName and additionalVariables of every option after the first it configures are ignored", name)
 	}
 	require.Empty(t, conflicting["C"].Steps[0].Setup.Problem, "another language set has its own variables")
+
+	// The cached NODE_OPTIONS composes with the value where the first
+	// option the plugin configures is, so the others' values are lost.
+	composed := jenkinsJobs(t, `pipeline {
+  agent any
+  environment { NODE_OPTIONS = '--conditions=ci' }
+  stages {
+    stage('A') { environment { NODE_OPTIONS = '--conditions=browser' }
+      `+stageOption("app")+`
+      steps { sh 'npm test' } }
+    stage('B') { `+stageOption("app")+`
+      steps { sh 'npm test' } }
+  }
+}`)
+	for _, name := range []string{"A", "B"} {
+		problem := composed[name].Steps[0].Setup.Problem
+		require.Contains(t, problem, "The datadog(testOptimization: …) options at Jenkinsfile:6 (serviceName \"app\", additionalVariables [], composed with NODE_OPTIONS \"--conditions=browser\") and Jenkinsfile:8 (serviceName \"app\", additionalVariables [], composed with NODE_OPTIONS \"--conditions=ci\") enable the same languages (JAVASCRIPT) with different arguments.", name)
+		require.Contains(t, problem, "and so are the values its variables compose with there", name)
+	}
+	sameComposed := jenkinsJobs(t, "pipeline {\n  agent any\n  environment { NODE_OPTIONS = '--conditions=ci' }\n"+jenkinsDatadogOption+"  stages {\n    stage('T') { "+stageOption("app")+"\n      steps { sh 'npm test' } }\n  }\n}\n")
+	require.Empty(t, sameComposed["T"].Steps[0].Setup.Problem, "the pipeline's NODE_OPTIONS reaches both options")
 
 	nested := jenkinsJobs(t, "pipeline {\n  agent any\n"+jenkinsDatadogOption+"  stages {\n    stage('T') { options { datadog(testOptimization: [enabled: true, serviceName: 'app', languages: ['JAVASCRIPT'], additionalVariables: [DD_ENV: 'ci']]) }\n      steps { sh 'npm test' } }\n  }\n}\n")
 	require.Contains(t, nested["T"].Steps[0].Setup.Problem, "additionalVariables [DD_ENV=ci]", "a stage option that differs from the pipeline's is ignored on a shared agent")

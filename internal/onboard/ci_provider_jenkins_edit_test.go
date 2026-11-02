@@ -89,7 +89,7 @@ func TestJenkinsApplyGolden(t *testing.T) {
 				// The setup snippet's folders stay untracked.
 				require.Len(t, plan.edits, 2)
 				require.Equal(t, ".gitignore", plan.edits[1].path)
-				require.Contains(t, string(plan.edits[1].after), "/.datadog-ci-container.*/\n")
+				require.Contains(t, strings.Split(string(plan.edits[1].after), "\n"), ".datadog-ci-container.*/", "at any depth: dir(…) or a cd may run the snippet below the root")
 			} else {
 				require.Len(t, plan.edits, 1)
 			}

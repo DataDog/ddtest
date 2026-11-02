@@ -112,6 +112,10 @@ type jenkinsScope struct {
 	// pluginUnread names a datadog(…) call around the scope whose arguments
 	// ddtest cannot read, which may enable Test Optimization for it.
 	pluginUnread string
+	// keyBinding names the withCredentials binding around the scope that
+	// sets DD_API_KEY to something other than a credential's secret text,
+	// such as a file binding's path (see jenkinsBindings).
+	keyBinding string
 }
 
 func (s jenkinsScope) with(change func(*jenkinsScope)) jenkinsScope {
@@ -184,6 +188,9 @@ type jenkinsReader struct {
 	setups, options []*jenkinsSetup
 	// snippets are the setup snippets the Jenkinsfile's sh steps run.
 	snippets []*ciSetup
+	// unread names the datadog(…) calls that may enable Test Optimization
+	// for languages ddtest cannot read (see jenkinsUnreadDatadog).
+	unread []string
 	// cells counts the matrix cells expanded so far.
 	cells int
 }
@@ -233,7 +240,16 @@ func readJenkinsfile(root, file, source string) (ciWorkflow, error) {
 		}
 	}
 	// A datadog(…) option elsewhere in the Jenkinsfile for a language a
-	// setup snippet installs runs beside it in the same workspace.
+	// setup snippet installs runs beside it in the same workspace, and so
+	// may one whose languages ddtest cannot read: the snippet's reset
+	// removes the plugin's variables in its own shell, not what the plugin
+	// changed in the workspace, such as the Gemfile its bundle add edits.
+	unread := slices.Clone(r.unread)
+	for _, option := range r.options {
+		if !option.disabled && option.languagesUnread {
+			unread = append(unread, "at "+option.source)
+		}
+	}
 	for _, snippet := range r.snippets {
 		for _, option := range r.options {
 			if option.disabled {
@@ -244,6 +260,9 @@ func readJenkinsfile(root, file, source string) (ciWorkflow, error) {
 					snippet.Beside = "the " + jenkinsPluginReference + ", which the datadog(…) option at " + option.source + " enables"
 				}
 			}
+		}
+		if snippet.Beside == "" && len(unread) > 0 {
+			snippet.Beside = jenkinsUnreadBeside(unread[0])
 		}
 	}
 	slices.Sort(r.review)
@@ -615,10 +634,17 @@ func (r *jenkinsReader) unreadOption(options *groovyCall) string {
 	}
 	for _, statement := range options.Closure.Body.Statements {
 		if call, ok := statement.(*groovyCall); ok && call.Name == "datadog" && jenkinsUnreadDatadog(call) {
+			r.unread = append(r.unread, "at "+r.where(call))
 			return "at " + r.where(call)
 		}
 	}
 	return ""
+}
+
+// jenkinsUnreadBeside names the plugin a datadog(…) call ddtest cannot read
+// (at source) may enable beside a setup snippet (see ciSetup.Beside).
+func jenkinsUnreadBeside(source string) string {
+	return "the " + jenkinsPluginReference + ", which the datadog(…) call " + source + " may enable (ddtest cannot read for which languages)"
 }
 
 // jenkinsUnreadDatadog reports a datadog(…) call that may configure Test
@@ -681,6 +707,9 @@ func (r *jenkinsReader) environment(body *groovyBlock, scope *jenkinsScope, top 
 func (r *jenkinsReader) assignEnvironment(key string, node groovyNode, scope *jenkinsScope, where string, narrow bool) {
 	if call, ok := node.(*groovyCall); ok && call.Name == "credentials" {
 		scope.env[key] = jenkinsSecret(key)
+		if key == "DD_API_KEY" {
+			scope.keyBinding = ""
+		}
 		if key == "DD_API_KEY" && scope.setup != nil {
 			r.review = append(r.review, r.file+": "+where+" binds DD_API_KEY from a Jenkins credential; the Datadog Jenkins plugin overwrites DD_API_KEY with its own configured key, so this binding is not the key the tests report with.")
 		}
@@ -1909,11 +1938,14 @@ func (r *jenkinsReader) call(call *groovyCall, scope *jenkinsScope, slot *jenkin
 		}))
 	case name == "withCredentials":
 		body(outer.with(func(next *jenkinsScope) {
-			text := groovyText(r.source, firstNode(positional))
-			for _, match := range jenkinsCredentialVariable.FindAllStringSubmatch(text, -1) {
-				next.env[match[1]] = jenkinsSecret(match[1])
-				next.shadow[match[1]] = true
-				if match[1] == "DD_API_KEY" && next.setup != nil {
+			for variable, binding := range r.jenkinsBindings(firstNode(positional)) {
+				next.env[variable] = jenkinsSecret(variable)
+				next.shadow[variable] = true
+				if variable != "DD_API_KEY" {
+					continue
+				}
+				next.keyBinding = binding
+				if next.setup != nil {
 					// Outside the plugin's scope it is the setup snippet's key.
 					r.review = append(r.review, r.file+": withCredentials at "+r.where(call)+" binds DD_API_KEY; the Datadog Jenkins plugin overwrites DD_API_KEY with its own configured key, so this binding is not the key the tests report with.")
 				}
@@ -2026,6 +2058,7 @@ func (r *jenkinsReader) call(call *groovyCall, scope *jenkinsScope, slot *jenkin
 			next.setup = r.datadog(call, outer, false)
 			if unread := jenkinsUnreadDatadog(call); unread && next.setup == nil {
 				next.pluginUnread = "at " + r.where(call)
+				r.unread = append(r.unread, next.pluginUnread)
 			}
 		}))
 	case slices.Contains(jenkinsRepeatingWrappers, name):
@@ -2087,8 +2120,54 @@ func jenkinsSecret(variable string) string {
 	return "${{ secrets." + variable + " }}"
 }
 
-// jenkinsCredentialVariable finds the variables withCredentials binds.
-var jenkinsCredentialVariable = regexp.MustCompile(`(?:variable|usernameVariable|passwordVariable|keyFileVariable|passphraseVariable|tokenVariable)\s*:\s*['"]([A-Za-z_][A-Za-z0-9_]*)['"]`)
+// jenkinsCredentialVariable finds the variables withCredentials binds, and
+// the argument that binds each one.
+var jenkinsCredentialVariable = regexp.MustCompile(`(variable|usernameVariable|passwordVariable|keyFileVariable|passphraseVariable|tokenVariable)\s*:\s*['"]([A-Za-z_][A-Za-z0-9_]*)['"]`)
+
+// jenkinsSecretBindings are the withCredentials bindings, by step name or
+// $class, and the argument whose variable holds the credential's secret
+// text: the others hold a file's path (file, sshUserPrivateKey,
+// certificate), a user name, or user:password.
+var jenkinsSecretBindings = map[string]string{
+	"string":                       "variable",
+	"StringBinding":                "variable",
+	"usernamePassword":             "passwordVariable",
+	"UsernamePasswordMultiBinding": "passwordVariable",
+}
+
+// jenkinsBindings reads the variables a withCredentials list binds: for
+// each, empty when it holds a credential's secret text, or else the binding
+// that sets it, such as file(…).
+func (r *jenkinsReader) jenkinsBindings(node groovyNode) map[string]string {
+	bindings := map[string]string{}
+	if node == nil {
+		return bindings
+	}
+	items := []groovyNode{node}
+	if list, ok := node.(*groovyList); ok {
+		items = list.Items
+	}
+	for _, item := range items {
+		kind := ""
+		switch binding := item.(type) {
+		case *groovyCall:
+			kind = binding.Name
+		case *groovyMap:
+			for _, entry := range binding.Entries {
+				if class, ok := entry.Value.(*groovyString); ok && entry.Name == "$class" {
+					kind, _ = class.Value.literal()
+				}
+			}
+		}
+		for _, match := range jenkinsCredentialVariable.FindAllStringSubmatch(groovyText(r.source, item), -1) {
+			bindings[match[2]] = ""
+			if jenkinsSecretBindings[kind] != match[1] {
+				bindings[match[2]] = cmp.Or(kind, "a binding") + "(…, " + match[1] + ": '" + match[2] + "')"
+			}
+		}
+	}
+	return bindings
+}
 
 func firstNode(nodes []groovyNode) groovyNode {
 	if len(nodes) == 0 {

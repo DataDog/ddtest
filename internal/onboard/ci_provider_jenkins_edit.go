@@ -1160,7 +1160,7 @@ func (e *jenkinsEditor) snippet(target jenkinsSnippetTarget) error {
 			return false
 		}
 		positional, _ := jenkinsArgs(enclosing)
-		return slices.ContainsFunc(jenkinsCredentialVariable.FindAllStringSubmatch(groovyText(e.source, firstNode(positional)), -1), func(match []string) bool { return match[1] == "DD_API_KEY" })
+		return slices.ContainsFunc(jenkinsCredentialVariable.FindAllStringSubmatch(groovyText(e.source, firstNode(positional)), -1), func(match []string) bool { return match[2] == "DD_API_KEY" })
 	}) {
 		// A withCredentials around the sh step binds the key already, as
 		// the check of the edited Jenkinsfile confirms.

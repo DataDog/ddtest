@@ -37,8 +37,10 @@ import (
 const jenkinsTracerFolder = `$(mktemp -d "$PWD/.datadog-ci-container.XXXXXX")`
 
 // jenkinsTracerIgnore is the .gitignore entry for the folders the snippet
-// leaves in the workspace.
-const jenkinsTracerIgnore = "/.datadog-ci-container.*/"
+// leaves in the workspace: unanchored, since the snippet creates them in the
+// sh step's working directory, which dir(…) or a cd may put below the
+// checkout root.
+const jenkinsTracerIgnore = ".datadog-ci-container.*/"
 
 // setupIgnores keeps the snippet's folders untracked when edits write a
 // Jenkinsfile that runs the setup snippet.
@@ -102,9 +104,11 @@ func (j jenkins) apiKeyActions(references []string, skipped bool) string {
 }
 
 // The snippet runs in the sh step's own shell: later commands of the same
-// script see its exports, other sh steps never do.
-func (jenkinsContainer) setupTerms() ciSetupTerms {
-	return ciSetupTerms{
+// script see its exports, other sh steps never do. Where a datadog(…) call
+// ddtest cannot read may reach the stage, the plugin may run beside the
+// snippet, in the same workspace.
+func (c jenkinsContainer) setupTerms() ciSetupTerms {
+	terms := ciSetupTerms{
 		Installer:  "installer",
 		Entry:      "the setup snippet",
 		SetupEntry: "the Datadog setup snippet",
@@ -118,6 +122,10 @@ func (jenkinsContainer) setupTerms() ciSetupTerms {
 		SharedMatrix:    "a matrix shares the stage's steps",
 		ImageGuard:      func(string, string, string) string { return "" },
 	}
+	if c.reset {
+		terms.Beside = "the " + jenkinsPluginReference + ", which a datadog(…) call ddtest cannot read may enable"
+	}
+	return terms
 }
 
 // jenkinsSnippetSetup reports a setup that is the setup snippet, not the
@@ -179,7 +187,7 @@ func (c jenkinsContainer) setupInstructions(request ciSetupRequest) string {
 	text.WriteString("2. In every sh script that runs the tests in those stages (each sh step is a shell of its own, so a stage whose tests run in several sh steps needs them in each), add these lines immediately before the test command, after dependency installation and any cd into the test directory, inside the same sh string. Write that script as a single-quoted Groovy string (sh '''…''') so Groovy leaves every $ to the shell, and keep its other commands unchanged:\n\n```sh\n")
 	text.WriteString(jenkinsSnippet(request, c.reset).shell())
 	text.WriteString("\n```\n")
-	text.WriteString("\nThe snippet installs the tracers into a new folder of the workspace for each shell (" + jenkinsTracerFolder + "), apart from the .datadog folder of the Datadog Jenkins plugin and from the shells that run at the same time in the same workspace, such as parallel branches under one Docker agent. The folders stay in the workspace after the build: add " + jenkinsTracerIgnore + " to the repository .gitignore so they stay untracked, and a workspace cleanup (such as cleanWs()) removes them. It tests the key with ${DD_API_KEY:+set}, so Jenkins' shell trace (sh -x) never prints it. The installer needs Bash and curl or wget in the container's image: images without Bash (Alpine variants, BusyBox, distroless) or curl (official -slim images) need another image, or a Dockerfile that installs them.\n")
+	text.WriteString("\nThe snippet installs the tracers into a new folder of the workspace for each shell (" + jenkinsTracerFolder + "), apart from the .datadog folder of the Datadog Jenkins plugin and from the shells that run at the same time in the same workspace, such as parallel branches under one Docker agent. The folders stay in the workspace after the build, in the working directory of each sh step: add " + jenkinsTracerIgnore + " to the repository .gitignore, without a leading /, so they stay untracked below the checkout root too, and a workspace cleanup (such as cleanWs()) removes them. It tests the key with ${DD_API_KEY:+set}, so Jenkins' shell trace (sh -x) never prints it. The installer needs Bash and curl or wget in the container's image: images without Bash (Alpine variants, BusyBox, distroless) or curl (official -slim images) need another image, or a Dockerfile that installs them.\n")
 	text.WriteString("\n3. Keep those stages out of every datadog(…) option's scope: in a declarative pipeline, that option goes in the options of the host-agent stages that run the tests, not the pipeline's; in a scripted pipeline, it wraps only node blocks on host agents. ddtest does not certify a container stage the plugin's variables reach. Enabling Test Optimization in the job's configuration page instead of the Jenkinsfile reaches every stage, so leave it off there.")
 	if c.reset {
 		text.WriteString(" ddtest cannot tell whether a datadog(…) call it cannot read reaches these stages, so the snippet first removes the variables the plugin would set there.")
@@ -194,9 +202,13 @@ func (c jenkinsContainer) setupInstructions(request ciSetupRequest) string {
 // jenkinsBuildArgs reads the docker build options of an agent { dockerfile
 // … }'s additionalBuildArgs: the build arguments it overrides, whose values
 // ddtest leaves unknown, and the stage --target selects. problem explains
-// options ddtest cannot follow: shell expansions, which Jenkins' sh step
-// expands, or another Dockerfile (-f, --file).
+// options ddtest cannot follow: shell quoting, escapes and expansions,
+// which Jenkins' sh step applies before docker build reads the words, or
+// another Dockerfile (-f, --file).
 func jenkinsBuildArgs(value string) (target string, overridden map[string]bool, problem string) {
+	if strings.ContainsAny(value, "\"'\\") {
+		return "", nil, "its additionalBuildArgs " + value + " use shell quoting or escapes, which ddtest cannot resolve"
+	}
 	overridden = map[string]bool{}
 	words := strings.Fields(value)
 	for i := 0; i < len(words); i++ {
@@ -345,6 +357,8 @@ func (r *jenkinsReader) snippetProblem(scope jenkinsScope, setup ciSetup, key st
 		return "ddtest cannot tell whether the datadog(…) call " + r.pluginUnread(scope) + " reaches this step, whose variables the setup snippet would then run with. Add these statements immediately before the snippet, as ddtest's instructions show, so it removes them first:\n" + strings.Join(jenkinsPluginResets(strings.Fields(setup.Inputs["languages"])...), "\n")
 	case cleared:
 		return "An earlier command of the sh script clears DD_API_KEY (export DD_API_KEY= or unset), so the setup snippet always skips; remove it."
+	case key == jenkinsSecret("DD_API_KEY") && scope.keyBinding != "":
+		return "withCredentials binds DD_API_KEY with " + scope.keyBinding + ", which sets it to a file's path or another field of the credential, not the Datadog API key, so the tests would report with an invalid key: store the key as a Jenkins credential of kind Secret text and bind it with withCredentials(" + jenkinsCredentialBinding + ") { … } or credentials('" + jenkinsCredentialID + "')."
 	case key == jenkinsSecret("DD_API_KEY"):
 	case key == "":
 		return "DD_API_KEY does not reach this sh step, so the setup snippet always skips and the tests run untraced: bind it from a Jenkins credential, with withCredentials(" + jenkinsCredentialBinding + ") { … } around the sh step or DD_API_KEY = credentials('" + jenkinsCredentialID + "') in the stage's environment directive. The Datadog Jenkins plugin's own key reaches only the steps in its option's scope."

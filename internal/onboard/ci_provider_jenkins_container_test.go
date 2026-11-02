@@ -32,6 +32,15 @@ func jenkinsContainerStage(agent, environment, script string) string {
 	return "pipeline {\n  agent { " + agent + " }\n  stages {\n    stage('Test') {\n" + environment + "      steps {\n        withCredentials([string(credentialsId: 'datadog-api-key', variable: 'DD_API_KEY')]) {\n          sh '''\n      " + script + "\n          '''\n        }\n      }\n    }\n  }\n}\n"
 }
 
+// onboard --apply never certifies a key a file binding supplies: the edited
+// Jenkinsfile's check refuses it, so nothing is written.
+func TestJenkinsApplyRefusesAFileBoundKey(t *testing.T) {
+	root := jenkinsApplyRepository(t, "jest", "pipeline {\n  agent { docker { image 'node:22' } }\n  stages {\n    stage('Test') {\n      steps {\n        withCredentials([file(credentialsId: 'datadog-api-key', variable: 'DD_API_KEY')]) {\n          sh 'npm test'\n        }\n      }\n    }\n  }\n}\n")
+	_, err := planProviderSetup(root, "jest", "datadoghq.com", "6.22.0")
+	require.ErrorContains(t, err, "so ddtest wrote nothing")
+	require.ErrorContains(t, err, "withCredentials binds DD_API_KEY with file(…, variable: 'DD_API_KEY')")
+}
+
 // The setup snippet is recognized in the sh script that runs the tests of a
 // container stage; the tests after it see its exports.
 func TestJenkinsRecognizesTheSetupSnippet(t *testing.T) {
@@ -66,16 +75,28 @@ func TestJenkinsRecognizesTheSetupSnippet(t *testing.T) {
 	unbound := strings.Replace(jenkinsContainerStage("docker { image 'node:22' }", "", snippet+"\n      npm test"), "withCredentials([string(credentialsId: 'datadog-api-key', variable: 'DD_API_KEY')]) {", "dir('.') {", 1)
 	credential := strings.Replace(unbound, "      steps {\n", "      environment {\n        DD_API_KEY = credentials('datadog-api-key')\n      }\n      steps {\n", 1)
 	literal := strings.Replace(unbound, "      steps {\n", "      environment {\n        DD_API_KEY = 'abc123'\n      }\n      steps {\n", 1)
+	// Only a binding of a credential's secret text gives the key itself.
+	binding := func(bindings string) string {
+		return strings.Replace(jenkinsContainerStage("docker { image 'node:22' }", "", snippet+"\n      npm test"), "[string(credentialsId: 'datadog-api-key', variable: 'DD_API_KEY')]", bindings, 1)
+	}
+	const notTheKey = "withCredentials binds DD_API_KEY with "
 	for name, test := range map[string]struct{ jenkinsfile, problem string }{
-		"no key":           {unbound, "DD_API_KEY does not reach this sh step, so the setup snippet always skips"},
-		"credentials()":    {credential, ""},
-		"literal key":      {literal, "DD_API_KEY is written into the Jenkinsfile for this step"},
-		"cleared key":      {jenkinsContainerStage("docker { image 'node:22' }", "", "unset DD_API_KEY\n      "+snippet+"\n      npm test"), "An earlier command of the sh script clears DD_API_KEY"},
-		"Alpine":           {jenkinsContainerStage("docker { image 'node:22-alpine' }", "", snippet+"\n      npm test"), "The step's image node:22-alpine has no Bash"},
-		"slim":             {jenkinsContainerStage("docker { image 'node:22-slim' }", "", snippet+"\n      npm test"), "has neither curl nor wget"},
-		"slim with curl":   {jenkinsContainerStage("docker { image 'node:22-slim' }", "", "apt-get update && apt-get install -y curl\n      "+snippet+"\n      npm test"), ""},
-		"Buildkite's form": {jenkinsContainerStage("docker { image 'node:22' }", "", strings.ReplaceAll(buildkiteRequestSnippet(ciSetupRequest{Language: "js", Site: "datadoghq.com", TracerInput: "js-tracer-version", TracerVersion: "5.134.0"}).shell(), "\n", "\n      ")+"\n      npm test"), "UNRESOLVED Jenkinsfile Test: The step runs Datadog's installer in a form ddtest does not recognize"},
-		"plugin's scope":   {strings.Replace(jenkinsContainerStage("docker { image 'node:22' }", "", snippet+"\n      npm test"), "  stages {\n", jenkinsDatadogOption+"  stages {\n", 1), "The setup snippet runs in the scope of the datadog(…) option at Jenkinsfile:4"},
+		"no key":                 {unbound, "DD_API_KEY does not reach this sh step, so the setup snippet always skips"},
+		"credentials()":          {credential, ""},
+		"literal key":            {literal, "DD_API_KEY is written into the Jenkinsfile for this step"},
+		"cleared key":            {jenkinsContainerStage("docker { image 'node:22' }", "", "unset DD_API_KEY\n      "+snippet+"\n      npm test"), "An earlier command of the sh script clears DD_API_KEY"},
+		"Alpine":                 {jenkinsContainerStage("docker { image 'node:22-alpine' }", "", snippet+"\n      npm test"), "The step's image node:22-alpine has no Bash"},
+		"slim":                   {jenkinsContainerStage("docker { image 'node:22-slim' }", "", snippet+"\n      npm test"), "has neither curl nor wget"},
+		"slim with curl":         {jenkinsContainerStage("docker { image 'node:22-slim' }", "", "apt-get update && apt-get install -y curl\n      "+snippet+"\n      npm test"), ""},
+		"Buildkite's form":       {jenkinsContainerStage("docker { image 'node:22' }", "", strings.ReplaceAll(buildkiteRequestSnippet(ciSetupRequest{Language: "js", Site: "datadoghq.com", TracerInput: "js-tracer-version", TracerVersion: "5.134.0"}).shell(), "\n", "\n      ")+"\n      npm test"), "UNRESOLVED Jenkinsfile Test: The step runs Datadog's installer in a form ddtest does not recognize"},
+		"file binding":           {binding("[file(credentialsId: 'datadog-api-key', variable: 'DD_API_KEY')]"), notTheKey + "file(…, variable: 'DD_API_KEY'), which sets it to a file's path"},
+		"file binding by class":  {binding("[[$class: 'FileBinding', credentialsId: 'datadog-api-key', variable: 'DD_API_KEY']]"), notTheKey + "FileBinding(…, variable: 'DD_API_KEY')"},
+		"user name binding":      {binding("[usernamePassword(credentialsId: 'datadog', usernameVariable: 'DD_API_KEY', passwordVariable: 'PASSWORD')]"), notTheKey + "usernamePassword(…, usernameVariable: 'DD_API_KEY')"},
+		"user:password binding":  {binding("[usernameColonPassword(credentialsId: 'datadog', variable: 'DD_API_KEY')]"), notTheKey + "usernameColonPassword(…, variable: 'DD_API_KEY')"},
+		"password binding":       {binding("[usernamePassword(credentialsId: 'datadog', usernameVariable: 'USER', passwordVariable: 'DD_API_KEY')]"), ""},
+		"secret text by class":   {binding("[[$class: 'StringBinding', credentialsId: 'datadog-api-key', variable: 'DD_API_KEY']]"), ""},
+		"secret text after file": {binding("[file(credentialsId: 'settings', variable: 'SETTINGS'), string(credentialsId: 'datadog-api-key', variable: 'DD_API_KEY')]"), ""},
+		"plugin's scope":         {strings.Replace(jenkinsContainerStage("docker { image 'node:22' }", "", snippet+"\n      npm test"), "  stages {\n", jenkinsDatadogOption+"  stages {\n", 1), "The setup snippet runs in the scope of the datadog(…) option at Jenkinsfile:4"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			require.Contains(t, problem(t, test.jenkinsfile), test.problem)
@@ -155,6 +176,10 @@ func TestJenkinsDockerfileAgents(t *testing.T) {
 		"\"${env.BUILD_ARGS}\"": "its additionalBuildArgs \"${env.BUILD_ARGS}\" cannot be resolved",
 		"'-f Dockerfile.other'": "its additionalBuildArgs select another Dockerfile (-f)",
 		"'--target'":            "its additionalBuildArgs end with --target and no value",
+		// The shell removes the quotes before docker build reads the
+		// argument's name.
+		"'--build-arg \"NODE_VERSION=18\"'": "its additionalBuildArgs --build-arg \"NODE_VERSION=18\" use shell quoting or escapes, which ddtest cannot resolve",
+		"'--target \\\\tests'":              "its additionalBuildArgs --target \\tests use shell quoting or escapes",
 	} {
 		workflow, err := readJenkinsfile(root, "Jenkinsfile", agent(arguments))
 		require.NoError(t, err)
@@ -288,6 +313,41 @@ func TestJenkinsRubySnippetBesideThePlugin(t *testing.T) {
 	require.Contains(t, text, "pin datadog-ci exactly in the Gemfile and Gemfile.lock, as the instructions for those stages show")
 }
 
+// A datadog(…) call ddtest cannot read may enable the plugin for Ruby: the
+// snippet's reset removes the plugin's variables in its shell, but not the
+// bundle add the plugin may have run in the workspace, so Gemfile.lock must
+// pin datadog-ci there too.
+func TestJenkinsRubySnippetUnderAnUnreadPluginCall(t *testing.T) {
+	root := copyFixture(t, "jenkins-ruby")
+	t.Chdir(root)
+	useCIProvider(t, "jenkins")
+	snippet := jenkinsTestSnippet("ruby", "1.42.0", true)
+	shell := "withCredentials([string(credentialsId: 'datadog-api-key', variable: 'DD_API_KEY')]) {\n          sh '''\n      " + snippet + "\n      bundle exec rake spec\n          '''\n        }"
+	for name, jenkinsfile := range map[string]string{
+		"positional map":    "def options = [testOptimization: [enabled: true, serviceName: 'app', languages: ['RUBY']]]\ndatadog(options) {\n  node('docker') {\n    stage('Test') {\n      docker.image('ruby:3.3').inside {\n        " + shell + "\n      }\n    }\n  }\n}\n",
+		"computed settings": "def settings = [enabled: true, serviceName: 'app', languages: ['RUBY']]\ndatadog(testOptimization: settings) {\n  node('docker') {\n    stage('Test') {\n      docker.image('ruby:3.3').inside {\n        " + shell + "\n      }\n    }\n  }\n}\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			writeFile(t, root, "Gemfile.lock", "GEM\n  specs:\n    rake (13.4.2)\n")
+			writeFile(t, root, "Jenkinsfile", jenkinsfile)
+			reason := func() string {
+				jobs := RubyCIConfigurationForSite(root, "rspec", "datadoghq.com").Jobs
+				require.Len(t, jobs, 1)
+				return jobs[0].Reason
+			}
+			require.Contains(t, reason(), "The build also runs the Datadog Jenkins plugin, which the datadog(…) call at Jenkinsfile:2 may enable (ddtest cannot read for which languages), for Ruby in the same workspace: without datadog-ci pinned in Gemfile.lock")
+			writeFile(t, root, "Gemfile.lock", "GEM\n  specs:\n    datadog-ci (1.42.0)\n")
+			require.NotContains(t, reason(), "Gemfile.lock")
+			require.NotContains(t, reason(), "may enable")
+		})
+	}
+
+	// The instructions for such stages ask for the pin.
+	request := rubyDiscovery{}.ciSetupRequest(root, "rspec", "datadoghq.com", jenkinsContainer{reset: true}.setupTerms())
+	require.Equal(t, "1.42.0", request.TracerVersion, "the snippet installs the pinned release")
+	require.Contains(t, request.Notes[0], "the build also runs the Datadog Jenkins plugin, which a datadog(…) call ddtest cannot read may enable: keep the pin")
+}
+
 // onboard --apply for Ruby writes the plugin's option and the snippet with
 // the release Gemfile.lock pins; without the pin it asks for it first, since
 // the plugin beside the snippet would change the release.
@@ -388,7 +448,7 @@ func TestJenkinsSnippetInEveryContainerTestShell(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, plan.edits, 2)
 	require.Equal(t, ".gitignore", plan.edits[1].path)
-	require.Equal(t, "/.datadog-ci-container.*/\n", string(plan.edits[1].after), "the snippet's folders stay untracked")
+	require.Equal(t, ".datadog-ci-container.*/\n", string(plan.edits[1].after), "the snippet's folders stay untracked")
 	after := string(plan.edits[0].after)
 	require.Equal(t, 2, strings.Count(after, "install_test_visibility.sh\" >\"$DD_TRACER_FOLDER/test-optimization.env\""), "the second shell gets a snippet; the first keeps its own")
 	require.True(t, strings.HasPrefix(after, firstOnly[:strings.Index(firstOnly, "          sh 'npm test -- packages/b'")]), "the first sh step is unchanged")
@@ -462,7 +522,7 @@ func TestJenkinsJavaScriptPlanReadsEveryContainerTestShell(t *testing.T) {
 		require.Equal(t, 1, strings.Count(after, "withCredentials("), "the binding around it already reaches it")
 		for _, edit := range setup.edits {
 			if edit.path == ".gitignore" {
-				require.Equal(t, "/.testoptimization/\n/.datadog-ci-container.*/\n", string(edit.after), "ddtest's reports and the snippet's folders stay untracked")
+				require.Equal(t, "/.testoptimization/\n.datadog-ci-container.*/\n", string(edit.after), "ddtest's reports and the snippet's folders stay untracked")
 			}
 		}
 		require.True(t, slices.ContainsFunc(setup.edits, func(edit setupEdit) bool { return edit.path == ".gitignore" }))
@@ -491,12 +551,48 @@ func TestJenkinsJavaScriptPlanReadsEveryContainerTestShell(t *testing.T) {
 	require.True(t, setup.Configured())
 }
 
+// The snippet creates its folder in the sh step's working directory, which
+// dir(…) or a cd may put below the checkout root, so only a pattern that
+// matches at any depth keeps it untracked.
+func TestJenkinsTracerFolderIgnoreCoversEveryDepth(t *testing.T) {
+	require.Equal(t, ".datadog-ci-container.*/", jenkinsTracerIgnore)
+	for line, covered := range map[string]bool{
+		".datadog-ci-container.*/":     true,
+		".datadog-ci-container*":       true,
+		"**/.datadog-ci-container.*/":  true,
+		".datadog-ci-*":                true,
+		"/.datadog-ci-container*":      false,
+		"/.datadog-ci-container.*/":    false,
+		"app/.datadog-ci-container.*/": false,
+		"!.datadog-ci-container*":      false,
+		"# .datadog-ci-container*":     false,
+		".datadog":                     false,
+		"":                             false,
+	} {
+		require.Equal(t, covered, ignoreCovers(line, jenkinsTracerIgnore), line)
+	}
+	// A root entry is covered at the root or at any depth.
+	require.True(t, ignoreCovers("/.datadog-ci-container*", "/.datadog-ci-container.*/"))
+	require.True(t, ignoreCovers(".datadog-ci-container*", "/.datadog-ci-container.*/"))
+
+	root := t.TempDir()
+	writeFile(t, root, ".gitignore", "/.datadog-ci-container*\n")
+	edits, err := ignoreEdits(root, []string{jenkinsTracerIgnore})
+	require.NoError(t, err)
+	require.Len(t, edits, 1)
+	require.Equal(t, "/.datadog-ci-container*\n.datadog-ci-container.*/\n", string(edits[0].after), "a root-only pattern misses the folders below the root")
+	writeFile(t, root, ".gitignore", "**/.datadog-ci-container.*\n")
+	edits, err = ignoreEdits(root, []string{jenkinsTracerIgnore})
+	require.NoError(t, err)
+	require.Empty(t, edits)
+}
+
 // Ruby's snippet exports RUBYOPT in its own shell only, too.
 func TestJenkinsRubySnippetInEveryContainerTestShell(t *testing.T) {
 	jenkinsfile := "pipeline {\n  agent { docker { image 'ruby:3.3' } }\n  stages {\n    stage('Test') {\n      steps {\n        sh 'bundle exec rake spec'\n        sh 'bundle exec rake spec SPEC=spec/calculator_spec.rb'\n      }\n    }\n  }\n}\n"
 	root := jenkinsApplyRepository(t, "rspec", jenkinsfile)
 	writeFile(t, root, "Gemfile.lock", "GEM\n  specs:\n    datadog-ci (1.42.0)\n    rake (13.4.2)\n")
-	writeFile(t, root, ".gitignore", "/vendor/\n/.datadog-ci-container*\n")
+	writeFile(t, root, ".gitignore", "/vendor/\n.datadog-ci-container*\n")
 	plan, err := planProviderSetup(root, "rspec", "datadoghq.com", "")
 	require.NoError(t, err)
 	require.Len(t, plan.edits, 1, "a pattern that covers the snippet's folders needs no entry")

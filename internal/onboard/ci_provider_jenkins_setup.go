@@ -87,9 +87,11 @@ type jenkinsSetup struct {
 	// pipelineSetup), and disabled an option that sets enabled: false
 	// literally, which configures no tracer.
 	preliminary, disabled bool
-	// languages are the plugin's language tokens.
-	languages []string
-	service   string
+	// languages are the plugin's language tokens; languagesUnread reports
+	// an option whose languages ddtest cannot read, which may enable any.
+	languages       []string
+	languagesUnread bool
+	service         string
 	// site is an additionalVariables DD_SITE.
 	site string
 	// variables are the additionalVariables the plugin sets for every step.
@@ -105,6 +107,10 @@ type jenkinsSetup struct {
 	stage   bool
 	base    map[string]string
 	covered map[string]string
+	// pipelineEnv is the pipeline's environment where the option is, which
+	// the plugin's variables compose with outside a stage (see
+	// pluginExports).
+	pipelineEnv map[string]string
 }
 
 // jenkinsContainerUnsupported is why a job that runs in a container cannot
@@ -113,13 +119,26 @@ const jenkinsContainerUnsupported = "the Datadog Jenkins plugin installs the tra
 
 // arguments is what the plugin's per-build cache keeps of the option: its
 // variables come from the first option it configures for a language set on
-// an agent, whatever the arguments of the others.
+// an agent, whatever the arguments of the others, and so does the value its
+// NODE_OPTIONS composes with, the one where that option is.
 func (s *jenkinsSetup) arguments() string {
 	var variables []string
 	for _, key := range slices.Sorted(maps.Keys(s.variables)) {
 		variables = append(variables, key+"="+s.variables[key])
 	}
-	return "serviceName " + strconv.Quote(s.service) + ", additionalVariables [" + strings.Join(variables, ", ") + "]"
+	text := "serviceName " + strconv.Quote(s.service) + ", additionalVariables [" + strings.Join(variables, ", ") + "]"
+	base := s.base
+	if base == nil {
+		base = s.pipelineEnv
+	}
+	for _, key := range slices.Sorted(maps.Keys(base)) {
+		if slices.ContainsFunc(discoveryLanguages, func(language discoveryLanguage) bool {
+			return slices.Contains(s.languages, language.ciPluginLanguage()) && language.ciPluginComposes(key) != ""
+		}) {
+			text += ", composed with " + key + " " + strconv.Quote(base[key])
+		}
+	}
+	return text
 }
 
 // languageSet is the cache key's language part.
@@ -154,7 +173,7 @@ func jenkinsArgumentConflicts(setups []*jenkinsSetup) map[*jenkinsSetup]string {
 		if len(differing) == 0 {
 			continue
 		}
-		problem := "The datadog(testOptimization: …) options at " + group[0].source + " (" + group[0].arguments() + ") and " + strings.Join(differing, ", ") + " enable the same languages (" + languages + ") with different arguments. The Datadog Jenkins plugin computes its variables once per build, build agent and set of languages, not per option, so on an agent where several of them run, the serviceName and additionalVariables of every option after the first it configures are ignored. Give every datadog(…) option for these languages the same arguments."
+		problem := "The datadog(testOptimization: …) options at " + group[0].source + " (" + group[0].arguments() + ") and " + strings.Join(differing, ", ") + " enable the same languages (" + languages + ") with different arguments. The Datadog Jenkins plugin computes its variables once per build, build agent and set of languages, not per option, so on an agent where several of them run, the serviceName and additionalVariables of every option after the first it configures are ignored, and so are the values its variables compose with there (composed with …, the values where that first option is). Give every datadog(…) option for these languages the same arguments and the same composed values: set those in the pipeline's environment, not a stage's."
 		for _, setup := range group {
 			conflicts[setup] = problem
 		}
@@ -262,7 +281,7 @@ func (r *jenkinsReader) datadog(call *groovyCall, scope jenkinsScope, preliminar
 	if setup == nil {
 		return nil
 	}
-	setup.position, setup.preliminary = call.Start, preliminary
+	setup.position, setup.preliminary, setup.pipelineEnv = call.Start, preliminary, maps.Clone(scope.pipelineEnv)
 	r.options = append(slices.DeleteFunc(r.options, func(other *jenkinsSetup) bool {
 		return other.preliminary && other.position == setup.position
 	}), setup)
@@ -285,6 +304,7 @@ func (r *jenkinsReader) readDatadog(call *groovyCall, scope jenkinsScope) *jenki
 	options, literal := value.(*groovyMap)
 	if !literal {
 		fail("The datadog(" + key + ": …) option at " + setup.source + " is not a literal map, so ddtest cannot tell what it enables; write [enabled: true, serviceName: '<service>', languages: [...]] literally.")
+		setup.languagesUnread = true
 		return setup
 	}
 	fields := map[string]groovyNode{}
@@ -298,11 +318,13 @@ func (r *jenkinsReader) readDatadog(call *groovyCall, scope jenkinsScope) *jenki
 	languages, isList := fields["languages"].(*groovyList)
 	if !isList || len(languages.Items) == 0 {
 		fail("The datadog(" + key + ": …) option at " + setup.source + " has no literal languages list; list the plugin's language tokens, such as languages: ['" + jenkinsLanguageExample() + "'].")
+		setup.languagesUnread = true
 	} else {
 		for _, item := range languages.Items {
 			token, problem := r.value(item, scope)
 			if problem != "" {
 				fail("The datadog(" + key + ": …) option at " + setup.source + " lists a language ddtest cannot resolve: " + r.text(item) + ".")
+				setup.languagesUnread = true
 				continue
 			}
 			setup.languages = append(setup.languages, strings.ToUpper(token))
