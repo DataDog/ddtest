@@ -114,6 +114,14 @@ func (s *handWrittenSetup) unconfirmed() []string {
 	return keys
 }
 
+// reportsThroughAgent reports a setup that reports through a Datadog Agent
+// the user confirmed (--ci-confirm datadog-agent): that Agent holds the API
+// key, so the job reads none from the provider's secrets.
+func (s *handWrittenSetup) reportsThroughAgent() bool {
+	_, stated := statedFact(handWrittenAgent)
+	return stated && slices.Contains(s.Confirmations, handWrittenAgent)
+}
+
 // problem explains why the setup is not certified, keeping it: empty when
 // it is complete.
 func (s *handWrittenSetup) problem() string {
@@ -230,13 +238,27 @@ func handWrittenFrameworkDisabled(setup *handWrittenSetup, env map[string]string
 	}
 }
 
+// handWrittenReporting is how a framework's configuration sets agentless
+// reporting, which replaces the environment's setting.
+type handWrittenReporting int
+
+const (
+	// reportingFromEnvironment leaves it to DD_CIVISIBILITY_AGENTLESS_ENABLED.
+	reportingFromEnvironment handWrittenReporting = iota
+	// reportingAgentless turns agentless mode on.
+	reportingAgentless
+	// reportingAgent turns it off, so the tracer reports through an Agent.
+	reportingAgent
+)
+
 // handWrittenConfiguration checks the Datadog configuration every
 // language's hand-written setup shares, in the environment its test command
 // starts with: Test Optimization not turned off (enabled requires it turned
 // on, as datadog-ci does), agentless reporting, the API key from the
-// provider's secret store and the selected site (empty: any). agentless
-// reports agentless mode the framework's configuration enables.
-func handWrittenConfiguration(setup *handWrittenSetup, provider ciProvider, job runtimeJob, env map[string]string, site string, enabled, agentless bool) {
+// provider's secret store and the selected site (empty: any). reporting is
+// the agentless mode the framework's configuration sets, if any, which the
+// environment does not change.
+func handWrittenConfiguration(setup *handWrittenSetup, provider ciProvider, job runtimeJob, env map[string]string, site string, enabled bool, reporting handWrittenReporting) {
 	terms := provider.setupTerms()
 	for _, key := range []string{"DD_TRACE_ENABLED", "DD_CIVISIBILITY_ENABLED"} {
 		value, set := env[key]
@@ -261,7 +283,8 @@ func handWrittenConfiguration(setup *handWrittenSetup, provider ciProvider, job 
 			setup.missing("DD_CIVISIBILITY_ENABLED=" + value + " leaves Test Optimization off: set it to true.")
 		}
 	}
-	if !agentless {
+	agentless := reporting == reportingAgentless
+	if reporting == reportingFromEnvironment {
 		for _, key := range []string{"DD_CIVISIBILITY_AGENTLESS_ENABLED", "DD_AGENTLESS_ENABLED"} {
 			value, set := env[key]
 			if !set {
@@ -285,9 +308,13 @@ func handWrittenConfiguration(setup *handWrittenSetup, provider ciProvider, job 
 				agent = key + "=" + value
 			}
 		}
+		because := "DD_CIVISIBILITY_AGENTLESS_ENABLED is not true"
+		if reporting == reportingAgent {
+			because = "the test helper's Datadog configuration turns agentless mode off (c.ci.agentless_mode_enabled = false), which DD_CIVISIBILITY_AGENTLESS_ENABLED does not change"
+		}
 		setup.Confirmations = append(setup.Confirmations, handWrittenAgent)
 		if _, stated := statedFact(handWrittenAgent); !stated {
-			setup.pending = append(setup.pending, "the tracer reports through a Datadog Agent ("+agent+") because DD_CIVISIBILITY_AGENTLESS_ENABLED is not true, and no CI configuration shows whether that Agent runs where the tests do, with an API key and the selected site; ddtest asks the user to confirm it (--ci-confirm "+handWrittenAgent+"). Keep reporting through the Agent unless the user decides otherwise.")
+			setup.pending = append(setup.pending, "the tracer reports through a Datadog Agent ("+agent+") because "+because+", and no CI configuration shows whether that Agent runs where the tests do, with an API key and the selected site; ddtest asks the user to confirm it (--ci-confirm "+handWrittenAgent+"). Keep reporting through the Agent unless the user decides otherwise.")
 		}
 		return
 	}
@@ -353,58 +380,72 @@ func handWrittenCISetup(root string, workflow ciWorkflow, job runtimeJob, index 
 	return setup
 }
 
-// jobHandWrittenSetup is the hand-written setup of the job's test step at
-// first (see handWrittenCISetup), checked against every later step of the
-// job that runs framework's tests too: a setup the first step writes inline
-// or in its own variables reaches no other step, so each one must load the
-// tracer itself, with the same release, for the job to be certified. nil
-// when the first step has none.
+// jobHandWrittenSetup is the hand-written setup of the job's test steps
+// from first on (see handWrittenCISetup): each step that runs framework's
+// tests is checked, since a setup one step writes inline or in its own
+// variables reaches no other step, so each one must load the tracer itself,
+// with the same release, for the job to be certified. A step that writes
+// none is reported as untraced, whichever step writes the setup, so a job
+// whose first test step lacks it keeps a later step's setup rather than
+// getting a second one. nil when no test step writes one.
 func jobHandWrittenSetup(root string, workflow ciWorkflow, job runtimeJob, first int, language, framework, site string) *handWrittenSetup {
-	setup := handWrittenCISetup(root, workflow, job, first, nil, language, framework, site)
-	if setup == nil {
-		return nil
-	}
 	token := setupActionLanguage(language)
-	for i := first + 1; i < len(job.Steps); i++ {
+	var setup *handWrittenSetup
+	var untraced []string
+	for i := first; i < len(job.Steps); i++ {
 		step := job.Steps[i]
 		label := "step " + strconv.Itoa(stepNumber(step, i))
 		if step.Source != "" {
 			label = step.Source
 		}
-		if current, ok := datadogSetup(step); ok {
+		if current, ok := datadogSetup(step); ok && i > first {
 			if selected, err := setupSelectsLanguage(current, nil, token); err != nil || selected {
+				if setup == nil {
+					return nil // The provider's setup decides; see its own checks.
+				}
 				setup.unresolved("the job also runs a Datadog setup (" + label + ") after its first " + framework + " test step, and ddtest does not certify a job that mixes it with a hand-written setup.")
 				return setup
 			}
 		}
-		resolution := resolveTestStep(root, workflow, job, step, language, framework)
-		if resolution.Review || !resolution.Matched {
+		if i > first {
+			if resolution := resolveTestStep(root, workflow, job, step, language, framework); resolution.Review || !resolution.Matched {
+				continue
+			}
+		}
+		current := handWrittenCISetup(root, workflow, job, i, nil, language, framework, site)
+		if current == nil {
+			untraced = append(untraced, "The "+framework+" test command at "+label+" ("+step.Run+") gets none of the hand-written setup, so its tests run untraced: give that command the same setup, or set it once for the job's later commands after its dependency install.")
 			continue
 		}
-		later := handWrittenCISetup(root, workflow, job, i, nil, language, framework, site)
-		if later == nil {
-			setup.missing("The " + framework + " test command at " + label + " (" + step.Run + ") gets none of the hand-written setup, so its tests run untraced: give that command the same setup, or set it once for the job's later commands after its dependency install.")
+		if setup == nil {
+			setup = current
 			continue
 		}
-		if later.Tracer != "" && setup.Tracer != "" && later.Tracer != setup.Tracer {
-			setup.missing("The " + framework + " test command at " + label + " loads tracer release " + later.Tracer + ", not " + setup.Tracer + " as the job's first test command does: load one exact release in every test command.")
+		if current.Tracer != "" && setup.Tracer != "" && current.Tracer != setup.Tracer {
+			setup.missing("The " + framework + " test command at " + label + " loads tracer release " + current.Tracer + ", not " + setup.Tracer + " as the job's first hand-written test command does: load one exact release in every test command.")
 		}
-		for _, problem := range later.Problems {
+		for _, problem := range current.Problems {
 			setup.missing(problem)
 		}
-		for _, reason := range later.Unresolved {
+		for _, reason := range current.Unresolved {
 			setup.unresolved(reason)
 		}
-		for _, reason := range later.pending {
+		for _, reason := range current.pending {
 			if !slices.Contains(setup.pending, reason) {
 				setup.pending = append(setup.pending, reason)
 			}
 		}
-		for _, key := range later.Confirmations {
+		for _, key := range current.Confirmations {
 			if !slices.Contains(setup.Confirmations, key) {
 				setup.Confirmations = append(setup.Confirmations, key)
 			}
 		}
+	}
+	if setup == nil {
+		return nil
+	}
+	for _, problem := range untraced {
+		setup.missing(problem)
 	}
 	return setup
 }

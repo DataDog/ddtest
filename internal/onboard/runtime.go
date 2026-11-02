@@ -74,6 +74,11 @@ type RuntimeFinding struct {
 	// UserStated reports a runtime the user stated with --ci-runtime, which
 	// ddtest checks but cannot verify.
 	UserStated bool `json:"user_stated,omitempty"`
+	// AgentReporting reports a hand-written setup (see
+	// HandWrittenSetupAction) that reports through a Datadog Agent the user
+	// confirmed (--ci-confirm datadog-agent), which holds the API key: the
+	// job needs no DD_API_KEY of its own.
+	AgentReporting bool `json:"agent_reporting,omitempty"`
 	// SetupCaveats are what ddtest could not check about the setup that
 	// precedes this entry, such as a tracer release it cannot pin.
 	SetupCaveats []string `json:"setup_caveats,omitempty"`
@@ -650,6 +655,7 @@ func checkRuntimeJob(ctx context.Context, root string, workflow ciWorkflow, name
 		}
 		if handWritten != nil {
 			finding.Action, finding.TracerRequested = handWritten.Reference, handWritten.Tracer
+			finding.AgentReporting = handWritten.reportsThroughAgent()
 			if problem := handWritten.problem(); problem != "" {
 				finding.Status, finding.Code, finding.Reason = StatusInconclusive, handWritten.code(), problem
 				findings = append(findings, finding)

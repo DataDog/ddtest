@@ -122,7 +122,7 @@ func javaHandWrittenSetup(root string, provider ciProvider, workflow ciWorkflow,
 	}
 	// -Ddd.* system properties in the agent's options configure it like
 	// DD_* variables, and take precedence over them.
-	handWrittenConfiguration(setup, provider, job, mergeEnvironment(commandEnv, javaHandWrittenProperties(carrier.value)), site, false, false)
+	handWrittenConfiguration(setup, provider, job, mergeEnvironment(commandEnv, javaHandWrittenProperties(carrier.value)), site, false, reportingFromEnvironment)
 	return setup
 }
 

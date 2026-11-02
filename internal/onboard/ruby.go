@@ -779,6 +779,7 @@ func RubyCIConfigurationFrom(root, source, framework, site string) RuntimeCheck 
 						if handWritten := (rubyDiscovery{}).handWrittenSetup(root, provider, workflow, rowJob, i, row, framework, site); handWritten != nil {
 							finding.handWritten = handWritten
 							finding.Action, finding.TracerRequested = handWritten.Reference, handWritten.Tracer
+							finding.AgentReporting = handWritten.reportsThroughAgent()
 							if problem := handWritten.problem(); problem != "" {
 								finding.Code, finding.Reason = handWritten.code(), problem
 							} else {

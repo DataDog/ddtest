@@ -188,7 +188,7 @@ func javascriptHandWrittenSetup(root string, provider ciProvider, workflow ciWor
 		return javascriptHandWrittenPreload(value).found
 	})
 	handWrittenFrameworkDisabled(setup, env, framework)
-	handWrittenConfiguration(setup, provider, job, env, site, true, false)
+	handWrittenConfiguration(setup, provider, job, env, site, true, reportingFromEnvironment)
 	return setup, normalized
 }
 
@@ -213,7 +213,10 @@ func javascriptInstallsDependencies(words []string) bool {
 func javascriptHandWrittenTracer(setup *handWrittenSetup, root, directory string, workflow ciWorkflow, job runtimeJob, index int, env map[string]string) (version, source string) {
 	// uninstalled is a command that removes dd-trace, whichever install it
 	// came from (package.json's too), when no later one installs it again.
-	removed, uninstalled, saved := "", "", false
+	// saved reports an install the job saves to package.json, and
+	// development one it saves as a devDependency, which a later command
+	// that omits devDependencies (npm prune --omit=dev) removes.
+	removed, uninstalled, saved, development := "", "", false, false
 	for _, step := range job.Steps[:index] {
 		where := step.Source
 		if where == "" {
@@ -238,7 +241,7 @@ func javascriptHandWrittenTracer(setup *handWrittenSetup, root, directory string
 			elsewhere := moved || installDirectory != directory || javascriptInstallsElsewhere(words)
 			release, global, ok := javascriptTracerInstall(words)
 			if !ok {
-				uninstall := javascriptRemovesTracer(words)
+				uninstall := javascriptRemovesTracer(words) || version != "" && development && javascriptOmitsDevelopmentCommand(mergeEnvironment(handWrittenEnvironment(workflow, job, step), javascriptAssigned(words)), words)
 				if !uninstall && (version == "" && uninstalled == "" || version != "" && saved || !javascriptReinstalls(words)) {
 					// A saved install is in the manifest and lockfile the job
 					// reinstalls from.
@@ -292,6 +295,7 @@ func javascriptHandWrittenTracer(setup *handWrittenSetup, root, directory string
 			}
 			version, source, removed, uninstalled = release, strings.Join(words, " ")+" at "+where, "", ""
 			saved = words[0] != "npm" || !slices.Contains(words, "--no-save")
+			development = saved && javascriptSavesDevelopment(root, directory, words)
 		}
 	}
 	if version != "" {
@@ -310,7 +314,7 @@ func javascriptHandWrittenTracer(setup *handWrittenSetup, root, directory string
 	case manifest == "":
 		setup.missing("No package.json in " + displayDirectory(directory) + " or above it depends on dd-trace, and no command of the job installs it, so -r dd-trace/ci/init cannot load: add dd-trace as a devDependency with an exact release (npm install --save-dev --save-exact dd-trace@<release>) and commit the lockfile.")
 		return "", ""
-	case development && javascriptOmitsDevelopment(workflow, job, index):
+	case development && javascriptOmitsDevelopment(workflow, job, index, directory, filepath.Dir(filepath.FromSlash(manifest))):
 		setup.missing("dd-trace is a devDependency of " + manifest + ", but the job installs production dependencies only, so -r dd-trace/ci/init cannot load: install the devDependencies too, or make dd-trace a dependency.")
 		return "", ""
 	case exactRelease(strings.TrimPrefix(declared, "=")):
@@ -433,41 +437,94 @@ func javascriptDeclaredTracer(root, directory string) (requested, manifest strin
 	}
 }
 
-// javascriptOmitsDevelopment reports an install command before index in
-// job that leaves devDependencies out: --production, --omit=dev (or --omit
-// dev), --only=production and the like, or NODE_ENV=production in that
-// command's own environment.
-func javascriptOmitsDevelopment(workflow ciWorkflow, job runtimeJob, index int) bool {
+// javascriptSavesDevelopment reports a saved dd-trace install (see
+// javascriptTracerInstall) that adds it as a devDependency: with -D,
+// --save-dev or --dev, or, without an option that saves it elsewhere, when
+// the package.json that resolves dd-trace in directory already has it only
+// there, where npm and Yarn keep it.
+func javascriptSavesDevelopment(root, directory string, words []string) bool {
+	if slices.ContainsFunc(words, func(word string) bool { return slices.Contains([]string{"-D", "--save-dev", "--dev"}, word) }) {
+		return true
+	}
+	if slices.ContainsFunc(words, func(word string) bool {
+		return slices.Contains([]string{"-P", "--save-prod", "-O", "--save-optional", "--optional", "--prod"}, word)
+	}) {
+		return false
+	}
+	_, manifest, development := javascriptDeclaredTracer(root, directory)
+	return manifest != "" && development
+}
+
+// javascriptAssigned is the variables a command assigns for itself (see
+// handWrittenCommand).
+func javascriptAssigned(words []string) map[string]string {
+	assigned, _ := handWrittenCommand(words)
+	return assigned
+}
+
+// javascriptOmitsDevelopment reports whether the last command before index
+// in job that decides which dependencies are installed leaves the
+// devDependencies out (see javascriptOmitsDevelopmentCommand), wherever it
+// runs. Only an npm ci or install without such an option in directory,
+// where the tests run, or in manifest's directory (the package.json that
+// declares dd-trace) installs them again; a prune without one keeps them.
+func javascriptOmitsDevelopment(workflow ciWorkflow, job runtimeJob, index int, directory, manifest string) bool {
+	omitted := false
 	for _, step := range job.Steps[:index] {
 		commands, err := staticCommands(step.Run)
 		if err != nil {
 			continue
 		}
+		installDirectory := filepath.Clean(filepath.FromSlash(stepDirectory(workflow, job, step)))
+		moved := false
 		for _, words := range commands {
-			assigned, words := handWrittenCommand(words)
-			if len(words) < 2 || !slices.Contains([]string{"npm", "yarn", "pnpm"}, words[0]) || !slices.Contains([]string{"ci", "install", "i"}, words[1]) {
+			env := mergeEnvironment(handWrittenEnvironment(workflow, job, step), javascriptAssigned(words))
+			_, command := handWrittenCommand(words)
+			if len(command) > 0 && slices.Contains([]string{"cd", "pushd", "popd"}, command[0]) {
+				moved = true
 				continue
 			}
-			env := mergeEnvironment(handWrittenEnvironment(workflow, job, step), assigned)
-			if strings.TrimSpace(env["NODE_ENV"]) == "production" {
-				return true
+			if len(command) < 2 || !slices.Contains([]string{"npm", "yarn", "pnpm"}, command[0]) {
+				continue
 			}
-			for i, word := range words[2:] {
-				next := ""
-				if i+3 < len(words) {
-					next = words[i+3]
-				}
-				option, value, inline := strings.Cut(word, "=")
-				if !inline {
-					value = next
-				}
-				switch {
-				case slices.Contains([]string{"--production", "--production=true", "--prod"}, word) || word == "-P" && words[0] == "pnpm",
-					option == "--omit" && value == "dev",
-					option == "--only" && slices.Contains([]string{"production", "prod"}, value):
-					return true
-				}
+			switch {
+			case javascriptOmitsDevelopmentCommand(env, words):
+				omitted = true
+			case slices.Contains([]string{"ci", "install", "i"}, command[1]) && !moved && !javascriptInstallsElsewhere(command) && (installDirectory == directory || installDirectory == manifest):
+				omitted = false
 			}
+		}
+	}
+	return omitted
+}
+
+// javascriptOmitsDevelopmentCommand reports a package manager command
+// (words, with the variables it assigns for itself) that installs or prunes
+// the dependencies without the devDependencies: --production, --omit=dev
+// (or --omit dev), --only=production and the like, or NODE_ENV=production
+// in its environment (env).
+func javascriptOmitsDevelopmentCommand(env map[string]string, words []string) bool {
+	_, words = handWrittenCommand(words)
+	if len(words) < 2 || !slices.Contains([]string{"npm", "yarn", "pnpm"}, words[0]) || !slices.Contains([]string{"ci", "install", "i", "prune"}, words[1]) {
+		return false
+	}
+	if strings.TrimSpace(env["NODE_ENV"]) == "production" {
+		return true
+	}
+	for i, word := range words[2:] {
+		next := ""
+		if i+3 < len(words) {
+			next = words[i+3]
+		}
+		option, value, inline := strings.Cut(word, "=")
+		if !inline {
+			value = next
+		}
+		switch {
+		case slices.Contains([]string{"--production", "--production=true", "--prod"}, word) || word == "-P" && words[0] == "pnpm",
+			option == "--omit" && value == "dev",
+			option == "--only" && slices.Contains([]string{"production", "prod"}, value):
+			return true
 		}
 	}
 	return false

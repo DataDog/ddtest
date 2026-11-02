@@ -229,6 +229,39 @@ func TestProviderApplyKeepsAnUnscopedExistingSetup(t *testing.T) {
 	require.Contains(t, gap.Reason, "Custom inherited instrumentation requires review: DD_CUCUMBER_NODE_OPTIONS")
 }
 
+// Every test step's own variables are checked, not only the first one's: a
+// later step that replaces the scoped variable gets no preload from it, so
+// onboard --apply neither adds a setup beside it nor accepts the existing
+// one.
+func TestProviderApplyChecksEveryTestStepsScopedVariable(t *testing.T) {
+	framework := scopedFrameworks[0]
+	for _, provider := range scopedProviders {
+		t.Run(provider.name, func(t *testing.T) {
+			root := scopedRepository(t, provider, provider.config("npm test", "DD_CUCUMBER_NODE_OPTIONS= npm test"), framework.pkg, nil)
+			_, err := PlanJavaScriptSetup(root, "cucumber", "5.133.0", "datadoghq.com", ">=18")
+			var gap *SetupGap
+			require.ErrorAs(t, err, &gap)
+			require.Contains(t, gap.Reason, "Custom inherited instrumentation requires review: DD_CUCUMBER_NODE_OPTIONS")
+		})
+	}
+	provider := scopedProviders[0]
+	setup := "test:\n  image: node:22\n  script:\n" + gitLabSetupEntry(gitLabJestSetup) + "    - " + providerScopedCommand("cucumber", "") + "\n    - npm test\n"
+	for _, later := range []string{"DD_CUCUMBER_NODE_OPTIONS= npm test", "export DD_CUCUMBER_NODE_OPTIONS=--trace-warnings", "npm test"} {
+		root := scopedRepository(t, provider, setup+"    - "+later+"\n    - npm test\n", framework.pkg, nil)
+		plan, err := PlanJavaScriptSetup(root, "cucumber", "5.133.0", "datadoghq.com", ">=18")
+		if later == "npm test" {
+			require.NoError(t, err, "every test step reads the exported preload")
+			for _, edit := range plan.edits {
+				require.NotEqual(t, gitLabCIFile, edit.path, "the existing setup is kept")
+			}
+			continue
+		}
+		var gap *SetupGap
+		require.ErrorAs(t, err, &gap, later)
+		require.Contains(t, gap.Reason, "DD_CUCUMBER_NODE_OPTIONS no longer carries the tracer's preload", later)
+	}
+}
+
 // The instructions show the scoped command after the setup and the package
 // script prefix that consumes it.
 func TestProviderScopedSetupInstructions(t *testing.T) {

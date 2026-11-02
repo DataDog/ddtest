@@ -49,15 +49,19 @@ type validationSummary struct {
 // the provider stores secrets, without its setup. A configuration with both
 // kinds of jobs needs both steps when the provider's setup keeps its key
 // elsewhere, as a Jenkins plugin-instrumented stage beside a hand-written
-// container stage does; otherwise the provider's step stores that key.
+// container stage does; otherwise the provider's step stores that key. A
+// hand-written setup that reports through a Datadog Agent the user
+// confirmed needs no key in CI: the Agent holds it.
 func apiKeyHumanActions(check *onboard.RuntimeCheck) []string {
-	guarded, provider, handWritten := false, false, false
+	guarded, provider, handWritten, agent := false, false, false, false
 	if check != nil {
 		for _, job := range check.Jobs {
 			switch {
 			case job.Reason == onboard.GuardedActionBranch:
 				guarded = true
 			case job.Status == "excluded":
+			case onboard.HandWrittenSetupAction(job.Action) && job.AgentReporting:
+				agent = true
 			case onboard.HandWrittenSetupAction(job.Action):
 				handWritten = true
 			default:
@@ -66,7 +70,7 @@ func apiKeyHumanActions(check *onboard.RuntimeCheck) []string {
 		}
 	}
 	var actions []string
-	if guarded || provider || !handWritten {
+	if guarded || provider || !handWritten && !agent {
 		// The provider's own setups decide its key actions; hand-written
 		// jobs get theirs below.
 		var setups *onboard.RuntimeCheck

@@ -25,10 +25,12 @@ import (
 type rubyHandWrittenHelper struct {
 	// file is the helper's repository path.
 	file string
-	// enabled, instrumented and agentless report the block's
-	// c.ci.enabled = true, c.ci.instrument :<framework> and
-	// c.ci.agentless_mode_enabled = true.
-	enabled, instrumented, agentless bool
+	// enabled and instrumented report the block's c.ci.enabled = true and
+	// c.ci.instrument :<framework>.
+	enabled, instrumented bool
+	// reporting is the block's c.ci.agentless_mode_enabled, true or false,
+	// which replaces DD_CIVISIBILITY_AGENTLESS_ENABLED.
+	reporting handWrittenReporting
 	// unresolved is why ddtest cannot evaluate the helper statically.
 	unresolved string
 }
@@ -59,7 +61,7 @@ func (rubyDiscovery) handWrittenSetup(root string, provider ciProvider, workflow
 		mechanism = helper.file
 	}
 	setup := &handWrittenSetup{Reference: handWrittenReference("datadog-ci", mechanism)}
-	enabled, agentless := false, false
+	enabled, reporting := false, reportingFromEnvironment
 	if auto {
 		words := strings.Fields(options)
 		preload := slices.IndexFunc(words, func(word string) bool {
@@ -80,7 +82,7 @@ func (rubyDiscovery) handWrittenSetup(root string, provider ciProvider, workflow
 			return strings.Contains(value, "datadog/ci")
 		})
 	} else {
-		enabled, agentless = helper.enabled, helper.agentless
+		enabled, reporting = helper.enabled, helper.reporting
 		switch {
 		case helper.unresolved != "":
 			setup.unresolved(helper.unresolved)
@@ -98,7 +100,7 @@ func (rubyDiscovery) handWrittenSetup(root string, provider ciProvider, workflow
 		setup.missing(lockfile + " does not lock datadog-ci, so the tests cannot load the release ddtest validates: add gem \"datadog-ci\", \"<exact release>\" (such as 1.42.0) to the test group of its Gemfile and run bundle lock.")
 	}
 	handWrittenFrameworkDisabled(setup, env, framework)
-	handWrittenConfiguration(setup, provider, job, env, site, enabled, agentless)
+	handWrittenConfiguration(setup, provider, job, env, site, enabled, reporting)
 	return setup
 }
 
@@ -318,9 +320,12 @@ func rubyReadHelper(text, framework string) *rubyHandWrittenHelper {
 				helper.unresolved = "the helper sets " + variable + ".ci.enabled = " + value + ", which ddtest does not evaluate."
 			}
 		case match[1] == "agentless_mode_enabled" && match[2] != "":
-			if value == "true" {
-				helper.agentless = true
-			} else if helper.unresolved == "" && value != "false" {
+			switch {
+			case value == "true":
+				helper.reporting = reportingAgentless
+			case value == "false":
+				helper.reporting = reportingAgent
+			case helper.unresolved == "":
 				helper.unresolved = "the helper sets " + variable + ".ci.agentless_mode_enabled = " + value + ", which ddtest does not evaluate."
 			}
 		case match[1] == "instrument" && match[2] == "":

@@ -64,7 +64,7 @@ func pythonHandWrittenSetup(root string, provider ciProvider, workflow ciWorkflo
 	}
 	// --ddtrace turns Test Optimization on; agentless reporting is the
 	// environment's.
-	handWrittenConfiguration(setup, provider, job, commandEnv, site, true, false)
+	handWrittenConfiguration(setup, provider, job, commandEnv, site, true, reportingFromEnvironment)
 	return setup
 }
 

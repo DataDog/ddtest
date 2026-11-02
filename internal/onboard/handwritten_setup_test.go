@@ -216,6 +216,14 @@ func TestHandWrittenJavaScriptSetups(t *testing.T) {
 				{name: "production install, split option", before: []string{"npm ci --omit dev"}, env: agentless, status: StatusInconclusive, reason: "installs production dependencies only"},
 				{name: "production install, split only", before: []string{"npm install --only production"}, env: agentless, status: StatusInconclusive, reason: "installs production dependencies only"},
 				{name: "production install, its own NODE_ENV", before: []string{"NODE_ENV=production npm ci"}, env: agentless, status: StatusInconclusive, reason: "installs production dependencies only"},
+				// Pruning the devDependencies removes a tracer the job saved
+				// as one, and the last install decides what the tests find.
+				{name: "saved devDependency pruned", pkg: `{"devDependencies": {"jest": "30.0.0"}}`, before: []string{"npm ci", "npm install --save-dev --save-exact dd-trace@5.40.0", "npm prune --omit=dev"}, env: agentless, status: StatusInconclusive, reason: "The job removes dd-trace (npm prune --omit=dev at"},
+				{name: "saved devDependency, production prune", pkg: `{"devDependencies": {"jest": "30.0.0"}}`, before: []string{"npm ci", "npm install -D --save-exact dd-trace@5.40.0", "npm prune --production"}, env: agentless, status: StatusInconclusive, reason: "The job removes dd-trace (npm prune --production at"},
+				{name: "saved dependency survives a production prune", pkg: `{"devDependencies": {"jest": "30.0.0"}}`, before: []string{"npm ci", "npm install --save-exact dd-trace@5.40.0", "npm prune --omit=dev"}, env: agentless, configured: true, status: StatusCompatible},
+				{name: "declared devDependency pruned", before: []string{"npm ci", "npm prune --production"}, env: agentless, status: StatusInconclusive, reason: "installs production dependencies only"},
+				{name: "production install, then a full one", before: []string{"npm ci --omit=dev", "npm ci"}, env: agentless, configured: true, status: StatusCompatible},
+				{name: "full install, then a production one", before: []string{"npm ci", "npm ci --omit=dev"}, env: agentless, status: StatusInconclusive, reason: "installs production dependencies only"},
 			} {
 				t.Run(tc.name, func(t *testing.T) {
 					framework, command, pkg := tc.framework, tc.command, tc.pkg
@@ -303,6 +311,21 @@ func TestHandWrittenCucumberSetupApply(t *testing.T) {
 			require.NoError(t, err)
 			require.True(t, plan.Configured(), "the hand-written setup stays")
 			require.Equal(t, StatusCompatible, handWrittenRuntime(t, root, "cucumber").Status)
+
+			// NYC alone is not enough: the impacted-tests workaround must
+			// reach the command too, written on it or in its variables.
+			writeFile(t, root, provider.file, provider.config(agentless, []string{"npm ci"}, "npx --no-install nyc -- cucumber-js"))
+			_, err = PlanJavaScriptSetup(root, "cucumber", "5.133.0", "datadoghq.com", ">=18")
+			require.ErrorAs(t, err, &gap)
+			require.Contains(t, gap.Reason, "without "+cucumberImpactedWorkaround)
+			require.Contains(t, gap.Reason, "the job's hand-written setup stays")
+			_, after, ok = strings.Cut(gap.Reason, "Change this CI command to exactly: ")
+			require.True(t, ok, gap.Reason)
+			require.Contains(t, after, cucumberImpactedWorkaround+" npx --no-install nyc -- cucumber-js")
+			writeFile(t, root, provider.file, provider.config(with(agentless, "DD_CIVISIBILITY_IMPACTED_TESTS_DETECTION_ENABLED", "false"), []string{"npm ci"}, "npx --no-install nyc -- cucumber-js"))
+			plan, err = PlanJavaScriptSetup(root, "cucumber", "5.133.0", "datadoghq.com", ">=18")
+			require.NoError(t, err)
+			require.True(t, plan.Configured(), "the job's variables carry the workaround")
 		})
 		t.Run(provider.name+"/native ESM", func(t *testing.T) {
 			pkg := fmt.Sprintf(cucumberPackage, `"type": "module", `)
@@ -481,6 +504,8 @@ func TestHandWrittenRubySetups(t *testing.T) {
 				// directory, a bare name from spec/ or lib/.
 				{name: "path-qualified helper", env: map[string]string{"DD_SITE": "datadoghq.com"}, files: map[string]string{".rspec": "--require ./spec/spec_helper.rb\n", "spec/spec_helper.rb": handWrittenSpecHelper}, configured: true},
 				{name: "helper on the load path", env: map[string]string{"DD_SITE": "datadoghq.com"}, files: map[string]string{".rspec": "--require support/datadog\n", "spec/support/datadog.rb": handWrittenSpecHelper}, configured: true},
+				// The helper's setting replaces DD_CIVISIBILITY_AGENTLESS_ENABLED.
+				{name: "helper turns agentless mode off", env: map[string]string{"DD_CIVISIBILITY_AGENTLESS_ENABLED": "true", "DD_SITE": "datadoghq.com"}, files: map[string]string{".rspec": "--require spec_helper\n", "spec/spec_helper.rb": strings.Replace(handWrittenSpecHelper, "agentless_mode_enabled = true", "agentless_mode_enabled = false", 1)}, reason: "reports through a Datadog Agent (localhost:8126) because the test helper's Datadog configuration turns agentless mode off"},
 				{name: "helper selects the site", env: map[string]string{"DD_SITE": "datadoghq.com"}, files: map[string]string{".rspec": "--require spec_helper\n", "spec/spec_helper.rb": strings.Replace(handWrittenSpecHelper, "  c.service = \"app\"\n", "  c.service = \"app\"\n  c.site = \"datadoghq.eu\"\n", 1)}, reason: "the helper sets c.site = \"datadoghq.eu\""},
 			} {
 				t.Run(tc.name, func(t *testing.T) {
@@ -713,11 +738,14 @@ func TestHandWrittenAgentModeIsConfirmedByTheUser(t *testing.T) {
 			require.Contains(t, check.Jobs[0].Reason, "Keep reporting through the Agent unless the user decides otherwise")
 			require.NotContains(t, check.Jobs[0].Reason, "set DD_CIVISIBILITY_AGENTLESS_ENABLED")
 
+			require.False(t, check.Jobs[0].AgentReporting, "the user has not confirmed the Agent")
+
 			require.NoError(t, UseCIStatements(nil, []CIFact{{Key: "datadog-agent"}}))
 			require.Nil(t, RequiredCIConfirmations(root, "javascript", "jest"))
 			require.True(t, javascriptDiscovery{}.ciSetupConfigured(root, "jest", ""))
 			check = handWrittenRuntime(t, root, "jest")
 			require.Equal(t, StatusCompatible, check.Status, "%+v", check)
+			require.True(t, check.Jobs[0].AgentReporting, "the confirmed Agent holds the API key")
 			stated, _ := StatedFacts(&check, "javascript")
 			require.Contains(t, stated, "A Datadog Agent runs where the hand-written CI setups' tests run, at the address they use, with an API key and the selected Datadog site (--ci-confirm)")
 		})
@@ -740,8 +768,18 @@ func TestHandWrittenSetupReachesEveryTestStep(t *testing.T) {
 			require.ErrorAs(t, err, &gap)
 			require.Contains(t, gap.Reason, "gets none of the hand-written setup, so its tests run untraced")
 
-			// Both commands with the setup are certified.
+			// A later step's setup is kept too when the first test step has
+			// none: onboard --apply adds no second setup beside it.
 			both := `NODE_OPTIONS='-r dd-trace/ci/init' npx jest integration`
+			writeFile(t, root, provider.file, provider.config(env, []string{"npm ci", "npx jest unit"}, both))
+			require.False(t, javascriptDiscovery{}.ciSetupConfigured(root, "jest", "datadoghq.com"))
+			require.Contains(t, strings.Join(existingSetupProblems(root, "javascript", "jest", "datadoghq.com"), "\n"), "(npx jest unit) gets none of the hand-written setup")
+			_, err = PlanJavaScriptSetup(root, "jest", "5.133.0", "datadoghq.com", ">=18")
+			require.ErrorAs(t, err, &gap)
+			require.Contains(t, gap.Reason, "keep it, without adding a second setup")
+			require.Contains(t, gap.Reason, "(npx jest unit) gets none of the hand-written setup")
+
+			// Both commands with the setup are certified.
 			writeFile(t, root, provider.file, provider.config(env, []string{"npm ci", inline}, both))
 			require.True(t, javascriptDiscovery{}.ciSetupConfigured(root, "jest", "datadoghq.com"))
 			plan, err := PlanJavaScriptSetup(root, "jest", "5.133.0", "datadoghq.com", ">=18")
@@ -799,11 +837,29 @@ func TestHandWrittenProductionInstallEnvironment(t *testing.T) {
 		{Run: "npm ci", Env: map[string]string{"NODE_ENV": "production"}},
 		{Run: "npx jest"},
 	}}
-	require.True(t, javascriptOmitsDevelopment(ciWorkflow{}, job, 1))
+	require.True(t, javascriptOmitsDevelopment(ciWorkflow{}, job, 1, ".", "."))
 	job.Steps[0].Env, job.Steps[1].Env = nil, map[string]string{"NODE_ENV": "production"}
-	require.False(t, javascriptOmitsDevelopment(ciWorkflow{}, job, 1))
+	require.False(t, javascriptOmitsDevelopment(ciWorkflow{}, job, 1, ".", "."))
 	job.Env = map[string]string{"NODE_ENV": "production"}
-	require.True(t, javascriptOmitsDevelopment(ciWorkflow{}, job, 1), "the job's variables reach the install too")
+	require.True(t, javascriptOmitsDevelopment(ciWorkflow{}, job, 1, ".", "."), "the job's variables reach the install too")
+}
+
+// The last install where the tests run decides whether they find the
+// devDependencies: one in another directory restores none of them there.
+func TestHandWrittenFinalInstallDecidesDevelopment(t *testing.T) {
+	for _, tc := range []struct {
+		later   runtimeStep
+		omitted bool
+	}{
+		{runtimeStep{Run: "npm ci"}, false},
+		{runtimeStep{Run: "npm prune"}, true},
+		{runtimeStep{Run: "cd docs && npm ci"}, true},
+		{runtimeStep{Run: "npm ci --prefix docs"}, true},
+		{runtimeStep{Run: "npm ci", WorkingDirectory: "docs"}, true},
+	} {
+		job := runtimeJob{Steps: []runtimeStep{{Run: "npm ci --omit=dev"}, tc.later, {Run: "npx jest"}}}
+		require.Equal(t, tc.omitted, javascriptOmitsDevelopment(ciWorkflow{}, job, 2, ".", "."), tc.later)
+	}
 }
 
 // The shell expands a command's arguments before its own assignments take

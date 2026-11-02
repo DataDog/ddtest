@@ -49,6 +49,11 @@ func TestAPIKeyActionForHandWrittenSetups(t *testing.T) {
 	require.Equal(t, []string{onboard.CIProviderHandWrittenKeyAction()}, actions)
 	require.Contains(t, actions[0], "Store DD_API_KEY in a masked GitLab CI/CD variable")
 	require.NotContains(t, actions[0], "setup script")
+	// A confirmed Datadog Agent holds the key for the jobs that report
+	// through it.
+	agent := onboard.RuntimeFinding{Status: "compatible", Action: handWritten.Action, AgentReporting: true}
+	require.Empty(t, apiKeyHumanActions(&onboard.RuntimeCheck{Jobs: []onboard.RuntimeFinding{agent}}))
+	require.Equal(t, []string{onboard.CIProviderHandWrittenKeyAction()}, apiKeyHumanActions(&onboard.RuntimeCheck{Jobs: []onboard.RuntimeFinding{agent, handWritten}}))
 	// The setup script reads the same masked variable.
 	mixed := &onboard.RuntimeCheck{Jobs: []onboard.RuntimeFinding{handWritten, {Status: "compatible", Action: "test-optimization-gitlab-script v1.2.10"}}}
 	require.Equal(t, []string{onboard.CIProviderAPIKeyAction(false)}, apiKeyHumanActions(mixed))
