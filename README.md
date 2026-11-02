@@ -299,6 +299,22 @@ ddtest run --platform javascript --framework cucumber
 For CI-node mode, worker environment variables, custom commands, and
 parallelism details, see [Running DDTest](docs/running.md).
 
+#### ddtest reseed
+
+Reseeds the Linux kernel's random number generator from a seed file. Machines
+restored from the same memory snapshot start with the same kernel random state,
+so until the kernel reseeds on its own they produce the same "random" values,
+such as UUIDs or trace IDs. Run it as root on each restored machine, with a
+different seed of 16 to 4096 bytes on each one, before running tests:
+
+```bash
+sudo ddtest reseed --seed-file /tmp/seed
+```
+
+ddtest mixes the seed into the kernel's entropy pool, makes the kernel reseed at
+once, and deletes the seed file. The reseed needs `CAP_SYS_ADMIN`, so it fails
+inside containers that drop that capability, even as root.
+
 ### Common settings
 
 | CLI flag | What it does |
