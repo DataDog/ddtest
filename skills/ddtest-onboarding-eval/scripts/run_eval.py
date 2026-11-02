@@ -89,10 +89,24 @@ SECRET_ASSIGNED_EXPANSION = re.compile(r"(?i)((?:\b[\w-]{0,80}(?:token|secret|pa
                                        r"(:?[-=]|:?[?+]|##?|%%?|//?|\^\^?|,,?|@|:)?([^}\n]*)(\}|$)", re.M)
 
 
+# A parameter expansion nested in a default, such as ${FALLBACK:-word} in
+# ${PRIMARY:-${FALLBACK:-word}}, without the closing braces the enclosing
+# match stops at.
+NESTED_EXPANSION = re.compile(r"\$\$?\{[#!]?[A-Za-z_]\w*(:?[-=]|:?[?+]|##?|%%?|//?|\^\^?|,,?|@|:)?(.*)", re.S)
+
+
 def literal_default(operator, word):
+    """Whether a parameter expansion's operand supplies a literal value: a
+    default ((:)- or (:)=) that is not a reference, or a reference whose own
+    nested default is one."""
     bare = word.strip(" \t\"'")
-    return (operator in ("-", ":-", "=", ":=") and bool(bare)
-            and not secret_reference(bare, literal_names=word.lstrip(" \t").startswith("'")))
+    if operator not in ("-", ":-", "=", ":=") or not bare:
+        return False
+    single_quoted = word.lstrip(" \t").startswith("'")
+    nested = None if single_quoted else NESTED_EXPANSION.fullmatch(bare)
+    if nested:
+        return literal_default(nested[1] or "", nested[2])
+    return not secret_reference(bare, literal_names=single_quoted)
 
 
 def redact_expansion(match):
@@ -257,9 +271,16 @@ def read_record(name, directory_fd):
 def harvest_ddtest_records(directory):
     """Completed ddtest invocations' standard output, oldest first, removed
     from the trial. A record still being written is left for later; a record
-    that is not a regular file is removed and kept as an empty record."""
+    that is not a regular file is removed and kept as an empty record.
+    Code in the trial can replace the records folder or its parent (the
+    harness folder) with a symlink, so neither is followed: the parent is
+    opened without following it, and the folder relative to it."""
     try:
-        directory_fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        parent_fd = os.open(directory.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            directory_fd = os.open(directory.name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent_fd)
+        finally:
+            os.close(parent_fd)
     except OSError:
         return []
     try:

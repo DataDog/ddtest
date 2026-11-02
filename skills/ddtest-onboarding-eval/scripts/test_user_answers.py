@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 from pathlib import Path
 import tempfile
 import unittest
@@ -109,12 +110,32 @@ class QuestionTests(unittest.TestCase):
             ["ci_confirm=jenkins-plugin", "ci_confirm=jenkins-plugin-mode", "ci_confirm=jenkins-agent-runtime-matches"]))
         self.assertEqual(valueless["missing"], ["ci_confirm:jenkins-plugin-mode=agentless:<site>|agent"])
         # A value must have one of the listed forms.
+        # A placeholder takes only what ddtest's parser accepts there.
         for value, covered in (("agent", True), ("agentless:datadoghq.eu", True), ("bogus", False),
-                               ("agentless:", False), ("agents", False), ("agentless", False)):
+                               ("agentless:", False), ("agents", False), ("agentless", False),
+                               ("agentless:us5.datadoghq.com", True), ("agentless:localhost", False),
+                               ("agentless:DATADOGHQ.COM", False), ("agentless:datadoghq.com1", False),
+                               ("agentless:-datadoghq.com", False)):
             with self.subTest(value=value):
                 composed = user_answers.reply(asked, [complete[0], complete[2]] + user_answers.load_answers(
                     ["ci_confirm=jenkins-plugin-mode=" + value]))
                 self.assertEqual(composed["reply"] is not None, covered, composed)
+
+    def test_placeholders_follow_ddtest_parser(self):
+        # Every placeholder ddtest's ci_confirm forms name is known here, with
+        # the rule ddtest's parser applies.
+        root = Path(__file__).resolve().parents[3]
+        setup = (root / "internal/onboard/ci_provider_jenkins_setup.go").read_text()
+        site = re.search(r"jenkinsSiteValue = regexp\.MustCompile\(`\^(.*)\$`\)", setup)
+        self.assertIsNotNone(site)
+        self.assertEqual(user_answers.PLACEHOLDER_VALUES["site"], site[1])
+        sources = "".join(path.read_text() for path in (root / "internal/onboard").glob("*.go") if not path.name.endswith("_test.go"))
+        placeholders = {name for values in re.findall(r'Values:\s*"([^"]*)"', sources) for name in re.findall(r"<([^<>]*)>", values)}
+        self.assertTrue(placeholders)
+        self.assertLessEqual(placeholders, set(user_answers.PLACEHOLDER_VALUES))
+        # A form with a placeholder the evaluator does not know covers nothing.
+        self.assertFalse(user_answers.offered("mode:<unknown>|agent", "mode:x"))
+        self.assertTrue(user_answers.offered("mode:<unknown>|agent", "agent"))
 
     def test_provider_and_unknown_questions(self):
         provider = {"code": "ci_provider_required", "required_input": ["github", "jenkins"]}
@@ -172,7 +193,10 @@ class EvidenceTests(unittest.TestCase):
                 "${DD_API_KEY^^}", "${DD_API_KEY,,}", "${DD_API_KEY@Q}", "${GITHUB_TOKEN:+-H x}",
                 "${DD_API_KEY:-$OTHER}", "${DD_API_KEY:=${OTHER}}", '${DD_API_KEY:-""}', "${DD_API_KEY-}",
                 "api_key: ${DD_API_KEY:+set}", "DD_API_KEY=${DD_API_KEY:+set}", "${DD_API_KEY:+set",
-                "DD_API_KEY=${KEY}", "DD_API_KEY=${KEY:-$OTHER}", "DD_API_KEY=${KEY:+set}", "DD_API_KEY=${KEY:-}")
+                "DD_API_KEY=${KEY}", "DD_API_KEY=${KEY:-$OTHER}", "DD_API_KEY=${KEY:+set}", "DD_API_KEY=${KEY:-}",
+                # A nested reference without a literal default of its own.
+                "DD_API_KEY=${PRIMARY:-${FALLBACK}}", "DD_API_KEY=${PRIMARY:-${FALLBACK:-}}",
+                "DD_API_KEY=${PRIMARY:-${FALLBACK:-$OTHER}}", "${DD_API_KEY:-${FALLBACK:+set}}")
         for text in kept:
             self.assertEqual(run_eval.redact(text), text)
         for text, expected in (("${DD_API_KEY-abc123}", "${DD_API_KEY-[REDACTED]}"),
@@ -188,6 +212,12 @@ class EvidenceTests(unittest.TestCase):
                                # Without its closing brace (a truncated line), a default is still a value.
                                ("${DD_API_KEY:-abc123", "${DD_API_KEY:-[REDACTED]"),
                                ("${DD_API_KEY=abc123", "${DD_API_KEY=[REDACTED]"),
+                               # A nested default supplies the value when every enclosing variable is unset.
+                               ("DD_API_KEY=${PRIMARY:-${FALLBACK:-opaque-secret-value}}", "DD_API_KEY=${PRIMARY:-[REDACTED]}}"),
+                               ("DD_API_KEY=${VAULT_VALUE:-${FALLBACK:-opaqueLiteralCredential12}}", "DD_API_KEY=${VAULT_VALUE:-[REDACTED]}}"),
+                               ("${DD_API_KEY:-${FALLBACK:-opaqueLiteral12}}", "${DD_API_KEY:-[REDACTED]}}"),
+                               ("DD_API_KEY=${A:-${B:=${C:-deep-literal-1}}}", "DD_API_KEY=${A:-[REDACTED]}}}"),
+                               ("DD_API_KEY=${A:-${B:-opaque-literal", "DD_API_KEY=${A:-[REDACTED]"),
                                # Recognized token shapes are redacted in any operand.
                                ("${DD_API_KEY:+sk-1234567890abcdefghijk}", "${DD_API_KEY:+[REDACTED]}")):
             self.assertEqual(run_eval.redact(text), expected)
@@ -285,6 +315,14 @@ class RecorderTests(unittest.TestCase):
             linked.symlink_to(target)
             self.assertEqual(run_eval.harvest_ddtest_records(linked), [])
             self.assertTrue((target / "e.done").exists())
+            # Nor is a harness folder replaced by a symlink to a host folder
+            # holding records/.
+            host = root / "host"
+            (host / "records").mkdir(parents=True)
+            (host / "records" / "host-file.done").write_text("host record")
+            (root / "harness").symlink_to(host)
+            self.assertEqual(run_eval.harvest_ddtest_records(root / "harness" / "records"), [])
+            self.assertEqual((host / "records" / "host-file.done").read_text(), "host record")
 
 
 class TrialTests(unittest.TestCase):

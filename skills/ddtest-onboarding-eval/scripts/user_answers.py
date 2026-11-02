@@ -115,14 +115,27 @@ def question(result):
     return asked
 
 
+# The values ddtest accepts for each placeholder a ci_confirm form names, as
+# its own parser checks them (<site> is jenkinsSiteValue in
+# internal/onboard/ci_provider_jenkins_setup.go). A value ddtest would reject
+# is not an answer: forwarding it would turn invalid evaluator input into an
+# apparent agent failure.
+PLACEHOLDER_VALUES = {"site": r"[a-z0-9][a-z0-9.-]*\.[a-z]+"}
+
+
 def offered(values, value):
     """Whether value has one of the forms a ci_confirm input lists, such as
-    agentless:<site>|agent: literal text, with <placeholder> for any word."""
+    agentless:<site>|agent: literal text, with <placeholder> for a value
+    ddtest accepts there. A form with a placeholder the evaluator does not
+    know covers no value."""
     if not value:
         return False
     for form in values.split("|"):
-        pattern = "".join(r"[^\s|<>]+" if part.startswith("<") else re.escape(part)
-                          for part in re.split(r"(<[^<>]*>)", form) if part)
+        parts = [part for part in re.split(r"(<[^<>]*>)", form) if part]
+        if any(part.startswith("<") and part[1:-1] not in PLACEHOLDER_VALUES for part in parts):
+            continue
+        pattern = "".join(f"(?:{PLACEHOLDER_VALUES[part[1:-1]]})" if part.startswith("<") else re.escape(part)
+                          for part in parts)
         if pattern and re.fullmatch(pattern, value):
             return True
     return False
