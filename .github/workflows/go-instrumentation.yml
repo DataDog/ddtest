@@ -62,7 +62,7 @@ jobs:
       verified-run: ${{ steps.verified.outputs.run }}
       window: ${{ steps.window.outputs.window }}
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - id: matrix
         shell: bash
         env:
@@ -131,10 +131,10 @@ jobs:
         working-directory: ddto
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # v6.4.0: on 2026-10-15 GitHub answered 404 for the archives of v6.5.0 and
       # v7.0.0 by commit, which job setup downloads.
-      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: '1.27.x'
           cache: false
@@ -184,7 +184,7 @@ jobs:
       DDTO_SUPPORTED_VERSIONS: ${{ needs.plan.outputs.window }}
       DDTO_COMPATIBILITY: ${{ inputs.compatibility }}
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Exclude build directories from Windows Defender
         if: runner.os == 'Windows'
         shell: pwsh
@@ -198,7 +198,7 @@ jobs:
             Write-Warning "Windows Defender settings unchanged: $_"
           }
           Get-MpComputerStatus -ErrorAction SilentlyContinue | Format-List RealTimeProtectionEnabled
-      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         id: go
         with:
           go-version: ${{ fromJSON(needs.plan.outputs.go-versions)[matrix.go] }}
@@ -309,7 +309,7 @@ jobs:
           format: go-coverprofile
           version: v5.19.0
       # A pull request or a push to main that reuses this run uploads it too.
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: success() && env.DATADOG_API_KEY_CONFIGURED == 'true'
         with:
           name: coverage-differential-${{ matrix.os }}-go-${{ matrix.go }}-${{ matrix.mode }}-${{ matrix.job }}
@@ -337,7 +337,7 @@ jobs:
         with:
           path: ${{ runner.temp }}/orchestrion-gocache
           key: ${{ steps.orchestrion-cache.outputs.cache-primary-key }}
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: ci-shard-differential-${{ matrix.os }}-go-${{ matrix.go }}-${{ matrix.mode }}-${{ matrix.job }}
@@ -353,7 +353,7 @@ jobs:
     outputs:
       sha: ${{ steps.build.outputs.sha }}
     steps:
-      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: '1.27.x'
           cache: false
@@ -370,7 +370,7 @@ jobs:
           mkdir "$RUNNER_TEMP/toolchain"
           echo "$tip_sha" > "$RUNNER_TEMP/toolchain/tip-sha.txt"
           tar --exclude=.git -czf "$RUNNER_TEMP/toolchain/go-tip.tar.gz" -C "$RUNNER_TEMP" go-tip
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: go-tip-toolchain
           path: ${{ runner.temp }}/toolchain/
@@ -395,8 +395,8 @@ jobs:
       DDTO_SUPPORTED_VERSIONS: ${{ needs.plan.outputs.window }}
       DDTO_COMPATIBILITY: ${{ inputs.compatibility }}
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         id: go
         with:
           go-version: ${{ fromJSON(needs.plan.outputs.go-versions)[matrix.go] }}
@@ -458,7 +458,7 @@ jobs:
           format: go-coverprofile
           version: v5.19.0
       # A pull request or a push to main that reuses this run uploads it too.
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: success() && env.DATADOG_API_KEY_CONFIGURED == 'true'
         with:
           name: coverage-mini-go-${{ matrix.go }}-${{ matrix.mode }}-${{ matrix.job }}
@@ -479,7 +479,7 @@ jobs:
             ${{ steps.paths.outputs.build }}
             ${{ steps.paths.outputs.modules }}
           key: ${{ steps.cache.outputs.cache-primary-key }}
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: ci-shard-mini-ubuntu-latest-go-${{ matrix.go }}-${{ matrix.mode }}-${{ matrix.job }}
@@ -514,10 +514,10 @@ jobs:
         working-directory: ddto
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # Releases are built with the newest Go, whose ddtest then writes Mini's
       # repository and the SDK of every Go release.
-      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: ${{ fromJSON(needs.plan.outputs.go-versions)['1.27.x'] }}
           cache: false
@@ -527,7 +527,7 @@ jobs:
         env:
           GOTOOLCHAIN: local
         run: go build -o "$RUNNER_TEMP/ddtest" .
-      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: ${{ fromJSON(needs.plan.outputs.go-versions)[matrix.go] }}
           cache: false
@@ -583,12 +583,12 @@ jobs:
       DDTO_SUPPORTED_VERSIONS: ${{ needs.plan.outputs.window }}
       DDTO_COMPATIBILITY: ${{ inputs.compatibility }}
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: '1.27.x'
           cache: false
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: go-tip-toolchain
           path: ${{ runner.temp }}/toolchain/
@@ -635,13 +635,13 @@ jobs:
           format: go-coverprofile
           version: v5.19.0
       # A pull request or a push to main that reuses this run uploads it too.
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: success() && env.DATADOG_API_KEY_CONFIGURED == 'true'
         with:
           name: coverage-tip-${{ matrix.job }}
           path: ddto/coverage.out
           retention-days: 7
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: ci-shard-mini-ubuntu-latest-go-tip-normal-${{ matrix.job }}
@@ -674,7 +674,7 @@ jobs:
           RUN: ${{ needs.plan.outputs.verified-run }}
         run: |
           echo "These inputs passed every group in run $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$RUN." >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # Datadog reports a commit's coverage from its uploads: without ddto's,
       # ddto's lines would count as uncovered.
       - name: Download the reused run's coverage
@@ -697,7 +697,7 @@ jobs:
         if: needs.plan.outputs.skip != 'true' && needs.lint.result != 'success'
         working-directory: ${{ github.workspace }}
         run: exit 1
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         if: needs.plan.outputs.skip != 'true'
         with:
           pattern: ci-shard-*
@@ -734,7 +734,7 @@ jobs:
               exit 1
             fi
           done
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always() && needs.plan.outputs.skip != 'true'
         with:
           name: compatibility-evidence
@@ -744,7 +744,7 @@ jobs:
       # run, which then carries the coverage that it uploads again. Only a run
       # of the recorded versions verifies them; the nightly and full runs test
       # the module proxy's window instead.
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: success() && needs.plan.outputs.skip != 'true' && needs.plan.outputs.window == '' && env.DATADOG_API_KEY_CONFIGURED == 'true'
         with:
           name: verified-inputs-${{ needs.plan.outputs.inputs }}
