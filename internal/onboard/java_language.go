@@ -193,8 +193,10 @@ func (javaDiscovery) runtimeVariable(name string) bool {
 	return name == "JAVA_HOME" || name == "JAVA_TOOL_OPTIONS"
 }
 
+// Gradle reads ORG_GRADLE_PROJECT_<name> as the project property <name>.
 func (javaDiscovery) toolVariable(name string) bool {
-	return slices.Contains([]string{"MAVEN_ARGS", "MAVEN_OPTS", "MAVEN_CONFIG", "GRADLE_OPTS", "JAVA_OPTS", "JDK_JAVA_OPTIONS", "_JAVA_OPTIONS"}, name)
+	return slices.Contains([]string{"MAVEN_ARGS", "MAVEN_OPTS", "MAVEN_CONFIG", "GRADLE_OPTS", "JAVA_OPTS", "JDK_JAVA_OPTIONS", "_JAVA_OPTIONS"}, name) ||
+		strings.HasPrefix(name, "ORG_GRADLE_PROJECT_")
 }
 
 func (javaDiscovery) cacheVariable(name string) bool {

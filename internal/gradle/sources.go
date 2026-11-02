@@ -75,12 +75,19 @@ var classesSourceSet = regexp.MustCompile(`testClassesDirs\s*(?:=|\.from\(|\.set
 // language sources of source set set: src/<set>/<language>, unless the build
 // file replaces the set's srcDirs, whose first literal directory it is then;
 // as in Gradle, the last replacement in the file wins. srcDirs that build
-// logic computes, or that leave the project, are not followed.
-func SourceDirectory(root string, project Project, set, language string) (string, bool) {
+// logic computes, that leave the project, or that build, the root project,
+// replaces for its subprojects, are not followed.
+func SourceDirectory(root string, build, project Project, set, language string) (string, bool) {
 	directory := filepath.Join("src", set, language)
 	source, ok := buildSource(root, project)
 	if !ok {
 		return "", false
+	}
+	if project.Path != build.Path {
+		rootSource, ok := buildSource(root, build)
+		if !ok || srcDirsAssignment.MatchString(rootSource) {
+			return "", false
+		}
 	}
 	name, lang := regexp.QuoteMeta(set), regexp.QuoteMeta(language)
 	// Each language configuration of the set, at its offset in the file.
@@ -116,16 +123,18 @@ func SourceDirectory(root string, project Project, set, language string) (string
 			// srcDir adds a directory and keeps the default.
 			continue
 		}
+		// A later replacement may still name a directory ddtest reads.
 		literal := firstLiteral.FindStringSubmatch(body[replacements[len(replacements)-1][1]:])
 		if literal == nil {
-			return "", false
+			directory = ""
+			continue
 		}
 		directory = filepath.Clean(literal[1] + literal[2])
 		if !filepath.IsLocal(directory) {
-			return "", false
+			directory = ""
 		}
 	}
-	return directory, true
+	return directory, directory != ""
 }
 
 var (

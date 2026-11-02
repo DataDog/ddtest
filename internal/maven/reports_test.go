@@ -122,6 +122,13 @@ func TestReportSwitches(t *testing.T) {
 	require.Empty(t, properties, "a test reads the property")
 	require.NoError(t, os.RemoveAll(filepath.Join(root, "api", "src")))
 
+	// Surefire reads skipTests on its own, so false would run tests CI skips.
+	writePOM(t, root, "pom.xml", `<project><modules><module>api</module></modules><properties><skipTests>true</skipTests></properties>
+		<build><plugins><plugin><artifactId>maven-surefire-plugin</artifactId><configuration><disableXmlReport>${skipTests}</disableXmlReport></configuration></plugin></plugins></build></project>`)
+	properties, err = ReportSwitches(root, projects)
+	require.NoError(t, err)
+	require.NotContains(t, properties, "skipTests", "skipTests is a Surefire property")
+
 	writePOM(t, root, "api/pom.xml", `<project><build><plugins><plugin><artifactId>maven-surefire-plugin</artifactId><configuration><disableXmlReport>true</disableXmlReport></configuration></plugin></plugins></build></project>`)
 	properties, err = ReportSwitches(root, projects[1:])
 	require.NoError(t, err)

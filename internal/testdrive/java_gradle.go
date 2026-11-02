@@ -324,7 +324,7 @@ func (b *gradleBuild) probe(target javaProbeTarget, framework string, args []str
 		if !ok {
 			return "", "The sources of " + target.module + " are set by build logic ddtest does not read, so the probe cannot be placed and its features are not validated."
 		}
-		directory, found := gradle.SourceDirectory(b.root, project, set, language)
+		directory, found := gradle.SourceDirectory(b.root, b.byPaths[":"], project, set, language)
 		if !found {
 			return "", "The " + language + " sources of " + target.module + " are set by build logic ddtest does not read, so the probe cannot be placed and its features are not validated."
 		}

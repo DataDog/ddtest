@@ -98,11 +98,21 @@ func ReportSwitches(root string, projects []Project) ([]string, error) {
 		if err != nil {
 			return nil, err
 		}
-		if !mentioned {
+		if !mentioned && !pluginProperty(property) {
 			properties = append(properties, property)
 		}
 	}
 	return properties, nil
+}
+
+// pluginProperty reports a user property that Maven, Surefire or Failsafe
+// read on their own, without the POM naming it, such as skipTests: setting it
+// would change which tests run or how they report.
+func pluginProperty(property string) bool {
+	return strings.HasPrefix(property, "maven.") || strings.HasPrefix(property, "surefire.") || strings.HasPrefix(property, "failsafe.") ||
+		slices.Contains([]string{"skip", "skipTests", "skipITs", "test", "it.test", "groups", "excludedGroups", "argLine", "parallel", "threadCount",
+			"forkCount", "reuseForks", "trimStackTrace", "failIfNoTests", "failIfNoSpecifiedTests", "useFile", "printSummary",
+			"redirectTestOutputToFile", "enableAssertions", "childDelegation", "useSystemClassLoader", "useManifestOnlyJar"}, property)
 }
 
 // sourcesMention reports whether any file under a project's src directory

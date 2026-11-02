@@ -84,7 +84,8 @@ func TestSourceDirectories(t *testing.T) {
 		t.Helper()
 		root := t.TempDir()
 		writeFile(t, root, "build.gradle", build)
-		return SourceDirectory(root, Project{Path: ":", Directory: ".", BuildFile: "build.gradle"}, set, language)
+		project := Project{Path: ":", Directory: ".", BuildFile: "build.gradle"}
+		return SourceDirectory(root, project, project, set, language)
 	}
 	for name, tc := range map[string]struct {
 		build, set, language, directory string
@@ -100,6 +101,7 @@ func TestSourceDirectories(t *testing.T) {
 		"last replacement wins":  {"sourceSets.test.java.srcDirs = ['src/old/java']\nsourceSets { test { java { srcDirs = ['src/test/java'] } } }", "test", "java", filepath.Join("src", "test", "java")},
 		"in file order":          {"sourceSets { test { java { srcDirs = ['src/test/java'] } } }\nsourceSets.test.java.srcDirs = ['src/old/java']", "test", "java", filepath.Join("src", "old", "java")},
 		"dotted in the set":      {"sourceSets { integrationTest { java.srcDirs = ['src/it-java'] } }", "integrationTest", "java", "src/it-java"},
+		"computed, then literal": {"sourceSets.test.java.srcDirs = generatedDirs\nsourceSets.test.java.srcDirs = ['src/test/java']", "test", "java", filepath.Join("src", "test", "java")},
 		"last in a block":        {"sourceSets { test { java {\n  srcDirs = ['src/old/java']\n  srcDirs = ['src/test/java']\n} } }", "test", "java", filepath.Join("src", "test", "java")},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -117,4 +119,17 @@ func TestSourceDirectories(t *testing.T) {
 		_, ok := directory(build, "it", "java")
 		require.False(t, ok, build)
 	}
+
+	// The root build may replace a subproject's source directories.
+	root := t.TempDir()
+	writeFile(t, root, "app/build.gradle", "")
+	build := Project{Path: ":", Directory: ".", BuildFile: "build.gradle"}
+	app := Project{Path: ":app", Directory: "app", BuildFile: filepath.Join("app", "build.gradle")}
+	writeFile(t, root, "build.gradle", "subprojects { sourceSets.integrationTest.java.srcDirs = ['src/it'] }\n")
+	_, ok := SourceDirectory(root, build, app, "integrationTest", "java")
+	require.False(t, ok, "the root build replaces the subproject's sources")
+	writeFile(t, root, "build.gradle", "subprojects { repositories { mavenCentral() } }\n")
+	got, ok := SourceDirectory(root, build, app, "integrationTest", "java")
+	require.True(t, ok)
+	require.Equal(t, filepath.Join("src", "integrationTest", "java"), got)
 }
