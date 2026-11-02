@@ -91,8 +91,9 @@ func (t *Testdrive) javaBuild(args []string) (javaBuild, error) {
 }
 
 // mavenUserHome is the user home Maven validation runs set, and the MAVEN_OPTS
-// they extend with it, when neither the command nor its MAVEN_OPTS, MAVEN_ARGS
-// or .mvn/jvm.config sets user.home or maven.repo.local; empty otherwise.
+// they extend with it, when neither the command nor its MAVEN_OPTS, MAVEN_ARGS,
+// JAVA_TOOL_OPTIONS, JDK_JAVA_OPTIONS or .mvn/jvm.config sets user.home or
+// maven.repo.local; empty otherwise.
 func (t *Testdrive) mavenUserHome(args []string) (options, home string) {
 	value := func(key string) string {
 		if value, ok := t.configurationEnvironment[key]; ok {
@@ -115,7 +116,7 @@ func (t *Testdrive) mavenUserHome(args []string) (options, home string) {
 			return "", ""
 		}
 	}
-	if slices.ContainsFunc(slices.Concat(args, strings.Fields(options), strings.Fields(value("MAVEN_ARGS")), strings.Fields(string(jvmConfig))), selects) {
+	if slices.ContainsFunc(slices.Concat(args, strings.Fields(options), strings.Fields(value("MAVEN_ARGS")), strings.Fields(value("JAVA_TOOL_OPTIONS")), strings.Fields(value("JDK_JAVA_OPTIONS")), strings.Fields(string(jvmConfig))), selects) {
 		return "", ""
 	}
 	home, err = os.UserHomeDir()

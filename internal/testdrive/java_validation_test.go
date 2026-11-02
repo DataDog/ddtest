@@ -405,7 +405,7 @@ func TestJavaNativeTestsUseTheirModules(t *testing.T) {
 		{module: "Customer API", Test: maven.Test{Module: "api", Suite: "example.ApiTest", Name: "works()", Status: "passed"}},
 		{module: ":app:test", Test: maven.Test{Module: "app", Suite: "example.AppTest", Name: "fails()", Status: "failed", Failure: "AssertionError: no\n"}},
 		{module: "core", Test: maven.Test{Module: "core", Suite: javaProbeClass, Name: "ddtestProbe()", Status: "passed"}},
-	}, true)
+	}, "junit5", true)
 	require.Equal(t, "Customer API / example.ApiTest", tests[0].File)
 	require.Equal(t, ":app:test / example.AppTest", tests[1].File, "a Gradle result is its test task's")
 	probe := tests[2]
@@ -415,12 +415,12 @@ func TestJavaNativeTestsUseTheirModules(t *testing.T) {
 	karate := javaNativeTests([]javaResult{
 		{module: "core", Test: maven.Test{Module: "core", Suite: "[src/test/resources/ddtest/DdtestValidation] " + javaProbeClass, Name: "ddtestProbe", Status: "passed"}},
 		{module: "core", Test: maven.Test{Module: "core", Suite: "[example/calc] Calculator", Name: "adds", Status: "passed"}},
-	}, true)
+	}, "karate", true)
 	require.True(t, karate[0].probe, "a Karate probe is its feature's path and name")
 	require.False(t, karate[1].probe)
 	// Gradle names a TestNG data-provider invocation with its arguments' toString.
 	invocation := func(address string) string {
-		return javaNativeTests([]javaResult{{module: ":test", Test: maven.Test{Suite: "com.beust.jcommander.CmdTest", Name: "testArgsWithDefaultCmd[0](--cmd-one, false, [Ljava.lang.String;@" + address + ")", Status: "passed"}}}, false)[0].Name
+		return javaNativeTests([]javaResult{{module: ":test", Test: maven.Test{Suite: "com.beust.jcommander.CmdTest", Name: "testArgsWithDefaultCmd[0](--cmd-one, false, [Ljava.lang.String;@" + address + ")", Status: "passed"}}}, "testng", false)[0].Name
 	}
 	require.Equal(t, invocation("20ca951f"), invocation("89caf47"), "one invocation has one name in every run")
 	require.Equal(t, "testArgsWithDefaultCmd", javaTestName(invocation("20ca951f")))
@@ -497,7 +497,7 @@ func TestJavaTelemetryMatchesGradleDisplayNames(t *testing.T) {
 
 	// A display name with a lambda's identity, as sshj's ConnectedSocketTest.
 	display := "[1] example.SocketTest$$Lambda$1352/0x000000980176c488@4f3b5c60"
-	lambda := javaNativeTests([]javaResult{{module: ":test", Test: maven.Test{Suite: "example.SocketTest", Name: display, Status: "passed"}}}, false)
+	lambda := javaNativeTests([]javaResult{{module: ":test", Test: maven.Test{Suite: "example.SocketTest", Name: display, Status: "passed"}}}, "junit5", false)
 	run = javaTelemetryRun(lambda, reported(":test", "example.SocketTest", "connects", `{"metadata":{"test_name":"`+display+`"}}`, intake.TestRun{Status: "pass", SpanID: 5}))
 	require.Equal(t, verdict{}, verifyJavaTelemetry(run), "the native name and the tracer's display name read the identity alike")
 }

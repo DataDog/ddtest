@@ -257,7 +257,7 @@ func (t *Testdrive) runJava(ctx context.Context, output io.Writer, session *work
 		run.ResultError = incomplete
 	}
 	results, run.Facts = probe.selectedResults(results, run.Facts)
-	run.Tests = javaNativeTests(results, spec.ProbePath != "")
+	run.Tests = javaNativeTests(results, run.framework, spec.ProbePath != "")
 	if spec.Instrumented && spec.ProbePath == "" {
 		run.Coverage = javaSourceCoverage(t.checkoutRoot(), run.Facts, run.Tests)
 	}
@@ -360,12 +360,16 @@ func javaModuleLabels(projects []maven.Project) map[string]string {
 
 // javaNativeTests identifies each native result as "<module> / <class>", and
 // in a probe run marks the probe.
-func javaNativeTests(results []javaResult, probe bool) []nativeTest {
+func javaNativeTests(results []javaResult, framework string, probe bool) []nativeTest {
 	native := make([]nativeTest, 0, len(results))
 	for _, test := range results {
 		// TestNG names a data-provider invocation with its arguments, whose
 		// default toString differs between runs.
-		item := nativeTest{File: test.module + " / " + test.Suite, Name: javaKarateScenario.ReplaceAllString(withoutObjectAddresses(test.Name), ""), Status: test.Status, Failure: withoutObjectAddresses(test.Failure)}
+		name := withoutObjectAddresses(test.Name)
+		if framework == "karate" {
+			name = javaKarateScenario.ReplaceAllString(name, "")
+		}
+		item := nativeTest{File: test.module + " / " + test.Suite, Name: name, Status: test.Status, Failure: withoutObjectAddresses(test.Failure)}
 		// A Karate suite is the probe feature's path and name. Gradle names a
 		// probe scenario of a Cucumber suite or Karate runner after the runner,
 		// so there the scenario's name identifies it.
@@ -526,7 +530,11 @@ func verifyJavaTelemetry(run validationRun) verdict {
 			observed[javaExecution{module, suite, name, attempt.Status}]++
 		}
 	}
-	reconcileJavaClasses(expected, observed)
+	// Only Cucumber and Karate are filed under a class the agent does not
+	// report; elsewhere a class mismatch is a real difference.
+	if run.framework == "cucumber-java" || run.framework == "karate" {
+		reconcileJavaClasses(expected, observed)
+	}
 	reconcileJavaDisplayNames(expected, observed)
 	keys := maps.Clone(expected)
 	maps.Copy(keys, observed)

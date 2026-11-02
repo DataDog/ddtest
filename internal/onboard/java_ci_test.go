@@ -176,6 +176,8 @@ func TestJavaReadsUnreadValuesAsPossibleTests(t *testing.T) {
 		"export MAVEN_ARGS=test\nmvn help:evaluate -Dexpression=project.version -q -DforceStdout": true,
 		"mvn help:evaluate -Dexpression=project.version -q -DforceStdout":                         false,
 		"mvn versions:set -DnewVersion=${TAG/v}":                                                  false,
+		"mvn surefire:${GOAL}":                                                                    true,
+		"mvn -B surefire:$GOAL -Dtest=${TESTS}":                                                   true,
 		"git tag $VERSION && git push origin $VERSION":                                            false,
 	} {
 		require.Equal(t, runs, javaMayRunTests(text, false), text)
@@ -198,10 +200,12 @@ func TestJavaReleaseGoalsWithUnreadValuesRunNoTests(t *testing.T) {
 	require.Len(t, scope.Commands, 1)
 
 	// Goals the shell fills in may still run tests.
-	root = javaWorkflowFixture(t, "jobs:\n  release:\n    steps:\n      - run: mvn ${GOALS/x/y}\n      - run: mvn -B verify\n", nil)
-	scope, err = DiscoverValidationScope(root, "junit5")
-	require.NoError(t, err)
-	require.NotEmpty(t, scope.Unresolved)
+	for _, run := range []string{"mvn ${GOALS/x/y}", "mvn surefire:${GOAL/x/y}"} {
+		root = javaWorkflowFixture(t, "jobs:\n  release:\n    steps:\n      - run: "+run+"\n      - run: mvn -B verify\n", nil)
+		scope, err = DiscoverValidationScope(root, "junit5")
+		require.NoError(t, err)
+		require.NotEmpty(t, scope.Unresolved, run)
+	}
 }
 
 func TestJavaCIConfigurationInventoriesJDKAndTracer(t *testing.T) {

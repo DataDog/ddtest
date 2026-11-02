@@ -52,7 +52,7 @@ func (javaDiscovery) stepMayStartTests(root string, workflow ciWorkflow, job run
 func javaStepMayRunTests(root string, workflow ciWorkflow, job runtimeJob, step runtimeStep) bool {
 	implicitGoals := workflow.Env["MAVEN_ARGS"] != "" || job.Env["MAVEN_ARGS"] != "" || step.Env["MAVEN_ARGS"] != "" ||
 		javaExportsMavenArgs(job) || javaConfigGoals(root, filepath.Clean(stepDirectory(workflow, job, step)))
-	return javaMayRunTests(workflowExpression.ReplaceAllString(step.Run, javaUnreadValue), implicitGoals)
+	return javaMayRunTests(workflowExpression.ReplaceAllLiteralString(step.Run, "${DDTEST_UNREAD}"), implicitGoals)
 }
 
 // javaUnreadValue stands for a value ddtest does not read, such as a CI
@@ -124,9 +124,11 @@ func pipeCall(statement *syntax.Stmt) *syntax.CallExpr {
 }
 
 // shellWord is a word's text with every expansion, such as $HOME or $(date),
-// read as javaUnreadValue.
+// read as javaUnreadValue. A word an expansion is part of, as surefire:$GOAL,
+// is wholly unread unless it is an option, whose value alone it chooses.
 func shellWord(word *syntax.Word) string {
 	var text strings.Builder
+	unread := false
 	var write func(parts []syntax.WordPart)
 	write = func(parts []syntax.WordPart) {
 		for _, part := range parts {
@@ -139,10 +141,14 @@ func shellWord(word *syntax.Word) string {
 				write(part.Parts)
 			default:
 				text.WriteString(javaUnreadValue)
+				unread = true
 			}
 		}
 	}
 	write(word.Parts)
+	if unread && !strings.HasPrefix(text.String(), "-") {
+		return javaUnreadValue
+	}
 	return text.String()
 }
 

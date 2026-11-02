@@ -37,13 +37,14 @@ func TestGradleNativeResultsOfRunnerProbes(t *testing.T) {
 		{module: ":test", Test: maven.Test{Suite: "example.KarateTest", Name: "[1:4] ddtestProbe", Status: "passed"}},
 		{module: ":test", Test: maven.Test{Suite: "example.KarateTest", Name: "[2:9] adds", Status: "passed"}},
 	}
-	tests := javaNativeTests(results, true)
+	tests := javaNativeTests(results, "karate", true)
 	require.Equal(t, "ddtestProbe", tests[0].Name, "Karate's [index:line] is not part of the scenario's name")
 	require.True(t, tests[0].probe, "Gradle files the probe scenario under the runner, so its name identifies it")
 	require.Equal(t, "ddtestProbe", *tests[0].telemetryName)
 	require.False(t, tests[1].probe)
 	require.Equal(t, "adds", tests[1].Name)
-	require.False(t, javaNativeTests(results, false)[0].probe, "only a probe run has a probe")
+	require.False(t, javaNativeTests(results, "karate", false)[0].probe, "only a probe run has a probe")
+	require.Equal(t, "[1:2] calculate", javaNativeTests([]javaResult{{module: ":test", Test: maven.Test{Suite: "example.CalcTest", Name: "[1:2] calculate", Status: "passed"}}}, "junit5", false)[0].Name, "a JUnit display name keeps its brackets")
 
 	// The runner is no test of its own, but Gradle files the probe under it;
 	// scenarios a tag filter excluded never ran.
@@ -85,18 +86,27 @@ func TestJavaTelemetryMatchesClassesGradleReportsInPlaceOfFeatures(t *testing.T)
 		{File: ":test / example.RunCucumberTest", Name: "adding more", Status: "passed"},
 		{File: ":test / example.CalcTest", Name: "works()", Status: "passed"},
 	}
-	run := javaTelemetryRun(native,
+	cucumber := func(native []nativeTest, telemetry ...intake.Test) validationRun {
+		run := javaTelemetryRun(native, telemetry...)
+		run.framework = "cucumber-java"
+		return run
+	}
+	run := cucumber(native,
 		reported(":test", "classpath:example/calc.feature:Calculator", "adding", "", pass(1)),
 		reported(":test", "classpath:example/calc.feature:Calculator", "adding more", "", pass(2)),
 		reported(":test", "example.CalcTest", "works", "", pass(3)))
 	require.Equal(t, verdict{}, verifyJavaTelemetry(run))
+	// Other frameworks report the classes Gradle files, so a class mismatch is a difference.
+	require.Equal(t, "inconclusive", verifyJavaTelemetry(javaTelemetryRun(
+		[]nativeTest{{File: ":test / example.ATest", Name: "works()", Status: "passed"}},
+		reported(":test", "example.BTest", "works", "", pass(1)))).Status, "a JUnit test reported under another class")
 	for name, telemetry := range map[string][]intake.Test{
 		"a scenario the tracer did not report": {reported(":test", "Calculator", "adding", "", pass(1)), reported(":test", "example.CalcTest", "works", "", pass(3))},
 		"a scenario of another name":           {reported(":test", "Calculator", "adding", "", pass(1)), reported(":test", "Calculator", "subtracting", "", pass(2)), reported(":test", "example.CalcTest", "works", "", pass(3))},
 		"another status":                       {reported(":test", "Calculator", "adding", "", pass(1)), reported(":test", "Calculator", "adding more", "", intake.TestRun{Status: "fail", SpanID: 2}), reported(":test", "example.CalcTest", "works", "", pass(3))},
 		"another module":                       {reported(":test", "Calculator", "adding", "", pass(1)), reported(":it", "Calculator", "adding more", "", pass(2)), reported(":test", "example.CalcTest", "works", "", pass(3))},
 	} {
-		require.Equal(t, "inconclusive", verifyJavaTelemetry(javaTelemetryRun(native, telemetry...)).Status, name)
+		require.Equal(t, "inconclusive", verifyJavaTelemetry(cucumber(native, telemetry...)).Status, name)
 	}
 }
 
@@ -131,4 +141,10 @@ func TestMavenRunsUseTheUserHomeValidationReads(t *testing.T) {
 	require.NoError(t, os.Mkdir(filepath.Join(root, ".mvn"), 0755))
 	requireWriteFile(t, filepath.Join(root, ".mvn", "jvm.config"), "-Xmx2g -Duser.home=/custom-home\n")
 	require.NotContains(t, options("", "", []string{"verify"}, map[string]string{}), "-Duser.home="+home, "jvm.config sets the home")
+	require.NoError(t, os.Remove(filepath.Join(root, ".mvn", "jvm.config")))
+	for _, variable := range []string{"JAVA_TOOL_OPTIONS", "JDK_JAVA_OPTIONS"} {
+		t.Setenv(variable, "-Duser.home=/custom-home")
+		require.NotContains(t, options("", "", []string{"verify"}, map[string]string{}), "-Duser.home="+home, "%s sets the home, which explicit options would override", variable)
+		t.Setenv(variable, "")
+	}
 }
