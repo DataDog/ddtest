@@ -264,7 +264,7 @@ func (r *jenkinsReader) snippetProblem(scope jenkinsScope, setup ciSetup, key st
 	switch {
 	case scope.setup != nil && scope.setup.problem() == "":
 		return "The setup snippet runs in the scope of the datadog(…) option at " + scope.setup.source + ", whose variables the Datadog Jenkins plugin also sets in this step: " + jenkinsContainerEffects(scope.setup.languages) + ". Keep this stage out of the option's scope (" + jenkinsContainerRemedy + "), so only the snippet sets it up."
-	case r.pluginMayReach(scope) && len(setup.before) < len(jenkinsPluginResets(strings.Fields(setup.Inputs["languages"])...)):
+	case r.pluginMayReach(scope) && jenkinsResetMissing(setup):
 		return "ddtest cannot tell whether the datadog(…) call " + r.pluginUnread(scope) + " reaches this step, whose variables the setup snippet would then run with. Add these statements immediately before the snippet, as ddtest's instructions show, so it removes them first:\n" + strings.Join(jenkinsPluginResets(strings.Fields(setup.Inputs["languages"])...), "\n")
 	case cleared:
 		return "An earlier command of the sh script clears DD_API_KEY (export DD_API_KEY= or unset), so the setup snippet always skips; remove it."
@@ -277,6 +277,16 @@ func (r *jenkinsReader) snippetProblem(scope jenkinsScope, setup ciSetup, key st
 		return "DD_API_KEY comes from " + key + ", which ddtest cannot tell is a Jenkins credential; bind it with withCredentials(" + jenkinsCredentialBinding + ") { … } or credentials('" + jenkinsCredentialID + "')."
 	}
 	return jenkinsImageSetupProblem(scope.agent, curl)
+}
+
+// jenkinsResetMissing reports a setup snippet that does not first run the
+// reset of every language it selects (see jenkinsPluginResets): another
+// language's reset leaves the selected one's plugin variables in place.
+func jenkinsResetMissing(setup ciSetup) bool {
+	return slices.ContainsFunc(jenkinsPluginResets(strings.Fields(setup.Inputs["languages"])...), func(reset string) bool {
+		expected, parsed := parseCIShell(reset)
+		return !parsed || len(expected.Stmts) != 1 || !slices.Contains(setup.before, shellText(expected.Stmts[0]))
+	})
 }
 
 // pluginMayReach reports a scope ddtest cannot prove is outside every

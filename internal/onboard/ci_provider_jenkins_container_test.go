@@ -110,6 +110,12 @@ func TestJenkinsSnippetResetsWhereThePluginMayReach(t *testing.T) {
 	require.Contains(t, text, "the snippet first removes the variables the plugin would set there")
 	require.NotContains(t, jenkinsContainer{}.setupInstructions(request), (javascriptDiscovery{}).ciPluginReset())
 	require.Equal(t, []string{(rubyDiscovery{}).ciPluginReset()}, jenkinsPluginResets("ruby"))
+
+	// Another language's reset leaves JavaScript's plugin variables in place.
+	jobs = jenkinsJobs(t, scripted((rubyDiscovery{}).ciPluginReset()+"\n      "+jenkinsTestSnippet("js", "5.134.0", false)))
+	inside = jobs["Test (docker.image('node:22').inside)"]
+	require.Contains(t, inside.Steps[0].Setup.Problem, "ddtest cannot tell whether the datadog(…) call at Jenkinsfile:2 reaches this step")
+	require.Contains(t, inside.Steps[0].Setup.Problem, (javascriptDiscovery{}).ciPluginReset())
 }
 
 // An agent { dockerfile … } runs the image its Dockerfile builds, whose
@@ -372,6 +378,85 @@ func TestJenkinsSnippetInEveryContainerTestShell(t *testing.T) {
 	require.Contains(t, providerJobSetupProblem(root, jenkins{}, workflows[0], "Test", "javascript", "jest", "datadoghq.com"), "runs in another shell")
 }
 
+// jenkinsContainerShells is a declarative pipeline whose Test stage runs
+// each script in an sh step of its own, in a node:22 container.
+func jenkinsContainerShells(scripts ...string) string {
+	steps := ""
+	for _, script := range scripts {
+		steps += "          sh '''\n      " + script + "\n          '''\n"
+	}
+	return "pipeline {\n  agent { docker { image 'node:22' } }\n  stages {\n    stage('Test') {\n      steps {\n        withCredentials([string(credentialsId: 'datadog-api-key', variable: 'DD_API_KEY')]) {\n" + steps + "        }\n      }\n    }\n  }\n}\n"
+}
+
+// The JavaScript plan reads a container stage shell by shell, as the setup
+// check does: a snippet sets up only the test commands of its own sh step,
+// so a test shell without one gets its own, the plan's own output is
+// configured, and an existing snippet without the ESM loader is refused,
+// naming the snippet's own command.
+func TestJenkinsJavaScriptPlanReadsEveryContainerTestShell(t *testing.T) {
+	plan := func(framework, jenkinsfile string) (string, *SetupPlan, error) {
+		root := jenkinsApplyRepository(t, framework, jenkinsfile)
+		workflows, err := readProviderWorkflows(jenkins{}, root)
+		require.NoError(t, err)
+		setup, err := planProviderJavaScriptSetup(root, jenkins{}, workflows, framework, "6.22.0", "datadoghq.com", "")
+		return root, setup, err
+	}
+	jenkinsFile := func(setup *SetupPlan) string {
+		for _, edit := range setup.edits {
+			if edit.path == "Jenkinsfile" {
+				return string(edit.after)
+			}
+		}
+		return ""
+	}
+	snippet := jenkinsTestSnippet("js", "6.22.0", false)
+
+	// Its own multi-shell output is configured.
+	own, err := os.ReadFile(filepath.Join("testdata", "jenkins-apply", "container-every-test-shell", "after.groovy"))
+	require.NoError(t, err)
+	root, setup, err := plan("jest", string(own))
+	require.NoError(t, err)
+	require.True(t, setup.Configured())
+	require.True(t, javascriptDiscovery{}.ciSetupConfigured(root, "jest", "datadoghq.com"))
+
+	// A snippet in the first test shell only, or in a shell of its own,
+	// leaves a test shell to set up.
+	for _, jenkinsfile := range []string{
+		jenkinsContainerShells(snippet+"\n      npm test -- packages/a", "npm test -- packages/b"),
+		jenkinsContainerShells(snippet, "npm test"),
+	} {
+		root, setup, err := plan("jest", jenkinsfile)
+		require.NoError(t, err)
+		require.False(t, javascriptDiscovery{}.ciSetupConfigured(root, "jest", "datadoghq.com"), "onboarding does not report it set up either")
+		require.False(t, setup.Configured())
+		after := jenkinsFile(setup)
+		require.Equal(t, 2, strings.Count(after, `DD_SET_TRACER_VERSION_JS="6.22.0"`), "the test shell without a snippet gets its own")
+		require.Equal(t, 1, strings.Count(after, "withCredentials("), "the binding around it already reaches it")
+		_, err = setup.Apply(true)
+		require.NoError(t, err)
+		require.False(t, providerJobsMissingSetup(t, root, "jest"))
+		workflows, err := readProviderWorkflows(jenkins{}, root)
+		require.NoError(t, err)
+		again, err := planProviderJavaScriptSetup(root, jenkins{}, workflows, "jest", "6.22.0", "datadoghq.com", "")
+		require.NoError(t, err)
+		require.True(t, again.Configured())
+	}
+
+	// A snippet after a test command of its own shell comes too late.
+	_, _, err = plan("jest", jenkinsContainerShells("npm test -- packages/a\n      "+snippet+"\n      npm test -- packages/b"))
+	require.ErrorContains(t, err, "The Datadog setup snippet runs after the first jest test command")
+
+	// Vitest's tests need the snippet's ESM loader in their shell.
+	esm := jenkinsContainerRequest(t, "vitest", "6.22.0").After
+	require.NotEmpty(t, esm)
+	_, _, err = plan("vitest", jenkinsContainerShells(snippet+"\n      npm test"))
+	require.ErrorContains(t, err, "so ddtest wrote nothing")
+	require.ErrorContains(t, err, "runs npm test without "+strings.Join(esm, "; ")+" in effect before it in its shell")
+	_, setup, err = plan("vitest", jenkinsContainerShells(jenkinsTestSnippet("js", "6.22.0", false, esm...)+"\n      npm test"))
+	require.NoError(t, err)
+	require.True(t, setup.Configured())
+}
+
 // Ruby's snippet exports RUBYOPT in its own shell only, too.
 func TestJenkinsRubySnippetInEveryContainerTestShell(t *testing.T) {
 	jenkinsfile := "pipeline {\n  agent { docker { image 'ruby:3.3' } }\n  stages {\n    stage('Test') {\n      steps {\n        sh 'bundle exec rake spec'\n        sh 'bundle exec rake spec SPEC=spec/calculator_spec.rb'\n      }\n    }\n  }\n}\n"
@@ -387,4 +472,17 @@ func TestJenkinsRubySnippetInEveryContainerTestShell(t *testing.T) {
 	again, err := planProviderSetup(root, "rspec", "datadoghq.com", "")
 	require.NoError(t, err)
 	require.True(t, again.Configured())
+	require.True(t, rubyDiscovery{}.ciSetupConfigured(root, "rspec", "datadoghq.com"))
+
+	// A snippet in an sh step of its own sets up no later test shell: its
+	// setup ends with its shell, so neither onboarding nor validation counts
+	// the tests as instrumented.
+	snippet := jenkinsTestSnippet("ruby", "1.42.0", false)
+	writeFile(t, root, "Jenkinsfile", "pipeline {\n  agent { docker { image 'ruby:3.3' } }\n  stages {\n    stage('Test') {\n      steps {\n        withCredentials([string(credentialsId: 'datadog-api-key', variable: 'DD_API_KEY')]) {\n          sh '''\n      "+snippet+"\n          '''\n          sh 'bundle exec rake spec'\n        }\n      }\n    }\n  }\n}\n")
+	jobs := RubyCIConfigurationForSite(root, "rspec", "datadoghq.com").Jobs
+	require.Len(t, jobs, 1)
+	require.Empty(t, jobs[0].Action)
+	require.Equal(t, "inconclusive", jobs[0].Status)
+	require.Equal(t, "The Datadog setup snippet at Jenkinsfile:7 runs in another shell than this test command, and its exports reach only the later commands of its own shell; run it in the same shell, before the test command.", jobs[0].Reason)
+	require.False(t, rubyDiscovery{}.ciSetupConfigured(root, "rspec", "datadoghq.com"))
 }

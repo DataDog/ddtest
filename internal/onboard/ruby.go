@@ -668,10 +668,20 @@ func RubyCIConfigurationFrom(root, source, framework, site string) RuntimeCheck 
 				}
 				tracer, action, rubygems, gemsAtSetup := "", "", "", ""
 				var setup *ciSetup
+				var setupStep runtimeStep
+				// expired is the source of a shell-local setup whose shell
+				// ended before the step (see ciSetup.shellLocal).
+				expired := ""
 				var inputs map[string]string
 				skippedAction := false
 				var actionErr error
 				for i, step := range job.Steps {
+					if setup != nil && setup.shellLocal && !sameShell(setupStep, step) {
+						// Its exports reach only the later commands of its own
+						// shell; this step runs in another one.
+						expired = setupStep.Source
+						tracer, action, actionErr, inputs, setup = "", "", nil, nil, nil
+					}
 					uses, _, hasVersion := strings.Cut(strings.ToLower(step.Uses), "@")
 					current, isSetup := datadogSetup(step)
 					active, stepErr := rubyStepActive(workflow, job, step, row)
@@ -695,7 +705,7 @@ func RubyCIConfigurationFrom(root, source, framework, site string) RuntimeCheck 
 						hostRuby, statedRuby = false, false
 					}
 					if isSetup {
-						tracer, action, actionErr, inputs, setup = "", "", nil, nil, nil
+						tracer, action, actionErr, inputs, setup, expired = "", "", nil, nil, nil, ""
 					}
 					if version := rubyGemsUpdate(step.Run); version != "" {
 						rubygems = version
@@ -717,7 +727,7 @@ func RubyCIConfigurationFrom(root, source, framework, site string) RuntimeCheck 
 							actionErr = err
 							if err == nil && selected {
 								action = current.Reference
-								setup = &current
+								setup, setupStep = &current, step
 								tracer, _ = runtimeValue(current.Inputs["ruby-tracer-version"], row)
 								if current.Floating && tracer == "" {
 									// The mechanism uses a datadog-ci the bundle already pins.
@@ -747,6 +757,9 @@ func RubyCIConfigurationFrom(root, source, framework, site string) RuntimeCheck 
 					finding := RuntimeFinding{Location: (commandLocation{Workflow: workflow.Path, Job: name, Matrix: row, Step: stepNumber(step, i), Command: step.Run}).String(), Workflow: workflow.Path, Job: name, Step: stepNumber(step, i), Command: resolved.Run, Runtime: ruby, Action: action, TracerRequested: tracer, setupInputs: inputs, setupProvider: provider, Status: "inconclusive", Reason: rubyMissingSetupReason(provider)}
 					if job.SetupUnsupported != "" && setup == nil {
 						finding.Reason = unsupportedSetupReason(provider, job)
+					}
+					if setup == nil && expired != "" {
+						finding.Reason = "The " + provider.setupName() + " at " + expired + " runs in another shell than this test command, and its exports reach only the later commands of its own shell; run it in the same shell, before the test command."
 					}
 					if setup != nil {
 						finding.setupSupported, finding.setupReadProblem = setup.Supported, setup.Problem

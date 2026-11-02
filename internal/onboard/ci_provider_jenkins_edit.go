@@ -106,6 +106,10 @@ func (j jenkins) planSetupEdits(root string, workflows []ciWorkflow, targets []c
 	token := jenkinsPluginToken(request.Language)
 	byFile := map[string][]jenkinsShTarget{}
 	snippets := map[string][]jenkinsSnippetTarget{}
+	// The sh steps of each Jenkinsfile a snippet is planned for, by call:
+	// the cells of a matrix run the same literal sh step, which one snippet
+	// sets up for all of them; the check below reads every cell again.
+	planned := map[string]map[int]bool{}
 	jobs := map[string][]string{}
 	language := discoveryLanguageName(request.Framework)
 	// The plugin set up on host stages runs beside the snippets.
@@ -124,17 +128,19 @@ func (j jenkins) planSetupEdits(root string, workflows []ciWorkflow, targets []c
 			// The snippet's exports reach only its own sh step's shell, so
 			// every sh step that runs the tests gets one, before its first
 			// test statement.
-			planned := map[int]bool{}
+			if planned[target.Workflow] == nil {
+				planned[target.Workflow] = map[int]bool{}
+			}
 			for i := target.Step; i < len(job.Steps); i++ {
 				current := job.Steps[i]
 				if i > target.Step && !resolveTestStep(root, workflow, job, current, language, request.Framework).Matched {
 					continue
 				}
 				origin, located := current.origin.(jenkinsShellStep)
-				if located && planned[origin.call] || jenkinsSnippetBefore(job, i) {
+				if located && planned[target.Workflow][origin.call] || jenkinsSnippetBefore(job, i) {
 					continue // That shell's setup is checked with the others below.
 				}
-				planned[origin.call] = true
+				planned[target.Workflow][origin.call] = true
 				snippet, err := jenkinsContainerTarget(root, workflows, target, job, current, request, plugin)
 				if err != nil {
 					return nil, nil, err
@@ -354,13 +360,18 @@ func jenkinsAfterProblem(root string, workflow ciWorkflow, name, language string
 		return ""
 	}
 	job := workflow.Jobs[name]
+	after := request.After
+	if jenkinsContainerJob(job) {
+		// A container stage's setup snippet runs its own commands.
+		after = registered.ciSetupRequest(root, request.Framework, request.Site, setupProviderFor(jenkins{}, job).setupTerms()).After
+	}
 	for _, step := range job.Steps {
 		resolution := resolveTestStep(root, workflow, job, step, language, request.Framework)
 		if !resolution.Matched {
 			continue
 		}
 		if needed, problem := registered.ciShellAfter(workflow, job, step, request.Framework, resolution); needed && problem != "" {
-			return "the sh step at " + step.Source + " runs " + OneLineExcerpt(step.Run) + " without " + strings.Join(request.After, "; ") + " in effect before it in its shell: " + problem + "; add it inside that sh script, before the test command."
+			return "the sh step at " + step.Source + " runs " + OneLineExcerpt(step.Run) + " without " + strings.Join(after, "; ") + " in effect before it in its shell: " + problem + "; add it inside that sh script, before the test command."
 		}
 	}
 	return ""
@@ -1142,6 +1153,18 @@ func (e *jenkinsEditor) snippet(target jenkinsSnippetTarget) error {
 	})
 	if call == nil {
 		return e.gap(nil, "The sh step of "+target.job+" could not be located.")
+	}
+	if target.wrap && slices.ContainsFunc(ancestors, func(node groovyNode) bool {
+		enclosing, ok := jenkinsStep(node, "withCredentials")
+		if !ok {
+			return false
+		}
+		positional, _ := jenkinsArgs(enclosing)
+		return slices.ContainsFunc(jenkinsCredentialVariable.FindAllStringSubmatch(groovyText(e.source, firstNode(positional)), -1), func(match []string) bool { return match[1] == "DD_API_KEY" })
+	}) {
+		// A withCredentials around the sh step binds the key already, as
+		// the check of the edited Jenkinsfile confirms.
+		target.wrap = false
 	}
 	location := e.file + ":" + strconv.Itoa(groovyLine(e.source, call.Start))
 	manual := func(reason string) error {

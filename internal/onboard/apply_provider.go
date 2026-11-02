@@ -51,16 +51,29 @@ func planProviderJavaScriptSetup(root string, provider ciProvider, workflows []c
 			first, setupIndex := -1, -1
 			var resolution commandResolution
 			var tests []TestCommand
+			// Steps that run the tests, and setups whose exports reach only
+			// the later commands of their own shell (see ciSetup.shellLocal),
+			// which each shell that runs the tests needs.
+			var testSteps, shellSetups []int
 			for i, step := range job.Steps {
 				if setup, ok := datadogSetup(step); ok {
 					if languages := setup.Inputs["languages"]; strings.Contains(languages, "$") {
 						return nil, &SetupGap{location, "The existing " + provider.setupName() + " selects its languages from " + languages + ", which ddtest cannot resolve; review it manually instead of adding a second setup."}
 					}
 					if selected, err := setupSelectsLanguage(setup, nil, request.Language); err == nil && selected {
-						if first >= 0 {
+						// A shell-local setup comes too late only for a test
+						// command of its own shell; another shell needs its own.
+						late := first >= 0
+						if setup.shellLocal {
+							late = slices.ContainsFunc(testSteps, func(test int) bool { return sameShell(job.Steps[test], step) })
+							shellSetups = append(shellSetups, i)
+						}
+						if late {
 							return nil, &SetupGap{location, "The " + provider.setupName() + " runs after the first " + framework + " test command; move it before the tests or review it manually without adding a second one."}
 						}
-						setupIndex = i
+						if !setup.shellLocal || first < 0 {
+							setupIndex = i
+						}
 					}
 				}
 				current := resolveTestStep(root, workflow, job, step, "javascript", framework)
@@ -69,12 +82,29 @@ func planProviderJavaScriptSetup(root string, provider ciProvider, workflows []c
 				}
 				// Every selected test command decides the loader and coverage.
 				tests = append(tests, current.Tests...)
+				testSteps = append(testSteps, i)
 				if first < 0 {
 					first, resolution = i, current
 				}
 			}
 			if first < 0 {
 				continue
+			}
+			// Shell-local setups count only in the shell they run in: one in
+			// a shell without tests sets up nothing, and a shell that runs
+			// the tests without one still needs it.
+			uncovered := false
+			if len(shellSetups) > 0 {
+				live := slices.DeleteFunc(slices.Clone(shellSetups), func(setup int) bool {
+					return !slices.ContainsFunc(testSteps, func(test int) bool { return test > setup && sameShell(job.Steps[setup], job.Steps[test]) })
+				})
+				if setupIndex >= 0 && !sameShell(job.Steps[setupIndex], job.Steps[first]) {
+					setupIndex = -1
+				}
+				uncovered = slices.ContainsFunc(testSteps, func(test int) bool {
+					return !slices.ContainsFunc(live, func(setup int) bool { return setup < test && sameShell(job.Steps[setup], job.Steps[test]) })
+				})
+				shellSetups = live
 			}
 			if resolution.OtherFramework {
 				return nil, &SetupGap{location, "The test command also runs another framework; initialize only the selected framework explicitly."}
@@ -106,7 +136,7 @@ func planProviderJavaScriptSetup(root string, provider ciProvider, workflows []c
 				esm = false
 				for _, command := range tests {
 					esm = esm || command.mochaESM
-					if !command.usesNYC && !command.mochaIstanbul && setupIndex < 0 {
+					if !command.usesNYC && !command.mochaIstanbul && (setupIndex < 0 || uncovered) {
 						// The GitHub Actions editor wraps the command with NYC; this
 						// editor only inserts the setup, so stop before any edit.
 						return nil, &EditThenApplyGap{SetupGap{location, MochaCoverageGap + command.Command + ". Wrap it with npx --no-install nyc -- in CI (adding nyc as a dev dependency if the project does not declare it), then rerun onboard --apply, which adds the Datadog setup."}}
@@ -133,20 +163,31 @@ func planProviderJavaScriptSetup(root string, provider ciProvider, workflows []c
 			if framework == "mocha" && !esm {
 				target.After = []string{}
 			}
-			if setupIndex >= 0 {
-				setup, _ := datadogSetup(job.Steps[setupIndex])
+			existing := shellSetups
+			if len(existing) == 0 && setupIndex >= 0 {
+				existing = []int{setupIndex}
+			}
+			complete := len(existing) > 0
+			for _, index := range existing {
+				setup, _ := datadogSetup(job.Steps[index])
 				problem := provider.setupProblem(setup, request.TracerInput, func(value string) bool { return value == version }, version, site)
 				switch {
 				case plugin && (problem != "" || esm):
 					// The provider completes the option and adds the commands
 					// that follow it, keeping what is already there.
+					complete = false
 				case problem != "":
 					return nil, &SetupGap{location, "Existing Datadog setup differs: " + problem + " Otherwise review it manually without adding a second setup."}
-				default:
-					configured++
-					continue
 				}
 			}
+			if complete && len(shellSetups) == 0 {
+				configured++
+				continue
+			}
+			// Shell-local setups are the provider's to plan shell by shell:
+			// it adds the setup to each test shell without one and checks
+			// every shell, with the commands that follow the setup, before
+			// writing anything; a complete job keeps its configuration.
 			if job.SetupUnsupported != "" {
 				// The provider reports it; it decides the plan only when no
 				// other job runs the tests.
@@ -420,21 +461,26 @@ func providerSetupConfigured(root string, provider ciProvider, language, framewo
 				continue
 			}
 			var setup *ciSetup
+			var setupStep runtimeStep
 			for _, step := range job.Steps {
 				if current, ok := datadogSetup(step); ok {
 					if selected, err := setupSelectsLanguage(current, nil, token); err == nil && selected {
-						setup = &current
+						setup, setupStep = &current, step
 					}
 				}
 				resolution := resolveTestStep(root, workflow, job, step, language, framework)
 				if resolution.Review || !resolution.Matched && (resolution.Reason == "" || !stepMayStartTests(root, workflow, job, step, framework)) {
 					continue
 				}
-				if resolution.Reason != "" || setup == nil || provider.setupProblem(*setup, tracerInput, exact, "", site) != "" {
+				if resolution.Reason != "" || setup == nil || setup.shellLocal && !sameShell(setupStep, step) || provider.setupProblem(*setup, tracerInput, exact, "", site) != "" {
 					return false
 				}
 				instrumented = true
-				break
+				if !setup.shellLocal {
+					// Its exports reach every later step of the job; a
+					// shell-local one's only its own shell's.
+					break
+				}
 			}
 		}
 	}

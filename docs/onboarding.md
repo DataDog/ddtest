@@ -873,7 +873,13 @@ with host stages beside them, the result asks for the pin first
 instructions'. An `sh` step that runs the snippet already is checked, not
 edited again, and the edited Jenkinsfile is read again like the plugin's edit:
 a container test command whose own `sh` step does not run the snippet before
-it is not set up, whatever another `sh` step of the stage runs.
+it is not set up, whatever another `sh` step of the stage runs, so a stage
+whose snippet sets up only some of its test shells gets one in the others, and
+a snippet without the ESM loader line its tests need is refused, naming that
+line. The cells of a matrix that run the same `sh` step share one snippet, and
+a `withCredentials` that already binds `DD_API_KEY` around the step is not
+added again. Validation reads the snippet's Ruby setup the same way: it ends
+with its `sh` step.
 
 It refuses, and onboarding gives the instructions instead with the
 reason: a Jenkinsfile that loads a shared library (`@Library`, `library …` or a
