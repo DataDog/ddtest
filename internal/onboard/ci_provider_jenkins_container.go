@@ -19,14 +19,19 @@ import (
 // docker.image(…).inside, container(…)) sets Test Optimization up with
 // Datadog's installer instead: the setup snippet Buildkite steps run (see
 // buildkiteSnippet), in the sh step that runs the tests, since each sh step
-// starts a fresh shell. Its Jenkins form keeps the tracers in a folder of
-// its own, apart from the plugin's .datadog folder that host stages of the
-// same workspace use, and tests the key without printing it in Jenkins'
-// shell trace (sh -x). The key comes from a Jenkins credential the stage
-// binds: the plugin's own key reaches only the steps in its scope.
+// starts a fresh shell. Its Jenkins form keeps the tracers in a temporary
+// folder of each shell, apart from the plugin's .datadog folder that host
+// stages of the same workspace use and from the shells that run at the same
+// time in that workspace (the parallel branches under one Docker agent),
+// and tests the key without printing it in Jenkins' shell trace (sh -x).
+// The key comes from a Jenkins credential the stage binds: the plugin's own
+// key reaches only the steps in its scope.
 
-// jenkinsTracerFolder is where the snippet installs the tracers.
-const jenkinsTracerFolder = "$PWD/.datadog-ci-container"
+// jenkinsTracerFolder is where the snippet installs the tracers: a new
+// folder in the container's temporary directory, which goes with it. When
+// mktemp fails, the empty folder fails the snippet's mkdir, so it logs that
+// the installation failed.
+const jenkinsTracerFolder = "$(mktemp -d)"
 
 // jenkinsSnippetForm is the setup snippet Jenkins container stages run.
 var jenkinsSnippetForm = snippetForm{provider: jenkinsProvider, folder: jenkinsTracerFolder, keySet: true}
@@ -158,7 +163,7 @@ func (c jenkinsContainer) setupInstructions(request ciSetupRequest) string {
 	text.WriteString("2. In every sh script that runs the tests in those stages (each sh step is a shell of its own, so a stage whose tests run in several sh steps needs them in each), add these lines immediately before the test command, after dependency installation and any cd into the test directory, inside the same sh string. Write that script as a single-quoted Groovy string (sh '''…''') so Groovy leaves every $ to the shell, and keep its other commands unchanged:\n\n```sh\n")
 	text.WriteString(jenkinsSnippet(request, c.reset).shell())
 	text.WriteString("\n```\n")
-	text.WriteString("\nThe snippet installs the tracers into " + jenkinsTracerFolder + ", apart from the .datadog folder of the Datadog Jenkins plugin, and tests the key with ${DD_API_KEY:+set}, so Jenkins' shell trace (sh -x) never prints it. The installer needs Bash and curl or wget in the container's image: images without Bash (Alpine variants, BusyBox, distroless) or curl (official -slim images) need another image, or a Dockerfile that installs them.\n")
+	text.WriteString("\nThe snippet installs the tracers into a new temporary folder of the container (" + jenkinsTracerFolder + "), apart from the .datadog folder of the Datadog Jenkins plugin and from the shells that run at the same time in the same workspace, such as parallel branches under one Docker agent, and tests the key with ${DD_API_KEY:+set}, so Jenkins' shell trace (sh -x) never prints it. The installer needs Bash and curl or wget in the container's image: images without Bash (Alpine variants, BusyBox, distroless) or curl (official -slim images) need another image, or a Dockerfile that installs them.\n")
 	text.WriteString("\n3. Keep those stages out of every datadog(…) option's scope: in a declarative pipeline, that option goes in the options of the host-agent stages that run the tests, not the pipeline's; in a scripted pipeline, it wraps only node blocks on host agents. ddtest does not certify a container stage the plugin's variables reach. Enabling Test Optimization in the job's configuration page instead of the Jenkinsfile reaches every stage, so leave it off there.")
 	if c.reset {
 		text.WriteString(" ddtest cannot tell whether a datadog(…) call it cannot read reaches these stages, so the snippet first removes the variables the plugin would set there.")
@@ -170,13 +175,64 @@ func (c jenkinsContainer) setupInstructions(request ciSetupRequest) string {
 	return strings.TrimSpace(text.String())
 }
 
+// jenkinsBuildArgs reads the docker build options of an agent { dockerfile
+// … }'s additionalBuildArgs: the build arguments it overrides, whose values
+// ddtest leaves unknown, and the stage --target selects. problem explains
+// options ddtest cannot follow: shell expansions, which Jenkins' sh step
+// expands, or another Dockerfile (-f, --file).
+func jenkinsBuildArgs(value string) (target string, overridden map[string]bool, problem string) {
+	overridden = map[string]bool{}
+	words := strings.Fields(value)
+	for i := 0; i < len(words); i++ {
+		word := words[i]
+		name, inline, hasValue := strings.Cut(word, "=")
+		if !strings.HasPrefix(word, "--") {
+			// Short options never take their value after =.
+			name, inline, hasValue = word, "", false
+		}
+		option := ""
+		switch name {
+		case "--build-arg", "--target", "-f", "--file":
+			option = inline
+			if !hasValue {
+				if i+1 >= len(words) {
+					return "", nil, "its additionalBuildArgs end with " + name + " and no value"
+				}
+				i++
+				option = words[i]
+			}
+		}
+		// A build argument's value is unknown anyway; anything else the
+		// shell expands may be any option.
+		read := word
+		if name == "--build-arg" {
+			read, _, _ = strings.Cut(option, "=")
+		} else if option != "" {
+			read = option
+		}
+		switch {
+		case strings.ContainsAny(read, "$`"):
+			return "", nil, "its additionalBuildArgs " + value + " read the shell's environment, which ddtest cannot resolve"
+		case name == "--build-arg":
+			overridden[read] = true
+		case name == "--target":
+			target = option
+		case name == "-f" || name == "--file":
+			return "", nil, "its additionalBuildArgs select another Dockerfile (" + name + ")"
+		}
+	}
+	return target, overridden, ""
+}
+
 // jenkinsDockerfileAgent reads the image an agent { dockerfile … } builds,
 // from its filename and dir (the checkout root's Dockerfile by default),
-// with the build arguments its additionalBuildArgs override left unknown.
+// and the stage its additionalBuildArgs' --target selects, with the build
+// arguments they override left unknown.
 func (r *jenkinsReader) jenkinsDockerfileAgent(call *groovyCall, scope jenkinsScope) jenkinsAgent {
 	agent := jenkinsAgent{kind: "container", describe: "agent { dockerfile … }"}
-	file, directory := "Dockerfile", "."
+	file, directory, target := "Dockerfile", ".", ""
 	overridden := map[string]bool{}
+	buildProblem := ""
 	if call.Closure != nil {
 		for _, statement := range call.Closure.Body.Statements {
 			inner, ok := statement.(*groovyCall)
@@ -200,16 +256,21 @@ func (r *jenkinsReader) jenkinsDockerfileAgent(call *groovyCall, scope jenkinsSc
 					directory = value
 				}
 			case "additionalBuildArgs":
-				for _, word := range strings.Fields(value) {
-					name, _, _ := strings.Cut(strings.TrimPrefix(word, "--build-arg="), "=")
-					overridden[name] = true
+				if problem != "" {
+					buildProblem = "its additionalBuildArgs " + r.text(args[0]) + " cannot be resolved"
+					continue
 				}
+				target, overridden, buildProblem = jenkinsBuildArgs(value)
 			}
 		}
 	}
 	dockerfile := path.Clean(path.Join(directory, file))
 	agent.describe = "agent { dockerfile … } (" + dockerfile + ")"
 	agent.dockerfile = dockerfile
+	if buildProblem != "" {
+		agent.imageProblem = buildProblem
+		return agent
+	}
 	if strings.HasPrefix(dockerfile, "../") || path.IsAbs(dockerfile) {
 		agent.imageProblem = "its Dockerfile " + dockerfile + " is outside the checkout"
 		return agent
@@ -219,7 +280,7 @@ func (r *jenkinsReader) jenkinsDockerfileAgent(call *groovyCall, scope jenkinsSc
 		agent.imageProblem = "its Dockerfile " + dockerfile + " cannot be read"
 		return agent
 	}
-	read := readBuildkiteDockerfile(string(data), "", overridden)
+	read := readBuildkiteDockerfile(string(data), target, overridden)
 	if read.problem != "" {
 		agent.imageProblem = "its Dockerfile " + dockerfile + ", " + read.problem
 		return agent

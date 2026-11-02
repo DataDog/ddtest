@@ -236,6 +236,9 @@ func readJenkinsfile(root, file, source string) (ciWorkflow, error) {
 	// setup snippet installs runs beside it in the same workspace.
 	for _, snippet := range r.snippets {
 		for _, option := range r.options {
+			if option.disabled {
+				continue
+			}
 			for _, token := range strings.Fields(snippet.Inputs["languages"]) {
 				if snippet.Beside == "" && slices.Contains(option.languages, jenkinsPluginToken(token)) {
 					snippet.Beside = "the " + jenkinsPluginReference + ", which the datadog(…) option at " + option.source + " enables"
@@ -506,9 +509,12 @@ func (r *jenkinsReader) pipeline(body *groovyBlock, scope jenkinsScope) jenkinsS
 
 // directives applies a pipeline's or stage's agent, environment, options,
 // tools, parameters and when to scope. The steps its environment values run
-// go to slot, whose scope becomes the one returned: Jenkins runs them on the
-// scope's agent when it enters the scope, before the scope's steps.
+// go to slot, whose scope becomes the one returned, with the environment
+// around the directive: Jenkins runs them on the scope's agent when it
+// enters the scope, before the scope's steps and before it sets the
+// directive's variables.
 func (r *jenkinsReader) directives(directives map[string]*groovyCall, scope jenkinsScope, top bool, slot *jenkinsSlot) jenkinsScope {
+	inherited := scope.env
 	result := scope.with(func(next *jenkinsScope) {
 		if parameters, ok := directives["parameters"]; ok && parameters.Closure != nil {
 			for _, statement := range parameters.Closure.Body.Statements {
@@ -537,10 +543,11 @@ func (r *jenkinsReader) directives(directives map[string]*groovyCall, scope jenk
 			if options, ok := directives["options"]; ok {
 				// The plugin sets its variables for the environment's steps
 				// too; the option is read again with the environment below.
-				if setup, found := r.pipelineSetup(options, *next, !top); found {
+				if setup, found := r.pipelineSetup(options, *next, !top, true); found {
 					next.setup = setup
 				}
 			}
+			inherited = maps.Clone(next.env)
 			r.environment(environment.Closure.Body, next, top, slot)
 		}
 		if tools, ok := directives["tools"]; ok && tools.Closure != nil {
@@ -557,7 +564,7 @@ func (r *jenkinsReader) directives(directives map[string]*groovyCall, scope jenk
 			// the stage, so the stage's environment is what its NODE_OPTIONS
 			// composes with (see pluginExports).
 			next.pluginUnread = cmp.Or(r.unreadOption(options), next.pluginUnread)
-			if setup, found := r.pipelineSetup(options, *next, !top); found {
+			if setup, found := r.pipelineSetup(options, *next, !top, false); found {
 				next.setup = setup
 				if setup != nil && !top {
 					setup.base, setup.covered = maps.Clone(next.env), maps.Clone(next.overrides)
@@ -570,9 +577,9 @@ func (r *jenkinsReader) directives(directives map[string]*groovyCall, scope jenk
 	})
 	// They run with the scope's agent and setup, which the directives after
 	// the environment complete.
-	slot.scope = result
+	slot.scope = result.with(func(next *jenkinsScope) { next.env = maps.Clone(inherited) })
 	if slot.job != nil {
-		slot.job.scope = result
+		slot.job.scope = slot.scope
 	}
 	return result
 }
@@ -580,7 +587,9 @@ func (r *jenkinsReader) directives(directives map[string]*groovyCall, scope jenk
 // pipelineSetup reads the datadog(…) option of a pipeline's top-level
 // options, or of a stage's (stage), with scope; found reports one. A
 // stage's datadog(…) without testOptimization keeps the setup around it.
-func (r *jenkinsReader) pipelineSetup(options *groovyCall, scope jenkinsScope, stage bool) (setup *jenkinsSetup, found bool) {
+// A preliminary reading, for the steps of the environment directive, is
+// replaced by the one after it.
+func (r *jenkinsReader) pipelineSetup(options *groovyCall, scope jenkinsScope, stage, preliminary bool) (setup *jenkinsSetup, found bool) {
 	if options.Closure == nil {
 		return nil, false
 	}
@@ -589,7 +598,7 @@ func (r *jenkinsReader) pipelineSetup(options *groovyCall, scope jenkinsScope, s
 			if _, _, configures := jenkinsTestOptimization(call); stage && !configures {
 				continue
 			}
-			setup, found = r.datadog(call, scope), true
+			setup, found = r.datadog(call, scope, preliminary), true
 			if setup != nil {
 				setup.stage = stage
 			}
@@ -865,16 +874,14 @@ func (r *jenkinsReader) stage(call *groovyCall, scope jenkinsScope) jenkinsScope
 		return scope
 	}
 	directives := jenkinsDirectives(call.Closure.Body)
-	// A stage's environment runs before its steps, as part of its job; a
-	// stage of stages runs it once, before them.
+	// A stage's environment runs once, before its steps or nested stages,
+	// in a job of its own: its shells start with the environment around
+	// it, the stage's steps with the one it sets.
 	slot := &jenkinsSlot{name: jobName(scope.stages, name, scope.suffix)}
-	if directives["steps"] == nil {
-		slot.name += " (environment)"
-	}
-	inner := r.directives(directives, scope, false, slot)
-	if directives["steps"] == nil {
-		r.finish(slot)
-	}
+	environment := &jenkinsSlot{name: slot.name + " (environment)"}
+	inner := r.directives(directives, scope, false, environment)
+	r.finish(environment)
+	slot.scope = inner
 	final := inner
 	switch {
 	case directives["steps"] != nil:
@@ -2016,7 +2023,7 @@ func (r *jenkinsReader) call(call *groovyCall, scope *jenkinsScope, slot *jenkin
 		r.inContainer(call, jenkinsAgent{kind: "container", describe: name + " (a Docker container)"}, scope, slot)
 	case name == "datadog":
 		body(outer.with(func(next *jenkinsScope) {
-			next.setup = r.datadog(call, outer)
+			next.setup = r.datadog(call, outer, false)
 			if unread := jenkinsUnreadDatadog(call); unread && next.setup == nil {
 				next.pluginUnread = "at " + r.where(call)
 			}
@@ -2145,20 +2152,15 @@ func (r *jenkinsReader) inContainer(call *groovyCall, agent jenkinsAgent, scope 
 	}
 	outer := *scope
 	inner := outer.with(func(next *jenkinsScope) { next.agent = agent })
-	target := r.containerSlot(slot, outer, inner)
+	target := r.containerSlot(slot, inner)
 	*scope = r.persist(outer, r.block(call.Closure.Body, inner, target), call.Closure.Body)
-	if target != slot {
-		r.finish(target)
-	}
+	r.finish(target)
 }
 
-// containerSlot is where a container block's steps go: the slot itself when
-// its job already runs in a container, or else a job of their own, so the
-// job's steps on the agent stay instrumentable.
-func (r *jenkinsReader) containerSlot(slot *jenkinsSlot, outer, inner jenkinsScope) *jenkinsSlot {
-	if outer.agent.kind == "container" {
-		return slot
-	}
+// containerSlot is where a container block's steps go: a job of their own,
+// so the job's steps on the agent stay instrumentable, and a block inside a
+// job that runs in another container is checked against its own image.
+func (r *jenkinsReader) containerSlot(slot *jenkinsSlot, inner jenkinsScope) *jenkinsSlot {
 	return &jenkinsSlot{name: slot.name + " (" + inner.agent.describe + ")", scope: inner, within: slot.name}
 }
 

@@ -80,6 +80,13 @@ var jenkinsFacts = []ciFactDefinition{
 // jenkinsSetup is a datadog(testOptimization: …) the Jenkinsfile enables.
 type jenkinsSetup struct {
 	source string
+	// position is where the datadog(…) call starts in the Jenkinsfile,
+	// which tells apart two calls on one line.
+	position int
+	// preliminary reports a reading the same call's next one replaces (see
+	// pipelineSetup), and disabled an option that sets enabled: false
+	// literally, which configures no tracer.
+	preliminary, disabled bool
 	// languages are the plugin's language tokens.
 	languages []string
 	service   string
@@ -126,20 +133,22 @@ func (s *jenkinsSetup) languageSet() string {
 // the same languages differs. The plugin caches its variables per build,
 // agent and language set, so on an agent where both run, the second one's
 // serviceName and additionalVariables are ignored. ddtest cannot tell which
-// options share an agent, so all of them must agree.
+// options share an agent, so all of them must agree. Every reading of a
+// call counts, such as one per matrix cell, as each may evaluate other
+// arguments; a disabled option configures nothing.
 func jenkinsArgumentConflicts(setups []*jenkinsSetup) map[*jenkinsSetup]string {
 	conflicts := map[*jenkinsSetup]string{}
 	groups := map[string][]*jenkinsSetup{}
 	for _, setup := range setups {
-		if len(setup.languages) > 0 {
+		if len(setup.languages) > 0 && !setup.disabled {
 			groups[setup.languageSet()] = append(groups[setup.languageSet()], setup)
 		}
 	}
 	for languages, group := range groups {
 		var differing []string
 		for _, setup := range group {
-			if setup.arguments() != group[0].arguments() {
-				differing = append(differing, setup.source+" ("+setup.arguments()+")")
+			if described := setup.source + " (" + setup.arguments() + ")"; setup.arguments() != group[0].arguments() && !slices.Contains(differing, described) {
+				differing = append(differing, described)
 			}
 		}
 		if len(differing) == 0 {
@@ -246,15 +255,27 @@ func jenkinsPositionalArgs(call *groovyCall) bool {
 }
 
 // datadog reads a datadog(…) call; nil when it does not configure Test
-// Optimization (such as datadog(collectLogs: true)).
-func (r *jenkinsReader) datadog(call *groovyCall, scope jenkinsScope) *jenkinsSetup {
+// Optimization (such as datadog(collectLogs: true)). A preliminary reading
+// is replaced by the call's next one.
+func (r *jenkinsReader) datadog(call *groovyCall, scope jenkinsScope, preliminary bool) *jenkinsSetup {
+	setup := r.readDatadog(call, scope)
+	if setup == nil {
+		return nil
+	}
+	setup.position, setup.preliminary = call.Start, preliminary
+	r.options = append(slices.DeleteFunc(r.options, func(other *jenkinsSetup) bool {
+		return other.preliminary && other.position == setup.position
+	}), setup)
+	return setup
+}
+
+// readDatadog reads a datadog(…) call that configures Test Optimization.
+func (r *jenkinsReader) readDatadog(call *groovyCall, scope jenkinsScope) *jenkinsSetup {
 	key, value, ok := jenkinsTestOptimization(call)
 	if !ok {
 		return nil
 	}
 	setup := &jenkinsSetup{source: r.where(call), variables: map[string]string{}}
-	// An option read again replaces the earlier reading.
-	r.options = append(slices.DeleteFunc(r.options, func(other *jenkinsSetup) bool { return other.source == setup.source }), setup)
 	fail := func(problem string) { setup.problems = append(setup.problems, problem) }
 	if jenkinsPositionalArgs(call) {
 		// Groovy passes the named arguments as one more map, and a Pipeline
@@ -271,6 +292,7 @@ func (r *jenkinsReader) datadog(call *groovyCall, scope jenkinsScope) *jenkinsSe
 		fields[entry.Name] = entry.Value
 	}
 	if enabled, ok := fields["enabled"].(*groovyLiteral); !ok || enabled.Text != "true" {
+		setup.disabled = ok && enabled.Text == "false"
 		fail("The datadog(" + key + ": …) option at " + setup.source + " does not set enabled: true literally, so the plugin does not enable Test Optimization; set enabled: true.")
 	}
 	languages, isList := fields["languages"].(*groovyList)

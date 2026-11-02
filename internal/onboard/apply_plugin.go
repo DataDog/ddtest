@@ -70,8 +70,9 @@ func ApplyPluginSetup(output io.Writer, options StartOptions, apply PluginApplyO
 		return start()
 	}
 	if plan.Configured() {
+		// Nothing to confirm: a preview hands off too, as --yes would.
 		if apply.Text {
-			if _, err := fmt.Fprintf(output, "%s CI setup is already configured; no edits.\n", apply.Display(framework)); err != nil || apply.Preview {
+			if _, err := fmt.Fprintf(output, "%s CI setup is already configured; no edits.\n", apply.Display(framework)); err != nil {
 				return err
 			}
 		}

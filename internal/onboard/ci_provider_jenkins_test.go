@@ -231,12 +231,24 @@ func TestJenkinsAgentsAndContainers(t *testing.T) {
 	require.Contains(t, docker.SetupImageProblem, "The step's image node:22-alpine has no Bash, which the Datadog installer needs")
 	require.Equal(t, "the container of agent { dockerfile … } (Dockerfile), where its Dockerfile Dockerfile cannot be read", jobs["Dockerfile"].Host)
 	require.Empty(t, jobs["Dockerfile"].ImageProblem)
-	require.Equal(t, "the container of agent { kubernetes … }, whose image ddtest does not read", jobs["Kubernetes"].Host)
-	require.True(t, jenkinsContainerJob(jobs["Kubernetes"]))
+	// A container block runs in its own container, not the pod's default.
+	kubernetes := jobs["Kubernetes (container('node') of a Kubernetes pod)"]
+	require.Equal(t, "the container of container('node') of a Kubernetes pod, whose image ddtest does not read", kubernetes.Host)
+	require.True(t, jenkinsContainerJob(kubernetes))
+	require.NotContains(t, jobs, "Kubernetes", "the pod's default container runs no step")
 	require.False(t, jenkinsContainerJob(jobs["Host"]))
 	require.Equal(t, "the Jenkins agents labeled \"linux\", with the Jenkins tool nodejs 'NodeJS 22' (tools directive) on PATH", jobs["Host"].Host)
 	require.Equal(t, []string{"UNRESOLVED Jenkinsfile Nowhere: it runs under agent none, without an agent for shell steps"}, jenkinsRuns(jobs["Nowhere"]))
 	require.Equal(t, []string{"UNRESOLVED Jenkinsfile Windows: runs bat, a Windows command; ddtest does not set up or validate Windows agents"}, jenkinsRuns(jobs["Windows"]))
+
+	// A container block inside a container job runs its own image.
+	nested := jenkinsJobs(t, "pipeline {\n  agent { docker { image 'node:22-bookworm' } }\n  stages { stage('Test') { steps {\n    sh 'npm run lint'\n    script { docker.image('node:18-bookworm').inside { sh 'npm test' } }\n  } } }\n}\n")
+	require.Equal(t, "node:22-bookworm", nested["Test"].Image)
+	require.Equal(t, []string{"npm run lint"}, jenkinsRuns(nested["Test"]))
+	inner := nested["Test (docker.image('node:18-bookworm').inside)"]
+	require.Equal(t, "node:18-bookworm", inner.Image)
+	require.Equal(t, []string{"npm test"}, jenkinsRuns(inner))
+	require.True(t, jenkinsContainerJob(inner))
 }
 
 // Anything ddtest cannot read statically is an unresolved step, never
@@ -546,7 +558,7 @@ func TestJenkinsContainerTestJobsUseTheSetupSnippet(t *testing.T) {
 	text := providerSetupInstructions(root, jenkins{}, "javascript", "jest", "datadoghq.eu", true)
 	require.Contains(t, text, "Set up Datadog Test Optimization in the stages that run the tests in a container (Jenkinsfile / Test) with Datadog's installer")
 	require.Contains(t, text, `if [ "${DD_API_KEY:+set}" = set ]; then`)
-	require.Contains(t, text, `export DD_TRACER_FOLDER="$PWD/.datadog-ci-container" DD_SITE="datadoghq.eu" DD_CIVISIBILITY_AUTO_INSTRUMENTATION_PROVIDER="jenkins"`)
+	require.Contains(t, text, `export DD_TRACER_FOLDER="$(mktemp -d)" DD_SITE="datadoghq.eu" DD_CIVISIBILITY_AUTO_INSTRUMENTATION_PROVIDER="jenkins"`)
 	require.Contains(t, text, "withCredentials([string(credentialsId: 'datadog-api-key', variable: 'DD_API_KEY')])")
 	require.NotContains(t, text, "datadog(testOptimization:", "no stage runs on a host agent")
 
@@ -1496,7 +1508,7 @@ func TestJenkinsStepsInExpressions(t *testing.T) {
 }
 
 // Jenkins runs what an environment value calls when it enters the scope,
-// before the scope's steps: a command there is a step of the scope's job,
+// before the scope's steps: a command there is a step of a job of its own,
 // classified as any other, and the variable it sets is unknown.
 func TestJenkinsEnvironmentValuesRunSteps(t *testing.T) {
 	jobs := jenkinsJobs(t, `def suite() { return sh(script: 'npm test', returnStdout: true) }
@@ -1530,15 +1542,15 @@ pipeline {
     }
   }
 }`)
-	require.Equal(t, []string{"Group (environment)", "Group / Inner", "Matrix (20) (environment)", "Matrix (22) (environment)", "Matrix / Cell (20)", "Matrix / Cell (22)", "Unit", "environment"}, slices.Sorted(maps.Keys(jobs)))
+	require.Equal(t, []string{"Group (environment)", "Group / Inner", "Matrix (20) (environment)", "Matrix (22) (environment)", "Matrix / Cell (20)", "Matrix / Cell (22)", "Unit", "Unit (environment)", "environment"}, slices.Sorted(maps.Keys(jobs)))
 	require.Equal(t, []string{"git show -s --pretty=%an", "git rev-parse --short HEAD"}, jenkinsRuns(jobs["environment"]), "the pipeline's environment runs once, on its agent, before the stages")
 	require.Equal(t, "the Jenkins agents labeled \"linux\"", jobs["environment"].Host)
-	unit := jenkinsRuns(jobs["Unit"])
-	require.Len(t, unit, 4)
+	unit := jenkinsRuns(jobs["Unit (environment)"])
+	require.Len(t, unit, 3)
 	require.Equal(t, `node -p -e "require('./package.json').version"`, unit[0], "the stage's environment runs before its steps")
 	require.Contains(t, unit[1], "it calls suite(), a Groovy function of the Jenkinsfile", "a Jenkinsfile function in a value is reported as in a step")
 	require.Contains(t, unit[2], "it calls libraryValue, which is not a Pipeline step ddtest knows")
-	require.Equal(t, "npm run unit", unit[3])
+	require.Equal(t, []string{"npm run unit"}, jenkinsRuns(jobs["Unit"]))
 	require.Equal(t, []string{"echo $DEFAULT_RECIPIENTS"}, jenkinsRuns(jobs["Group (environment)"]))
 	require.Equal(t, []string{"npm run inner"}, jenkinsRuns(jobs["Group / Inner"]))
 	require.Equal(t, []string{"echo node-20"}, jenkinsRuns(jobs["Matrix (20) (environment)"]))
@@ -1547,6 +1559,11 @@ pipeline {
 		require.Error(t, unresolvedCIError(jobs["Unit"].Env[key]), key)
 	}
 	require.Equal(t, "ci", jobs["Unit"].Env["MODE"])
+	// The stage's environment shells start with the environment around it.
+	require.Equal(t, "ci", jobs["Unit (environment)"].Env["MODE"])
+	for _, key := range []string{"VERSION", "OUTPUT", "LIBRARY"} {
+		require.NotContains(t, jobs["Unit (environment)"].Env, key)
+	}
 
 	// Commands that run no tests stay outside validation, as reviews: the
 	// test job is the only one whose runtime the user states. A test
@@ -1572,7 +1589,7 @@ pipeline {
 	}
 	review := strings.Join(scope.Review, "\n")
 	require.Contains(t, review, "Not a jest test consumer: Jenkinsfile / environment / step 2 (git show -s --pretty=%an)")
-	require.Contains(t, review, "Not a jest test consumer: Jenkinsfile / Version / step 2 (node -p -e")
+	require.Contains(t, review, "Not a jest test consumer: Jenkinsfile / Version (environment) / step 2 (node -p -e")
 	required := RequiredCIRuntimes(t.Context(), root, "javascript", "jest")
 	require.NotNil(t, required)
 	require.Equal(t, []string{"Jenkinsfile / Test"}, required.Jobs)
@@ -1584,6 +1601,7 @@ pipeline {
 		require.NoError(t, err)
 		require.Len(t, scope.Commands, 1)
 		require.Equal(t, "jest", scope.Commands[0].Command)
+		require.Empty(t, scope.Unresolved, "the shell computing OUTPUT starts without it")
 		tests := 0
 		for _, job := range jenkinsJobs(t, source) {
 			for _, step := range job.Steps {
@@ -1623,7 +1641,8 @@ func TestJenkinsEnvironmentValueShellsStartWithTheInheritedEnvironment(t *testin
   }
 }`)
 	require.Equal(t, []string{`if [ "$RUN_TESTS" != false ]; then npm test; fi`, "npm run unit"}, jenkinsRuns(jobs["environment"]), "the pipeline's environment shells start without its RUN_TESTS, so its test branch stays, and Groovy reads its SUITE")
-	require.Equal(t, []string{"npm run skipped", "npm run after"}, jenkinsRuns(jobs["Unit"]), "the stage's environment shells start with the pipeline's environment, and its steps with the stage's")
+	require.Equal(t, []string{"npm run skipped"}, jenkinsRuns(jobs["Unit (environment)"]), "the stage's environment shells start with the pipeline's environment")
+	require.Equal(t, []string{"npm run after"}, jenkinsRuns(jobs["Unit"]), "the stage's steps start with the stage's environment")
 }
 
 // A stage's options { datadog(…) } sets the plugin up for that stage, its
@@ -1704,6 +1723,26 @@ func TestJenkinsStageLevelOptions(t *testing.T) {
 	hostOnly := jenkinsJobs(t, "pipeline {\n  agent none\n  stages {\n    stage('Docker') { agent { docker { image 'node:22' } }\n      steps { sh 'npm run package' } }\n    stage('Host') { agent any\n      "+stageOption("app")+"\n      steps { sh 'npm test' } }\n  }\n}\n")
 	require.Empty(t, hostOnly["Host"].Steps[0].Setup.Problem, "a stage option keeps the container stage out of its scope")
 	require.Nil(t, hostOnly["Docker"].Steps[0].Setup)
+
+	// Two calls on one line are two options, told apart by position.
+	scriptedOption := func(service, stage string) string {
+		return "datadog(testOptimization: [enabled: true, serviceName: '" + service + "', languages: ['JAVASCRIPT']]) { node { stage('" + stage + "') { sh 'npm test' } } }"
+	}
+	oneLine := jenkinsJobs(t, scriptedOption("app", "A")+"; "+scriptedOption("web", "B")+"\n")
+	for _, name := range []string{"A", "B"} {
+		require.Contains(t, oneLine[name].Steps[0].Setup.Problem, "options at Jenkinsfile:1 (serviceName \"app\", additionalVariables []) and Jenkinsfile:1 (serviceName \"web\", additionalVariables []) enable the same languages", name)
+	}
+
+	// A disabled option configures no tracer, so no cache entry.
+	disabled := jenkinsJobs(t, "pipeline {\n  agent any\n  stages {\n    stage('Package') { options { datadog(testOptimization: [enabled: false, serviceName: 'unused', languages: ['JAVASCRIPT']]) }\n      steps { sh 'npm pack' } }\n    stage('Test') { "+stageOption("app")+"\n      steps { sh 'npm test' } }\n  }\n}\n")
+	require.Empty(t, disabled["Test"].Steps[0].Setup.Problem, "a disabled option does not conflict")
+
+	// The reading before a stage's environment is replaced by the one with
+	// it, which resolves the service name the environment sets.
+	preliminary := jenkinsJobs(t, "pipeline {\n  agent any\n  stages {\n    stage('A') {\n      environment { SERVICE = 'app' }\n      options { datadog(testOptimization: [enabled: true, serviceName: \"${env.SERVICE}\", languages: ['JAVASCRIPT']]) }\n      steps { sh 'npm test' } }\n    stage('B') { "+stageOption("app")+"\n      steps { sh 'npm test' } }\n  }\n}\n")
+	for _, name := range []string{"A", "B"} {
+		require.Empty(t, preliminary[name].Steps[0].Setup.Problem, name)
+	}
 }
 
 // The plugin installs the latest dd-trace whatever the CI Node: a stated
@@ -1792,11 +1831,12 @@ func TestJenkinsEnvironmentValueShellsInPluginAndContainerStages(t *testing.T) {
   }
 }`)
 	const value = `if [ "$RUN_TESTS" != false ]; then npm test; fi`
-	require.Equal(t, []string{"SETUP", value}, jenkinsRuns(jobs["Plugin"]), "the environment's shell keeps its test branch, and the steps after it read RUN_TESTS")
-	for _, step := range jobs["Plugin"].Steps {
+	require.Equal(t, []string{"SETUP", value}, jenkinsRuns(jobs["Plugin (environment)"]), "the environment's shell keeps its test branch")
+	require.Equal(t, []string{"SETUP"}, jenkinsRuns(jobs["Plugin"]), "the steps after it read RUN_TESTS")
+	for _, step := range jobs["Plugin (environment)"].Steps {
 		if step.Run == value {
 			require.NotEmpty(t, step.Env["NODE_OPTIONS"], "the stage's plugin variables reach the environment's shell")
 		}
 	}
-	require.Equal(t, []string{value}, jenkinsRuns(jobs["Docker"]), "the container stage's environment shell keeps its test branch")
+	require.Equal(t, []string{value}, jenkinsRuns(jobs["Docker (environment)"]), "the container stage's environment shell keeps its test branch")
 }

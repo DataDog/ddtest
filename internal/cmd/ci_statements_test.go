@@ -157,8 +157,10 @@ func TestOnboardApplyOnJenkinsWritesThePluginSetupForRuby(t *testing.T) {
 	command.SetArgs([]string{"--apply", "--ci-runtime", "ruby=3.3"})
 	preview.Reset()
 	command.SetOut(&preview)
-	_ = command.ExecuteContext(t.Context())
+	command.SetErr(io.Discard)
+	err = command.ExecuteContext(t.Context())
 	require.True(t, strings.HasPrefix(preview.String(), "RSpec CI setup is already configured; no edits.\n"), preview.String())
+	require.ErrorContains(t, err, "until the user confirms them (jenkins-plugin, jenkins-plugin-mode)", "with nothing to confirm, the preview hands off as --yes does")
 }
 
 // onboard --apply --command is rejected before any Jenkinsfile is written,

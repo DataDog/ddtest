@@ -541,8 +541,8 @@ unknown, so every `sh` after it is unresolved. `environment` (pipeline and stage
 order; `credentials()` and computed values are unknown; what a value runs,
 such as `X = sh(script: 'git show …', returnStdout: true).trim()` or an `sh`
 in its GString, is read like any expression's, at the point Jenkins runs it:
-before a stage's steps, in its job, and for the pipeline, a stage of stages or
-a matrix cell, in a job of its own, `environment` or `<stage> (environment)`;
+before the scope's steps, in a job of its own, `environment` or
+`<stage> (environment)` (whose environment is the one around the directive);
 its shell starts with the environment around the directive, as Jenkins sets
 the directive's variables only after evaluating them, while the value's
 Groovy reads the directive's earlier values), `withEnv` with a literal
@@ -633,7 +633,10 @@ same languages run, the `serviceName` and `additionalVariables` of every one
 after the first it configures are ignored. ddtest cannot tell which stages
 share an agent, so every `datadog(…)` option of a Jenkinsfile with the same
 languages (top-level, stage-level or a scripted wrap) must have the same
-arguments; otherwise each is a setup problem naming the others. A stage's
+arguments; otherwise each is a setup problem naming the others. Each call
+counts on its own, even with another on the same line, and so does each
+reading of one with other arguments (such as a matrix cell's); an option with
+`enabled: false` configures no tracer and is left out. A stage's
 `datadog(…)` without `testOptimization` (such as `datadog(collectLogs: true)`)
 keeps the setup around it.
 
@@ -649,17 +652,21 @@ The plugin does not support tests inside containers, so stages that run in
 Test Optimization up with Datadog's installer instead: the setup snippet
 Buildkite steps run (see [Buildkite](#buildkite)), in the `sh` script that runs
 the tests, before the test command, since each `sh` starts a fresh shell. A
-container block in a job on a host agent runs only its own steps in the
-container: they become a job of their own, named after the job and the
-container (`Test (docker.image('node:22').inside)`). The snippet's Jenkins
+container block runs only its own steps in the container: they become a job
+of their own, named after the job and the container
+(`Test (docker.image('node:22').inside)`), also inside a job that already runs
+in another container, whose image they do not run. The snippet's Jenkins
 form differs from Buildkite's where Jenkins needs it:
 
-- It exports `DD_TRACER_FOLDER="$PWD/.datadog-ci-container"`, where the
-  installer installs the tracers and the snippet keeps its download and
-  output, so it never replaces the tracer the plugin installs in the
-  workspace's `.datadog` for the host stages of the same build (a real Jenkins
-  run showed the installer otherwise overwrites it, and later host stages then
-  run the snippet's release).
+- It exports `DD_TRACER_FOLDER="$(mktemp -d)"`, a new temporary folder of the
+  container where the installer installs the tracers and the snippet keeps its
+  download and output. So it never replaces the tracer the plugin installs in
+  the workspace's `.datadog` for the host stages of the same build (a real
+  Jenkins run showed the installer otherwise overwrites it, and later host
+  stages then run the snippet's release), and shells that run at the same time
+  in one workspace, such as the parallel branches of a stage under a
+  top-level Docker agent, never overwrite each other's installer, tracers or
+  output. The folder goes with the container.
 - It tests the key with `[ "${DD_API_KEY:+set}" = set ]`, which Jenkins' shell
   trace (`sh -x`) prints without the key's value.
 - No `$` is escaped: the `sh` script is a single-quoted Groovy string.
@@ -671,8 +678,11 @@ form differs from Buildkite's where Jenkins needs it:
 The snippet is complete under Buildkite's rules: the pinned installer release
 and its SHA256, an exact tracer release, the selected site, and a runtime from
 the container's image. `agent { dockerfile … }` reads the base image of the
-Dockerfile it builds (`filename`, `dir`; a build argument `additionalBuildArgs`
-overrides is unknown), as Buildkite's Compose builds do. For an image ddtest
+Dockerfile it builds (`filename`, `dir`; the stage `additionalBuildArgs`'
+`--target` selects, or else the last one; a build argument it overrides is
+unknown; `additionalBuildArgs` that are not literal, read the shell's
+environment or select another Dockerfile leave the image unread), as
+Buildkite's Compose builds do. For an image ddtest
 does not read (a Kubernetes pod's, or `docker.build(…)`'s), the runtime is the
 user's to state with `--ci-runtime`, as a host agent's, and `final_response`
 says ddtest could not check that the image has Bash and curl or wget. So is the

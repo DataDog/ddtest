@@ -136,6 +136,31 @@ func TestJenkinsDockerfileAgents(t *testing.T) {
 	arguments := workflow.Jobs["Arguments"]
 	require.Empty(t, arguments.Image, "the build overrides the argument the base image reads")
 	require.Contains(t, arguments.Host, "the container of agent { dockerfile … } (Dockerfile.ci), where its Dockerfile Dockerfile.ci")
+
+	// --target builds that stage, not the last one; options ddtest cannot
+	// follow leave the image unresolved, for the user to state.
+	writeFile(t, root, "Dockerfile.stages", "FROM node:18-bookworm AS tests\nFROM node:22-bookworm\n")
+	agent := func(arguments string) string {
+		return "pipeline {\n  agent { dockerfile { filename 'Dockerfile.stages'\n    additionalBuildArgs " + arguments + " } }\n  stages { stage('Test') { steps { sh 'npm test' } } }\n}\n"
+	}
+	for _, arguments := range []string{"'--target tests'", "'--pull --target=tests --build-arg A=$B'"} {
+		workflow, err := readJenkinsfile(root, "Jenkinsfile", agent(arguments))
+		require.NoError(t, err)
+		require.Equal(t, "node:18-bookworm", workflow.Jobs["Test"].Image, arguments)
+	}
+	for arguments, problem := range map[string]string{
+		"'--target missing'":    "its Dockerfile Dockerfile.stages, which has no stage missing for the build's target",
+		"'--target $STAGE'":     "its additionalBuildArgs --target $STAGE read the shell's environment, which ddtest cannot resolve",
+		"\"${env.BUILD_ARGS}\"": "its additionalBuildArgs \"${env.BUILD_ARGS}\" cannot be resolved",
+		"'-f Dockerfile.other'": "its additionalBuildArgs select another Dockerfile (-f)",
+		"'--target'":            "its additionalBuildArgs end with --target and no value",
+	} {
+		workflow, err := readJenkinsfile(root, "Jenkinsfile", agent(arguments))
+		require.NoError(t, err)
+		test := workflow.Jobs["Test"]
+		require.Empty(t, test.Image, arguments)
+		require.Contains(t, test.Host, "the container of agent { dockerfile … } (Dockerfile.stages), where "+problem, arguments)
+	}
 }
 
 // The runtime of a container whose image ddtest does not read is the
