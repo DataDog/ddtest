@@ -278,7 +278,8 @@ func TestPublicCucumberTestdrive(t *testing.T) {
 				reached := false
 				require.Eventually(t, func() bool {
 					select {
-					case <-finished:
+					case err := <-finished:
+						t.Logf("validation exited before recovery was reached: %v", err)
 						return true
 					default:
 					}
