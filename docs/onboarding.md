@@ -1013,8 +1013,9 @@ result names only the command. A direct Cucumber command is accepted only
 with NYC and the impacted-tests workaround (after the prefix or among the
 command's own assignments). A direct command that assigns other variables
 inline (`DD_ENV=ci cucumber-js …`) gets no exact command, since rebuilding it
-would drop them: `onboard --apply` returns a setup gap asking to move them into
-the job's variables first. When the job's existing setup leaves the preload in
+would drop them: `onboard --apply` returns a setup gap asking to move them out
+of the command first, into the variables of the commands after the job's
+dependency install. When the job's existing setup leaves the preload in
 `NODE_OPTIONS`, a direct Cucumber command without NYC still gets the
 NYC-wrapped command to write, and the setup stays.
 
@@ -1036,29 +1037,47 @@ what earlier commands export) and recognizes the setups the tracers document:
   dd-trace@<release>` earlier in the job, in the test's directory (an
   install elsewhere, or with `--prefix` and the like, stays unresolved). A
   later `npm ci`, install or prune removes an earlier `npm install --no-save`
-  that `package.json` does not declare, so it no longer counts. A dd-trace in
-  `optionalDependencies` installs with production-only installs too. Cypress,
+  that `package.json` does not declare, so it no longer counts; an `npm
+  uninstall dd-trace` removes it whichever install added it (a later
+  reinstall stays unresolved). A dd-trace in `optionalDependencies` installs
+  with production-only installs too; a production-only install is read with
+  its own step's `NODE_ENV` and options (`--omit dev`, `--only production`
+  and their `=` forms). Only the documented preload spellings count: a path
+  such as `-r ./node_modules/dd-trace/ci/init` stays unresolved. Cypress,
   which loads dd-trace through its configuration, is not read this way.
-- Ruby: `RUBYOPT` preloads `-rdatadog/ci/auto_instrument` (after
-  `-rbundler/setup`, or for a test command run with `bundle exec`; a binstub
-  such as `bin/rspec` sets up Bundler only after `RUBYOPT`'s preloads)
-  with `DD_CIVISIBILITY_ENABLED=true`; or an RSpec helper that `.rspec` loads
-  (`--require spec_helper`) requires `datadog/ci` at top level and configures
-  it in a `Datadog.configure do |c|` block with `c.ci.enabled = true` (or
-  `DD_CIVISIBILITY_ENABLED=true`) and `c.ci.instrument :rspec` (with no
-  options or trailing condition, which stay unresolved). The datadog-ci
-  release is the one the selected bundle's `Gemfile.lock` locks.
+- Ruby: `RUBYOPT` preloads `-rdatadog/ci/auto_instrument` after
+  `-rbundler/setup` (Ruby reads `RUBYOPT` when it starts `bundle exec` or a
+  binstub such as `bin/rspec` too, before either sets up the bundle) with
+  `DD_CIVISIBILITY_ENABLED=true`; or an RSpec helper that the options file
+  loads (`.rspec`, or the file `--options` selects instead; `--require
+  spec_helper` from `spec/` or `lib/`, `--require ./spec/spec_helper.rb`
+  from the working directory) requires `datadog/ci` at top level and
+  configures it in a `Datadog.configure do |c|` block with `c.ci.enabled =
+  true` (or `DD_CIVISIBILITY_ENABLED=true`) and `c.ci.instrument :rspec`
+  (with no options or trailing condition, which stay unresolved; so does a
+  setting outside `c.ci` other than `service`, `env`, `version` and `tags`,
+  such as `c.site`). The datadog-ci release is the one the selected bundle's
+  `Gemfile.lock` locks.
+
+The preload must not reach the job's dependency install (`npm ci`, `yarn`,
+`bundle install` and the like): the tracer is not installed yet there, so on
+a fresh checkout the install fails to start. A preload in the job's
+variables, or exported before the install, is reported; set it on the test
+commands or for the commands after the install.
 
 Such a setup is certified with the same rules as the provider's own: an exact
 tracer release; `DD_API_KEY` from the provider's secret store (a GitLab CI/CD
 variable, CircleCI project settings or a context, a Buildkite agent hook,
-secrets plugin or UI environment, a Jenkins credential), never a literal in the
-configuration, and reaching a container that runs the tests; `DD_SITE` (or the
+secrets plugin or UI environment, a Jenkins credential the stage binds with
+`credentials()` or `withCredentials`, without which no key reaches it), never
+a literal in the configuration, and reaching a container that runs the tests; `DD_SITE` (or the
 default `datadoghq.com`) matching the selected site; a preload that reaches the
 test process; and agentless reporting (`DD_CIVISIBILITY_AGENTLESS_ENABLED=true`
 or `c.ci.agentless_mode_enabled = true`) or a Datadog Agent the user confirms;
 and no `DD_TRACE_<FRAMEWORK>_ENABLED=false` (such as `DD_TRACE_RSPEC_ENABLED`)
-turning the framework's integration off. A setup one test step writes for
+turning the framework's integration off. `DD_TRACE_ENABLED`,
+`DD_CIVISIBILITY_ENABLED` and the framework switches read from a value only
+CI knows (`$TRACE_TESTS`) stay unresolved. A setup one test step writes for
 itself, inline or in its own variables, reaches no other step: a job is
 certified only when every test step loads the tracer, with the same release.
 No CI configuration shows an Agent (whether it runs where the tests do, at

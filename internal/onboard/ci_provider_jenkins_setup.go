@@ -483,6 +483,7 @@ func (jenkins) setupTerms() ciSetupTerms {
 		MatrixExclusion: "with the matrix's excludes",
 		SharedMatrix:    "a matrix shares the stage's steps",
 		ImageGuard:      func(string, string, string) string { return "" },
+		KeyBinding:      true,
 		Plugin:          true,
 	}
 }

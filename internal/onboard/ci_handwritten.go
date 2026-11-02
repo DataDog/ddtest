@@ -198,9 +198,10 @@ func handWrittenReads(value string) (reference, dynamic bool) {
 }
 
 // handWrittenTrue reads a boolean setting the way the tracers do: true or 1.
-// known is false for a value ddtest cannot evaluate.
+// known is false for a value ddtest cannot evaluate, such as a read of
+// another variable ($TRACE_TESTS) only CI knows.
 func handWrittenTrue(value string) (enabled, known bool) {
-	if _, dynamic := handWrittenReads(value); dynamic {
+	if reference, dynamic := handWrittenReads(value); reference || dynamic {
 		return false, false
 	}
 	value = strings.ToLower(strings.TrimSpace(value))
@@ -238,7 +239,14 @@ func handWrittenFrameworkDisabled(setup *handWrittenSetup, env map[string]string
 func handWrittenConfiguration(setup *handWrittenSetup, provider ciProvider, job runtimeJob, env map[string]string, site string, enabled, agentless bool) {
 	terms := provider.setupTerms()
 	for _, key := range []string{"DD_TRACE_ENABLED", "DD_CIVISIBILITY_ENABLED"} {
-		if value, set := env[key]; set && handWrittenFalse(value) {
+		value, set := env[key]
+		if !set {
+			continue
+		}
+		if _, known := handWrittenTrue(value); !known {
+			// CI may set it to false.
+			setup.unresolved(key + " comes from " + value + ", which ddtest cannot read.")
+		} else if handWrittenFalse(value) {
 			setup.missing(key + "=" + value + " turns the tracer off for these tests: remove it.")
 		}
 	}
@@ -286,11 +294,13 @@ func handWrittenConfiguration(setup *handWrittenSetup, provider ciProvider, job 
 	if job.KeyProblem != "" {
 		setup.missing(job.KeyProblem)
 	}
+	bound := false
 	for _, key := range []string{"DD_API_KEY", "DATADOG_API_KEY"} {
 		value, set := env[key]
 		if !set {
 			continue
 		}
+		bound = true
 		reference, dynamic := handWrittenReads(value)
 		switch {
 		case reference:
@@ -301,6 +311,9 @@ func handWrittenConfiguration(setup *handWrittenSetup, provider ciProvider, job 
 		default:
 			setup.missing("The configuration writes " + key + " as a literal; never commit the key: remove it and store DD_API_KEY in " + terms.SecretStore + ".")
 		}
+	}
+	if terms.KeyBinding && !bound {
+		setup.missing("No DD_API_KEY reaches these tests, so the tracer reports nothing: the CI server gives a job a stored credential only where its configuration binds it. Use " + terms.SecretStore + ".")
 	}
 	configured, set := env["DD_SITE"]
 	if !set {
@@ -370,7 +383,7 @@ func jobHandWrittenSetup(root string, workflow ciWorkflow, job runtimeJob, first
 		}
 		later := handWrittenCISetup(root, workflow, job, i, nil, language, framework, site)
 		if later == nil {
-			setup.missing("The " + framework + " test command at " + label + " (" + step.Run + ") gets none of the hand-written setup, so its tests run untraced: give that command the same setup, or set it once in the job's variables.")
+			setup.missing("The " + framework + " test command at " + label + " (" + step.Run + ") gets none of the hand-written setup, so its tests run untraced: give that command the same setup, or set it once for the job's later commands after its dependency install.")
 			continue
 		}
 		if later.Tracer != "" && setup.Tracer != "" && later.Tracer != setup.Tracer {
@@ -544,4 +557,49 @@ func firstHandWrittenSetup(root string, workflow ciWorkflow, job runtimeJob, lan
 		return jobHandWrittenSetup(root, workflow, job, i, language, framework, site)
 	}
 	return nil
+}
+
+// handWrittenAssignment is a shell word that assigns a variable for its
+// command, such as NODE_ENV=production.
+var handWrittenAssignment = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*=`)
+
+// handWrittenCommand splits a static command's words (see staticCommands)
+// into the variables it assigns for itself and the command they prefix.
+func handWrittenCommand(words []string) (assigned map[string]string, command []string) {
+	assigned = map[string]string{}
+	for len(words) > 0 && handWrittenAssignment.MatchString(words[0]) {
+		name, value, _ := strings.Cut(words[0], "=")
+		assigned[name] = value
+		words = words[1:]
+	}
+	return assigned, words
+}
+
+// handWrittenPreloadBeforeInstall records a preload in variable (loaded
+// reads its value) that reaches the job's first dependency install
+// (install) before the test step at index. The tracer is not installed yet
+// there, so on a fresh checkout the install's own runtime fails to load the
+// preload, and the job stops before any test runs. tracer names it.
+func handWrittenPreloadBeforeInstall(setup *handWrittenSetup, workflow ciWorkflow, job runtimeJob, index int, variable, tracer string, install func(words []string) bool, loaded func(value string) bool) {
+	for i, step := range job.Steps[:index] {
+		commands, err := staticCommands(step.Run)
+		if err != nil {
+			continue
+		}
+		for _, words := range commands {
+			assigned, command := handWrittenCommand(words)
+			if !install(command) {
+				continue
+			}
+			env := mergeEnvironment(handWrittenEnvironment(workflow, job, step), assigned)
+			if value, set := env[variable]; set && loaded(value) {
+				where := step.Source
+				if where == "" {
+					where = "step " + strconv.Itoa(stepNumber(step, i))
+				}
+				setup.missing(variable + " preloads " + tracer + " for " + strings.Join(command, " ") + " at " + where + " too, which runs before " + tracer + " is installed: on a fresh checkout the install cannot load the preload and fails, so no test runs. Set " + variable + " for the test commands only (inline on each, or for the commands after the install).")
+			}
+			return
+		}
+	}
 }

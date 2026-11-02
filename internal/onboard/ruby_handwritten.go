@@ -50,7 +50,7 @@ func (rubyDiscovery) handWrittenSetup(root string, provider ciProvider, workflow
 	auto := set && strings.Contains(options, "datadog/ci")
 	var helper *rubyHandWrittenHelper
 	if !auto {
-		if helper = rubyHandWrittenHelperFor(root, directory, framework); helper == nil {
+		if helper = rubyHandWrittenHelperFor(root, directory, framework, step.Run); helper == nil {
 			return nil
 		}
 	}
@@ -71,9 +71,14 @@ func (rubyDiscovery) handWrittenSetup(root string, provider ciProvider, workflow
 			setup.unresolved("RUBYOPT (" + options + ") holds values only CI knows, so ddtest cannot tell what it preloads.")
 		case preload < 0:
 			setup.missing("RUBYOPT loads datadog/ci without its auto instrumentation: preload -rdatadog/ci/auto_instrument instead, which starts Test Optimization for " + framework + ".")
-		case !slices.Contains(words[:preload], "-rbundler/setup") && !rubyRunsWithBundler(step.Run):
-			setup.missing("RUBYOPT preloads datadog/ci/auto_instrument before Bundler sets up the bundle, so Ruby cannot load the datadog-ci it locks: run the tests with bundle exec, or preload -rbundler/setup before it. A binstub such as bin/rspec sets up Bundler only after RUBYOPT's preloads.")
+		case !slices.Contains(words[:preload], "-rbundler/setup") && !slices.Contains(words[:preload], "bundler/setup"):
+			// Ruby reads RUBYOPT when it starts bundle exec or a binstub too,
+			// before either sets up the bundle.
+			setup.missing("RUBYOPT preloads datadog/ci/auto_instrument before Bundler sets up the bundle, so Ruby cannot load the datadog-ci it locks (it reads RUBYOPT when starting bundle exec or a binstub such as bin/rspec too): preload -rbundler/setup before it, as in RUBYOPT=\"-rbundler/setup -rdatadog/ci/auto_instrument\".")
 		}
+		handWrittenPreloadBeforeInstall(setup, workflow, job, index, "RUBYOPT", "datadog-ci", rubyInstallsBundle, func(value string) bool {
+			return strings.Contains(value, "datadog/ci")
+		})
 	} else {
 		enabled, agentless = helper.enabled, helper.agentless
 		switch {
@@ -97,22 +102,17 @@ func (rubyDiscovery) handWrittenSetup(root string, provider ciProvider, workflow
 	return setup
 }
 
-// rubyRunsWithBundler reports a test command whose every command runs
-// through bundle exec, which sets up the bundle before Ruby reads RUBYOPT's
-// preloads (a directory change aside). A binstub does not: Ruby preloads
-// RUBYOPT's libraries before the binstub's require "bundler/setup".
-func rubyRunsWithBundler(run string) bool {
-	commands, err := staticCommands(run)
-	if err != nil || len(commands) == 0 {
+// rubyInstallsBundle reports a command that installs the bundle or a gem:
+// bundle install (bundle alone, bundle update) or gem install.
+func rubyInstallsBundle(words []string) bool {
+	switch {
+	case len(words) == 0:
 		return false
+	case words[0] == "bundle":
+		return len(words) == 1 || strings.HasPrefix(words[1], "-") || slices.Contains([]string{"install", "i", "update"}, words[1])
+	default:
+		return words[0] == "gem" && len(words) > 1 && words[1] == "install"
 	}
-	return !slices.ContainsFunc(commands, func(words []string) bool {
-		for len(words) > 0 && strings.Contains(words[0], "=") {
-			words = words[1:]
-		}
-		bundled := len(words) > 1 && words[0] == "bundle" && (words[1] == "exec" || words[1] == "e")
-		return !bundled && (len(words) == 0 || words[0] != "cd")
-	})
 }
 
 // rubyHandWrittenLockfile is the repository path of the Gemfile.lock the
@@ -157,26 +157,46 @@ func rubyLockedRelease(lockfile string) string {
 	return ""
 }
 
-// rubyHandWrittenHelperFor reads the helper an RSpec run in directory loads
-// through .rspec (--require <helper>) when it sets up datadog-ci, or a
-// Minitest test/test_helper.rb that does, which ddtest cannot tell every
-// test file loads. nil when neither sets up datadog-ci.
-func rubyHandWrittenHelperFor(root, directory, framework string) *rubyHandWrittenHelper {
+// rubyHandWrittenHelperFor reads the helper an RSpec run in directory
+// (command) loads through its options file (--require <helper>) when it
+// sets up datadog-ci, or a Minitest test/test_helper.rb that does, which
+// ddtest cannot tell every test file loads. The options file is .rspec, or
+// the one the command selects with --options, which replaces it. A path
+// written from the working directory (./spec/spec_helper.rb) is read from
+// there, a bare name (spec_helper) from spec/ or lib/, RSpec's load path. nil
+// when none sets up datadog-ci.
+func rubyHandWrittenHelperFor(root, directory, framework, command string) *rubyHandWrittenHelper {
 	var candidates []string
 	if framework == "rspec" {
-		data, err := os.ReadFile(filepath.Join(root, directory, ".rspec"))
+		options, ok := rubyRSpecOptionsFile(command)
+		if !ok {
+			return nil
+		}
+		data, err := os.ReadFile(filepath.Join(root, directory, filepath.FromSlash(options)))
 		if err != nil {
 			return nil
 		}
 		for line := range strings.SplitSeq(string(data), "\n") {
-			if match := rubyRSpecRequire.FindStringSubmatch(line); match != nil {
-				candidates = append(candidates, path.Join(filepath.ToSlash(directory), "spec", strings.TrimSuffix(match[1], ".rb")+".rb"))
+			match := rubyRSpecRequire.FindStringSubmatch(line)
+			if match == nil {
+				continue
+			}
+			name := strings.TrimSuffix(match[1], ".rb") + ".rb"
+			switch {
+			case path.IsAbs(name):
+			case strings.HasPrefix(name, "./") || strings.HasPrefix(name, "../"):
+				candidates = append(candidates, path.Join(filepath.ToSlash(directory), name))
+			default:
+				candidates = append(candidates, path.Join(filepath.ToSlash(directory), "spec", name), path.Join(filepath.ToSlash(directory), "lib", name))
 			}
 		}
 	} else {
 		candidates = []string{path.Join(filepath.ToSlash(directory), "test", "test_helper.rb")}
 	}
 	for _, file := range candidates {
+		if strings.HasPrefix(file, "../") {
+			continue // Outside the repository ddtest reads.
+		}
 		data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(file)))
 		if err != nil {
 			continue
@@ -192,6 +212,39 @@ func rubyHandWrittenHelperFor(root, directory, framework string) *rubyHandWritte
 		return helper
 	}
 	return nil
+}
+
+// rubyRSpecOptionsFile is the options file an RSpec command reads, relative
+// to its working directory: the one --options (-O) selects, otherwise
+// .rspec. ok is false for one outside the repository ddtest reads.
+func rubyRSpecOptionsFile(command string) (file string, ok bool) {
+	file = ".rspec"
+	commands, err := staticCommands(command)
+	if err != nil {
+		return file, true
+	}
+	for _, words := range commands {
+		if !slices.ContainsFunc(words, func(word string) bool { return path.Base(word) == "rspec" }) {
+			continue // Such as curl -O.
+		}
+		for i, word := range words {
+			option, value, inline := strings.Cut(word, "=")
+			if option != "--options" && option != "-O" {
+				continue
+			}
+			if !inline {
+				if i+1 >= len(words) {
+					continue
+				}
+				value = words[i+1]
+			}
+			if path.IsAbs(value) || strings.HasPrefix(path.Clean(value), "..") {
+				return "", false
+			}
+			file = value
+		}
+	}
+	return file, true
 }
 
 // rubyReadHelper reads a helper's top-level require "datadog/ci" and
@@ -251,6 +304,12 @@ func rubyReadHelper(text, framework string) *rubyHandWrittenHelper {
 			if helper.unresolved == "" {
 				helper.unresolved = "the helper's Datadog.configure block runs code ddtest does not evaluate (line " + strconv.Itoa(start+i+2) + ": " + trimmed + ")."
 			}
+		case match == nil && !rubyHelperSettingIgnored(strings.TrimPrefix(trimmed, variable+".")):
+			// Such as c.site = "datadoghq.eu" or c.api_key = ...: where and
+			// whether the tracer reports.
+			if helper.unresolved == "" {
+				helper.unresolved = "the helper sets " + trimmed + " (line " + strconv.Itoa(start+i+2) + "), which ddtest does not evaluate."
+			}
 		case match == nil:
 		case match[1] == "enabled" && match[2] != "":
 			if value == "true" {
@@ -280,4 +339,13 @@ func rubyReadHelper(text, framework string) *rubyHandWrittenHelper {
 		}
 	}
 	return helper
+}
+
+// rubyHelperSettingIgnored reports a Datadog.configure setting outside
+// c.ci that changes neither where nor whether the tracer reports, such as
+// service = "app".
+func rubyHelperSettingIgnored(setting string) bool {
+	name, _, _ := strings.Cut(setting, "=")
+	name = strings.TrimSpace(name)
+	return slices.Contains([]string{"service", "env", "version", "tags"}, name)
 }

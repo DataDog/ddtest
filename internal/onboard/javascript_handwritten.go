@@ -40,16 +40,19 @@ type handWrittenNodePreload struct {
 }
 
 // javascriptHandWrittenModule classifies a module NODE_OPTIONS preloads:
-// dd-trace/ci/init, dd-trace/register.js, by package name or through a
-// node_modules path.
-func javascriptHandWrittenModule(module string) string {
+// dd-trace/ci/init, dd-trace/register.js or dd-trace/init, by package name
+// or through a node_modules path. canonical reports the spelling dd-trace
+// documents (dd-trace/ci/init, dd-trace/register.js), the only one the
+// command resolution and validation scope accept.
+func javascriptHandWrittenModule(module string) (kind string, canonical bool) {
 	module = strings.Trim(module, `"'`)
-	for _, name := range []string{"ci/init", "ci/init.js", "register.js", "init", "init.js"} {
+	for _, name := range []string{"ci/init", "ci/init.js", "register.js", "register", "init", "init.js"} {
 		if module == "dd-trace/"+name || strings.HasSuffix(module, "node_modules/dd-trace/"+name) {
-			return strings.TrimSuffix(name, ".js")
+			kind = strings.TrimSuffix(name, ".js")
+			return kind, module == "dd-trace/ci/init" || module == "dd-trace/register.js"
 		}
 	}
-	return ""
+	return "", false
 }
 
 // javascriptHandWrittenPreload reads the dd-trace preloads of NODE_OPTIONS.
@@ -100,8 +103,17 @@ func javascriptHandWrittenPreload(options string) handWrittenNodePreload {
 			normalized = append(normalized, flag, module)
 			continue
 		}
-		kind := javascriptHandWrittenModule(module)
+		kind, canonical := javascriptHandWrittenModule(module)
 		switch {
+		case (kind == "ci/init" && flag != "--import" || kind == "register" && flag == "--import") && !canonical:
+			// Such as -r ./node_modules/dd-trace/ci/init: the test command's
+			// resolution and the validation scope read only the documented
+			// spelling, so ddtest cannot validate this one.
+			preload.found = true
+			if preload.unresolved == "" {
+				preload.unresolved = "NODE_OPTIONS loads " + flag + " " + module + ", a spelling ddtest does not validate: preload the package as dd-trace documents it (-r dd-trace/ci/init, and --import dd-trace/register.js for ESM tests)."
+			}
+			normalized = append(normalized, flag, module)
 		case kind == "ci/init" && flag != "--import":
 			preload.found, preload.ci = true, true
 			normalized = append(normalized, flag, "${{ env.DD_TRACE_PACKAGE }}")
@@ -116,7 +128,7 @@ func javascriptHandWrittenPreload(options string) handWrittenNodePreload {
 			normalized = append(normalized, flag, module)
 		}
 	}
-	if preload.found && !preload.ci && len(preload.problems) == 0 {
+	if preload.found && !preload.ci && len(preload.problems) == 0 && preload.unresolved == "" {
 		preload.problems = append(preload.problems, "NODE_OPTIONS loads only dd-trace's ESM loader: add -r dd-trace/ci/init, which starts Test Optimization.")
 	}
 	preload.normalized = environment.JoinNodeOptions(normalized)
@@ -172,9 +184,25 @@ func javascriptHandWrittenSetup(root string, provider ciProvider, workflow ciWor
 	if setup.Tracer != "" {
 		setup.Reference = handWrittenReference("dd-trace@"+setup.Tracer, "NODE_OPTIONS")
 	}
+	handWrittenPreloadBeforeInstall(setup, workflow, job, index, "NODE_OPTIONS", "dd-trace", javascriptInstallsDependencies, func(value string) bool {
+		return javascriptHandWrittenPreload(value).found
+	})
 	handWrittenFrameworkDisabled(setup, env, framework)
 	handWrittenConfiguration(setup, provider, job, env, site, true, false)
 	return setup, normalized
+}
+
+// javascriptInstallsDependencies reports a package manager command that
+// installs the project's dependencies: npm ci, an install or add, or Yarn
+// alone.
+func javascriptInstallsDependencies(words []string) bool {
+	if len(words) == 0 || !slices.Contains([]string{"npm", "yarn", "pnpm"}, words[0]) {
+		return false
+	}
+	if len(words) == 1 || strings.HasPrefix(words[1], "-") {
+		return words[0] == "yarn"
+	}
+	return slices.Contains([]string{"ci", "install", "i", "add"}, words[1])
 }
 
 // javascriptHandWrittenTracer finds the exact dd-trace release a
@@ -183,7 +211,9 @@ func javascriptHandWrittenSetup(root string, provider ciProvider, workflow ciWor
 // removes, otherwise the one the package.json that resolves dd-trace there
 // pins, or its lockfile resolves. It records on setup why none is pinned.
 func javascriptHandWrittenTracer(setup *handWrittenSetup, root, directory string, workflow ciWorkflow, job runtimeJob, index int, env map[string]string) (version, source string) {
-	removed, saved := "", false
+	// uninstalled is a command that removes dd-trace, whichever install it
+	// came from (package.json's too), when no later one installs it again.
+	removed, uninstalled, saved := "", "", false
 	for _, step := range job.Steps[:index] {
 		where := step.Source
 		if where == "" {
@@ -209,7 +239,7 @@ func javascriptHandWrittenTracer(setup *handWrittenSetup, root, directory string
 			release, global, ok := javascriptTracerInstall(words)
 			if !ok {
 				uninstall := javascriptRemovesTracer(words)
-				if version == "" || !uninstall && (saved || !javascriptReinstalls(words)) {
+				if !uninstall && (version == "" && uninstalled == "" || version != "" && saved || !javascriptReinstalls(words)) {
 					// A saved install is in the manifest and lockfile the job
 					// reinstalls from.
 					continue
@@ -217,15 +247,33 @@ func javascriptHandWrittenTracer(setup *handWrittenSetup, root, directory string
 				if !moved && !javascriptInstallsElsewhere(words) && !javascriptRelatedDirectories(installDirectory, directory) {
 					continue // Another package's dependencies.
 				}
-				if elsewhere {
-					setup.unresolved("the job installs dd-trace (" + source + "), and ddtest cannot tell whether a later " + strings.Join(words, " ") + " at " + where + " removes it from " + displayDirectory(directory) + ".")
+				command := strings.Join(words, " ") + " at " + where
+				switch {
+				case elsewhere:
+					installed := "the job installs dd-trace (" + source + "), and "
+					if source == "" {
+						installed = ""
+					}
+					setup.unresolved(installed + "ddtest cannot tell whether " + command + " removes dd-trace from " + displayDirectory(directory) + ".")
 					return "", ""
+				case uninstall:
+					// Whichever install added it, the tests no longer find it.
+					if version != "" {
+						removed = source + ", which " + command + " removes"
+					}
+					uninstalled, version, source = command, "", ""
+				case version == "":
+					// After an uninstall, whether a reinstall restores dd-trace
+					// depends on whether the uninstall saved its removal.
+					setup.unresolved("the job removes dd-trace (" + uninstalled + "), and ddtest cannot tell whether the later " + command + " installs it again.")
+					return "", ""
+				default:
+					// npm ci, a later install or a prune reinstalls the
+					// dependencies as declared, removing a tracer installed
+					// without saving it.
+					removed = source + ", which " + command + " removes"
+					version, source = "", ""
 				}
-				// npm ci, a later install or a prune reinstalls the
-				// dependencies as declared, removing a tracer installed
-				// without saving it.
-				removed = source + ", which " + strings.Join(words, " ") + " at " + where + " removes"
-				version, source = "", ""
 				continue
 			}
 			switch {
@@ -242,12 +290,17 @@ func javascriptHandWrittenTracer(setup *handWrittenSetup, root, directory string
 				setup.unresolved("the job installs dd-trace (" + strings.Join(words, " ") + " at " + where + ") outside " + displayDirectory(directory) + ", where the tests run, so ddtest cannot tell that their -r dd-trace/ci/init resolves that install.")
 				return "", ""
 			}
-			version, source, removed = release, strings.Join(words, " ")+" at "+where, ""
+			version, source, removed, uninstalled = release, strings.Join(words, " ")+" at "+where, "", ""
 			saved = words[0] != "npm" || !slices.Contains(words, "--no-save")
 		}
 	}
 	if version != "" {
 		return version, source
+	}
+	if uninstalled != "" {
+		// package.json may still declare it; the installed tree does not.
+		setup.missing("The job removes dd-trace (" + uninstalled + ") before the tests, and no later command installs it, so -r dd-trace/ci/init cannot load: remove that command, or install an exact release after it.")
+		return "", ""
 	}
 	declared, manifest, development := javascriptDeclaredTracer(root, directory)
 	switch {
@@ -257,7 +310,7 @@ func javascriptHandWrittenTracer(setup *handWrittenSetup, root, directory string
 	case manifest == "":
 		setup.missing("No package.json in " + displayDirectory(directory) + " or above it depends on dd-trace, and no command of the job installs it, so -r dd-trace/ci/init cannot load: add dd-trace as a devDependency with an exact release (npm install --save-dev --save-exact dd-trace@<release>) and commit the lockfile.")
 		return "", ""
-	case development && javascriptOmitsDevelopment(job, index, env):
+	case development && javascriptOmitsDevelopment(workflow, job, index):
 		setup.missing("dd-trace is a devDependency of " + manifest + ", but the job installs production dependencies only, so -r dd-trace/ci/init cannot load: install the devDependencies too, or make dd-trace a dependency.")
 		return "", ""
 	case exactRelease(strings.TrimPrefix(declared, "=")):
@@ -381,23 +434,39 @@ func javascriptDeclaredTracer(root, directory string) (requested, manifest strin
 }
 
 // javascriptOmitsDevelopment reports an install command before index in
-// job that leaves devDependencies out: --production, --omit=dev or
-// NODE_ENV=production.
-func javascriptOmitsDevelopment(job runtimeJob, index int, env map[string]string) bool {
-	production := strings.TrimSpace(env["NODE_ENV"]) == "production"
+// job that leaves devDependencies out: --production, --omit=dev (or --omit
+// dev), --only=production and the like, or NODE_ENV=production in that
+// command's own environment.
+func javascriptOmitsDevelopment(workflow ciWorkflow, job runtimeJob, index int) bool {
 	for _, step := range job.Steps[:index] {
 		commands, err := staticCommands(step.Run)
 		if err != nil {
 			continue
 		}
 		for _, words := range commands {
+			assigned, words := handWrittenCommand(words)
 			if len(words) < 2 || !slices.Contains([]string{"npm", "yarn", "pnpm"}, words[0]) || !slices.Contains([]string{"ci", "install", "i"}, words[1]) {
 				continue
 			}
-			if production || slices.ContainsFunc(words[2:], func(word string) bool {
-				return slices.Contains([]string{"--production", "--production=true", "--prod", "--omit=dev", "--only=production", "--only=prod"}, word)
-			}) {
+			env := mergeEnvironment(handWrittenEnvironment(workflow, job, step), assigned)
+			if strings.TrimSpace(env["NODE_ENV"]) == "production" {
 				return true
+			}
+			for i, word := range words[2:] {
+				next := ""
+				if i+3 < len(words) {
+					next = words[i+3]
+				}
+				option, value, inline := strings.Cut(word, "=")
+				if !inline {
+					value = next
+				}
+				switch {
+				case slices.Contains([]string{"--production", "--production=true", "--prod"}, word) || word == "-P" && words[0] == "pnpm",
+					option == "--omit" && value == "dev",
+					option == "--only" && slices.Contains([]string{"production", "prod"}, value):
+					return true
+				}
 			}
 		}
 	}

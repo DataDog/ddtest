@@ -205,6 +205,11 @@ type ciSetupTerms struct {
 	// without writing it, such as "a masked GitLab CI/CD variable", for
 	// setups written by hand.
 	SecretStore string
+	// KeyBinding reports a provider that gives a job the stored key only
+	// where its configuration binds it (a Jenkins credential), not merely
+	// because the secret store holds it: a hand-written setup without
+	// DD_API_KEY in its environment then reports nothing.
+	KeyBinding bool
 	// Plugin reports a setup that is a CI server plugin, enabled in the
 	// configuration, that installs the tracers on the build agent and sets
 	// their variables for every step (the Datadog Jenkins plugin), instead of

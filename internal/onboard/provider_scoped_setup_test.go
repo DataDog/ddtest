@@ -501,7 +501,7 @@ func TestProviderDirectCucumberNeedsTheImpactedWorkaround(t *testing.T) {
 
 // A direct invocation that assigns variables inline loses them when ddtest
 // rebuilds the command from what remains, so ddtest prescribes no exact
-// command for it: they move into the job's variables first.
+// command for it: they move out of the command first.
 func TestProviderDirectInvocationKeepsInlineAssignments(t *testing.T) {
 	for _, framework := range scopedFrameworks {
 		t.Run(framework.name, func(t *testing.T) {

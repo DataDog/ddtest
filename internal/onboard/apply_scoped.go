@@ -151,7 +151,7 @@ func inlineAssignmentsError(step runtimeStep) error {
 	if len(step.inline) == 0 {
 		return nil
 	}
-	return fmt.Errorf("CI runs %s with inline variable assignments (%s), which ddtest does not rewrite into the scoped command: move them into the job's variables, keeping their values, then rerun onboard --apply", step.Run, strings.Join(step.inline, ", "))
+	return fmt.Errorf("CI runs %s with inline variable assignments (%s), which ddtest does not rewrite into the scoped command: move them out of the command, keeping their values, into the variables of the commands that run after the job's dependency install (a preload such as NODE_OPTIONS must not reach the install), then rerun onboard --apply", step.Run, strings.Join(step.inline, ", "))
 }
 
 // Only literal package-script leaves are changed. Framework configs, profiles,

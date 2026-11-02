@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -21,14 +22,42 @@ import (
 const handWrittenPackage = `{"scripts": {"test": "jest"}, "devDependencies": {"jest": "30.0.0", "vitest": "3.2.0", "dd-trace": "5.40.0"}}`
 
 // handWrittenProvider writes one provider's job running command with env as
-// its variables, in the provider's own syntax.
+// its variables, in the provider's own syntax. A preload (NODE_OPTIONS or
+// RUBYOPT) in env is set for the commands after before instead, as a job
+// that installs its dependencies there must: the job's variables would
+// reach the install, before the tracer exists.
 type handWrittenProvider struct {
 	name, file string
 	config     func(env map[string]string, before []string, command string) string
 }
 
+// handWrittenPreloadEntries moves env's preload into entries for the
+// commands after before, written as provider runs them: an export in the
+// job's shell, or for CircleCI, whose run steps start their own shells, in
+// $BASH_ENV.
+func handWrittenPreloadEntries(provider string, env map[string]string, before []string) (map[string]string, []string) {
+	entries := slices.Clone(before)
+	for _, key := range []string{"NODE_OPTIONS", "RUBYOPT"} {
+		value, set := env[key]
+		if !set {
+			continue
+		}
+		env = with(env, key, "")
+		switch provider {
+		case "circleci":
+			entries = append(entries, `echo 'export `+key+`="`+value+`"' >> "$BASH_ENV"`)
+		case "buildkite":
+			entries = append(entries, `export `+key+`="`+strings.ReplaceAll(value, "$", "$$")+`"`)
+		default:
+			entries = append(entries, `export `+key+`="`+value+`"`)
+		}
+	}
+	return env, entries
+}
+
 var handWrittenProviders = []handWrittenProvider{
 	{"gitlab", ".gitlab-ci.yml", func(env map[string]string, before []string, command string) string {
+		env, before = handWrittenPreloadEntries("gitlab", env, before)
 		text := "test:\n  image: node:22\n" + yamlVariables("  variables:\n", "    ", env) + "  script:\n"
 		for _, entry := range append(before, command) {
 			text += "    - " + entry + "\n"
@@ -36,6 +65,7 @@ var handWrittenProviders = []handWrittenProvider{
 		return text
 	}},
 	{"circleci", ".circleci/config.yml", func(env map[string]string, before []string, command string) string {
+		env, before = handWrittenPreloadEntries("circleci", env, before)
 		text := "version: 2.1\njobs:\n  test:\n    docker:\n      - image: cimg/node:22.11\n" + yamlVariables("    environment:\n", "      ", env) + "    steps:\n      - checkout\n"
 		for _, entry := range append(before, command) {
 			text += "      - run: " + entry + "\n"
@@ -43,6 +73,7 @@ var handWrittenProviders = []handWrittenProvider{
 		return text + "workflows:\n  main:\n    jobs:\n      - test\n"
 	}},
 	{"buildkite", ".buildkite/pipeline.yml", func(env map[string]string, before []string, command string) string {
+		env, before = handWrittenPreloadEntries("buildkite", env, before)
 		text := "steps:\n  - label: test\n" + yamlVariables("    env:\n", "      ", env) + "    commands:\n"
 		for _, entry := range append(before, command) {
 			text += "      - " + entry + "\n"
@@ -50,6 +81,13 @@ var handWrittenProviders = []handWrittenProvider{
 		text += "    plugins:\n      - docker#v5.12.0:\n          image: node:22\n          propagate-environment: true\n          environment:\n            - DD_API_KEY\n"
 		return text
 	}},
+}
+
+// preloadFirst is an entry that sets a preload for the provider's later
+// commands, to place before a dependency install.
+func preloadFirst(provider handWrittenProvider, key, value string) []string {
+	_, entries := handWrittenPreloadEntries(provider.name, map[string]string{key: value}, nil)
+	return entries
 }
 
 func yamlVariables(header, indent string, env map[string]string) string {
@@ -163,6 +201,21 @@ func TestHandWrittenJavaScriptSetups(t *testing.T) {
 				{name: "APM preload", env: handWrittenAgentless("-r dd-trace/init"), status: StatusInconclusive, reason: "does not set up Test Optimization"},
 				{name: "action variable", env: handWrittenAgentless("-r $DD_TRACE_PACKAGE"), status: StatusInconclusive, reason: "only the Datadog GitHub Actions setup exports"},
 				{name: "no setup", env: map[string]string{"DD_SITE": "datadoghq.com"}, status: StatusIncompatible, reason: "selecting JavaScript runs before this test command"},
+				// npm runs on Node too: a preload that reaches npm ci, before
+				// dd-trace is installed, stops the job on a fresh checkout.
+				{name: "preload before the install", env: with(agentless, "NODE_OPTIONS", ""), before: append(preloadFirst(provider, "NODE_OPTIONS", "-r dd-trace/ci/init"), "npm ci"), status: StatusInconclusive, reason: "NODE_OPTIONS preloads dd-trace for npm ci"},
+				{name: "inline preload on the install", env: agentless, before: []string{"NODE_OPTIONS='-r dd-trace/ci/init' npm ci"}, status: StatusInconclusive, reason: "NODE_OPTIONS preloads dd-trace for npm ci"},
+				// Command resolution and the validation scope accept only the
+				// documented spelling.
+				{name: "node_modules path preload", env: handWrittenAgentless("-r ./node_modules/dd-trace/ci/init"), status: StatusInconclusive, reason: "a spelling ddtest does not validate"},
+				{name: "unknown tracer switch", env: with(agentless, "DD_TRACE_ENABLED", "$TRACE_TESTS"), status: StatusInconclusive, reason: "DD_TRACE_ENABLED comes from"},
+				{name: "unknown Test Optimization switch", env: with(agentless, "DD_CIVISIBILITY_ENABLED", "$TRACE_TESTS"), status: StatusInconclusive, reason: "DD_CIVISIBILITY_ENABLED comes from"},
+				{name: "manifest tracer uninstalled", before: []string{"npm ci", "npm uninstall dd-trace"}, env: agentless, status: StatusInconclusive, reason: "The job removes dd-trace (npm uninstall dd-trace at"},
+				{name: "reinstall after an uninstall", before: []string{"npm ci", "npm uninstall --no-save dd-trace", "npm ci"}, env: agentless, status: StatusInconclusive, reason: "cannot tell whether the later npm ci"},
+				{name: "uninstall then exact install", pkg: `{"devDependencies": {"jest": "30.0.0"}}`, before: []string{"npm ci", "npm uninstall dd-trace", "npm install --no-save dd-trace@5.40.0"}, env: agentless, configured: true, status: StatusCompatible},
+				{name: "production install, split option", before: []string{"npm ci --omit dev"}, env: agentless, status: StatusInconclusive, reason: "installs production dependencies only"},
+				{name: "production install, split only", before: []string{"npm install --only production"}, env: agentless, status: StatusInconclusive, reason: "installs production dependencies only"},
+				{name: "production install, its own NODE_ENV", before: []string{"NODE_ENV=production npm ci"}, env: agentless, status: StatusInconclusive, reason: "installs production dependencies only"},
 			} {
 				t.Run(tc.name, func(t *testing.T) {
 					framework, command, pkg := tc.framework, tc.command, tc.pkg
@@ -273,6 +326,23 @@ func TestHandWrittenCucumberSetupApply(t *testing.T) {
 			require.NoError(t, err)
 			require.NotContains(t, string(config), "DD_CUCUMBER_NODE_OPTIONS=", "no provider setup is added")
 		})
+		// A later test command that sets its own NODE_OPTIONS without the
+		// loader gets incomplete coverage, whatever the first one loads.
+		t.Run(provider.name+"/native ESM, later step without the loader", func(t *testing.T) {
+			pkg := fmt.Sprintf(cucumberPackage, `"type": "module", `)
+			loaded := with(agentless, "NODE_OPTIONS", agentless["NODE_OPTIONS"]+" "+cucumberESMLoaderHook)
+			env, before := handWrittenPreloadEntries(provider.name, loaded, []string{"npm ci"})
+			later := `NODE_OPTIONS='` + agentless["NODE_OPTIONS"] + `' npm test`
+			root := handWrittenRepository(t, provider, pkg, provider.config(env, append(before, "npm test"), later), nil)
+			_, err := PlanJavaScriptSetup(root, "cucumber", "5.133.0", "datadoghq.com", ">=18")
+			var gap *SetupGap
+			require.ErrorAs(t, err, &gap)
+			require.Contains(t, gap.Reason, "hand-written setup leaves the tracer's preload in NODE_OPTIONS without the "+cucumberESMLoaderHook)
+
+			writeFile(t, root, provider.file, provider.config(env, append(before, "npm test"), `NODE_OPTIONS='`+loaded["NODE_OPTIONS"]+`' npm test`))
+			_, err = PlanJavaScriptSetup(root, "cucumber", "5.133.0", "datadoghq.com", ">=18")
+			require.NoError(t, err, "every test step loads it")
+		})
 	}
 }
 
@@ -333,6 +403,7 @@ func TestProviderSetupsExportNoDDTracePackage(t *testing.T) {
 // rubyHandWrittenProviders write one provider's RSpec job.
 var rubyHandWrittenProviders = []handWrittenProvider{
 	{"gitlab", ".gitlab-ci.yml", func(env map[string]string, before []string, command string) string {
+		env, before = handWrittenPreloadEntries("gitlab", env, before)
 		text := "rspec:\n  image: ruby:3.3\n" + yamlVariables("  variables:\n", "    ", env) + "  script:\n"
 		for _, entry := range append(before, command) {
 			text += "    - " + entry + "\n"
@@ -340,6 +411,7 @@ var rubyHandWrittenProviders = []handWrittenProvider{
 		return text
 	}},
 	{"circleci", ".circleci/config.yml", func(env map[string]string, before []string, command string) string {
+		env, before = handWrittenPreloadEntries("circleci", env, before)
 		text := "version: 2.1\njobs:\n  rspec:\n    docker:\n      - image: cimg/ruby:3.3\n" + yamlVariables("    environment:\n", "      ", env) + "    steps:\n      - checkout\n"
 		for _, entry := range append(before, command) {
 			text += "      - run: " + entry + "\n"
@@ -347,6 +419,7 @@ var rubyHandWrittenProviders = []handWrittenProvider{
 		return text + "workflows:\n  main:\n    jobs:\n      - rspec\n"
 	}},
 	{"buildkite", ".buildkite/pipeline.yml", func(env map[string]string, before []string, command string) string {
+		env, before = handWrittenPreloadEntries("buildkite", env, before)
 		text := "steps:\n  - label: rspec\n" + yamlVariables("    env:\n", "      ", env) + "    commands:\n"
 		for _, entry := range append(before, command) {
 			text += "      - " + entry + "\n"
@@ -372,6 +445,7 @@ func TestHandWrittenRubySetups(t *testing.T) {
 			for _, tc := range []struct {
 				name       string
 				env        map[string]string
+				before     []string
 				command    string
 				lock       string
 				files      map[string]string
@@ -380,9 +454,12 @@ func TestHandWrittenRubySetups(t *testing.T) {
 				reason     string
 			}{
 				{name: "RUBYOPT", env: auto, configured: true},
-				{name: "RUBYOPT with bundle exec", env: with(auto, "RUBYOPT", "-rdatadog/ci/auto_instrument"), configured: true},
+				// Ruby reads RUBYOPT when it starts bundle exec too, before
+				// Bundler sets up a bundle that may hold datadog-ci alone.
+				{name: "RUBYOPT with bundle exec", env: with(auto, "RUBYOPT", "-rdatadog/ci/auto_instrument"), reason: "preload -rbundler/setup before it"},
+				{name: "RUBYOPT with -r bundler/setup", env: with(auto, "RUBYOPT", "-r bundler/setup -r datadog/ci/auto_instrument"), configured: true},
 				{name: "RUBYOPT without Bundler", env: with(auto, "RUBYOPT", "-rdatadog/ci/auto_instrument"), command: "rspec", reason: "before Bundler sets up the bundle"},
-				{name: "RUBYOPT with a binstub", env: with(auto, "RUBYOPT", "-rdatadog/ci/auto_instrument"), command: "bin/rspec", files: map[string]string{"bin/rspec": "#!/usr/bin/env ruby\nrequire 'bundler/setup'\nload Gem.bin_path('rspec-core', 'rspec')\n"}, reason: "A binstub such as bin/rspec sets up Bundler only after RUBYOPT's preloads"},
+				{name: "RUBYOPT with a binstub", env: with(auto, "RUBYOPT", "-rdatadog/ci/auto_instrument"), command: "bin/rspec", files: map[string]string{"bin/rspec": "#!/usr/bin/env ruby\nrequire 'bundler/setup'\nload Gem.bin_path('rspec-core', 'rspec')\n"}, reason: "a binstub such as bin/rspec too"},
 				{name: "RUBYOPT with a binstub after Bundler", env: auto, command: "bin/rspec", files: map[string]string{"bin/rspec": "#!/usr/bin/env ruby\nrequire 'bundler/setup'\nload Gem.bin_path('rspec-core', 'rspec')\n"}, configured: true},
 				{name: "framework disabled", env: with(auto, "DD_TRACE_RSPEC_ENABLED", "false"), reason: "DD_TRACE_RSPEC_ENABLED=false turns the tracer's rspec integration off"},
 				{name: "conditional instrument", env: map[string]string{"DD_SITE": "datadoghq.com"}, files: map[string]string{".rspec": "--require spec_helper\n", "spec/spec_helper.rb": strings.Replace(handWrittenSpecHelper, "  c.ci.instrument :rspec\n", "  c.ci.instrument :rspec if ENV[\"TRACE_TESTS\"] == \"true\"\n", 1)}, reason: "calls c.ci.instrument :rspec if ENV[\"TRACE_TESTS\"] == \"true\", which ddtest does not evaluate"},
@@ -395,6 +472,16 @@ func TestHandWrittenRubySetups(t *testing.T) {
 				{name: "spec helper without instrument", files: map[string]string{".rspec": "--require spec_helper\n", "spec/spec_helper.rb": strings.Replace(handWrittenSpecHelper, "  c.ci.instrument :rspec\n", "", 1)}, reason: "add c.ci.instrument :rspec"},
 				{name: "conditional spec helper", files: map[string]string{".rspec": "--require spec_helper\n", "spec/spec_helper.rb": strings.Replace(handWrittenSpecHelper, "  c.ci.enabled = true\n", "  c.ci.enabled = ENV[\"CI\"] == \"true\"\n", 1)}, reason: "which ddtest does not evaluate"},
 				{name: "no setup", env: map[string]string{"DD_SITE": "datadoghq.com"}, reason: "before this test command"},
+				{name: "RUBYOPT before bundle install", env: with(auto, "RUBYOPT", ""), before: append(preloadFirst(provider, "RUBYOPT", auto["RUBYOPT"]), "bundle install"), reason: "RUBYOPT preloads datadog-ci for bundle install"},
+				{name: "unknown tracer switch", env: with(auto, "DD_TRACE_ENABLED", "$TRACE_TESTS"), reason: "DD_TRACE_ENABLED comes from"},
+				// --options replaces .rspec.
+				{name: "selected options file", env: map[string]string{"DD_SITE": "datadoghq.com"}, command: "bundle exec rspec --options .rspec-ci", files: map[string]string{".rspec": "--format progress\n", ".rspec-ci": "--require spec_helper\n", "spec/spec_helper.rb": handWrittenSpecHelper}, configured: true},
+				{name: "options file without the helper", env: map[string]string{"DD_SITE": "datadoghq.com"}, command: "bundle exec rspec --options .rspec-ci", files: map[string]string{".rspec": "--require spec_helper\n", ".rspec-ci": "--format progress\n", "spec/spec_helper.rb": handWrittenSpecHelper}, reason: "before this test command"},
+				// RSpec requires ./spec/spec_helper.rb from the working
+				// directory, a bare name from spec/ or lib/.
+				{name: "path-qualified helper", env: map[string]string{"DD_SITE": "datadoghq.com"}, files: map[string]string{".rspec": "--require ./spec/spec_helper.rb\n", "spec/spec_helper.rb": handWrittenSpecHelper}, configured: true},
+				{name: "helper on the load path", env: map[string]string{"DD_SITE": "datadoghq.com"}, files: map[string]string{".rspec": "--require support/datadog\n", "spec/support/datadog.rb": handWrittenSpecHelper}, configured: true},
+				{name: "helper selects the site", env: map[string]string{"DD_SITE": "datadoghq.com"}, files: map[string]string{".rspec": "--require spec_helper\n", "spec/spec_helper.rb": strings.Replace(handWrittenSpecHelper, "  c.service = \"app\"\n", "  c.service = \"app\"\n  c.site = \"datadoghq.eu\"\n", 1)}, reason: "the helper sets c.site = \"datadoghq.eu\""},
 			} {
 				t.Run(tc.name, func(t *testing.T) {
 					command := tc.command
@@ -413,7 +500,11 @@ func TestHandWrittenRubySetups(t *testing.T) {
 					for path, contents := range files {
 						writeFile(t, root, path, contents)
 					}
-					writeFile(t, root, provider.file, provider.config(tc.env, []string{"bundle install"}, command))
+					before := tc.before
+					if before == nil {
+						before = []string{"bundle install"}
+					}
+					writeFile(t, root, provider.file, provider.config(tc.env, before, command))
 					t.Chdir(root)
 					useCIProvider(t, provider.name)
 					require.Equal(t, tc.configured, rubyDiscovery{}.ciSetupConfigured(root, "rspec", tc.site))
@@ -439,10 +530,15 @@ func TestHandWrittenRubySetups(t *testing.T) {
 // instrument, is set up by hand there: ddtest then checks that setup, with
 // the key from a Jenkins credential, instead of reporting it unsupported.
 func TestHandWrittenJenkinsContainerSetup(t *testing.T) {
-	pipeline := func(environment string) string {
-		return "pipeline {\n  agent { docker { image 'node:22' } }\n  environment {\n" + environment + "  }\n  stages {\n    stage('Test') {\n      steps {\n        sh 'npm ci'\n        sh 'npx jest'\n      }\n    }\n  }\n}\n"
+	// The preload reaches the tests only, after npm ci installs dd-trace.
+	const scopedTest = "withEnv(['NODE_OPTIONS=-r dd-trace/ci/init']) {\n          sh 'npx jest'\n        }"
+	pipeline := func(environment string, test ...string) string {
+		if len(test) == 0 {
+			test = []string{scopedTest}
+		}
+		return "pipeline {\n  agent { docker { image 'node:22' } }\n  environment {\n" + environment + "  }\n  stages {\n    stage('Test') {\n      steps {\n        sh 'npm ci'\n        " + test[0] + "\n      }\n    }\n  }\n}\n"
 	}
-	complete := "    NODE_OPTIONS = '-r dd-trace/ci/init'\n    DD_CIVISIBILITY_AGENTLESS_ENABLED = 'true'\n    DD_API_KEY = credentials('datadog-api-key')\n"
+	complete := "    DD_CIVISIBILITY_AGENTLESS_ENABLED = 'true'\n    DD_API_KEY = credentials('datadog-api-key')\n"
 	for _, tc := range []struct {
 		name, environment string
 		configured        bool
@@ -450,10 +546,19 @@ func TestHandWrittenJenkinsContainerSetup(t *testing.T) {
 	}{
 		{"complete", complete, true, StatusCompatible, ""},
 		{"literal key", strings.Replace(complete, "credentials('datadog-api-key')", "'0123456789abcdef'", 1), false, StatusInconclusive, "never commit the key"},
+		// A Jenkins credential reaches a stage only where it is bound.
+		{"unbound key", strings.Replace(complete, "    DD_API_KEY = credentials('datadog-api-key')\n", "", 1), false, StatusInconclusive, "No DD_API_KEY reaches these tests"},
 		{"agent mode", strings.Replace(complete, "    DD_CIVISIBILITY_AGENTLESS_ENABLED = 'true'\n", "", 1), false, StatusInconclusive, "reports through a Datadog Agent"},
+		// The pipeline's environment reaches npm ci too, before dd-trace is
+		// installed.
+		{"preload before the install", complete + "    NODE_OPTIONS = '-r dd-trace/ci/init'\n", false, StatusInconclusive, "NODE_OPTIONS preloads dd-trace for npm ci"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			root := jenkinsRepository(t, pipeline(tc.environment))
+			source := pipeline(tc.environment)
+			if strings.Contains(tc.environment, "NODE_OPTIONS") {
+				source = pipeline(tc.environment, "sh 'npx jest'")
+			}
+			root := jenkinsRepository(t, source)
 			writeFile(t, root, "package.json", handWrittenPackage)
 			// The stage's own setup is what ddtest reads, whatever the
 			// provider's setup can do in a container.
@@ -471,7 +576,7 @@ func TestHandWrittenJenkinsContainerSetup(t *testing.T) {
 		})
 	}
 	// An inline prefix in the sh script is the command's environment there too.
-	root := jenkinsRepository(t, strings.Replace(pipeline("    DD_API_KEY = credentials('datadog-api-key')\n"), "sh 'npx jest'", "sh 'NODE_OPTIONS=\"-r dd-trace/ci/init\" DD_CIVISIBILITY_AGENTLESS_ENABLED=true npx jest'", 1))
+	root := jenkinsRepository(t, strings.Replace(pipeline("    DD_API_KEY = credentials('datadog-api-key')\n", "sh 'npx jest'"), "sh 'npx jest'", "sh 'NODE_OPTIONS=\"-r dd-trace/ci/init\" DD_CIVISIBILITY_AGENTLESS_ENABLED=true npx jest'", 1))
 	writeFile(t, root, "package.json", handWrittenPackage)
 	require.True(t, javascriptDiscovery{}.ciSetupConfigured(root, "jest", ""))
 	check := handWrittenRuntime(t, root, "jest")
@@ -479,7 +584,7 @@ func TestHandWrittenJenkinsContainerSetup(t *testing.T) {
 	require.Equal(t, "hand-written dd-trace@5.40.0 setup (NODE_OPTIONS)", check.Jobs[0].Action)
 	// Without a hand-written setup ddtest reads none, and the provider's
 	// setup alone decides: a stage it cannot instrument stays unsupported.
-	source := pipeline("    DD_SITE = 'datadoghq.com'\n")
+	source := pipeline("    DD_SITE = 'datadoghq.com'\n", "sh 'npx jest'")
 	root = jenkinsRepository(t, source)
 	writeFile(t, root, "package.json", handWrittenPackage)
 	require.Nil(t, firstJobHandWrittenSetup(t, root, "javascript", "jest", ""))
@@ -517,7 +622,7 @@ func TestHandWrittenSetupInstructions(t *testing.T) {
 	root = t.TempDir()
 	writeFile(t, root, "Gemfile", handWrittenGemfile)
 	writeFile(t, root, "Gemfile.lock", handWrittenGemfileLock)
-	writeFile(t, root, rubyProvider.file, rubyProvider.config(map[string]string{"RUBYOPT": "-rdatadog/ci/auto_instrument", "DD_CIVISIBILITY_AGENTLESS_ENABLED": "true"}, []string{"bundle install"}, "bundle exec rspec"))
+	writeFile(t, root, rubyProvider.file, rubyProvider.config(map[string]string{"RUBYOPT": "-rbundler/setup -rdatadog/ci/auto_instrument", "DD_CIVISIBILITY_AGENTLESS_ENABLED": "true"}, []string{"bundle install"}, "bundle exec rspec"))
 	t.Chdir(root)
 	useCIProvider(t, rubyProvider.name)
 	state, err := rubyAgentStart(t, StartOptions{Format: "json", Site: "datadoghq.com"})
@@ -529,7 +634,7 @@ func TestHandWrittenSetupInstructions(t *testing.T) {
 	require.Contains(t, state.Instruction, "# Keep the hand-written Datadog Test Optimization setup for rspec on GitLab CI")
 	require.NotContains(t, state.Instruction, "test-optimization-gitlab-script", "no job gets the provider's setup")
 
-	writeFile(t, root, rubyProvider.file, rubyProvider.config(map[string]string{"RUBYOPT": "-rdatadog/ci/auto_instrument", "DD_CIVISIBILITY_ENABLED": "true", "DD_CIVISIBILITY_AGENTLESS_ENABLED": "true"}, []string{"bundle install"}, "bundle exec rspec"))
+	writeFile(t, root, rubyProvider.file, rubyProvider.config(map[string]string{"RUBYOPT": "-rbundler/setup -rdatadog/ci/auto_instrument", "DD_CIVISIBILITY_ENABLED": "true", "DD_CIVISIBILITY_AGENTLESS_ENABLED": "true"}, []string{"bundle install"}, "bundle exec rspec"))
 	state, err = rubyAgentStart(t, StartOptions{Format: "json", Site: "datadoghq.com"})
 	require.NoError(t, err)
 	require.Equal(t, "ready", state.Status)
@@ -650,7 +755,8 @@ func TestHandWrittenSetupReachesEveryTestStep(t *testing.T) {
 			root := t.TempDir()
 			writeFile(t, root, "Gemfile", handWrittenGemfile)
 			writeFile(t, root, "Gemfile.lock", handWrittenGemfileLock)
-			writeFile(t, root, provider.file, provider.config(auto, []string{"bundle install", "bundle exec rspec spec/unit"}, "bundle exec rspec spec/integration"))
+			env, before := handWrittenPreloadEntries(provider.name, auto, []string{"bundle install"})
+			writeFile(t, root, provider.file, provider.config(env, append(before, "bundle exec rspec spec/unit"), "bundle exec rspec spec/integration"))
 			t.Chdir(root)
 			useCIProvider(t, provider.name)
 			check := RubyCIConfigurationForSite(root, "rspec", "datadoghq.com")
@@ -683,4 +789,35 @@ func TestHandWrittenTracerInstallDirectory(t *testing.T) {
 	require.Equal(t, "5.40.0", version)
 	require.Empty(t, setup.Problems)
 	require.Empty(t, setup.Unresolved)
+}
+
+// A production-only install is read in its own step's environment: a
+// NODE_ENV=production there omits devDependencies, one only the test step
+// sets does not.
+func TestHandWrittenProductionInstallEnvironment(t *testing.T) {
+	job := runtimeJob{Steps: []runtimeStep{
+		{Run: "npm ci", Env: map[string]string{"NODE_ENV": "production"}},
+		{Run: "npx jest"},
+	}}
+	require.True(t, javascriptOmitsDevelopment(ciWorkflow{}, job, 1))
+	job.Steps[0].Env, job.Steps[1].Env = nil, map[string]string{"NODE_ENV": "production"}
+	require.False(t, javascriptOmitsDevelopment(ciWorkflow{}, job, 1))
+	job.Env = map[string]string{"NODE_ENV": "production"}
+	require.True(t, javascriptOmitsDevelopment(ciWorkflow{}, job, 1), "the job's variables reach the install too")
+}
+
+// The shell expands a command's arguments before its own assignments take
+// effect, so a command whose arguments read a variable it assigns keeps
+// them: folded into the step's environment, the argument would read the
+// assigned value instead of the earlier one.
+func TestFoldCommandEnvironmentKeepsArgumentExpansion(t *testing.T) {
+	known := map[string]string{"TEST_TARGET": "unit"}
+	_, _, ok := foldCommandEnvironment(`DD_ENV=ci TEST_TARGET=integration npx jest "$TEST_TARGET"`, known, "")
+	require.False(t, ok)
+	_, _, ok = foldCommandEnvironment(`DD_ENV=ci TEST_TARGET=integration npx jest "${TEST_TARGET}/specs"`, known, "")
+	require.False(t, ok)
+	run, env, ok := foldCommandEnvironment(`DD_ENV=ci npx jest "$TEST_TARGET"`, known, "")
+	require.True(t, ok)
+	require.Equal(t, `npx jest "$TEST_TARGET"`, run)
+	require.Equal(t, map[string]string{"DD_ENV": "ci"}, env)
 }

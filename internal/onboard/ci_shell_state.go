@@ -92,7 +92,9 @@ func (s *ciShellState) apply(command string, current map[string]string) bool {
 // shell sets them for that command alone, as a step's environment does, so
 // they become the step's environment and the command runs without them.
 // Values read known like exports; one ddtest cannot evaluate stays
-// unresolved. ok is false for any other command.
+// unresolved. ok is false for any other command, and for one whose
+// arguments read a variable it assigns, which the shell expands with the
+// value from before the assignment.
 func foldCommandEnvironment(command string, known map[string]string, project string) (run string, env map[string]string, ok bool) {
 	file, parsed := parseCIShell(command)
 	if !parsed || len(file.Stmts) != 1 {
@@ -121,6 +123,22 @@ func foldCommandEnvironment(command string, known map[string]string, project str
 		env[name] = value
 	}
 	if !tracer {
+		return "", nil, false
+	}
+	// The shell expands the command's arguments before its assignments
+	// take effect: in A=x cmd "$A", $A is the earlier value. Folded into
+	// the step's environment, it would read x instead.
+	reads := false
+	for _, arg := range call.Args {
+		syntax.Walk(arg, func(node syntax.Node) bool {
+			if expansion, ok := node.(*syntax.ParamExp); ok && expansion.Param != nil {
+				_, assigned := env[expansion.Param.Value]
+				reads = reads || assigned
+			}
+			return !reads
+		})
+	}
+	if reads {
 		return "", nil, false
 	}
 	var text strings.Builder
