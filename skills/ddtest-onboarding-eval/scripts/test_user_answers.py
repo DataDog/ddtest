@@ -78,6 +78,19 @@ class QuestionTests(unittest.TestCase):
         self.assertEqual([answer["answer"] for answer in composed["answers"]], ["ci_runtime=ruby=3.4", "ci_runtime=B / test:ruby=3.3"])
         self.assertNotIn("--", composed["reply"])
 
+    def test_runtime_aliases_match_ddtest_ci_runtime_names(self):
+        # ddtest's --ci-runtime takes js for node, in any case.
+        for text in ("ci_runtime=js=22", "ci_runtime=JS=22", "ci_runtime= Node =22", "ci_runtime=A / test:js=22"):
+            with self.subTest(text=text):
+                self.assertEqual(user_answers.parse_answer(text)["runtime"], "node")
+        with self.assertRaises(ValueError):
+            user_answers.parse_answer("ci_runtime=js=lts")
+        for flag in ("node", "js"):
+            with self.subTest(flag=flag):
+                asked = user_answers.question(runtime_question(("A / test", "B / test"), runtime="Node", flag=flag))
+                composed = user_answers.reply(asked, user_answers.load_answers(["ci_runtime=js=22", "ci_runtime=B / test:JS=20"]))
+                self.assertEqual(composed["reply"], "A / test runs Node 22.\nB / test runs Node 20.")
+
     def test_answer_for_another_runtime_does_not_cover_the_question(self):
         composed = user_answers.reply(user_answers.question(runtime_question()), user_answers.load_answers(["ci_runtime=node=22"]))
         self.assertIsNone(composed["reply"])
@@ -125,6 +138,29 @@ class EvidenceTests(unittest.TestCase):
             self.assertEqual(run_eval.redact(text), expected)
         with patch.dict(os.environ, {"DD_API_KEY": "real-known-key-value"}):
             self.assertNotIn("real-known-key-value", run_eval.redact("${DD_API_KEY:-real-known-key-value}"))
+
+    def test_only_whole_references_in_an_expanding_context_survive_redaction(self):
+        # A leading $ does not make a literal a reference: the whole value must
+        # be one, and single quotes or a data file's quoted key keep $NAME literal.
+        kept = ("token=$TOKEN", "token=$A$B", 'password="$PASSWORD"', "token=$(vault read secret)",
+                "api_key = os.environ['DD_API_KEY']", 'api_key = os.environ.get("DD_API_KEY")',
+                '"api_key": "${{ secrets.DD_API_KEY }}"', '"api_key": "${DD_API_KEY}"', "${DD_API_KEY:-\"$OTHER\"}")
+        for text in kept:
+            with self.subTest(text=text):
+                self.assertEqual(run_eval.redact(text), text)
+        for text, expected in (('password: "$actual-secret"', 'password: "[REDACTED]"'),
+                               ("password='$ecret123'", "password='[REDACTED]'"),
+                               ('"password": "$ecret123"', '"password": "[REDACTED]"'),
+                               ("password: $2b$12$abcdefghijklmnopqrstuv", "password: [REDACTED]"),
+                               ("token='$(vault read secret)'", "token='[REDACTED] read secret)'"),
+                               ("token=$$abc123", "token=[REDACTED]"),
+                               ("apiKey: process.env.DD_API_KEY||abc123", "apiKey: [REDACTED]"),
+                               # Defaults follow the same rules.
+                               ("${DD_API_KEY:-$2b$10$abcdef}", "${DD_API_KEY:-[REDACTED]}"),
+                               ("${DD_API_KEY:-'$ecret123'}", "${DD_API_KEY:-[REDACTED]}"),
+                               ("DD_API_KEY=${KEY:-'$ecret123'}", "DD_API_KEY=${KEY:-[REDACTED]}")):
+            with self.subTest(text=text):
+                self.assertEqual(run_eval.redact(text), expected)
 
     def test_parameter_expansions_survive_and_only_literal_defaults_are_redacted(self):
         # Only a default supplies the variable's value; the other operands

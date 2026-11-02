@@ -1149,7 +1149,12 @@ class VerdictTests(unittest.TestCase):
                       "I've onboarded the repository.", "We have finished onboarding.", "Successfully set up Test Optimization.",
                       # A completed action before the claim is not a condition on it.
                       "After updating Jenkinsfile, I successfully onboarded the repository.",
-                      "I onboarded the repository after I updated the Jenkinsfile."):
+                      "I onboarded the repository after I updated the Jenkinsfile.",
+                      # A condition must qualify the claim: not the reader's needs or another clause.
+                      "If you need anything else, everything is done.", "Everything is done if you need anything else.",
+                      "When you're ready, the repository is onboarded.", "If needed, everything is done.",
+                      "Everything is done; CI reruns once a day.", "Everything is done, and CI runs when tests change.",
+                      "Everything is done: when CI runs, it reports to Datadog.", "Everything is done — if CI fails, rerun it."):
             with self.subTest(claim=claim):
                 result = run_eval.reporting_verdict(self.compact_answer() + "\n" + claim, self.compact_report())
                 self.assertEqual(result["status"], "review")
@@ -1171,6 +1176,8 @@ class VerdictTests(unittest.TestCase):
                      "Not onboarded yet.", "I have not onboarded the repository.", "Workflow edits are complete.",
                      "Once CI runs, the repository is onboarded.", "Test Optimization is set up when the secret is added.",
                      "After the first CI run, the repository will be onboarded.",
+                     "If the secret is added, everything is done.", "Everything is done once you add the secret.",
+                     "Once CI runs and the secret is added, the repository is onboarded.",
                      "CI is set up to skip forks.", "Onboarded, except the testwheel job."):
             with self.subTest(text=text):
                 result = run_eval.reporting_verdict(self.compact_answer() + "\n" + text, report)

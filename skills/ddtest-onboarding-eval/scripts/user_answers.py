@@ -16,9 +16,17 @@ _NAME = r"[a-z0-9][a-z0-9_-]*"
 # The versions ddtest's --ci-runtime takes (after an optional v): Node 22,
 # 22.11 or 22.11.0; Ruby 3.3 or 3.3.6, with a minor version.
 _NODE_VERSION = (r"v?[0-9]+(?:\.[0-9]+){0,2}", "22, 22.11 or 22.11.0")
-_RUNTIME_VERSIONS = {"node": _NODE_VERSION, "js": _NODE_VERSION,
+_RUNTIME_VERSIONS = {"node": _NODE_VERSION,
                      "ruby": (r"v?[0-9]+\.[0-9]+(?:\.[0-9]+)?", "3.3 or 3.3.6")}
 _VERSION = (r"v?[0-9]+(?:\.[0-9]+)*", "3.12")
+# Like ddtest's --ci-runtime, a runtime name is case-insensitive and js names
+# node; questions name the runtime by its first name (node, ruby).
+_RUNTIME_ALIASES = {"js": "node"}
+
+
+def runtime_name(name):
+    name = name.strip().lower()
+    return _RUNTIME_ALIASES.get(name, name)
 
 
 def parse_answer(text):
@@ -32,6 +40,7 @@ def parse_answer(text):
     if kind == "ci_runtime":
         selector, separator, version = value.rpartition("=")
         job, _, runtime = selector.rpartition(":")
+        runtime = runtime_name(runtime)
         if not separator or not re.fullmatch(_NAME, runtime):
             raise ValueError(f"User answer {text!r} must be ci_runtime=<runtime>=<version> or ci_runtime=<workflow / job>:<runtime>=<version>")
         pattern, example = _RUNTIME_VERSIONS.get(runtime, _VERSION)
@@ -101,7 +110,7 @@ def question(result):
     if asked["code"] == "ci_runtime_required":
         flag = re.search(r"--ci-runtime ([a-z][\w-]*)=<version>", instruction)
         name = re.search(r"\bwhich (\S+) version\b", reason)
-        asked["runtime"] = flag[1] if flag else None
+        asked["runtime"] = runtime_name(flag[1]) if flag else None
         asked["runtime_name"] = name[1] if name else asked["runtime"]
     return asked
 

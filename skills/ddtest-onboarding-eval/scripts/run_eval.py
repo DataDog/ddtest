@@ -53,10 +53,23 @@ def excerpt(value, limit=None):
     return text[:head] + f"\n[truncated: {len(text) - limit} characters omitted]\n" + text[len(text) - (limit - head):]
 
 
-# A variable reference names a secret without containing it: $NAME, ${NAME},
-# ${{ secrets.NAME }}, $(command), or a lookup such as credentials('id'),
-# ENV['NAME'] or process.env.NAME whose literal ends at the quote.
-SECRET_REFERENCE = re.compile(r"\$|process\.env\.|os\.environ\b")
+# A variable reference names a secret without containing it: $NAME, ${NAME...}
+# (or $${NAME...}, escaped for make or Compose), ${{ secrets.NAME }},
+# $(command), process.env.NAME, os.environ, or a lookup such as
+# credentials('id') or ENV['NAME'] whose literal ends at the quote. Only the
+# whole value counts: "$ecret-123" or a "$2b$12$..." hash is a literal.
+SECRET_REFERENCE = re.compile(r"\$\$?\{[#!]?[A-Za-z_]\w*(?:\W.*)?|(?:\$[A-Za-z_]\w*)+|\$\([A-Za-z_./]\S*"
+                              r"|process\.env\.[A-Za-z_]\w*|(?:process\.env|os\.environ)(?:\[|\.get\()?", re.S)
+# Names expanded in single quotes or in a data file (a quoted key, as in JSON)
+# stay literal; a CI expression or interpolation (${{ ... }}, ${NAME}) does not.
+EXPRESSION_REFERENCE = re.compile(r"\$\{\{.*|\$\$?\{[#!]?[A-Za-z_]\w*(?:\W.*)?", re.S)
+
+
+def secret_reference(value, literal_names=False):
+    """Whether value, whole, is a reference rather than a literal: with
+    literal_names, $NAME and $(command) are taken literally."""
+    return bool((EXPRESSION_REFERENCE if literal_names else SECRET_REFERENCE).fullmatch(value)
+                or value.startswith("${{"))
 SECRET_LOOKUP = re.compile(r"[A-Za-z_][\w.]*[(\[]")
 SECRET_ASSIGNMENT = re.compile(r"(?i)((?:\b[\w-]{0,80}(?:token|secret|password|api[_-]?key)|\bauthorization)[\"']?\s*[:=]\s*[\"']?)((?:bearer\s+)?)([^\s,;\"'}]+)")
 
@@ -78,7 +91,8 @@ SECRET_ASSIGNED_EXPANSION = re.compile(r"(?i)((?:\b[\w-]{0,80}(?:token|secret|pa
 
 def literal_default(operator, word):
     bare = word.strip(" \t\"'")
-    return operator in ("-", ":-", "=", ":=") and bool(bare) and not SECRET_REFERENCE.match(bare)
+    return (operator in ("-", ":-", "=", ":=") and bool(bare)
+            and not secret_reference(bare, literal_names=word.lstrip(" \t").startswith("'")))
 
 
 def redact_expansion(match):
@@ -112,7 +126,10 @@ def redact_assignment(match):
     if not bearer and (NON_SECRET_VALUE.fullmatch(value) or
                        LOCKFILE_PACKAGE.search(match.string[max(0, match.start() - 300):match.start()])):
         return match[0]
-    if not bearer and (SECRET_REFERENCE.match(value) or
+    # A single-quoted value, or a quoted key's (a data file such as JSON),
+    # does not expand $NAME.
+    literal_names = prefix.endswith("'") or re.search(r"[\"']\s*[:=]\s*[\"']?$", prefix) is not None
+    if not bearer and (secret_reference(value, literal_names) or
                        SECRET_LOOKUP.fullmatch(value) and match.string[match.end():match.end() + 1] in ("'", '"')):
         return match[0]
     if match.string[:match.start()].rstrip("#!").endswith("${"):
@@ -518,7 +535,7 @@ def reporting_verdict(text, report):
                 continue
             # "Onboarded once CI runs" states a condition, not completion;
             # "after updating the Jenkinsfile" describes a completed action.
-            if COMPLETION_CONDITION.search(sentence):
+            if qualified_claim(prose, match.start()):
                 continue
             claim = match[0].strip(" \t.!—–-")
             unsupported.append(f"Success claim \"{claim}\" while the report status is {summary.get('status') or 'unavailable'}.")
@@ -601,6 +618,22 @@ SUCCESS_CLAIM = re.compile(
 # updated it" describes an action done, not a condition.
 COMPLETION_CONDITION = re.compile(r"\b(?:once|when|until|unless|if|as soon as"
                                   r"|after(?!\s+(?:\w+?(?<!th)ing|(?:i|we)(?:'ve|\s+have|\s+had)?\s+\w+ed)\b))\b")
+
+# A boundary between coordinate clauses: a condition beyond it qualifies
+# another clause, not the claim.
+CLAUSE_BREAK = re.compile(r"[.!?;:\n]|[—–]|\s-\s|,\s*(?:and|but|so|then|or)\b|\bbut\b")
+# A condition on the reader's needs, not on completion: "if you need anything
+# else", "if needed", "when you're ready".
+COURTESY_CONDITION = re.compile(r"(?:if|when|once)\s+(?:you(?:['’]d|\s+would|['’]re|\s+are)?\s+"
+                                r"(?:need|want|like|prefer|wish|have\s+(?:any\s+)?(?:questions?|feedback|concerns?)|ready)"
+                                r"|needed|necessary|desired|required|wanted|helpful|useful|anything|there\s+(?:is|are|['’]s)\s+anything)\b")
+
+
+def qualified_claim(prose, start):
+    """Whether a condition in the claim's own clause qualifies the claim at start."""
+    clause = CLAUSE_BREAK.split(prose[:start])[-1] + CLAUSE_BREAK.split(prose[start:], maxsplit=1)[0]
+    return any(not COURTESY_CONDITION.match(clause, condition.start())
+               for condition in COMPLETION_CONDITION.finditer(clause))
 
 
 def unquoted(text):
