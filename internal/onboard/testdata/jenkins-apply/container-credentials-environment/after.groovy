@@ -9,7 +9,7 @@ pipeline {
                 sh '''
                     npm ci
                     if [ "${DD_API_KEY:+set}" = set ]; then
-                      export DD_TRACER_FOLDER="$(mktemp -d)" DD_SITE="datadoghq.com" DD_CIVISIBILITY_AUTO_INSTRUMENTATION_PROVIDER="jenkins"
+                      export DD_TRACER_FOLDER="$(mktemp -d "$PWD/.datadog-ci-container.XXXXXX")" DD_SITE="datadoghq.com" DD_CIVISIBILITY_AUTO_INSTRUMENTATION_PROVIDER="jenkins"
                       if mkdir -p "$DD_TRACER_FOLDER" &&
                         { curl -fsSL -o "$DD_TRACER_FOLDER/install_test_visibility.sh" https://install.datadoghq.com/scripts/install_test_visibility_v15.sh || wget -qO "$DD_TRACER_FOLDER/install_test_visibility.sh" https://install.datadoghq.com/scripts/install_test_visibility_v15.sh; } &&
                         echo "e64a4a45e0b171f4294b9f949f7fc99946192f952a2d463c61fad3cb8b956a58  $DD_TRACER_FOLDER/install_test_visibility.sh" | { sha256sum -c - || shasum -a 256 -c -; } >/dev/null 2>&1 &&

@@ -211,7 +211,11 @@ func planProviderJavaScriptSetup(root string, provider ciProvider, workflows []c
 			return nil, err
 		}
 	}
-	ignored, err := ignoreSetupEdits(root, false)
+	var extra []string
+	if ignorer, ok := provider.(ciSetupIgnorer); ok {
+		extra = ignorer.setupIgnores(edits)
+	}
+	ignored, err := ignoreSetupEdits(root, false, extra...)
 	if err != nil {
 		return nil, err
 	}
@@ -220,6 +224,13 @@ func planProviderJavaScriptSetup(root string, provider ciProvider, workflows []c
 		return &SetupPlan{root: root, impact: impact}, nil
 	}
 	return &SetupPlan{root: root, edits: append(edits, ignored...), impact: impact}, nil
+}
+
+// ciSetupIgnorer is a provider whose setup leaves files in the CI
+// workspace, which the repository's .gitignore keeps untracked.
+type ciSetupIgnorer interface {
+	// setupIgnores are the .gitignore entries for what edits set up.
+	setupIgnores(edits []setupEdit) []string
 }
 
 // floatingNodeGap refuses a CI server plugin's setup for a job whose Node
@@ -385,6 +396,15 @@ func planProviderSetup(root, framework, site, release string) (*SetupPlan, error
 	edits, impact, err := provider.planSetupEdits(root, workflows, targets, request)
 	if err != nil {
 		return nil, err
+	}
+	if ignorer, ok := provider.(ciSetupIgnorer); ok && len(edits) > 0 {
+		if entries := ignorer.setupIgnores(edits); len(entries) > 0 {
+			ignored, err := ignoreEdits(root, entries)
+			if err != nil {
+				return nil, err
+			}
+			edits = append(edits, ignored...)
+		}
 	}
 	return &SetupPlan{root: root, edits: edits, impact: impact}, nil
 }

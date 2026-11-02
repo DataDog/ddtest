@@ -658,15 +658,24 @@ of their own, named after the job and the container
 in another container, whose image they do not run. The snippet's Jenkins
 form differs from Buildkite's where Jenkins needs it:
 
-- It exports `DD_TRACER_FOLDER="$(mktemp -d)"`, a new temporary folder of the
-  container where the installer installs the tracers and the snippet keeps its
-  download and output. So it never replaces the tracer the plugin installs in
-  the workspace's `.datadog` for the host stages of the same build (a real
-  Jenkins run showed the installer otherwise overwrites it, and later host
-  stages then run the snippet's release), and shells that run at the same time
-  in one workspace, such as the parallel branches of a stage under a
-  top-level Docker agent, never overwrite each other's installer, tracers or
-  output. The folder goes with the container.
+- It exports `DD_TRACER_FOLDER="$(mktemp -d "$PWD/.datadog-ci-container.XXXXXX")"`,
+  a new folder of the workspace for each shell, where the installer installs
+  the tracers and the snippet keeps its download and output. So it never
+  replaces the tracer the plugin installs in the workspace's `.datadog` for the
+  host stages of the same build (a real Jenkins run showed the installer
+  otherwise overwrites it, and later host stages then run the snippet's
+  release), and shells that run at the same time in one workspace, such as the
+  parallel branches of a stage under a top-level Docker agent, never overwrite
+  each other's installer, tracers or output. `mktemp` names it uniquely even
+  across containers that share the workspace, which a PID (`$$`) would not, as
+  each container has its own PID namespace. It is not in the container's
+  `/tmp`, which hardened images may mount `noexec`, stopping the tracer's
+  native add-ons. When `mktemp` fails, the snippet logs that the installation
+  failed. The folders stay in the workspace: the instructions ask for
+  `/.datadog-ci-container.*/` in the repository's `.gitignore`, which
+  `onboard --apply` adds when it writes a snippet (unless a pattern such as
+  `/.datadog-ci-container*` already covers it), and a workspace cleanup such
+  as `cleanWs()` removes them.
 - It tests the key with `[ "${DD_API_KEY:+set}" = set ]`, which Jenkins' shell
   trace (`sh -x`) prints without the key's value.
 - No `$` is escaped: the `sh` script is a single-quoted Groovy string.

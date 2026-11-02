@@ -19,8 +19,8 @@ import (
 // docker.image(…).inside, container(…)) sets Test Optimization up with
 // Datadog's installer instead: the setup snippet Buildkite steps run (see
 // buildkiteSnippet), in the sh step that runs the tests, since each sh step
-// starts a fresh shell. Its Jenkins form keeps the tracers in a temporary
-// folder of each shell, apart from the plugin's .datadog folder that host
+// starts a fresh shell. Its Jenkins form keeps the tracers in a folder of
+// each shell in the workspace, apart from the plugin's .datadog folder that host
 // stages of the same workspace use and from the shells that run at the same
 // time in that workspace (the parallel branches under one Docker agent),
 // and tests the key without printing it in Jenkins' shell trace (sh -x).
@@ -28,10 +28,26 @@ import (
 // key reaches only the steps in its scope.
 
 // jenkinsTracerFolder is where the snippet installs the tracers: a new
-// folder in the container's temporary directory, which goes with it. When
-// mktemp fails, the empty folder fails the snippet's mkdir, so it logs that
-// the installation failed.
-const jenkinsTracerFolder = "$(mktemp -d)"
+// folder in the workspace, unique to the shell even across containers that
+// share the workspace (a PID is not: each container has its own PID
+// namespace), and not in the container's /tmp, which hardened images may
+// mount noexec, stopping the tracer's native add-ons. When mktemp fails, the
+// empty folder fails the snippet's mkdir, so it logs that the installation
+// failed.
+const jenkinsTracerFolder = `$(mktemp -d "$PWD/.datadog-ci-container.XXXXXX")`
+
+// jenkinsTracerIgnore is the .gitignore entry for the folders the snippet
+// leaves in the workspace.
+const jenkinsTracerIgnore = "/.datadog-ci-container.*/"
+
+// setupIgnores keeps the snippet's folders untracked when edits write a
+// Jenkinsfile that runs the setup snippet.
+func (jenkins) setupIgnores(edits []setupEdit) []string {
+	if slices.ContainsFunc(edits, func(edit setupEdit) bool { return strings.Contains(string(edit.after), jenkinsTracerFolder) }) {
+		return []string{jenkinsTracerIgnore}
+	}
+	return nil
+}
 
 // jenkinsSnippetForm is the setup snippet Jenkins container stages run.
 var jenkinsSnippetForm = snippetForm{provider: jenkinsProvider, folder: jenkinsTracerFolder, keySet: true}
@@ -163,7 +179,7 @@ func (c jenkinsContainer) setupInstructions(request ciSetupRequest) string {
 	text.WriteString("2. In every sh script that runs the tests in those stages (each sh step is a shell of its own, so a stage whose tests run in several sh steps needs them in each), add these lines immediately before the test command, after dependency installation and any cd into the test directory, inside the same sh string. Write that script as a single-quoted Groovy string (sh '''…''') so Groovy leaves every $ to the shell, and keep its other commands unchanged:\n\n```sh\n")
 	text.WriteString(jenkinsSnippet(request, c.reset).shell())
 	text.WriteString("\n```\n")
-	text.WriteString("\nThe snippet installs the tracers into a new temporary folder of the container (" + jenkinsTracerFolder + "), apart from the .datadog folder of the Datadog Jenkins plugin and from the shells that run at the same time in the same workspace, such as parallel branches under one Docker agent, and tests the key with ${DD_API_KEY:+set}, so Jenkins' shell trace (sh -x) never prints it. The installer needs Bash and curl or wget in the container's image: images without Bash (Alpine variants, BusyBox, distroless) or curl (official -slim images) need another image, or a Dockerfile that installs them.\n")
+	text.WriteString("\nThe snippet installs the tracers into a new folder of the workspace for each shell (" + jenkinsTracerFolder + "), apart from the .datadog folder of the Datadog Jenkins plugin and from the shells that run at the same time in the same workspace, such as parallel branches under one Docker agent. The folders stay in the workspace after the build: add " + jenkinsTracerIgnore + " to the repository .gitignore so they stay untracked, and a workspace cleanup (such as cleanWs()) removes them. It tests the key with ${DD_API_KEY:+set}, so Jenkins' shell trace (sh -x) never prints it. The installer needs Bash and curl or wget in the container's image: images without Bash (Alpine variants, BusyBox, distroless) or curl (official -slim images) need another image, or a Dockerfile that installs them.\n")
 	text.WriteString("\n3. Keep those stages out of every datadog(…) option's scope: in a declarative pipeline, that option goes in the options of the host-agent stages that run the tests, not the pipeline's; in a scripted pipeline, it wraps only node blocks on host agents. ddtest does not certify a container stage the plugin's variables reach. Enabling Test Optimization in the job's configuration page instead of the Jenkinsfile reaches every stage, so leave it off there.")
 	if c.reset {
 		text.WriteString(" ddtest cannot tell whether a datadog(…) call it cannot read reaches these stages, so the snippet first removes the variables the plugin would set there.")

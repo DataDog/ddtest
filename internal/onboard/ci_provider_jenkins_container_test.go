@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -385,7 +386,9 @@ func TestJenkinsSnippetInEveryContainerTestShell(t *testing.T) {
 
 	plan, err := planProviderSetup(root, "jest", "datadoghq.com", "6.22.0")
 	require.NoError(t, err)
-	require.Len(t, plan.edits, 1)
+	require.Len(t, plan.edits, 2)
+	require.Equal(t, ".gitignore", plan.edits[1].path)
+	require.Equal(t, "/.datadog-ci-container.*/\n", string(plan.edits[1].after), "the snippet's folders stay untracked")
 	after := string(plan.edits[0].after)
 	require.Equal(t, 2, strings.Count(after, "install_test_visibility.sh\" >\"$DD_TRACER_FOLDER/test-optimization.env\""), "the second shell gets a snippet; the first keeps its own")
 	require.True(t, strings.HasPrefix(after, firstOnly[:strings.Index(firstOnly, "          sh 'npm test -- packages/b'")]), "the first sh step is unchanged")
@@ -457,6 +460,12 @@ func TestJenkinsJavaScriptPlanReadsEveryContainerTestShell(t *testing.T) {
 		after := jenkinsFile(setup)
 		require.Equal(t, 2, strings.Count(after, `DD_SET_TRACER_VERSION_JS="6.22.0"`), "the test shell without a snippet gets its own")
 		require.Equal(t, 1, strings.Count(after, "withCredentials("), "the binding around it already reaches it")
+		for _, edit := range setup.edits {
+			if edit.path == ".gitignore" {
+				require.Equal(t, "/.testoptimization/\n/.datadog-ci-container.*/\n", string(edit.after), "ddtest's reports and the snippet's folders stay untracked")
+			}
+		}
+		require.True(t, slices.ContainsFunc(setup.edits, func(edit setupEdit) bool { return edit.path == ".gitignore" }))
 		_, err = setup.Apply(true)
 		require.NoError(t, err)
 		require.False(t, providerJobsMissingSetup(t, root, "jest"))
@@ -487,9 +496,10 @@ func TestJenkinsRubySnippetInEveryContainerTestShell(t *testing.T) {
 	jenkinsfile := "pipeline {\n  agent { docker { image 'ruby:3.3' } }\n  stages {\n    stage('Test') {\n      steps {\n        sh 'bundle exec rake spec'\n        sh 'bundle exec rake spec SPEC=spec/calculator_spec.rb'\n      }\n    }\n  }\n}\n"
 	root := jenkinsApplyRepository(t, "rspec", jenkinsfile)
 	writeFile(t, root, "Gemfile.lock", "GEM\n  specs:\n    datadog-ci (1.42.0)\n    rake (13.4.2)\n")
+	writeFile(t, root, ".gitignore", "/vendor/\n/.datadog-ci-container*\n")
 	plan, err := planProviderSetup(root, "rspec", "datadoghq.com", "")
 	require.NoError(t, err)
-	require.Len(t, plan.edits, 1)
+	require.Len(t, plan.edits, 1, "a pattern that covers the snippet's folders needs no entry")
 	after := string(plan.edits[0].after)
 	require.Equal(t, 2, strings.Count(after, `DD_SET_TRACER_VERSION_RUBY="1.42.0"`), after)
 	_, err = plan.Apply(true)

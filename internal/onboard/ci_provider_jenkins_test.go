@@ -558,7 +558,7 @@ func TestJenkinsContainerTestJobsUseTheSetupSnippet(t *testing.T) {
 	text := providerSetupInstructions(root, jenkins{}, "javascript", "jest", "datadoghq.eu", true)
 	require.Contains(t, text, "Set up Datadog Test Optimization in the stages that run the tests in a container (Jenkinsfile / Test) with Datadog's installer")
 	require.Contains(t, text, `if [ "${DD_API_KEY:+set}" = set ]; then`)
-	require.Contains(t, text, `export DD_TRACER_FOLDER="$(mktemp -d)" DD_SITE="datadoghq.eu" DD_CIVISIBILITY_AUTO_INSTRUMENTATION_PROVIDER="jenkins"`)
+	require.Contains(t, text, `export DD_TRACER_FOLDER="$(mktemp -d "$PWD/.datadog-ci-container.XXXXXX")" DD_SITE="datadoghq.eu" DD_CIVISIBILITY_AUTO_INSTRUMENTATION_PROVIDER="jenkins"`)
 	require.Contains(t, text, "withCredentials([string(credentialsId: 'datadog-api-key', variable: 'DD_API_KEY')])")
 	require.NotContains(t, text, "datadog(testOptimization:", "no stage runs on a host agent")
 

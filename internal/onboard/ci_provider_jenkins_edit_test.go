@@ -83,9 +83,16 @@ func TestJenkinsApplyGolden(t *testing.T) {
 			require.NoError(t, err)
 			want, err := os.ReadFile(filepath.Join(directory, "after.groovy"))
 			require.NoError(t, err)
-			require.Len(t, plan.edits, 1)
 			require.Equal(t, "Jenkinsfile", plan.edits[0].path)
 			require.Equal(t, string(want), string(plan.edits[0].after))
+			if strings.Contains(string(want), jenkinsTracerFolder) {
+				// The setup snippet's folders stay untracked.
+				require.Len(t, plan.edits, 2)
+				require.Equal(t, ".gitignore", plan.edits[1].path)
+				require.Contains(t, string(plan.edits[1].after), "/.datadog-ci-container.*/\n")
+			} else {
+				require.Len(t, plan.edits, 1)
+			}
 
 			_, err = plan.Apply(true)
 			require.NoError(t, err)

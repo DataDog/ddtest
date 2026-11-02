@@ -47,8 +47,8 @@ type language struct {
 var languages = []language{
 	{name: "javascript", marker: regexp.MustCompile(`(?i)javascript|dd-trace|node_options|jest|vitest|mocha|cypress|playwright|cucumber|webdriverio`)},
 	{name: "python", prefix: "python", marker: regexp.MustCompile(`(?i)python|pytest|ddtrace`)},
-	// datadog-ci is the gem; .datadog-ci-container, the folder Jenkins
-	// container stages install every tracer into, is not.
+	// datadog-ci is the gem; .datadog-ci-container.XXXXXX, the folders
+	// Jenkins container shells install every tracer into, are not.
 	{name: "ruby", prefix: "ruby", marker: regexp.MustCompile(`(?i)ruby|rspec|minitest|gemfile|gems\.rb|bundle (exec|install|config)|bundle_|datadog-ci($|[^-]|-rb)`)},
 	// "java" is a prefix of "javascript": Java files are java_*.go, and its
 	// markers are whole words or Java-only terms. JUnit XML is a report format

@@ -61,11 +61,11 @@ func TestJavaScriptBundlesAreNotRuby(t *testing.T) {
 	Check(t, dir)
 }
 
-// .datadog-ci-container names a folder, not the datadog-ci gem, which still
-// counts as Ruby.
+// .datadog-ci-container.XXXXXX names a folder, not the datadog-ci gem, which
+// still counts as Ruby.
 func TestTracerFolderIsNotRuby(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "ci_provider_example.go"), []byte("package p\n\nconst folder = \"$PWD/.datadog-ci-container\"\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "ci_provider_example.go"), []byte("package p\n\nconst folder = \"$(mktemp -d \\\"$PWD/.datadog-ci-container.XXXXXX\\\")\"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	CheckNeutral(t, dir, "ci_provider*.go")

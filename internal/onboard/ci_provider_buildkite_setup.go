@@ -36,7 +36,7 @@ const (
 type snippetForm struct {
 	provider string
 	// folder, when set, is the DD_TRACER_FOLDER the snippet exports as
-	// written, such as "$(mktemp -d)": the installer installs
+	// written, such as a mktemp -d in the workspace: the installer installs
 	// the tracers there instead of its default .datadog, and the snippet
 	// keeps its download and output there too.
 	folder string
