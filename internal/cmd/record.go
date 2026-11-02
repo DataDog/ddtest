@@ -2,11 +2,9 @@ package cmd
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"net"
-	"net/http"
 	"path/filepath"
 	"time"
 
@@ -65,23 +63,18 @@ ddtest stops on SIGINT or SIGTERM, after saving the payloads it is receiving.`,
 // waits for the requests in progress, so every payload a library sent is
 // saved.
 func serveOfflineAgent(ctx context.Context, listener net.Listener, config offlineagent.Config) error {
-	server := &http.Server{Handler: offlineagent.NewHandler(config), ReadHeaderTimeout: 10 * time.Second}
-	served := make(chan error, 1)
-	go func() { served <- server.Serve(listener) }()
+	server := offlineagent.Serve(listener, config)
 	slog.Info("Offline agent listening", "address", listener.Addr().String(), "payloads_dir", config.PayloadsDir)
 
 	select {
-	case err := <-served:
-		return fmt.Errorf("offline agent stopped: %w", err)
+	case <-server.Done():
+		return fmt.Errorf("offline agent stopped: %w", server.Err())
 	case <-ctx.Done():
 	}
-	shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), offlineAgentShutdownTimeout)
+	stopCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), offlineAgentShutdownTimeout)
 	defer cancel()
-	if err := server.Shutdown(shutdownCtx); err != nil {
-		return fmt.Errorf("stop the offline agent: %w", err)
-	}
-	if err := <-served; !errors.Is(err, http.ErrServerClosed) {
-		return fmt.Errorf("offline agent stopped: %w", err)
+	if err := server.Stop(stopCtx); err != nil {
+		return err
 	}
 	slog.Info("Offline agent stopped")
 	return nil

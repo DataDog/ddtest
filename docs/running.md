@@ -224,6 +224,26 @@ job retains its normal `ci.*` tags. Missing fields are omitted. If the file is
 missing, unreadable, or corrupt, supporting libraries still set the enabled tag
 and omit the planning identity. Older artifacts without this file are supported.
 
+### Recording payloads as files
+
+On a machine that can't reach Datadog, `--record-payloads <dir>` (or
+`DD_TEST_OPTIMIZATION_RUNNER_RECORD_PAYLOADS`) saves the workers' Test
+Optimization payloads as files instead of sending them:
+
+```bash
+ddtest run --ci-node 3 --record-payloads /tmp/payloads
+```
+
+DDTest serves the local stand-in for the Datadog Agent that
+[`ddtest record`](../README.md#ddtest-record) runs, on a free `127.0.0.1` port,
+and sets `DD_TRACE_AGENT_URL` to it and `DD_CIVISIBILITY_AGENTLESS_ENABLED` to
+`false` for every worker, overriding `--worker-env` and the environment.
+Configuration requests are answered from the plan's HTTP cache. After the
+workers finish, DDTest waits for the payloads in progress, so the directory
+holds every payload the libraries sent. If the directory can't be created,
+DDTest stops with `run_payload_recorder_failed` before running any test.
+Without the flag, workers send their payloads as usual.
+
 ## Custom Commands
 
 Use `--command` to override the framework's default base test command where

@@ -582,6 +582,7 @@ func TestPrintDDTestSettingsReport_AllSupportedSettings(t *testing.T) {
 	config.StrictDiscovery = true
 	config.RuntimeTags = `{"runtime.version":"3.3.4"}`
 	config.ReportEnabled = false
+	config.RecordPayloads = "/tmp/payloads"
 
 	var output strings.Builder
 	printDDTestSettingsReport(&output, &config)
@@ -621,6 +622,7 @@ func TestPrintDDTestSettingsReport_AllSupportedSettings(t *testing.T) {
 		"Strict discovery",
 		"Runtime tags",
 		"Report enabled",
+		"Record payloads",
 	}
 	if !reflect.DeepEqual(names, expectedNames) {
 		t.Fatalf("unexpected changed setting names:\ngot:  %v\nwant: %v", names, expectedNames)

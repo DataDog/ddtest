@@ -54,6 +54,7 @@ const (
 	RunCINodeTestFilesMissing                  Code = "run_ci_node_test_files_missing"
 	RunCINodeTestFilesReadFailed               Code = "run_ci_node_test_files_read_failed"
 	RunCINodeTestsFailed                       Code = "run_ci_node_tests_failed"
+	RunPayloadRecorderFailed                   Code = "run_payload_recorder_failed"
 )
 
 // Error associates a stable code with an underlying error while preserving
