@@ -315,6 +315,26 @@ ddtest mixes the seed into the kernel's entropy pool, makes the kernel reseed at
 once, and deletes the seed file. The reseed needs `CAP_SYS_ADMIN`, so it fails
 inside containers that drop that capability, even as root.
 
+#### ddtest record
+
+Stands in for the Datadog Agent while tests run on a machine that can't reach
+Datadog, and saves the Test Optimization payloads as files:
+
+```bash
+ddtest record --payloads-dir /tmp/payloads &
+DD_TRACE_AGENT_URL=http://127.0.0.1:8126 DD_CIVISIBILITY_AGENTLESS_ENABLED=false <test command>
+kill %1   # stops after saving the payloads it is receiving
+```
+
+The tracing library sends its payloads through what it takes for the Agent's
+EVP proxy. ddtest writes them as JSON under `tests/`, `coverage/` and
+`telemetry/`, in the same layout as the libraries' Bazel payload-files mode
+(`DD_TEST_OPTIMIZATION_PAYLOADS_IN_FILES`), so the same uploader handles both.
+Configuration requests are answered from the plan's HTTP cache in
+`.testoptimization/cache/http/` (change it with `--plan-dir`), or with every
+feature off when there is no cache, and git uploads are answered as if Datadog
+already had the commits.
+
 ### Common settings
 
 | CLI flag | What it does |
