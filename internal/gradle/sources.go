@@ -87,6 +87,10 @@ func TestSourceSet(root string, build, project Project, task string) (string, bo
 // tasks.withType<Test>().configureEach { or tasks.withType(Test) {.
 var typeWideTests = regexp.MustCompile(`withType\s*(?:<\s*Test\s*>|\(\s*Test(?:::class(?:\.java)?)?\s*\))[^{\n]*\{`)
 
+// statement is the rest of one statement: up to a semicolon, brace or line
+// end outside string literals.
+const statement = `(?:[^;{}\n"']|"[^"\n]*"|'[^'\n]*')*`
+
 // classesAssignment assigns a Test task's testClassesDirs.
 var classesAssignment = regexp.MustCompile(`\btestClassesDirs\s*(?:=|\.from\(|\.setFrom\()`)
 
@@ -130,13 +134,13 @@ func SourceDirectory(root string, build, project Project, set, language string) 
 				}
 			}
 			// java.srcDirs = […] inside the set's block.
-			for _, assignment := range regexp.MustCompile(`\b`+lang+`\.((?:srcDirs\s*=|setSrcDirs\()[^\n]*)`).FindAllStringSubmatchIndex(set, -1) {
+			for _, assignment := range regexp.MustCompile(`\b`+lang+`\.((?:srcDirs\s*=|setSrcDirs\()`+statement+`)`).FindAllStringSubmatchIndex(set, -1) {
 				configurations = append(configurations, configuration{match[1] + assignment[0], set[assignment[2]:assignment[3]]})
 			}
 		}
 	}
 	// sourceSets.integrationTest.java.srcDirs = […] on one line.
-	for _, match := range regexp.MustCompile(`\b`+name+`\.`+lang+`\.(?:srcDirs\s*=|setSrcDirs\()[^\n]*`).FindAllStringIndex(source, -1) {
+	for _, match := range regexp.MustCompile(`\b`+name+`\.`+lang+`\.(?:srcDirs\s*=|setSrcDirs\()`+statement).FindAllStringIndex(source, -1) {
 		line := source[match[0]:match[1]]
 		configurations = append(configurations, configuration{match[0], line[strings.Index(line, lang+".")+len(lang)+1:]})
 	}

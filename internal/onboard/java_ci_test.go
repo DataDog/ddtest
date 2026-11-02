@@ -8,6 +8,7 @@ package onboard
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -175,28 +176,52 @@ func TestJavaReadsUnreadValuesAsPossibleTests(t *testing.T) {
 		"MAVEN_ARGS=test mvn help:evaluate -Dexpression=project.version -q -DforceStdout":         true,
 		"export MAVEN_ARGS=test\nmvn help:evaluate -Dexpression=project.version -q -DforceStdout": true,
 		"mvn help:evaluate -Dexpression=project.version -q -DforceStdout":                         false,
-		"mvn versions:set -DnewVersion=${TAG/v}":                                                  false,
-		"mvn surefire:${GOAL}":                                                                    true,
-		"mvn -B surefire:$GOAL -Dtest=${TESTS}":                                                   true,
-		"git tag $VERSION && git push origin $VERSION":                                            false,
+		"mvn versions:set -DnewVersion=\"${TAG/v}\"":                                              false,
+		"mvn versions:set -DnewVersion=$VERSION_ARGS":                                             true,
+		"mvn surefire:${GOAL}":                         true,
+		"mvn -B surefire:$GOAL -Dtest=${TESTS}":        true,
+		"git tag $VERSION && git push origin $VERSION": false,
 	} {
 		require.Equal(t, runs, javaMayRunTests(text, false), text)
 	}
 	require.True(t, javaConfigGoals(t.TempDir(), "/tmp"), "a directory outside the checkout may hold any configuration, and the search ends")
 }
 
+func TestJavaResolvesMatrixExpressionsInsideValues(t *testing.T) {
+	root := javaWorkflowFixture(t, `jobs:
+  tests:
+    strategy:
+      matrix:
+        suite: [unit, it]
+    env:
+      TEST_MODE: suite-${{ matrix.suite }}
+    steps:
+      - run: mvn -B verify
+`, nil)
+	scope, err := DiscoverValidationScope(root, "junit5")
+	require.NoError(t, err)
+	var modes []string
+	for _, command := range scope.Commands {
+		modes = append(modes, command.Environment["TEST_MODE"])
+		require.Empty(t, command.WithoutCIValues, "the row holds the value")
+	}
+	slices.Sort(modes)
+	require.Equal(t, []string{"suite-it", "suite-unit"}, modes, "each row runs with its own value")
+}
+
 func TestJavaReleaseGoalsWithUnreadValuesRunNoTests(t *testing.T) {
-	// As WriteThemFirst/approvals-java's release job does, before its deploy.
+	// As WriteThemFirst/approvals-java's release job does before its deploy,
+	// with the value quoted so it can't split into goals.
 	root := javaWorkflowFixture(t, `jobs:
   release:
     steps:
-      - run: mvn versions:set -DnewVersion=${GITHUB_REF_NAME/v}
+      - run: mvn versions:set -DnewVersion="${GITHUB_REF_NAME/v}"
       - run: mvn -B verify
 `, nil)
 	scope, err := DiscoverValidationScope(root, "junit5")
 	require.NoError(t, err)
 	require.Empty(t, scope.Unresolved, "versions:set runs no tests whatever its version")
-	require.Contains(t, strings.Join(scope.Review, "\n"), "release / step 1 (mvn versions:set -DnewVersion=${GITHUB_REF_NAME/v}): Maven goals outside the test lifecycle")
+	require.Contains(t, strings.Join(scope.Review, "\n"), "release / step 1 (mvn versions:set -DnewVersion=\"${GITHUB_REF_NAME/v}\"): Maven goals outside the test lifecycle")
 	require.Len(t, scope.Commands, 1)
 
 	// Goals the shell fills in may still run tests.

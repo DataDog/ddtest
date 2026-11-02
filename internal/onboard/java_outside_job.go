@@ -125,12 +125,13 @@ func pipeCall(statement *syntax.Stmt) *syntax.CallExpr {
 
 // shellWord is a word's text with every expansion, such as $HOME or $(date),
 // read as javaUnreadValue. A word an expansion is part of, as surefire:$GOAL,
-// is wholly unread unless it is an option, whose value alone it chooses.
+// is wholly unread unless it is an option whose quoted value alone the
+// expansion chooses; an unquoted one may split into more words, as goals.
 func shellWord(word *syntax.Word) string {
 	var text strings.Builder
-	unread := false
-	var write func(parts []syntax.WordPart)
-	write = func(parts []syntax.WordPart) {
+	unread, unquoted := false, false
+	var write func(parts []syntax.WordPart, quoted bool)
+	write = func(parts []syntax.WordPart, quoted bool) {
 		for _, part := range parts {
 			switch part := part.(type) {
 			case *syntax.Lit:
@@ -138,15 +139,15 @@ func shellWord(word *syntax.Word) string {
 			case *syntax.SglQuoted:
 				text.WriteString(part.Value)
 			case *syntax.DblQuoted:
-				write(part.Parts)
+				write(part.Parts, true)
 			default:
 				text.WriteString(javaUnreadValue)
-				unread = true
+				unread, unquoted = true, unquoted || !quoted
 			}
 		}
 	}
-	write(word.Parts)
-	if unread && !strings.HasPrefix(text.String(), "-") {
+	write(word.Parts, false)
+	if unread && (unquoted || !strings.HasPrefix(text.String(), "-")) {
 		return javaUnreadValue
 	}
 	return text.String()

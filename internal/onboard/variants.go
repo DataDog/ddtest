@@ -187,6 +187,13 @@ func resolveVariantStep(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 			}
 		}
 		resolved, err := runtimeValue(value, row)
+		// A matrix expression inside a value, as suite-${{ matrix.suite }},
+		// takes the row's value before the value counts as CI-only.
+		if err != nil && row != nil {
+			if interpolated, interpolationErr := interpolateMatrix(value, row); interpolationErr == nil && interpolated != value {
+				resolved, err = runtimeValue(interpolated, row)
+			}
+		}
 		if err != nil && len(frameworks) > 0 && frameworks[0] == "cypress" {
 			// Local comparison installs its own tracer and uses the same app
 			// coverage flag in both modes. CI installation/preload conditions

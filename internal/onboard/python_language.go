@@ -110,7 +110,7 @@ func (pythonDiscovery) runtimeVariable(name string) bool {
 }
 
 func (pythonDiscovery) toolVariable(name string) bool {
-	return slices.Contains([]string{"PYTHONWARNINGS", "PYTEST_ADDOPTS", "PYTEST_PLUGINS", "TOX_ENV", "TOXENV"}, name)
+	return slices.Contains([]string{"PYTHONWARNINGS", "PYTHONOPTIMIZE", "PYTEST_ADDOPTS", "PYTEST_PLUGINS", "PYTEST_DISABLE_PLUGIN_AUTOLOAD", "TOX_ENV", "TOXENV"}, name)
 }
 
 func (pythonDiscovery) cacheVariable(name string) bool {

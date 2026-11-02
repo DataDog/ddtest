@@ -62,9 +62,16 @@ var reportDirectories = []string{filepath.Join("target", "surefire-reports"), fi
 // karateReports is where Karate writes one *.karate-json.txt per feature.
 var karateReports = filepath.Join("target", "karate-reports")
 
-// reportSwitch is a Surefire or Failsafe disableXmlReport set from a
-// property, as <disableXmlReport>${closeTestReports}</disableXmlReport>.
-var reportSwitch = regexp.MustCompile(`<disableXmlReport>\s*\$\{([\w.-]+)\}\s*</disableXmlReport>`)
+var (
+	// reportSwitch is a disableXmlReport set from a property, as
+	// <disableXmlReport>${closeTestReports}</disableXmlReport>.
+	reportSwitch = regexp.MustCompile(`<disableXmlReport>\s*\$\{([\w.-]+)\}\s*</disableXmlReport>`)
+	// pomPlugin is one plugin declaration; plugins don't nest.
+	pomPlugin = regexp.MustCompile(`(?s)<plugin>.*?</plugin>`)
+	// testPlugin is Surefire's or Failsafe's artifact.
+	testPlugin = regexp.MustCompile(`<artifactId>\s*maven-(?:surefire|failsafe)-plugin\s*</artifactId>`)
+	xmlComment = regexp.MustCompile(`(?s)<!--.*?-->`)
+)
 
 // ReportSwitches are the properties the reactor's POMs turn Surefire or
 // Failsafe XML reports off with, so setting them to false writes the reports.
@@ -80,10 +87,16 @@ func ReportSwitches(root string, projects []Project) ([]string, error) {
 		}
 		poms = append(poms, string(data))
 	}
-	source := strings.Join(poms, "\n")
+	source := xmlComment.ReplaceAllString(strings.Join(poms, "\n"), "")
 	switches := map[string]bool{}
-	for _, match := range reportSwitch.FindAllStringSubmatch(source, -1) {
-		switches[match[1]] = true
+	// Only Surefire's and Failsafe's disableXmlReport turns their reports off.
+	for _, plugin := range pomPlugin.FindAllString(source, -1) {
+		if !testPlugin.MatchString(plugin) {
+			continue
+		}
+		for _, match := range reportSwitch.FindAllStringSubmatch(plugin, -1) {
+			switches[match[1]] = true
+		}
 	}
 	var properties []string
 	for _, property := range slices.Sorted(maps.Keys(switches)) {

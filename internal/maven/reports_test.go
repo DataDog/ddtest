@@ -122,6 +122,15 @@ func TestReportSwitches(t *testing.T) {
 	require.Empty(t, properties, "a test reads the property")
 	require.NoError(t, os.RemoveAll(filepath.Join(root, "api", "src")))
 
+	// A switch in a comment or another plugin's configuration turns nothing off.
+	writePOM(t, root, "pom.xml", `<project><modules><module>api</module></modules><properties><foo>true</foo><bar>true</bar></properties>
+		<!-- <plugin><artifactId>maven-surefire-plugin</artifactId><configuration><disableXmlReport>${foo}</disableXmlReport></configuration></plugin> -->
+		<build><plugins><plugin><artifactId>other-plugin</artifactId><configuration><disableXmlReport>${bar}</disableXmlReport></configuration></plugin></plugins></build></project>`)
+	properties, err = ReportSwitches(root, projects)
+	require.NoError(t, err)
+	require.NotContains(t, properties, "foo", "a commented-out switch")
+	require.NotContains(t, properties, "bar", "another plugin's switch")
+
 	// Surefire reads skipTests on its own, so false would run tests CI skips.
 	writePOM(t, root, "pom.xml", `<project><modules><module>api</module></modules><properties><skipTests>true</skipTests></properties>
 		<build><plugins><plugin><artifactId>maven-surefire-plugin</artifactId><configuration><disableXmlReport>${skipTests}</disableXmlReport></configuration></plugin></plugins></build></project>`)

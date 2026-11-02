@@ -120,6 +120,7 @@ func TestSourceDirectories(t *testing.T) {
 		"in file order":          {"sourceSets { test { java { srcDirs = ['src/test/java'] } } }\nsourceSets.test.java.srcDirs = ['src/old/java']", "test", "java", filepath.Join("src", "old", "java")},
 		"dotted in the set":      {"sourceSets { integrationTest { java.srcDirs = ['src/it-java'] } }", "integrationTest", "java", "src/it-java"},
 		"computed, then literal": {"sourceSets.test.java.srcDirs = generatedDirs\nsourceSets.test.java.srcDirs = ['src/test/java']", "test", "java", filepath.Join("src", "test", "java")},
+		"one statement":          {"sourceSets { it { java.srcDirs = ['src/it/java']; resources.srcDirs = ['src/it/resources'] } }", "it", "java", filepath.Join("src", "it", "java")},
 		"last in a block":        {"sourceSets { test { java {\n  srcDirs = ['src/old/java']\n  srcDirs = ['src/test/java']\n} } }", "test", "java", filepath.Join("src", "test", "java")},
 	} {
 		t.Run(name, func(t *testing.T) {
