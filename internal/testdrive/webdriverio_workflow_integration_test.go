@@ -259,7 +259,8 @@ func TestPublicWebdriverIOTestdrive(t *testing.T) {
 				reached := false
 				require.Eventually(t, func() bool {
 					select {
-					case <-finished:
+					case err := <-finished:
+						t.Logf("validation exited before the browser hook was reached: %v", err)
 						return true
 					default:
 					}
