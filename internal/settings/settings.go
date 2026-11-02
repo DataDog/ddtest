@@ -134,6 +134,7 @@ type Config struct {
 	StrictDiscovery        bool              `mapstructure:"strict_discovery"`
 	RuntimeTags            string            `mapstructure:"runtime_tags"`
 	ReportEnabled          bool              `mapstructure:"report_enabled"`
+	RecordPayloads         string            `mapstructure:"record_payloads"`
 }
 
 var (
@@ -238,6 +239,7 @@ func setDefaults() {
 	viper.SetDefault("strict_discovery", false)
 	viper.SetDefault("runtime_tags", "")
 	viper.SetDefault("report_enabled", true)
+	viper.SetDefault("record_payloads", "")
 }
 
 // NormalizeTestSkippingLevel accepts only the backend-supported TIA skipping modes.
@@ -379,6 +381,13 @@ func GetRuntimeTags() string {
 
 func GetReportEnabled() bool {
 	return Get().ReportEnabled
+}
+
+// GetRecordPayloads is the directory where ddtest run saves the workers' Test
+// Optimization payloads as files, or empty when the workers send them to
+// Datadog as usual.
+func GetRecordPayloads() string {
+	return Get().RecordPayloads
 }
 
 // GetRuntimeTagsMap parses the runtime_tags setting as JSON and returns it as a map.

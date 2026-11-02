@@ -86,6 +86,7 @@ func TestFatalCodesAreUnique(t *testing.T) {
 		RunCINodeTestFilesMissing,
 		RunCINodeTestFilesReadFailed,
 		RunCINodeTestsFailed,
+		RunPayloadRecorderFailed,
 	}
 
 	seen := make(map[Code]struct{}, len(codes))

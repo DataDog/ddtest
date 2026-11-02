@@ -138,6 +138,11 @@ var rootPersistentFlagBindings = []persistentFlagBinding{
 	{configKey: "runtime_tags", flagName: "runtime-tags"},
 }
 
+// runPersistentFlagBindings are the flags only ddtest run has.
+var runPersistentFlagBindings = []persistentFlagBinding{
+	{configKey: "record_payloads", flagName: "record-payloads"},
+}
+
 func init() {
 	rootCmd.SetVersionTemplate("{{ .Version }}\n")
 
@@ -160,6 +165,12 @@ func init() {
 	rootCmd.PersistentFlags().Bool("strict-discovery", false, "Fail planning when full test discovery fails")
 	rootCmd.PersistentFlags().String("runtime-tags", "", "JSON string to override runtime tags (e.g. '{\"os.platform\":\"linux\",\"runtime.version\":\"3.2.0\"}')")
 	if err := bindPersistentFlags(rootCmd, rootPersistentFlagBindings); err != nil {
+		fmt.Fprintf(os.Stderr, "Error binding CLI flags: %v\n", err)
+		os.Exit(1)
+	}
+
+	runCmd.PersistentFlags().String("record-payloads", "", "Save the workers' Test Optimization payloads as files in this directory instead of sending them to Datadog (see ddtest record)")
+	if err := bindPersistentFlags(runCmd, runPersistentFlagBindings); err != nil {
 		fmt.Fprintf(os.Stderr, "Error binding CLI flags: %v\n", err)
 		os.Exit(1)
 	}

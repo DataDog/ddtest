@@ -335,6 +335,10 @@ Configuration requests are answered from the plan's HTTP cache in
 feature off when there is no cache, and git uploads are answered as if Datadog
 already had the commits.
 
+To record the payloads of `ddtest run`'s own workers, pass
+`--record-payloads <dir>` to `ddtest run` instead; see
+[Recording payloads as files](docs/running.md#recording-payloads-as-files).
+
 ### Common settings
 
 | CLI flag | What it does |

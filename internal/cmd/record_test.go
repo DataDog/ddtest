@@ -11,7 +11,9 @@ import (
 
 	"github.com/DataDog/ddtest/internal/git"
 	"github.com/DataDog/ddtest/internal/offlineagent"
+	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -86,4 +88,24 @@ func TestRecordCommandIsRegistered(t *testing.T) {
 		found = found || command == recordCmd
 	}
 	assert.True(t, found, "record should be added to the root command")
+}
+
+func TestRunCommandRecordsPayloadsOnlyWhenAsked(t *testing.T) {
+	flag := runCmd.PersistentFlags().Lookup("record-payloads")
+	require.NotNil(t, flag, "ddtest run should have --record-payloads")
+	assert.Empty(t, flag.DefValue, "recording must stay opt-in")
+	t.Cleanup(func() {
+		_ = flag.Value.Set(flag.DefValue)
+		flag.Changed = false
+		viper.Reset()
+		settings.Init()
+	})
+	viper.Reset()
+	require.NoError(t, bindPersistentFlags(runCmd, runPersistentFlagBindings))
+	dir := t.TempDir()
+
+	require.NoError(t, runCmd.PersistentFlags().Set("record-payloads", dir))
+	settings.Init()
+
+	assert.Equal(t, dir, settings.GetRecordPayloads())
 }

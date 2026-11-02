@@ -60,3 +60,4 @@ or API cause. Existing codes must not be reused for a different condition.
 | `run_ci_node_test_files_missing` | The requested CI-node split file does not exist. |
 | `run_ci_node_test_files_read_failed` | The requested CI-node split file could not be read. |
 | `run_ci_node_tests_failed` | The test framework failed in a CI-node worker. |
+| `run_payload_recorder_failed` | With `--record-payloads`, the payload directory could not be created, the local recorder could not start, or it could not finish saving the payloads. |
