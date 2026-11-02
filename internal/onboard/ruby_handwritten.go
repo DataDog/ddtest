@@ -72,7 +72,7 @@ func (rubyDiscovery) handWrittenSetup(root string, provider ciProvider, workflow
 		case preload < 0:
 			setup.missing("RUBYOPT loads datadog/ci without its auto instrumentation: preload -rdatadog/ci/auto_instrument instead, which starts Test Optimization for " + framework + ".")
 		case !slices.Contains(words[:preload], "-rbundler/setup") && !rubyRunsWithBundler(step.Run):
-			setup.missing("RUBYOPT preloads datadog/ci/auto_instrument before Bundler sets up the bundle, so Ruby cannot load the datadog-ci it locks: run the tests with bundle exec (or a binstub), or preload -rbundler/setup before it.")
+			setup.missing("RUBYOPT preloads datadog/ci/auto_instrument before Bundler sets up the bundle, so Ruby cannot load the datadog-ci it locks: run the tests with bundle exec, or preload -rbundler/setup before it. A binstub such as bin/rspec sets up Bundler only after RUBYOPT's preloads.")
 		}
 	} else {
 		enabled, agentless = helper.enabled, helper.agentless
@@ -92,24 +92,26 @@ func (rubyDiscovery) handWrittenSetup(root string, provider ciProvider, workflow
 	} else {
 		setup.missing(lockfile + " does not lock datadog-ci, so the tests cannot load the release ddtest validates: add gem \"datadog-ci\", \"<exact release>\" (such as 1.42.0) to the test group of its Gemfile and run bundle lock.")
 	}
+	handWrittenFrameworkDisabled(setup, env, framework)
 	handWrittenConfiguration(setup, provider, job, env, site, enabled, agentless)
 	return setup
 }
 
-// rubyRunsWithBundler reports a test command that runs through Bundler,
-// which loads the bundle before RUBYOPT's preloads: bundle exec or a
-// binstub.
+// rubyRunsWithBundler reports a test command whose every command runs
+// through bundle exec, which sets up the bundle before Ruby reads RUBYOPT's
+// preloads (a directory change aside). A binstub does not: Ruby preloads
+// RUBYOPT's libraries before the binstub's require "bundler/setup".
 func rubyRunsWithBundler(run string) bool {
 	commands, err := staticCommands(run)
-	if err != nil {
+	if err != nil || len(commands) == 0 {
 		return false
 	}
-	return slices.ContainsFunc(commands, func(words []string) bool {
+	return !slices.ContainsFunc(commands, func(words []string) bool {
 		for len(words) > 0 && strings.Contains(words[0], "=") {
 			words = words[1:]
 		}
-		return len(words) > 1 && words[0] == "bundle" && (words[1] == "exec" || words[1] == "e") ||
-			len(words) > 0 && strings.HasPrefix(words[0], "bin/")
+		bundled := len(words) > 1 && words[0] == "bundle" && (words[1] == "exec" || words[1] == "e")
+		return !bundled && (len(words) == 0 || words[0] != "cd")
 	})
 }
 
@@ -265,7 +267,16 @@ func rubyReadHelper(text, framework string) *rubyHandWrittenHelper {
 		case match[1] == "instrument" && match[2] == "":
 			name := strings.TrimPrefix(strings.Fields(value + " ")[0], ":")
 			name = strings.Trim(strings.TrimSuffix(name, ","), `"'`)
-			helper.instrumented = helper.instrumented || name == framework
+			if name != framework {
+				break
+			}
+			// Options or a trailing condition, such as
+			// if ENV["TRACE_TESTS"] == "true", can leave it off.
+			if value == ":"+framework || value == `"`+framework+`"` || value == "'"+framework+"'" {
+				helper.instrumented = true
+			} else if helper.unresolved == "" {
+				helper.unresolved = "the helper calls " + variable + ".ci.instrument " + value + ", which ddtest does not evaluate."
+			}
 		}
 	}
 	return helper

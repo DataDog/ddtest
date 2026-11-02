@@ -34,8 +34,8 @@ func TestCIScopeCountsEachNodeVersionOnce(t *testing.T) {
 }
 
 func TestAPIKeyActionFollowsTheActionGuard(t *testing.T) {
-	require.Equal(t, onboard.CIProviderAPIKeyAction(false), apiKeyHumanAction(&onboard.RuntimeCheck{Jobs: []onboard.RuntimeFinding{{Status: "compatible"}}}))
-	require.Equal(t, onboard.CIProviderAPIKeyAction(true), apiKeyHumanAction(&onboard.RuntimeCheck{Jobs: []onboard.RuntimeFinding{{Status: "excluded", Reason: onboard.GuardedActionBranch}}}))
+	require.Equal(t, []string{onboard.CIProviderAPIKeyAction(false)}, apiKeyHumanActions(&onboard.RuntimeCheck{Jobs: []onboard.RuntimeFinding{{Status: "compatible"}}}))
+	require.Equal(t, []string{onboard.CIProviderAPIKeyAction(true)}, apiKeyHumanActions(&onboard.RuntimeCheck{Jobs: []onboard.RuntimeFinding{{Status: "excluded", Reason: onboard.GuardedActionBranch}}}))
 	require.Contains(t, onboard.CIProviderAPIKeyAction(true), "is skipped")
 }
 
@@ -45,12 +45,22 @@ func TestAPIKeyActionForHandWrittenSetups(t *testing.T) {
 	onboard.UseCIProvider("gitlab")
 	t.Cleanup(func() { onboard.UseCIProvider("") })
 	handWritten := onboard.RuntimeFinding{Status: "compatible", Action: "hand-written dd-trace@5.40.0 setup (NODE_OPTIONS)"}
-	action := apiKeyHumanAction(&onboard.RuntimeCheck{Jobs: []onboard.RuntimeFinding{handWritten, {Status: "excluded"}}})
-	require.Equal(t, onboard.CIProviderHandWrittenKeyAction(), action)
-	require.Contains(t, action, "Store DD_API_KEY in a masked GitLab CI/CD variable")
-	require.NotContains(t, action, "setup script")
-	mixed := apiKeyHumanAction(&onboard.RuntimeCheck{Jobs: []onboard.RuntimeFinding{handWritten, {Status: "compatible", Action: "test-optimization-gitlab-script v1.2.10"}}})
-	require.Equal(t, onboard.CIProviderAPIKeyAction(false), mixed)
+	actions := apiKeyHumanActions(&onboard.RuntimeCheck{Jobs: []onboard.RuntimeFinding{handWritten, {Status: "excluded"}}})
+	require.Equal(t, []string{onboard.CIProviderHandWrittenKeyAction()}, actions)
+	require.Contains(t, actions[0], "Store DD_API_KEY in a masked GitLab CI/CD variable")
+	require.NotContains(t, actions[0], "setup script")
+	// The setup script reads the same masked variable.
+	mixed := &onboard.RuntimeCheck{Jobs: []onboard.RuntimeFinding{handWritten, {Status: "compatible", Action: "test-optimization-gitlab-script v1.2.10"}}}
+	require.Equal(t, []string{onboard.CIProviderAPIKeyAction(false)}, apiKeyHumanActions(mixed))
+
+	// The Jenkins plugin keeps its own key, so a hand-written container
+	// stage beside a plugin-instrumented one needs its credential too.
+	onboard.UseCIProvider("jenkins")
+	mixed = &onboard.RuntimeCheck{Jobs: []onboard.RuntimeFinding{{Status: "compatible", Action: "Datadog Jenkins plugin"}, handWritten}}
+	actions = apiKeyHumanActions(mixed)
+	require.Equal(t, []string{onboard.CIProviderAPIKeyAction(false), onboard.CIProviderHandWrittenKeyAction()}, actions)
+	require.Contains(t, actions[0], "configure the Datadog plugin")
+	require.Contains(t, actions[1], "Store DD_API_KEY in")
 }
 
 // A rerun-until-green must stay visible: trials reran an inconclusive

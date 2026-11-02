@@ -642,9 +642,7 @@ func (c *buildkiteConfig) steps(name string, scope buildkiteScope, commands *yam
 				step.Run = ""
 			} else {
 				step.readScopedPrefix()
-				if run, assigned, ok := foldCommandEnvironment(step.Run, mergeEnvironment(mergeEnvironment(env, state.env), state.references), state.dialect.projectVariable); ok {
-					step.Run, step.Env = run, mergeEnvironment(step.Env, assigned)
-				}
+				step.foldInlineEnvironment(mergeEnvironment(mergeEnvironment(env, state.env), state.references), state.dialect.projectVariable)
 			}
 		}
 	}

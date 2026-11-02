@@ -769,7 +769,9 @@ func RubyCIConfigurationFrom(root, source, framework, site string) RuntimeCheck 
 						}
 					}
 					// Without a provider setup, the job may set up datadog-ci by
-					// hand; it is checked like the setup's inputs.
+					// hand; it is checked like the setup's inputs. Each test step
+					// is checked on its own: its setup reaches no other step.
+					action, tracer := action, tracer
 					if action == "" && !skippedAction && resolution.Matched && conditionErr == nil && stepErr == nil && resolveErr == nil && !provider.sharedSyntax() {
 						rowJob := job
 						rowJob.Steps = slices.Clone(job.Steps)

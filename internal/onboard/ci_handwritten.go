@@ -81,6 +81,14 @@ func CIProviderHandWrittenKeyAction() string {
 	return "Store DD_API_KEY in " + activeOrDefaultCIProvider().setupTerms().SecretStore + ", where the jobs' hand-written setup reads it; never write the key into the CI configuration. Until it exists, the tracer reports nothing and those tests run untraced."
 }
 
+// CIProviderKeyServesHandWritten reports whether the selected CI provider's
+// API key step also gives the jobs' hand-written setups their key: its
+// setup reads DD_API_KEY from the same secret store. A CI server plugin
+// configured with its own key (the Datadog Jenkins plugin) does not.
+func CIProviderKeyServesHandWritten() bool {
+	return !activeOrDefaultCIProvider().setupTerms().Plugin
+}
+
 // handWrittenReference names a language's hand-written setup in findings.
 func handWrittenReference(tracer, mechanism string) string {
 	return handWrittenPrefix + tracer + " setup (" + mechanism + ")"
@@ -205,6 +213,22 @@ func handWrittenFalse(value string) bool {
 	return value == "false" || value == "0"
 }
 
+// handWrittenFrameworkDisabled records a setting in env that turns the
+// tracer's integration for framework off, DD_TRACE_<FRAMEWORK>_ENABLED=false,
+// or one ddtest cannot read.
+func handWrittenFrameworkDisabled(setup *handWrittenSetup, env map[string]string, framework string) {
+	key := "DD_TRACE_" + strings.ToUpper(framework) + "_ENABLED"
+	value, set := env[key]
+	if !set {
+		return
+	}
+	if _, known := handWrittenTrue(value); !known {
+		setup.unresolved(key + " comes from " + value + ", which ddtest cannot read.")
+	} else if handWrittenFalse(value) {
+		setup.missing(key + "=" + value + " turns the tracer's " + framework + " integration off for these tests: remove it.")
+	}
+}
+
 // handWrittenConfiguration checks the Datadog configuration every
 // language's hand-written setup shares, in the environment its test command
 // starts with: Test Optimization not turned off (enabled requires it turned
@@ -312,6 +336,62 @@ func handWrittenCISetup(root string, workflow ciWorkflow, job runtimeJob, index 
 	setup := registered.handWrittenSetup(root, provider, workflow, job, index, row, framework, site)
 	if setup != nil && !registered.validatesHandWrittenSetup() {
 		setup.Unvalidated = handWrittenUnvalidated(language)
+	}
+	return setup
+}
+
+// jobHandWrittenSetup is the hand-written setup of the job's test step at
+// first (see handWrittenCISetup), checked against every later step of the
+// job that runs framework's tests too: a setup the first step writes inline
+// or in its own variables reaches no other step, so each one must load the
+// tracer itself, with the same release, for the job to be certified. nil
+// when the first step has none.
+func jobHandWrittenSetup(root string, workflow ciWorkflow, job runtimeJob, first int, language, framework, site string) *handWrittenSetup {
+	setup := handWrittenCISetup(root, workflow, job, first, nil, language, framework, site)
+	if setup == nil {
+		return nil
+	}
+	token := setupActionLanguage(language)
+	for i := first + 1; i < len(job.Steps); i++ {
+		step := job.Steps[i]
+		label := "step " + strconv.Itoa(stepNumber(step, i))
+		if step.Source != "" {
+			label = step.Source
+		}
+		if current, ok := datadogSetup(step); ok {
+			if selected, err := setupSelectsLanguage(current, nil, token); err != nil || selected {
+				setup.unresolved("the job also runs a Datadog setup (" + label + ") after its first " + framework + " test step, and ddtest does not certify a job that mixes it with a hand-written setup.")
+				return setup
+			}
+		}
+		resolution := resolveTestStep(root, workflow, job, step, language, framework)
+		if resolution.Review || !resolution.Matched {
+			continue
+		}
+		later := handWrittenCISetup(root, workflow, job, i, nil, language, framework, site)
+		if later == nil {
+			setup.missing("The " + framework + " test command at " + label + " (" + step.Run + ") gets none of the hand-written setup, so its tests run untraced: give that command the same setup, or set it once in the job's variables.")
+			continue
+		}
+		if later.Tracer != "" && setup.Tracer != "" && later.Tracer != setup.Tracer {
+			setup.missing("The " + framework + " test command at " + label + " loads tracer release " + later.Tracer + ", not " + setup.Tracer + " as the job's first test command does: load one exact release in every test command.")
+		}
+		for _, problem := range later.Problems {
+			setup.missing(problem)
+		}
+		for _, reason := range later.Unresolved {
+			setup.unresolved(reason)
+		}
+		for _, reason := range later.pending {
+			if !slices.Contains(setup.pending, reason) {
+				setup.pending = append(setup.pending, reason)
+			}
+		}
+		for _, key := range later.Confirmations {
+			if !slices.Contains(setup.Confirmations, key) {
+				setup.Confirmations = append(setup.Confirmations, key)
+			}
+		}
 	}
 	return setup
 }
@@ -461,7 +541,7 @@ func firstHandWrittenSetup(root string, workflow ciWorkflow, job runtimeJob, lan
 		if resolution.Review || !resolution.Matched {
 			continue
 		}
-		return handWrittenCISetup(root, workflow, job, i, nil, language, framework, site)
+		return jobHandWrittenSetup(root, workflow, job, i, language, framework, site)
 	}
 	return nil
 }

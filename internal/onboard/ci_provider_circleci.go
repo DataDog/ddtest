@@ -1610,9 +1610,7 @@ func (c *circleConfig) steps(job *circleJob, raw []circleRawStep) []runtimeStep 
 				step.Run = ""
 			} else {
 				step.readScopedPrefix()
-				if folded, assigned, ok := foldCommandEnvironment(step.Run, mergeEnvironment(mergeEnvironment(mergeEnvironment(job.env, item.env), state.env), state.references), state.dialect.projectVariable); ok {
-					step.Run, step.Env = folded, mergeEnvironment(step.Env, assigned)
-				}
+				step.foldInlineEnvironment(mergeEnvironment(mergeEnvironment(mergeEnvironment(job.env, item.env), state.env), state.references), state.dialect.projectVariable)
 			}
 			if !followed {
 				// Later steps start from an environment ddtest doesn't know.

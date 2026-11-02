@@ -144,6 +144,12 @@ type runtimeStep struct {
 	// DD_WDIO_NODE_OPTIONS) whose prefix the provider's reader removed from
 	// the start of Run (see readScopedPrefix).
 	scopedVariable string
+	// impactedWorkaround reports Cucumber's impacted-tests workaround right
+	// after that prefix (see readScopedPrefix).
+	impactedWorkaround bool
+	// inline names the variables assigned inline before Run's command, which
+	// the provider's reader moved into Env (see foldInlineEnvironment).
+	inline []string
 }
 
 // ciShellRuntime is a version manager's selection in a shell: the version

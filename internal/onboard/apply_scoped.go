@@ -59,7 +59,8 @@ func (s *runtimeStep) readScopedPrefix() {
 	if variable == "DD_CUCUMBER_NODE_OPTIONS" {
 		// As in a scoped package script, the impacted-tests workaround
 		// follows the prefix; discovery reads the command after it.
-		rest = strings.TrimSpace(strings.TrimPrefix(rest, cucumberImpactedWorkaround+" "))
+		trimmed := strings.TrimSpace(strings.TrimPrefix(rest, cucumberImpactedWorkaround+" "))
+		s.impactedWorkaround, rest = trimmed != rest, trimmed
 	}
 	file, ok := parseCIShell(rest)
 	if !ok || len(file.Stmts) != 1 {
@@ -77,6 +78,16 @@ func (s *runtimeStep) readScopedPrefix() {
 		return
 	}
 	s.Run, s.scopedVariable = rest, variable
+}
+
+// foldInlineEnvironment moves the variables a single command assigns inline
+// for itself into the step's environment (see foldCommandEnvironment), and
+// records their names: a CI command rebuilt from Run alone would drop them.
+func (s *runtimeStep) foldInlineEnvironment(known map[string]string, project string) {
+	if run, assigned, ok := foldCommandEnvironment(s.Run, known, project); ok {
+		s.Run, s.Env = run, mergeEnvironment(s.Env, assigned)
+		s.inline = slices.Sorted(maps.Keys(assigned))
+	}
 }
 
 // scopedPrefix is the prefix with which a command reads variable on top of
@@ -110,10 +121,16 @@ func directScopedCommand(step runtimeStep, test TestCommand, framework string) (
 		if step.scopedVariable == scopedEnvironment(framework) {
 			return "", nil
 		}
+		if err := inlineAssignmentsError(step); err != nil {
+			return "", err
+		}
 		return scopedPrefix(scopedEnvironment(framework)) + " " + command, nil
 	}
-	if step.scopedVariable == scopedEnvironment(framework) && test.usesNYC {
+	if step.scopedVariable == scopedEnvironment(framework) && test.usesNYC && (step.impactedWorkaround || handWrittenFalse(step.Env["DD_CIVISIBILITY_IMPACTED_TESTS_DETECTION_ENABLED"])) {
 		return "", nil
+	}
+	if err := inlineAssignmentsError(step); err != nil {
+		return "", err
 	}
 	command = strings.TrimSpace(strings.TrimPrefix(command, cucumberImpactedWorkaround+" "))
 	if !test.usesNYC {
@@ -124,6 +141,17 @@ func directScopedCommand(step runtimeStep, test TestCommand, framework string) (
 		command = command[:start] + insertion + command[end:]
 	}
 	return scopedPrefix(scopedEnvironment(framework)) + " " + cucumberImpactedWorkaround + " " + command, nil
+}
+
+// inlineAssignmentsError explains why ddtest does not rebuild a direct
+// invocation whose command assigns variables inline (step.inline), such as a
+// hand-written NODE_OPTIONS preload: the provider's reader moved them out of
+// Run, and placing them around the scoped prefix needs a person's review.
+func inlineAssignmentsError(step runtimeStep) error {
+	if len(step.inline) == 0 {
+		return nil
+	}
+	return fmt.Errorf("CI runs %s with inline variable assignments (%s), which ddtest does not rewrite into the scoped command: move them into the job's variables, keeping their values, then rerun onboard --apply", step.Run, strings.Join(step.inline, ", "))
 }
 
 // Only literal package-script leaves are changed. Framework configs, profiles,

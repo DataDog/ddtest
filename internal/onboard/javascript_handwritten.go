@@ -172,29 +172,61 @@ func javascriptHandWrittenSetup(root string, provider ciProvider, workflow ciWor
 	if setup.Tracer != "" {
 		setup.Reference = handWrittenReference("dd-trace@"+setup.Tracer, "NODE_OPTIONS")
 	}
+	handWrittenFrameworkDisabled(setup, env, framework)
 	handWrittenConfiguration(setup, provider, job, env, site, true, false)
 	return setup, normalized
 }
 
 // javascriptHandWrittenTracer finds the exact dd-trace release a
 // hand-written setup loads in directory: one an install command earlier in
-// the job adds (npm install dd-trace@5.40.0), otherwise the one the
-// package.json that resolves dd-trace there pins, or its lockfile
-// resolves. It records on setup why none is pinned.
+// the job adds there (npm install dd-trace@5.40.0) and no later install
+// removes, otherwise the one the package.json that resolves dd-trace there
+// pins, or its lockfile resolves. It records on setup why none is pinned.
 func javascriptHandWrittenTracer(setup *handWrittenSetup, root, directory string, workflow ciWorkflow, job runtimeJob, index int, env map[string]string) (version, source string) {
+	removed, saved := "", false
 	for _, step := range job.Steps[:index] {
+		where := step.Source
+		if where == "" {
+			where = "an earlier step"
+		}
 		commands, err := staticCommands(step.Run)
 		if err != nil {
+			if version != "" && javascriptMentionsPackageManager(step.Run) {
+				// An install ddtest cannot read may remove the tracer.
+				setup.unresolved("the job installs dd-trace (" + source + "), and a later command ddtest cannot read (" + step.Run + " at " + where + ") may reinstall the dependencies without it.")
+				return "", ""
+			}
 			continue
 		}
+		installDirectory := filepath.Clean(filepath.FromSlash(stepDirectory(workflow, job, step)))
+		moved := false
 		for _, words := range commands {
-			release, global, ok := javascriptTracerInstall(words)
-			if !ok {
+			if len(words) > 0 && slices.Contains([]string{"cd", "pushd", "popd"}, words[0]) {
+				moved = true
 				continue
 			}
-			where := step.Source
-			if where == "" {
-				where = "an earlier step"
+			elsewhere := moved || installDirectory != directory || javascriptInstallsElsewhere(words)
+			release, global, ok := javascriptTracerInstall(words)
+			if !ok {
+				uninstall := javascriptRemovesTracer(words)
+				if version == "" || !uninstall && (saved || !javascriptReinstalls(words)) {
+					// A saved install is in the manifest and lockfile the job
+					// reinstalls from.
+					continue
+				}
+				if !moved && !javascriptInstallsElsewhere(words) && !javascriptRelatedDirectories(installDirectory, directory) {
+					continue // Another package's dependencies.
+				}
+				if elsewhere {
+					setup.unresolved("the job installs dd-trace (" + source + "), and ddtest cannot tell whether a later " + strings.Join(words, " ") + " at " + where + " removes it from " + displayDirectory(directory) + ".")
+					return "", ""
+				}
+				// npm ci, a later install or a prune reinstalls the
+				// dependencies as declared, removing a tracer installed
+				// without saving it.
+				removed = source + ", which " + strings.Join(words, " ") + " at " + where + " removes"
+				version, source = "", ""
+				continue
 			}
 			switch {
 			case global && env["NODE_PATH"] == "":
@@ -206,8 +238,12 @@ func javascriptHandWrittenTracer(setup *handWrittenSetup, root, directory string
 			case !exactRelease(release):
 				setup.missing("The job installs dd-trace without an exact release (" + strings.Join(words, " ") + "), so each build can load another one: install an exact release, such as dd-trace@5.40.0.")
 				return "", ""
+			case elsewhere:
+				setup.unresolved("the job installs dd-trace (" + strings.Join(words, " ") + " at " + where + ") outside " + displayDirectory(directory) + ", where the tests run, so ddtest cannot tell that their -r dd-trace/ci/init resolves that install.")
+				return "", ""
 			}
-			version, source = release, strings.Join(words, " ")+" at "+where
+			version, source, removed = release, strings.Join(words, " ")+" at "+where, ""
+			saved = words[0] != "npm" || !slices.Contains(words, "--no-save")
 		}
 	}
 	if version != "" {
@@ -215,6 +251,9 @@ func javascriptHandWrittenTracer(setup *handWrittenSetup, root, directory string
 	}
 	declared, manifest, development := javascriptDeclaredTracer(root, directory)
 	switch {
+	case manifest == "" && removed != "":
+		setup.missing("The job installs dd-trace (" + removed + ": package.json does not declare dd-trace), so -r dd-trace/ci/init cannot load: install the exact release after the last dependency install, or add dd-trace to package.json as a devDependency with an exact release.")
+		return "", ""
 	case manifest == "":
 		setup.missing("No package.json in " + displayDirectory(directory) + " or above it depends on dd-trace, and no command of the job installs it, so -r dd-trace/ci/init cannot load: add dd-trace as a devDependency with an exact release (npm install --save-dev --save-exact dd-trace@<release>) and commit the lockfile.")
 		return "", ""
@@ -230,6 +269,53 @@ func javascriptHandWrittenTracer(setup *handWrittenSetup, root, directory string
 	}
 	setup.missing(manifest + " requires dd-trace " + declared + ", which is not an exact release, and no lockfile pins it, so each build can load another one: pin an exact release (npm install --save-dev --save-exact dd-trace@<release>) or commit the lockfile.")
 	return "", ""
+}
+
+// javascriptMentionsPackageManager reports a command that may run npm, Yarn
+// or pnpm.
+func javascriptMentionsPackageManager(command string) bool {
+	return slices.ContainsFunc([]string{"npm", "yarn", "pnpm"}, func(name string) bool { return strings.Contains(command, name) })
+}
+
+// javascriptReinstalls reports a package manager command that reinstalls
+// the dependencies as package.json and the lockfile declare them, removing
+// a package installed without saving it: npm ci, any install or add, prune,
+// or removing a package.
+func javascriptReinstalls(words []string) bool {
+	if len(words) == 0 || !slices.Contains([]string{"npm", "yarn", "pnpm"}, words[0]) {
+		return false
+	}
+	if len(words) == 1 || strings.HasPrefix(words[1], "-") {
+		return words[0] == "yarn" // Yarn alone installs.
+	}
+	return slices.Contains([]string{"ci", "install", "i", "add", "prune", "uninstall", "remove", "rm", "un", "r", "unlink"}, words[1])
+}
+
+// javascriptRemovesTracer reports a package manager command that removes
+// dd-trace, such as npm uninstall dd-trace.
+func javascriptRemovesTracer(words []string) bool {
+	return len(words) > 2 && slices.Contains([]string{"npm", "yarn", "pnpm"}, words[0]) &&
+		slices.Contains([]string{"uninstall", "remove", "rm", "un", "r"}, words[1]) && slices.Contains(words[2:], "dd-trace")
+}
+
+// javascriptRelatedDirectories reports two repository directories one of
+// which contains the other, so an install in one can change the packages
+// the other resolves.
+func javascriptRelatedDirectories(a, b string) bool {
+	within := func(inner, outer string) bool {
+		relative, err := filepath.Rel(outer, inner)
+		return err == nil && filepath.IsLocal(relative) || relative == "."
+	}
+	return within(a, b) || within(b, a)
+}
+
+// javascriptInstallsElsewhere reports a package manager option that runs it
+// in another directory or package than the one it starts in.
+func javascriptInstallsElsewhere(words []string) bool {
+	return slices.ContainsFunc(words, func(word string) bool {
+		option, _, _ := strings.Cut(word, "=")
+		return slices.Contains([]string{"--prefix", "-C", "--cwd", "--dir", "-w", "--workspace", "--workspaces", "-ws", "--filter", "-F", "--location"}, option)
+	})
 }
 
 // displayDirectory names a repository directory in findings.
@@ -280,8 +366,10 @@ func javascriptDeclaredTracer(root, directory string) (requested, manifest strin
 			if json.Unmarshal(data, &pkg) == nil {
 				for _, dependencies := range []map[string]string{pkg.Dependencies, pkg.OptionalDependencies, pkg.DevDependencies} {
 					if version, ok := dependencies["dd-trace"]; ok {
+						// Optional dependencies install without devDependencies too.
 						_, inProduction := pkg.Dependencies["dd-trace"]
-						return strings.TrimSpace(version), path.Join(filepath.ToSlash(current), "package.json"), !inProduction
+						_, optional := pkg.OptionalDependencies["dd-trace"]
+						return strings.TrimSpace(version), path.Join(filepath.ToSlash(current), "package.json"), !inProduction && !optional
 					}
 				}
 			}

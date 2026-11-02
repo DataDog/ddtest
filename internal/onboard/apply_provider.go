@@ -126,7 +126,7 @@ func planProviderJavaScriptSetup(root string, provider ciProvider, workflows []c
 			// A job that sets up the tracer by hand keeps that setup.
 			var handWritten *handWrittenSetup
 			if setupIndex < 0 {
-				handWritten = handWrittenCISetup(root, workflow, job, first, nil, "javascript", framework, site)
+				handWritten = jobHandWrittenSetup(root, workflow, job, first, "javascript", framework, site)
 			}
 			inherited := []string{"DD_TRACE_PACKAGE", "DD_TRACE_ESM_IMPORT", "DD_CIVISIBILITY_ENABLED", "DD_TRACE_ENABLED"}
 			if scoped != "NODE_OPTIONS" && setupIndex < 0 {
@@ -195,7 +195,7 @@ func planProviderJavaScriptSetup(root string, provider ciProvider, workflows []c
 			// in NODE_OPTIONS, or a CI server plugin's, reaches it without one.
 			for _, leaf := range direct {
 				if _, exported := leaf.step.Env[scoped]; handWritten != nil || provider.setupTerms().Plugin || setupIndex >= 0 && !exported {
-					break
+					continue
 				}
 				if framework == "webdriverio" {
 					if local, err := localWDIOLeaf(root, leaf.test.Command); err != nil {
@@ -252,6 +252,19 @@ func planProviderJavaScriptSetup(root string, provider ciProvider, workflows []c
 				if _, exported := job.Steps[first].Env[scoped]; !exported && scoped != "NODE_OPTIONS" && !plugin {
 					if gap := existingScopedSetupGap(provider, workflow, job, job.Steps[first], tests, framework, options, request.After[0]); gap != "" {
 						return nil, &SetupGap{location, gap}
+					}
+					// The preload reaches a direct command without the scoped
+					// prefix, but NYC must still wrap Cucumber there.
+					if framework == "cucumber" {
+						var bare []directLeaf
+						for _, leaf := range direct {
+							if _, exported := leaf.step.Env[scoped]; !exported {
+								bare = append(bare, leaf)
+							}
+						}
+						if gap := directCucumberCoverageGap(provider, location, bare, "the job's "+provider.setupName()+" stays."); gap != nil {
+							return nil, gap
+						}
 					}
 				}
 				configured++
@@ -586,6 +599,22 @@ func cucumberLoaderReached(workflow ciWorkflow, job runtimeJob, step runtimeStep
 // invocation needs NYC in the CI command itself, and native ESM (options)
 // needs the loader in the hand-written NODE_OPTIONS.
 func handWrittenCucumberGap(provider ciProvider, location string, workflow ciWorkflow, job runtimeJob, step runtimeStep, tests []TestCommand, direct []directLeaf, options string) error {
+	if gap := directCucumberCoverageGap(provider, location, direct, "the job's hand-written setup stays."); gap != nil {
+		return gap
+	}
+	if options != "" && !cucumberLoaderReached(workflow, job, step, tests) {
+		return &SetupGap{location, "The job's hand-written setup leaves the tracer's preload in NODE_OPTIONS without the " + options + " native ESM coverage needs. Add it to the NODE_OPTIONS that preloads dd-trace/ci/init, then rerun onboard --apply; the job's hand-written setup stays."}
+	}
+	return nil
+}
+
+// directCucumberCoverageGap prescribes NYC for the first direct Cucumber
+// invocation in direct that lacks it, in a job whose setup leaves the
+// tracer's preload in NODE_OPTIONS (a hand-written setup, or the provider's
+// without the scoped variable): no package script carries the wrapper
+// onboard --apply adds, so the CI command itself must. stays says what
+// happens to the job's setup. nil when every one has NYC.
+func directCucumberCoverageGap(provider ciProvider, location string, direct []directLeaf, stays string) error {
 	for _, leaf := range direct {
 		if leaf.test.usesNYC {
 			continue
@@ -597,10 +626,7 @@ func handWrittenCucumberGap(provider ciProvider, location string, workflow ciWor
 		if _, ok := provider.(buildkite); ok {
 			command = buildkiteEscape(command) // pipeline upload would replace each $.
 		}
-		return &EditThenApplyGap{SetupGap{directLeafLocation(location, leaf.step), CucumberCoverageGap + " CI runs " + leaf.test.Command + " directly, not through a package script, so onboard --apply cannot wrap it with NYC. Change this CI command to exactly: " + command + ". Then rerun onboard --apply; the job's hand-written setup stays."}}
-	}
-	if options != "" && !cucumberLoaderReached(workflow, job, step, tests) {
-		return &SetupGap{location, "The job's hand-written setup leaves the tracer's preload in NODE_OPTIONS without the " + options + " native ESM coverage needs. Add it to the NODE_OPTIONS that preloads dd-trace/ci/init, then rerun onboard --apply; the job's hand-written setup stays."}
+		return &EditThenApplyGap{SetupGap{directLeafLocation(location, leaf.step), CucumberCoverageGap + " CI runs " + leaf.test.Command + " directly, not through a package script, so onboard --apply cannot wrap it with NYC. Change this CI command to exactly: " + command + ". Then rerun onboard --apply; " + stays}}
 	}
 	return nil
 }
@@ -660,7 +686,7 @@ func providerSetupConfigured(root string, provider ciProvider, language, framewo
 				}
 				if setup == nil && resolution.Reason == "" {
 					// A complete setup the job writes by hand counts as its own.
-					if handWritten := handWrittenCISetup(root, workflow, job, i, nil, language, framework, site); handWritten != nil && handWritten.complete() {
+					if handWritten := jobHandWrittenSetup(root, workflow, job, i, language, framework, site); handWritten != nil && handWritten.complete() {
 						instrumented = true
 						break
 					}
@@ -716,7 +742,7 @@ func existingSetupProblems(root, language, framework, site string) []string {
 				problem := ""
 				if setup == nil {
 					// A setup the job writes by hand is reported with what it lacks.
-					if handWritten := handWrittenCISetup(root, workflow, job, i, nil, language, framework, site); handWritten != nil {
+					if handWritten := jobHandWrittenSetup(root, workflow, job, i, language, framework, site); handWritten != nil {
 						problem = handWritten.problem()
 					}
 				} else {

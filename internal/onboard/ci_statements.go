@@ -816,7 +816,7 @@ func RequiredCIConfirmations(root, language, framework string) *CIConfirmationRe
 				case setup == nil && resolution.Matched:
 					// A setup the job writes by hand depends on facts too, once
 					// nothing else is missing.
-					if handWritten := handWrittenCISetup(root, workflow, job, i, nil, language, framework, ""); handWritten != nil {
+					if handWritten := jobHandWrittenSetup(root, workflow, job, i, language, framework, ""); handWritten != nil {
 						confirmations = handWritten.unconfirmed()
 					}
 				}

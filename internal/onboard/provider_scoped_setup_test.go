@@ -476,3 +476,88 @@ func TestProviderDirectInvocationGetsTheScopedCommand(t *testing.T) {
 		}
 	}
 }
+
+// A direct Cucumber command with the scoped prefix and NYC is accepted only
+// with the impacted-tests workaround, inline after the prefix or among the
+// command's own assignments, as onboard --apply writes package scripts.
+func TestProviderDirectCucumberNeedsTheImpactedWorkaround(t *testing.T) {
+	provider, framework := scopedProviders[0], scopedFrameworks[0]
+	leaf := "npx --no-install nyc -- ./node_modules/.bin/cucumber-js ./features"
+	root := scopedRepository(t, provider, provider.config("npm ci", cucumberScopedOptions+" "+leaf), framework.pkg, nil)
+	_, err := PlanJavaScriptSetup(root, "cucumber", "5.133.0", "datadoghq.com", ">=18")
+	var gap *EditThenApplyGap
+	require.ErrorAs(t, err, &gap)
+	require.Contains(t, gap.Reason, "Change this CI command to exactly: "+cucumberScopedOptions+" "+cucumberImpactedWorkaround+" "+leaf+".")
+
+	for _, command := range []string{
+		cucumberScopedOptions + " " + cucumberImpactedWorkaround + " " + leaf,
+		cucumberScopedOptions + " DD_ENV=ci " + cucumberImpactedWorkaround + " " + leaf,
+	} {
+		writeFile(t, root, provider.file, provider.config("npm ci", command))
+		_, err = PlanJavaScriptSetup(root, "cucumber", "5.133.0", "datadoghq.com", ">=18")
+		require.NoError(t, err, command)
+	}
+}
+
+// A direct invocation that assigns variables inline loses them when ddtest
+// rebuilds the command from what remains, so ddtest prescribes no exact
+// command for it: they move into the job's variables first.
+func TestProviderDirectInvocationKeepsInlineAssignments(t *testing.T) {
+	for _, framework := range scopedFrameworks {
+		t.Run(framework.name, func(t *testing.T) {
+			provider := scopedProviders[0]
+			direct := "DD_ENV=ci ./node_modules/.bin/cucumber-js ./features"
+			if framework.name == "webdriverio" {
+				direct = "DD_ENV=ci npx wdio run wdio.conf.js"
+			}
+			root := scopedRepository(t, provider, provider.config("npm ci", direct), framework.pkg, framework.files)
+			_, err := PlanJavaScriptSetup(root, framework.name, "5.133.0", "datadoghq.com", ">=18")
+			var gap *SetupGap
+			require.ErrorAs(t, err, &gap)
+			var edit *EditThenApplyGap
+			require.False(t, errors.As(err, &edit), "no exact command drops DD_ENV")
+			require.Contains(t, gap.Reason, "with inline variable assignments (DD_ENV), which ddtest does not rewrite")
+		})
+	}
+	// A hand-written preload written inline is never dropped from the
+	// prescribed NYC command either.
+	provider := handWrittenProviders[0]
+	pkg := `{"scripts": {"test": "cucumber-js"}, "devDependencies": {"@cucumber/cucumber": "11.0.1", "nyc": "17.1.0", "dd-trace": "5.40.0"}}`
+	command := `NODE_OPTIONS='-r dd-trace/ci/init --import dd-trace/register.js' DD_CIVISIBILITY_AGENTLESS_ENABLED=true npx cucumber-js`
+	root := handWrittenRepository(t, provider, pkg, provider.config(map[string]string{"DD_SITE": "datadoghq.com"}, []string{"npm ci"}, command), nil)
+	_, err := PlanJavaScriptSetup(root, "cucumber", "5.133.0", "datadoghq.com", ">=18")
+	var gap *SetupGap
+	require.ErrorAs(t, err, &gap)
+	require.Contains(t, gap.Reason, "inline variable assignments (DD_CIVISIBILITY_AGENTLESS_ENABLED, NODE_OPTIONS)")
+	require.NotContains(t, gap.Reason, "Change this CI command to exactly")
+}
+
+// An existing provider setup that leaves the preload in NODE_OPTIONS
+// reaches a direct Cucumber command, but no package script carries NYC for
+// it: onboard --apply prescribes the NYC-wrapped command and keeps the
+// setup, and the result validates.
+func TestProviderApplyPrescribesNYCForDirectCucumberAfterAnExistingSetup(t *testing.T) {
+	provider, framework := scopedProviders[0], scopedFrameworks[0]
+	config := func(command string) string {
+		return "test:\n  image: node:22\n  script:\n" + gitLabSetupEntry(gitLabJestSetup) + "    - " + esmImportCommand + "\n    - " + command + "\n"
+	}
+	root := scopedRepository(t, provider, config("./node_modules/.bin/cucumber-js ./features"), framework.pkg, nil)
+	_, err := PlanJavaScriptSetup(root, "cucumber", "5.133.0", "datadoghq.com", ">=18")
+	var gap *EditThenApplyGap
+	require.ErrorAs(t, err, &gap)
+	require.Contains(t, gap.Reason, CucumberCoverageGap)
+	require.Contains(t, gap.Reason, "the job's Datadog setup script stays.")
+	_, after, ok := strings.Cut(gap.Reason, "Change this CI command to exactly: ")
+	require.True(t, ok, gap.Reason)
+	written, _, _ := strings.Cut(after, ". Then rerun onboard --apply")
+	require.Contains(t, written, "npx --no-install nyc -- ./node_modules/.bin/cucumber-js ./features")
+
+	writeFile(t, root, provider.file, config(written))
+	plan, err := PlanJavaScriptSetup(root, "cucumber", "5.133.0", "datadoghq.com", ">=18")
+	require.NoError(t, err)
+	for _, edit := range plan.edits {
+		require.NotEqual(t, gitLabCIFile, edit.path, "the existing setup is kept")
+	}
+	check := checkCIRuntimes(t.Context(), root, nil, scopedRequirement, "cucumber")
+	require.Equal(t, StatusCompatible, check.Status, check.Jobs)
+}

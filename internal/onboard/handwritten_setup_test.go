@@ -152,6 +152,11 @@ func TestHandWrittenJavaScriptSetups(t *testing.T) {
 				{name: "global install", pkg: `{"devDependencies": {"jest": "30.0.0"}}`, before: []string{"npm install -g dd-trace@5.40.0"}, env: agentless, status: StatusInconclusive, reason: "installs dd-trace globally"},
 				{name: "not a dependency", pkg: `{"devDependencies": {"jest": "30.0.0"}}`, env: agentless, status: StatusInconclusive, reason: "depends on dd-trace"},
 				{name: "production install", before: []string{"npm ci --omit=dev"}, env: agentless, status: StatusInconclusive, reason: "installs production dependencies only"},
+				{name: "optional dependency", pkg: `{"devDependencies": {"jest": "30.0.0"}, "optionalDependencies": {"dd-trace": "5.40.0"}}`, before: []string{"npm ci --omit=dev"}, env: agentless, configured: true, status: StatusCompatible},
+				{name: "install removed by npm ci", pkg: `{"devDependencies": {"jest": "30.0.0"}}`, before: []string{"npm install --no-save dd-trace@5.40.0", "npm ci"}, env: agentless, status: StatusInconclusive, reason: "which npm ci at"},
+				{name: "saved install before npm ci", pkg: `{"devDependencies": {"jest": "30.0.0"}}`, before: []string{"npm install --save-exact dd-trace@5.40.0", "npm ci"}, env: agentless, configured: true, status: StatusCompatible},
+				{name: "install in another package", pkg: `{"devDependencies": {"jest": "30.0.0"}}`, before: []string{"npm ci", "npm install --no-save --prefix tools dd-trace@5.40.0"}, env: agentless, status: StatusInconclusive, reason: "outside the checkout root, where the tests run"},
+				{name: "framework disabled", env: with(agentless, "DD_TRACE_JEST_ENABLED", "false"), status: StatusInconclusive, reason: "DD_TRACE_JEST_ENABLED=false turns the tracer's jest integration off"},
 				{name: "literal key", env: with(agentless, "DD_API_KEY", "0123456789abcdef"), status: StatusInconclusive, reason: "never commit the key"},
 				{name: "agent mode", env: with(agentless, "DD_CIVISIBILITY_AGENTLESS_ENABLED", ""), status: StatusInconclusive, reason: "reports through a Datadog Agent"},
 				{name: "disabled", env: with(agentless, "DD_CIVISIBILITY_ENABLED", "false"), status: StatusInconclusive, reason: "DD_CIVISIBILITY_ENABLED=false turns the tracer off"},
@@ -377,6 +382,10 @@ func TestHandWrittenRubySetups(t *testing.T) {
 				{name: "RUBYOPT", env: auto, configured: true},
 				{name: "RUBYOPT with bundle exec", env: with(auto, "RUBYOPT", "-rdatadog/ci/auto_instrument"), configured: true},
 				{name: "RUBYOPT without Bundler", env: with(auto, "RUBYOPT", "-rdatadog/ci/auto_instrument"), command: "rspec", reason: "before Bundler sets up the bundle"},
+				{name: "RUBYOPT with a binstub", env: with(auto, "RUBYOPT", "-rdatadog/ci/auto_instrument"), command: "bin/rspec", files: map[string]string{"bin/rspec": "#!/usr/bin/env ruby\nrequire 'bundler/setup'\nload Gem.bin_path('rspec-core', 'rspec')\n"}, reason: "A binstub such as bin/rspec sets up Bundler only after RUBYOPT's preloads"},
+				{name: "RUBYOPT with a binstub after Bundler", env: auto, command: "bin/rspec", files: map[string]string{"bin/rspec": "#!/usr/bin/env ruby\nrequire 'bundler/setup'\nload Gem.bin_path('rspec-core', 'rspec')\n"}, configured: true},
+				{name: "framework disabled", env: with(auto, "DD_TRACE_RSPEC_ENABLED", "false"), reason: "DD_TRACE_RSPEC_ENABLED=false turns the tracer's rspec integration off"},
+				{name: "conditional instrument", env: map[string]string{"DD_SITE": "datadoghq.com"}, files: map[string]string{".rspec": "--require spec_helper\n", "spec/spec_helper.rb": strings.Replace(handWrittenSpecHelper, "  c.ci.instrument :rspec\n", "  c.ci.instrument :rspec if ENV[\"TRACE_TESTS\"] == \"true\"\n", 1)}, reason: "calls c.ci.instrument :rspec if ENV[\"TRACE_TESTS\"] == \"true\", which ddtest does not evaluate"},
 				{name: "not enabled", env: with(auto, "DD_CIVISIBILITY_ENABLED", ""), reason: "set DD_CIVISIBILITY_ENABLED=true"},
 				{name: "not locked", env: auto, lock: "GEM\n  specs:\n    rspec (3.13.0)\n", reason: "does not lock datadog-ci"},
 				{name: "other site", env: auto, site: "datadoghq.eu", reason: "set DD_SITE=datadoghq.eu"},
@@ -608,4 +617,70 @@ func TestHandWrittenAgentModeIsConfirmedByTheUser(t *testing.T) {
 			require.Contains(t, stated, "A Datadog Agent runs where the hand-written CI setups' tests run, at the address they use, with an API key and the selected Datadog site (--ci-confirm)")
 		})
 	}
+}
+
+// A hand-written setup one test step writes for itself, inline or in its
+// own variables, reaches no other step: a job is certified only when every
+// test step loads the tracer, and each Ruby step is checked on its own.
+func TestHandWrittenSetupReachesEveryTestStep(t *testing.T) {
+	inline := `NODE_OPTIONS='-r dd-trace/ci/init' npx jest unit`
+	env := with(handWrittenAgentless("-r dd-trace/ci/init"), "NODE_OPTIONS", "")
+	for _, provider := range handWrittenProviders {
+		t.Run(provider.name, func(t *testing.T) {
+			root := handWrittenRepository(t, provider, handWrittenPackage, provider.config(env, []string{"npm ci", inline}, "npx jest integration"), nil)
+			require.False(t, javascriptDiscovery{}.ciSetupConfigured(root, "jest", "datadoghq.com"))
+			require.Contains(t, strings.Join(existingSetupProblems(root, "javascript", "jest", "datadoghq.com"), "\n"), "(npx jest integration) gets none of the hand-written setup")
+			_, err := PlanJavaScriptSetup(root, "jest", "5.133.0", "datadoghq.com", ">=18")
+			var gap *SetupGap
+			require.ErrorAs(t, err, &gap)
+			require.Contains(t, gap.Reason, "gets none of the hand-written setup, so its tests run untraced")
+
+			// Both commands with the setup are certified.
+			both := `NODE_OPTIONS='-r dd-trace/ci/init' npx jest integration`
+			writeFile(t, root, provider.file, provider.config(env, []string{"npm ci", inline}, both))
+			require.True(t, javascriptDiscovery{}.ciSetupConfigured(root, "jest", "datadoghq.com"))
+			plan, err := PlanJavaScriptSetup(root, "jest", "5.133.0", "datadoghq.com", ">=18")
+			require.NoError(t, err)
+			require.True(t, plan.Configured())
+		})
+	}
+	auto := map[string]string{"RUBYOPT": "-rbundler/setup -rdatadog/ci/auto_instrument", "DD_CIVISIBILITY_ENABLED": "true", "DD_CIVISIBILITY_AGENTLESS_ENABLED": "true", "DD_SITE": "datadoghq.com"}
+	for _, provider := range rubyHandWrittenProviders {
+		t.Run(provider.name+"/ruby", func(t *testing.T) {
+			root := t.TempDir()
+			writeFile(t, root, "Gemfile", handWrittenGemfile)
+			writeFile(t, root, "Gemfile.lock", handWrittenGemfileLock)
+			writeFile(t, root, provider.file, provider.config(auto, []string{"bundle install", "bundle exec rspec spec/unit"}, "bundle exec rspec spec/integration"))
+			t.Chdir(root)
+			useCIProvider(t, provider.name)
+			check := RubyCIConfigurationForSite(root, "rspec", "datadoghq.com")
+			require.Len(t, check.Jobs, 2, "%+v", check)
+			for _, job := range check.Jobs {
+				require.Equal(t, "not checked", job.Status, job.Reason)
+				require.Contains(t, job.Action, "hand-written datadog-ci 1.42.0 setup")
+			}
+		})
+	}
+}
+
+// An install in another directory than the tests' does not pin the
+// release their -r dd-trace/ci/init loads.
+func TestHandWrittenTracerInstallDirectory(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "app/package.json", `{"devDependencies": {"jest": "30.0.0", "dd-trace": "^4.0.0"}}`)
+	job := runtimeJob{Steps: []runtimeStep{
+		{Run: "npm install --no-save dd-trace@5.40.0", WorkingDirectory: "tools"},
+		{Run: "npx jest", WorkingDirectory: "app"},
+	}}
+	setup := &handWrittenSetup{}
+	version, _ := javascriptHandWrittenTracer(setup, root, "app", ciWorkflow{}, job, 1, nil)
+	require.Empty(t, version)
+	require.Contains(t, strings.Join(setup.Unresolved, " "), "outside app, where the tests run")
+
+	job.Steps[0].WorkingDirectory = "app"
+	setup = &handWrittenSetup{}
+	version, _ = javascriptHandWrittenTracer(setup, root, "app", ciWorkflow{}, job, 1, nil)
+	require.Equal(t, "5.40.0", version)
+	require.Empty(t, setup.Problems)
+	require.Empty(t, setup.Unresolved)
 }
