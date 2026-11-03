@@ -181,6 +181,20 @@ func TestJavaReactorIncludesMavenConfig(t *testing.T) {
 	require.ErrorContains(t, err, ".mvn/jvm.config attaches dd-java-agent")
 }
 
+func TestJavaRunsWriteTheXMLReportsAPropertyTurnsOff(t *testing.T) {
+	root := t.TempDir()
+	requireWriteFile(t, filepath.Join(root, "pom.xml"), `<project><artifactId>root</artifactId><properties><closeTestReports>true</closeTestReports></properties>
+		<build><plugins><plugin><artifactId>maven-surefire-plugin</artifactId><configuration><disableXmlReport>${closeTestReports}</disableXmlReport></configuration></plugin></plugins></build></project>`)
+	drive := &Testdrive{repositoryRoot: root, configurationRoot: root, command: "mvn", args: []string{"verify"}}
+	build, err := drive.javaBuild([]string{"verify"})
+	require.NoError(t, err)
+	args := []string{"verify"}
+	require.Equal(t, []string{"verify", "-DcloseTestReports=false"}, build.arguments(args, nil), "validation reads the reports")
+	require.Equal(t, []string{"verify"}, args)
+	probe := &javaProbe{args: []string{"-Dtest=" + javaProbeClass}}
+	require.Equal(t, []string{"test", "-Dtest=" + javaProbeClass, "-DcloseTestReports=false"}, build.arguments(args, probe), "probe runs read them too")
+}
+
 func TestJavaRefusesADatadogAgentInJVMConfig(t *testing.T) {
 	root := t.TempDir()
 	requireWriteFile(t, filepath.Join(root, "pom.xml"), `<project><artifactId>root</artifactId></project>`)
@@ -391,7 +405,7 @@ func TestJavaNativeTestsUseTheirModules(t *testing.T) {
 		{module: "Customer API", Test: maven.Test{Module: "api", Suite: "example.ApiTest", Name: "works()", Status: "passed"}},
 		{module: ":app:test", Test: maven.Test{Module: "app", Suite: "example.AppTest", Name: "fails()", Status: "failed", Failure: "AssertionError: no\n"}},
 		{module: "core", Test: maven.Test{Module: "core", Suite: javaProbeClass, Name: "ddtestProbe()", Status: "passed"}},
-	}, true)
+	}, "junit5", true)
 	require.Equal(t, "Customer API / example.ApiTest", tests[0].File)
 	require.Equal(t, ":app:test / example.AppTest", tests[1].File, "a Gradle result is its test task's")
 	probe := tests[2]
@@ -401,12 +415,12 @@ func TestJavaNativeTestsUseTheirModules(t *testing.T) {
 	karate := javaNativeTests([]javaResult{
 		{module: "core", Test: maven.Test{Module: "core", Suite: "[src/test/resources/ddtest/DdtestValidation] " + javaProbeClass, Name: "ddtestProbe", Status: "passed"}},
 		{module: "core", Test: maven.Test{Module: "core", Suite: "[example/calc] Calculator", Name: "adds", Status: "passed"}},
-	}, true)
+	}, "karate", true)
 	require.True(t, karate[0].probe, "a Karate probe is its feature's path and name")
 	require.False(t, karate[1].probe)
 	// Gradle names a TestNG data-provider invocation with its arguments' toString.
 	invocation := func(address string) string {
-		return javaNativeTests([]javaResult{{module: ":test", Test: maven.Test{Suite: "com.beust.jcommander.CmdTest", Name: "testArgsWithDefaultCmd[0](--cmd-one, false, [Ljava.lang.String;@" + address + ")", Status: "passed"}}}, false)[0].Name
+		return javaNativeTests([]javaResult{{module: ":test", Test: maven.Test{Suite: "com.beust.jcommander.CmdTest", Name: "testArgsWithDefaultCmd[0](--cmd-one, false, [Ljava.lang.String;@" + address + ")", Status: "passed"}}}, "testng", false)[0].Name
 	}
 	require.Equal(t, invocation("20ca951f"), invocation("89caf47"), "one invocation has one name in every run")
 	require.Equal(t, "testArgsWithDefaultCmd", javaTestName(invocation("20ca951f")))
@@ -483,7 +497,7 @@ func TestJavaTelemetryMatchesGradleDisplayNames(t *testing.T) {
 
 	// A display name with a lambda's identity, as sshj's ConnectedSocketTest.
 	display := "[1] example.SocketTest$$Lambda$1352/0x000000980176c488@4f3b5c60"
-	lambda := javaNativeTests([]javaResult{{module: ":test", Test: maven.Test{Suite: "example.SocketTest", Name: display, Status: "passed"}}}, false)
+	lambda := javaNativeTests([]javaResult{{module: ":test", Test: maven.Test{Suite: "example.SocketTest", Name: display, Status: "passed"}}}, "junit5", false)
 	run = javaTelemetryRun(lambda, reported(":test", "example.SocketTest", "connects", `{"metadata":{"test_name":"`+display+`"}}`, intake.TestRun{Status: "pass", SpanID: 5}))
 	require.Equal(t, verdict{}, verifyJavaTelemetry(run), "the native name and the tracer's display name read the identity alike")
 }
@@ -524,10 +538,10 @@ func TestJavaProbeRunsInAModuleThatRanTests(t *testing.T) {
 	projects := newMavenBuild(t.TempDir(), javaFixtureProjects())
 	module, ok := javaProbeModule(projects, []nativeTest{{File: "Customer API / example.ApiTest"}, {File: "core / example.CoreTest"}}, "junit5")
 	require.True(t, ok)
-	require.Equal(t, "core", module, "a module declaring the selected framework is preferred")
+	require.Equal(t, javaProbeTarget{directory: "core", module: "core"}, module, "a module declaring the selected framework is preferred")
 	module, ok = javaProbeModule(projects, []nativeTest{{File: "Customer API / example.ApiTest"}}, "junit5")
 	require.True(t, ok)
-	require.Equal(t, "api", module, "an inherited framework dependency still runs the probe")
+	require.Equal(t, javaProbeTarget{directory: "api", module: "Customer API"}, module, "an inherited framework dependency still runs the probe")
 	_, ok = javaProbeModule(projects, nil, "junit5")
 	require.False(t, ok)
 }
@@ -707,7 +721,7 @@ func TestJavaCIRuntimeCertifiesTheValidatedJDKOrAnAcceptedSubstitute(t *testing.
 	drive.args = []string{"test"}
 	ci, _, err = drive.javaCIRuntime("17.0.20")
 	require.NoError(t, err)
-	require.Contains(t, ci.Reason, "No CI consumer matches this Maven command", "a local command that CI does not run certifies no CI row")
+	require.Contains(t, ci.Reason, "No CI consumer matches this command", "a local command that CI does not run certifies no CI row")
 }
 
 func TestJavaRuntimeChecksMergeAcrossConfigurations(t *testing.T) {
@@ -901,4 +915,15 @@ func TestJavaPackageCheckInspectsTheReactorsCommandsSelect(t *testing.T) {
 	drive.workflowScope.Commands[0].Command = "mvn -f missing.xml verify"
 	check, _ = javaLanguage{}.packageExclusions(drive, t.Context())
 	require.Equal(t, "failed", check.Status, "an unreadable reactor cannot be ruled out")
+
+	// Gradle packages its source sets' resources, never the repository root's.
+	drive.workflowScope.Commands = []onboard.TestCommand{{Directory: ".", Command: "./gradlew check"}}
+	check, _ = javaLanguage{}.packageExclusions(drive, t.Context())
+	require.Equal(t, "passed", check.Status)
+	require.Equal(t, "Gradle commands package only their source sets' resource directories, which do not hold the repository root's .testoptimization/.", check.Reason, "no Maven resources are claimed for a Gradle scope")
+	requireWriteFile(t, filepath.Join(root, "pom-ci.xml"), `<project><artifactId>ci</artifactId></project>`)
+	drive.workflowScope.Commands = append(drive.workflowScope.Commands, onboard.TestCommand{Directory: ".", Command: "mvn -B -f pom-ci.xml verify"})
+	check, _ = javaLanguage{}.packageExclusions(drive, t.Context())
+	require.Equal(t, "passed", check.Status)
+	require.Contains(t, check.Reason, "Maven resource declarations; none packages the reports. Gradle commands package only")
 }

@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 
 	"github.com/DataDog/ddtest/internal/gradle"
 	"github.com/DataDog/ddtest/internal/maven"
@@ -49,19 +50,23 @@ type javaBuild interface {
 	arguments(args []string, probe *javaProbe) []string
 	// environment prepares a run's environment.
 	environment(env map[string]string)
-	// probe is framework's controlled probe in the project at directory, or
-	// why it has none.
-	probe(directory, framework string, args []string) (javaProbe, string, error)
+	// probe is framework's controlled probe at target, or why it has none.
+	probe(target javaProbeTarget, framework string, args []string) (javaProbe, string, error)
 	// results reads a run's native results. Missing results are an error
 	// errNoJavaResults wraps; incomplete explains a build that stopped for a
 	// reason other than native test failures.
 	results(exitCode int, output string) (results []javaResult, incomplete string, err error)
-	// directory is the project directory whose tests a module label names.
+	// directory is the project directory whose tests a module label names,
+	// when a probe there can join them.
 	directory(module string) (string, bool)
 	// javaHome is the JDK the build tool selects for itself in place of
 	// JAVA_HOME or PATH, and where that is set; empty when it selects none.
 	javaHome() (home, source string)
 }
+
+// javaProbeTarget is where a probe runs: a project directory, and the module
+// label whose native results it joins there, such as a Gradle test task path.
+type javaProbeTarget struct{ directory, module string }
 
 // errNoJavaResults wraps a build that wrote no native result: a skipped or
 // disabled probe never starts, so its run reports none.
@@ -77,7 +82,49 @@ func (t *Testdrive) javaBuild(args []string) (javaBuild, error) {
 	if err != nil {
 		return nil, err
 	}
-	return newMavenBuild(root, projects), nil
+	build := newMavenBuild(root, projects)
+	build.options, build.userHome = t.mavenUserHome(args)
+	if build.reportSwitches, err = maven.ReportSwitches(root, projects); err != nil {
+		return nil, err
+	}
+	return build, nil
+}
+
+// mavenUserHome is the user home Maven validation runs set, and the MAVEN_OPTS
+// they extend with it, when neither the command nor its MAVEN_OPTS, MAVEN_ARGS,
+// JAVA_TOOL_OPTIONS, JDK_JAVA_OPTIONS or .mvn/jvm.config sets user.home or
+// maven.repo.local; empty otherwise.
+func (t *Testdrive) mavenUserHome(args []string) (options, home string) {
+	value := func(key string) string {
+		if value, ok := t.configurationEnvironment[key]; ok {
+			return value
+		}
+		return os.Getenv(key)
+	}
+	options = value("MAVEN_OPTS")
+	selects := func(word string) bool {
+		return strings.HasPrefix(word, "-Duser.home=") || strings.HasPrefix(word, "-Dmaven.repo.local=")
+	}
+	// Maven puts jvm.config before MAVEN_OPTS, so a home added there would win.
+	directory, err := t.javaMavenDirectory(args)
+	if err != nil {
+		return "", ""
+	}
+	var jvmConfig []byte
+	if directory != "" {
+		if jvmConfig, err = os.ReadFile(filepath.Join(directory, "jvm.config")); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return "", ""
+		}
+	}
+	if slices.ContainsFunc(slices.Concat(args, strings.Fields(options), strings.Fields(value("MAVEN_ARGS")), strings.Fields(value("JAVA_TOOL_OPTIONS")), strings.Fields(value("JDK_JAVA_OPTIONS")), strings.Fields(string(jvmConfig))), selects) {
+		return "", ""
+	}
+	home, err = os.UserHomeDir()
+	// MAVEN_OPTS is split on whitespace, so a home with any is left alone.
+	if err != nil || strings.ContainsAny(home, " \t") {
+		return "", ""
+	}
+	return options, home
 }
 
 // newMavenBuild is the reactor of projects, relative to root.
@@ -91,6 +138,12 @@ type mavenBuild struct {
 	reactor []maven.Project
 	// labels map each project directory to its module label.
 	labels map[string]string
+	// userHome is the user home validation runs set, extending the
+	// MAVEN_OPTS options the configuration has, when nothing else selects one.
+	options, userHome string
+	// reportSwitches are the properties that turn off the XML reports
+	// validation reads, and nothing else.
+	reportSwitches []string
 }
 
 func (b *mavenBuild) tool() string      { return "Maven" }
@@ -122,20 +175,37 @@ func (b *mavenBuild) clean() error {
 
 // arguments narrow a probe run to Surefire: checks after the test phase, such
 // as license headers or coverage gates, would judge the probe file itself.
+// Every run turns back on the XML reports a property turns off.
 func (b *mavenBuild) arguments(args []string, probe *javaProbe) []string {
-	if probe == nil {
-		return args
+	if probe != nil {
+		args = append(maven.UpToTest(args), probe.args...)
 	}
-	return append(maven.UpToTest(args), probe.args...)
+	args = slices.Clone(args)
+	for _, property := range b.reportSwitches {
+		args = append(args, "-D"+property+"=false")
+	}
+	return args
 }
 
-// ~/.mavenrc and /etc/mavenrc may attach agents or change options between runs.
+// ~/.mavenrc and /etc/mavenrc may attach agents or change options between
+// runs. Maven reads ~/.m2, its settings and repository, from the JVM's
+// user.home, which a user without a passwd entry, as in a container, resolves
+// to "?": a directory inside the build. Runs use the home whose files
+// validation reads instead.
 func (b *mavenBuild) environment(env map[string]string) {
 	env["MAVEN_SKIP_RC"] = "true"
+	if b.userHome == "" {
+		return
+	}
+	options, ok := env["MAVEN_OPTS"]
+	if !ok {
+		options = b.options
+	}
+	env["MAVEN_OPTS"] = strings.TrimSpace(options + " -Duser.home=" + b.userHome)
 }
 
-func (b *mavenBuild) probe(directory, framework string, args []string) (javaProbe, string, error) {
-	return javaProbeFor(b.root, directory, framework, args)
+func (b *mavenBuild) probe(target javaProbeTarget, framework string, args []string) (javaProbe, string, error) {
+	return javaProbeFor(b.root, target.directory, framework, args)
 }
 
 func (b *mavenBuild) results(exitCode int, output string) ([]javaResult, string, error) {

@@ -92,7 +92,8 @@ one to configure before discovery, edits or validation (agents receive
 `ci_provider_required` with `next_action: ask_user`), and follow-up commands
 keep the selected `--ci-provider`. A language without setup support on the
 selected provider gets `ci_provider_unsupported` instead of instructions:
-JavaScript and Ruby support every provider, Python and Java GitHub Actions only.
+JavaScript and Ruby support every provider, Java every provider but Jenkins, and
+Python GitHub Actions only.
 Other CI files (Travis CI, Azure Pipelines and others) are never parsed: when
 they mention the framework they are listed as outside this validation, and they
 never fail onboarding.
@@ -815,15 +816,22 @@ configuration whose CI step reads a remote browser grid's credentials from CI
 secrets (Sauce Labs, BrowserStack, LambdaTest, TestingBot): setup instruments it
 like any other step, and it is reported as running only in CI once a local
 configuration of the same suite passed its paired comparison; without one, it
-blocks. A GitHub Actions variable that carries only a credential secret, such
-as `GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}` or a `SONAR_TOKEN` set on the test
-step, its job or an earlier setup step, is a caveat as well: local validation
-runs without it (a value the host exports is unset too) and names it. A
-credential is a variable whose name ends with TOKEN, SECRET, PASSWORD,
-PASSPHRASE, API_KEY, ACCESS_KEY, SECRET_KEY, PRIVATE_KEY, CREDENTIALS or AUTH.
-A command that reads such a variable, a secret used as a setting (such as
-`AUTH_MODE` or a URL) and a remote grid's key outside WebdriverIO still
-require review. Caveats never prevent COMPLETE LOCALLY. The handoff also names CI step
+blocks. A CI variable whose value only CI provides, set on the test step, its
+job or an earlier setup step, is a caveat as well: a secret, whatever its name,
+as `GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}` or `API_URL: ${{ secrets.API_URL }}`,
+a CI context such as `${{ github.ref }}`, a step output, or a value that reads
+only the provider's predefined variables, as GitLab's `$CI_COMMIT_TAG`,
+Buildkite's `$BUILDKITE_*` or CircleCI's `$CIRCLE_*`. Local validation runs
+without it (a value the host exports is unset too) and names it; both paired
+runs miss it alike. A command line that expands such a variable, a value the
+job's own commands or build logic compute (`export SUITE=$(cat ci/suite)`, a
+Jenkins `sh(returnStdout: true, …)`, a project variable), and a variable that
+controls the runtime, the tools or the tracer still require review: `PATH`,
+`HOME`, `BASH_ENV`, `ENV`, the dynamic linker's, the `DD_*` settings
+validation keeps, and each language's runtime, cache and tool variables, such
+as `NODE_OPTIONS`, `CYPRESS_*`, `PYTHONPATH`, `PYTEST_ADDOPTS`, `RUBYOPT`,
+`BUNDLE_*`, `SPEC_OPTS`, `JAVA_TOOL_OPTIONS`, `JDK_JAVA_OPTIONS`,
+`MAVEN_ARGS` or `GRADLE_OPTS`. Caveats never prevent COMPLETE LOCALLY. The handoff also names CI step
 settings that disable a tracer integration (such as
 `DD_TRACE_DISABLED_INSTRUMENTATIONS=router`) and lists earlier attempts of the
 same workflow that stopped before the final run. Re-running `--apply` on its own
@@ -907,13 +915,27 @@ Datadog backend processing remain untested.
 ## Java validation
 
 Java projects build with Maven or Gradle. `ddtest onboard --framework junit5`
-lists the Maven and Gradle CI test commands of the GitHub Actions workflows and
-prints their setup; select the framework the project uses (`junit4`, `junit5`,
+lists the Maven and Gradle CI test commands of the selected CI provider's
+configuration (GitHub Actions, GitLab CI, CircleCI or Buildkite) and prints
+their setup; select the framework the project uses (`junit4`, `junit5`,
 `testng`, `spock`, `cucumber-java`, `karate`, `scalatest` or `munit`). A
 repository with a `pom.xml` or Gradle settings or build files at its root is a
 Java repository; one that also contains a JavaScript, Python or Ruby project
 keeps that platform by default; select Java with `--platform java` or a JVM
 `--framework`.
+
+On GitLab CI, CircleCI and Buildkite the setup is the provider's Datadog
+mechanism (the GitLab setup script, the CircleCI orb, or on Buildkite the
+installer in the test step's commands), which runs the same installer as the
+GitHub action: it adds `-javaagent` to `MAVEN_OPTS` and `GRADLE_OPTS` in the
+job's shell, before the job's own options (the orb, to `JAVA_TOOL_OPTIONS` for
+every Java process, unless `java_instrumented_build_system` names Maven or
+Gradle). A later command that replaces that variable instead of extending it
+(`export MAVEN_OPTS="$MAVEN_OPTS …"`) leaves the tests uninstrumented. The JDK a
+row is certified on is the one its job image names, such as
+`maven:3.9-eclipse-temurin-21`, `gradle:8.10-jdk17`, `eclipse-temurin:17-jdk` or
+`cimg/openjdk:17.0`; a job on the build agent's own JDK, or in an image whose
+name selects no JDK version, stays inconclusive.
 
 For Gradle, ddtest reads the build's settings (and the scripts they apply),
 build files and default version catalog without running Gradle, including the
@@ -921,7 +943,9 @@ test tasks and suites build files declare; a project list or test task that
 build logic computes, such as in buildSrc, leaves the step unresolved rather
 than guessed, except for tasks the build files declare with another type, such
 as a `JapicmpTask`, which never run tests. It resolves each CI step to its test
-tasks, reports the other tasks and the projects of other frameworks, and
+tasks, reports the other tasks and the projects of other frameworks, resolves
+a step that chains Gradle commands, as `./gradlew assemble && ./gradlew
+check`, to its one test command when the others run no tests, and
 treats a job without the Datadog action whose commands only sign, download and
 publish, with Maven outside the test lifecycle or Gradle tasks that by
 convention run no tests, as outside validation, reported as a caveat even
@@ -934,7 +958,10 @@ Gradle builds are validated like Maven builds, with these differences. Every run
 adds `--rerun-tasks --no-build-cache --continue --no-daemon` and disables the
 configuration cache, so no test task is up to date or cached, a failing test task
 does not stop the others, and no daemon carries the agent from one run into
-another. The agent rides on `GRADLE_OPTS`, as the Datadog action attaches it,
+another. Without a Gradle user home of their own, runs use `~/.gradle`, the home
+whose `gradle.properties` validation reads, rather than the JVM's `user.home`,
+which a container user without a passwd entry resolves to a directory inside
+the build. The agent rides on `GRADLE_OPTS`, as the Datadog action attaches it,
 and an agent already in `JAVA_OPTS`, which the Gradle launcher also reads, is
 removed; native results come from each project's `build/test-results/<task>`
 JUnit XML, matched to the test task path dd-java-agent reports, such as
@@ -942,10 +969,26 @@ JUnit XML, matched to the test task path dd-java-agent reports, such as
 the build files declare: `--command` refuses other tasks, and an
 `org.gradle.jvmargs` that attaches dd-java-agent, on the command line or in the
 build's or the user home's `gradle.properties` (`-g` included), is refused like
-`.mvn/jvm.config`. The feature probe runs alone through its project's `test`
-task with `--tests`, for JUnit 4, JUnit 5, TestNG and Spock; for Cucumber JVM,
-Karate, ScalaTest and MUnit, Gradle builds report the features as not available
-yet.
+`.mvn/jvm.config`. The feature probe runs alone, with `--tests`, through a test
+task that ran in the baseline, preferring a project's `test` task: the probe is
+written among the sources of that task's source set, the test source set, a JVM
+test suite's own (`integrationTest(JvmTestSuite)`) or the one a `Test` task's
+`testClassesDirs = sourceSets.<name>.output.classesDirs` names, under
+`src/<set>/java` or a literal `srcDirs` that replaces it. Source sets build
+logic computes leave the features inconclusive. A Cucumber or Karate probe
+goes through the task's runner, its feature among the source set's resources
+(`src/<set>/resources`); a ScalaTest or MUnit probe goes under `src/<set>/scala`.
+Gradle passes its own system properties to no test JVM, so a probe's own, as
+`cucumber.features` or `karate.options`, reaches the test JVMs through
+`JAVA_TOOL_OPTIONS`. A JUnit Platform suite of the cucumber engine runs the
+probe feature next to its own features, selected by its `@ddtest` tag: with
+`cucumber.features`, Gradle would also run it through the root cucumber
+engine. Gradle names a suite's scenarios after the suite class and a Karate
+runner's after the runner, where dd-java-agent reports each feature; in a test
+task, native classes and reported classes that match no other account for each
+other when their tests, by name and status, are the same. Maven runs set
+`-Duser.home` to `~` in `MAVEN_OPTS` unless the command or its options set
+`user.home` or `maven.repo.local`, for the same reason as Gradle's user home.
 
 Every framework supports plain `ddtest testdrive --all --check-only --yes`
 and full `ddtest testdrive --all --yes` validation, or a focused
@@ -983,7 +1026,7 @@ Validation runs only the Maven test lifecycle up to `verify`: a CI step such as
 and left out, and `--command` refuses `install`, `deploy` and other goals, as
 validation does for goals in `MAVEN_ARGS` or `.mvn/maven.config`, so `~/.m2`
 artifacts are never overwritten and nothing is published. A dd-java-agent that
-`MAVEN_OPTS` or `JAVA_TOOL_OPTIONS` already attaches, as after the GitHub action,
+`MAVEN_OPTS` or `JAVA_TOOL_OPTIONS` already attaches, as after the Datadog setup,
 is removed from both runs; the reporting run attaches only the selected agent.
 Validation refuses a dd-java-agent in `.mvn/jvm.config`, which no run could
 remove. One Maven

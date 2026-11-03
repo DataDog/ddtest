@@ -184,8 +184,9 @@ func TestCypressResolvesConditionalApplicationFlagsWithoutForwardingActionPaths(
 		{"installed action flag", "${{ env.DD_TRACE_PACKAGE != '' && 'true' || '' }}", "cypress", "true", true},
 		{"import presence flag", "${{ env.DD_TRACE_ESM_IMPORT != '' && '1' || '0' }}", "cypress", "1", true},
 		{"path is not a local flag", "${{ env.DD_TRACE_PACKAGE }}", "cypress", "", false},
-		{"unknown CI state", "${{ secrets.DD_API_KEY != '' && 'true' || '' }}", "cypress", "", false},
-		{"other frameworks unchanged", "${{ env.DD_TRACE_PACKAGE != '' && 'true' || '' }}", "jest", "", false},
+		// A flag that only CI's state decides is left out and reported.
+		{"unknown CI state", "${{ secrets.DD_API_KEY != '' && 'true' || '' }}", "cypress", "", true},
+		{"other frameworks unchanged", "${{ env.DD_TRACE_PACKAGE != '' && 'true' || '' }}", "jest", "", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			step := runtimeStep{Run: "npx cypress run", Env: map[string]string{"COVERAGE": tc.value}}
@@ -196,6 +197,9 @@ func TestCypressResolvesConditionalApplicationFlagsWithoutForwardingActionPaths(
 			}
 			require.NoError(t, err)
 			require.Equal(t, tc.want, env["COVERAGE"])
+			if tc.want == "" {
+				require.NotContains(t, env, "COVERAGE")
+			}
 		})
 	}
 }

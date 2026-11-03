@@ -80,14 +80,20 @@ func TestScopeRetainsMutationsAndUnresolvedBuildInputs(t *testing.T) {
 		require.Len(t, scope.Commands, 1)
 		require.Contains(t, strings.Join(scope.Commands[0].UnvalidatedSetup, "\n"), command)
 	}
-	for _, input := range []string{"        env: {MODE: '${{ secrets.MODE }}'}", "        if: steps.setup.outputs.ready"} {
-		root := newJestRepository(t, "jobs:\n  tests:\n    steps:\n      - run: rollup -c\n"+input+"\n      - run: jest\n")
-		scope, err := DiscoverValidationScope(root, "jest")
-		require.NoError(t, err)
-		require.Len(t, scope.Commands, 1)
-		require.NotEmpty(t, scope.Unresolved)
-		require.NotEmpty(t, scope.Commands[0].UnvalidatedSetup)
-	}
+	// A build step whose condition only CI decides stays unresolved.
+	root := newJestRepository(t, "jobs:\n  tests:\n    steps:\n      - run: rollup -c\n        if: steps.setup.outputs.ready\n      - run: jest\n")
+	scope, err := DiscoverValidationScope(root, "jest")
+	require.NoError(t, err)
+	require.Len(t, scope.Commands, 1)
+	require.NotEmpty(t, scope.Unresolved)
+	require.NotEmpty(t, scope.Commands[0].UnvalidatedSetup)
+	// One that reads a value only CI provides runs without it, reported.
+	root = newJestRepository(t, "jobs:\n  tests:\n    steps:\n      - run: rollup -c\n        env: {MODE: '${{ secrets.MODE }}'}\n      - run: jest\n")
+	scope, err = DiscoverValidationScope(root, "jest")
+	require.NoError(t, err)
+	require.Len(t, scope.Commands, 1)
+	require.Empty(t, scope.Unresolved)
+	require.Equal(t, []string{"MODE"}, scope.Commands[0].WithoutCIValues)
 }
 
 func TestCompositeSubstitutesExecutableInputFields(t *testing.T) {
@@ -142,4 +148,22 @@ func TestNodeOptionsRemainValidForNode(t *testing.T) {
 		require.Equal(t, want, actual.Title, fmt.Sprintf("options=%s", options))
 		require.True(t, actual.VM)
 	}
+}
+
+// A report action after the tests, guarded by a status function such as
+// always(), cannot change them; the same action before them still could.
+func TestPostTestActionConditionsAreReviewed(t *testing.T) {
+	after := "jobs:\n  tests:\n    steps:\n      - run: jest\n      - uses: simple-elf/allure-report-action@v1.11\n        if: always()\n"
+	scope, err := DiscoverValidationScope(newJestRepository(t, after), "jest")
+	require.NoError(t, err)
+	require.Empty(t, scope.Unresolved)
+	require.Contains(t, strings.Join(scope.Review, "\n"), "After the job's last jest test step, a condition that affects only an action outside the test path")
+	before := "jobs:\n  tests:\n    steps:\n      - uses: some/prepare-action@v1\n        if: always()\n      - run: jest\n"
+	scope, err = DiscoverValidationScope(newJestRepository(t, before), "jest")
+	require.NoError(t, err)
+	blocked := len(scope.Unresolved) > 0
+	for _, entry := range scope.Commands {
+		blocked = blocked || len(entry.UnvalidatedSetup) > 0
+	}
+	require.True(t, blocked, "an action before the tests may prepare them")
 }

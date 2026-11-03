@@ -78,10 +78,31 @@ func resolveVariantStep(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 	for _, layer := range []map[string]string{workflow.Env, job.Env, step.Env} {
 		maps.Copy(env, layer)
 	}
+	// A value only CI knows, as a secret, a CI context such as github.ref or a
+	// step output, is left out of local runs and named in the report: both
+	// paired runs miss it alike, so comparing them stays sound. A variable
+	// that controls the runtime, the tools or the tracer still requires
+	// review, and so does one the step's command line expands, below.
+	withoutCIValue := func(key string, err error) error {
+		if ciControlVariable(key) {
+			return fmt.Errorf("CI environment variable %s requires review: %w", key, err)
+		}
+		step.WithoutCIValues = append(step.WithoutCIValues, key)
+		delete(env, key)
+		return nil
+	}
 	for _, key := range slices.Sorted(maps.Keys(env)) {
 		value := env[key]
 		if err := unresolvedCIError(value); err != nil && !strings.HasPrefix(key, "DD_") {
-			return step, nil, fmt.Errorf("CI environment variable %s requires review: %w", key, err)
+			// Only a value the provider says CI defines is left out: what the
+			// job's own commands or build logic compute is its setup.
+			if !unresolvedCIProvided(value) {
+				return step, nil, fmt.Errorf("CI environment variable %s requires review: %w", key, err)
+			}
+			if err := withoutCIValue(key, err); err != nil {
+				return step, nil, err
+			}
+			continue
 		}
 		if len(frameworks) > 0 {
 			if language := discoveryLanguageFor(frameworks[0]); language != nil {
@@ -111,17 +132,6 @@ func resolveVariantStep(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 				delete(env, key)
 				continue
 			}
-		}
-		// A credential that only carries a CI secret, such as a token for a
-		// coverage or analysis upload, never exists locally. The step's tests
-		// run without it and the report names it; a command that reads it
-		// still requires review below. A secret used as a setting, such as a
-		// URL or mode, or a remote grid's key, which every test depends on,
-		// still requires review.
-		if ciCredential(key, value) {
-			step.WithoutSecrets = append(step.WithoutSecrets, key)
-			delete(env, key)
-			continue
 		}
 		if len(frameworks) > 0 && frameworks[0] == "vitest" && strings.HasPrefix(key, "DD_TEST_OPTIMIZATION_RUNNER_") {
 			if _, ok := VitestRunnerEnvironmentFlag(key); !ok {
@@ -163,7 +173,27 @@ func resolveVariantStep(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 			delete(env, key)
 			continue
 		}
+		// A setup for several languages, run in the job's shell, exports each
+		// tracer's options for later commands; another language's export only
+		// instruments that language, and holds values only CI knows. The job's
+		// own options in the variable are kept.
+		if len(frameworks) > 0 {
+			if exported, ok := otherLanguageSetupExport(discoveryLanguageFor(frameworks[0]), key); ok && strings.Contains(value, exported) {
+				value = strings.TrimSpace(strings.ReplaceAll(value, exported, ""))
+				if value == "" {
+					delete(env, key)
+					continue
+				}
+			}
+		}
 		resolved, err := runtimeValue(value, row)
+		// A matrix expression inside a value, as suite-${{ matrix.suite }},
+		// takes the row's value before the value counts as CI-only.
+		if err != nil && row != nil {
+			if interpolated, interpolationErr := interpolateMatrix(value, row); interpolationErr == nil && interpolated != value {
+				resolved, err = runtimeValue(interpolated, row)
+			}
+		}
 		if err != nil && len(frameworks) > 0 && frameworks[0] == "cypress" {
 			// Local comparison installs its own tracer and uses the same app
 			// coverage flag in both modes. CI installation/preload conditions
@@ -172,12 +202,15 @@ func resolveVariantStep(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 			known["DD_TRACE_PACKAGE"], known["DD_TRACE_ESM_IMPORT"] = actionPreload, "\x00DD_ACTION_IMPORT\x00"
 			resolved, err = bootstrapOptions(value, row, known)
 			if err == nil && strings.ContainsRune(resolved, 0) {
-				err = fmt.Errorf("cypress application environment %s forwards a CI-only action path", key)
+				return step, nil, fmt.Errorf("CI environment variable %s requires review: cypress application environment forwards a CI-only action path", key)
 			}
 		}
 
 		if err != nil {
-			return step, nil, fmt.Errorf("CI environment variable %s requires review: %w", key, err)
+			if err := withoutCIValue(key, err); err != nil {
+				return step, nil, err
+			}
+			continue
 		}
 		env[key] = resolved
 	}
@@ -416,15 +449,18 @@ func TracerPluginSetting(key string) bool {
 	return ok && enabled && plugin != ""
 }
 
-// credentialName is a variable name that ends with a credential, as in
-// GITHUB_TOKEN, SONAR_LOGIN_PASSWORD or NPM_AUTH. A name that only contains
-// one, such as AUTH_MODE or PASSWORD_POLICY, is a setting.
-var credentialName = regexp.MustCompile(`(?i)(?:^|_)(?:TOKEN|SECRET|PASSWORD|PASSWD|PASSPHRASE|API_?KEY|ACCESS_?KEY|SECRET_?KEY|PRIVATE_?KEY|CREDENTIALS?|AUTH)$`)
-
-// ciCredential reports a CI variable that only carries a credential secret.
-// Datadog's own settings and remote grid keys are not.
-func ciCredential(key, value string) bool {
-	return secretReference.MatchString(strings.TrimSpace(value)) && credentialName.MatchString(key) && !strings.HasPrefix(key, "DD_") && remoteGridSecret(key, value) == ""
+// ciControlVariable reports a variable whose CI value decides how the
+// runtime, the build and test tools or the tracer run, so a local run without
+// it would validate something else: PATH, HOME, the startup files Bash and sh
+// source (BASH_ENV, ENV), the dynamic linker's variables, Datadog settings,
+// and the variables a language's runtime, caches and tools read.
+func ciControlVariable(key string) bool {
+	if slices.Contains([]string{"PATH", "HOME", "BASH_ENV", "ENV", "LD_PRELOAD", "LD_LIBRARY_PATH", "DYLD_INSERT_LIBRARIES", "DYLD_LIBRARY_PATH"}, key) || strings.HasPrefix(key, "DD_") {
+		return true
+	}
+	return slices.ContainsFunc(discoveryLanguages, func(language discoveryLanguage) bool {
+		return language.runtimeVariable(key) || language.cacheVariable(key) || language.toolVariable(key)
+	})
 }
 
 // remoteGridProviders maps credential variable prefixes to remote browser
@@ -473,6 +509,21 @@ func keptRuntimeRead(parameter *syntax.ParamExp) bool {
 		_, ok := exported[parameter.Param.Value]
 		return ok
 	})
+}
+
+// otherLanguageSetupExport is what the Datadog installer exports into key
+// for a language other than current, without the job's own value.
+func otherLanguageSetupExport(current discoveryLanguage, key string) (string, bool) {
+	for _, language := range discoveryLanguages {
+		if current != nil && language.name() == current.name() {
+			continue
+		}
+		exported, _ := language.setupShellExports(map[string]string{})
+		if value, ok := exported[key]; ok && value != "" {
+			return value, true
+		}
+	}
+	return "", false
 }
 
 // readsKeptRuntimeVariable reports a word that reads such a variable.

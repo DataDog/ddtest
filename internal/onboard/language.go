@@ -76,12 +76,20 @@ type discoveryLanguage interface {
 	// runtimeVariable reports an environment variable the language's
 	// runtime or tools read, which images commonly export.
 	runtimeVariable(name string) bool
+	// toolVariable reports an environment variable that adds options or
+	// arguments to the language's build or test tools, as Maven's
+	// MAVEN_ARGS: CI's value for it decides what runs.
+	toolVariable(name string) bool
 	// outsideFrameworkJob reports whether a CI job, on one matrix row,
 	// cannot run framework's tests: nothing it runs (following package and
 	// repository scripts) mentions the framework. Such a job without the
 	// setup and without a recognized test is reported, not a blocker.
 	// Languages without a static answer return false.
 	outsideFrameworkJob(root string, workflow ciWorkflow, job runtimeJob, row map[string]any, framework string) bool
+	// stepMayStartTests reports whether a CI step ddtest did not resolve may
+	// still start the language's tests, when the language reads its steps
+	// more precisely than the shared scan; handled is false otherwise.
+	stepMayStartTests(root string, workflow ciWorkflow, job runtimeJob, step runtimeStep) (may, handled bool)
 	// unsupportedImage names the runtime a CI job's container image selects
 	// when the language's tracer cannot instrument it, such as another
 	// language engine; empty otherwise. Such a job without the setup keeps

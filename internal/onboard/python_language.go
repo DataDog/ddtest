@@ -100,8 +100,17 @@ func (pythonDiscovery) outsideFrameworkJob(string, ciWorkflow, runtimeJob, map[s
 	return false
 }
 
+// The shared scan follows this language's package and repository scripts.
+func (pythonDiscovery) stepMayStartTests(string, ciWorkflow, runtimeJob, runtimeStep) (bool, bool) {
+	return false, false
+}
+
 func (pythonDiscovery) runtimeVariable(name string) bool {
 	return name == "PYTHONPATH" || name == "PYTHONHOME"
+}
+
+func (pythonDiscovery) toolVariable(name string) bool {
+	return slices.Contains([]string{"PYTHONWARNINGS", "PYTHONOPTIMIZE", "PYTEST_ADDOPTS", "PYTEST_PLUGINS", "PYTEST_DISABLE_PLUGIN_AUTOLOAD", "TOX_ENV", "TOXENV"}, name)
 }
 
 func (pythonDiscovery) cacheVariable(name string) bool {

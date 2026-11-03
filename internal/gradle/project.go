@@ -565,6 +565,9 @@ func buildDependencies(build string, catalog map[string][]maven.Dependency) []ma
 	for _, match := range mapCoordinate.FindAllStringSubmatch(build, -1) {
 		dependencies = append(dependencies, maven.Dependency{Group: match[1], Artifact: match[2]})
 	}
+	for _, match := range testFrameworkSelection.FindAllStringSubmatch(build, -1) {
+		dependencies = append(dependencies, testFrameworkDependencies[match[1]])
+	}
 	for _, accessor := range slices.Sorted(func(yield func(string) bool) {
 		for key := range catalog {
 			if !yield(key) {
@@ -577,6 +580,20 @@ func buildDependencies(build string, catalog map[string][]maven.Dependency) []ma
 		}
 	}
 	return dependencies
+}
+
+// testFrameworkSelection selects a test suite's or Test task's framework, as
+// useJUnitJupiter(); a JVM test suite adds its dependency itself. A Test
+// task's useJUnitPlatform() selects no framework.
+var testFrameworkSelection = regexp.MustCompile(`\buse(JUnitJupiter|JUnit|TestNG|Spock)\s*\(`)
+
+// testFrameworkDependencies are the dependencies a test framework selection
+// stands for.
+var testFrameworkDependencies = map[string]maven.Dependency{
+	"JUnitJupiter": {Group: "org.junit.jupiter", Artifact: "junit-jupiter"},
+	"JUnit":        {Group: "junit", Artifact: "junit"},
+	"TestNG":       {Group: "org.testng", Artifact: "testng"},
+	"Spock":        {Group: "org.spockframework", Artifact: "spock-core"},
 }
 
 // catalogReference reports whether a build file uses a catalog accessor, as

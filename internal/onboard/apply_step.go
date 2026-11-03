@@ -297,26 +297,6 @@ const CodeIncompleteCISetup = "incomplete_ci_setup"
 
 const defaultDatadogSite = "datadoghq.com"
 
-// setupActionProblem explains why the Datadog action before an instrumented CI
-// entry is not a complete setup: a supported v3 release, an API key and the
-// selected site (empty: not selected). Empty when it is.
-func setupActionProblem(job RuntimeFinding, site string) string {
-	if !setupActionSupported(job.Action) {
-		return "The Datadog action " + job.Action + " is not a supported release; use datadog/test-visibility-github-action@v3."
-	}
-	if strings.TrimSpace(job.setupInputs["api_key"]) == "" {
-		return "The Datadog action has no api_key input; set api_key: ${{ secrets.DD_API_KEY }}."
-	}
-	configured := job.setupInputs["site"]
-	if configured == "" {
-		configured = defaultDatadogSite
-	}
-	if site != "" && configured != site {
-		return "The Datadog action reports to " + configured + ", but the selected Datadog site is " + site + "; set site: " + site + " on the action."
-	}
-	return ""
-}
-
 // These immutable releases were verified against the action's published v3 tags.
 func setupActionSupported(action string) bool {
 	switch strings.TrimPrefix(strings.ToLower(action), "datadog/test-visibility-github-action@") {
