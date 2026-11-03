@@ -434,3 +434,32 @@ func TestJenkinsPluginApplyRejectsOptionsBeforeWriting(t *testing.T) {
 		})
 	}
 }
+
+// Native ESM Cucumber on a host stage needs the Istanbul ESM loader with
+// the plugin's preload: onboard --apply adds it in the test's shell, after
+// the tracer's ESM loader, and the result validates.
+func TestJenkinsNativeESMCucumberGetsTheIstanbulLoader(t *testing.T) {
+	root := jenkinsApplyRepository(t, "jest", "pipeline {\n  agent any\n  stages {\n    stage('Test') {\n      steps {\n        sh 'npm ci'\n        sh 'npm test'\n      }\n    }\n  }\n}\n")
+	writeFile(t, root, "package.json", `{"name": "app", "type": "module", "scripts": {"test": "cucumber-js"}, "devDependencies": {"@cucumber/cucumber": "11.0.1", "nyc": "17.1.0", "@istanbuljs/esm-loader-hook": "0.3.0"}}`)
+	useCIStatements(t, []string{"node=22"})
+	loader := pluginOptionsCommand(cucumberESMLoaderHook)
+	request := javascriptDiscovery{}.ciSetupRequest(root, "cucumber", "datadoghq.com", jenkins{}.setupTerms())
+	require.Equal(t, []string{pluginESMImportCommand, loader}, request.After)
+	plan, err := PlanJavaScriptSetup(root, "cucumber", "6.22.0", "datadoghq.com", ">=18")
+	require.NoError(t, err)
+	require.Contains(t, plannedFile(t, plan, "Jenkinsfile"), "        sh '"+pluginESMImportCommand+"; "+loader+"; npm test'\n")
+	_, err = plan.apply(true, os.Rename)
+	require.NoError(t, err)
+	result := checkCIRuntimes(t.Context(), root, nil, func(context.Context, string, string) (tracerRequirement, error) {
+		return tracerRequirement{Version: "6.22.0", Node: ">=18"}, nil
+	}, "cucumber")
+	require.Equal(t, StatusCompatible, result.Status, result.Jobs)
+	again, err := PlanJavaScriptSetup(root, "cucumber", "6.22.0", "datadoghq.com", ">=18")
+	require.NoError(t, err)
+	require.True(t, again.Configured(), "a second apply changes nothing")
+
+	// CommonJS Cucumber needs no Istanbul loader.
+	writeFile(t, root, "package.json", `{"name": "app", "scripts": {"test": "cucumber-js"}, "devDependencies": {"@cucumber/cucumber": "11.0.1", "nyc": "17.1.0"}}`)
+	request = javascriptDiscovery{}.ciSetupRequest(root, "cucumber", "datadoghq.com", jenkins{}.setupTerms())
+	require.Equal(t, []string{pluginESMImportCommand}, request.After)
+}

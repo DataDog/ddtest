@@ -116,6 +116,12 @@ const esmImportCommand = `if [ -n "${DD_TRACE_ESM_IMPORT:-}" ]; then export NODE
 // DD_TRACE_PATH; without the plugin's setup it adds nothing.
 const pluginESMImportCommand = `if [ -n "${DD_TRACE_PATH:-}" ]; then export NODE_OPTIONS="${NODE_OPTIONS:-} --import $DD_TRACE_PATH/register.js"; fi`
 
+// pluginOptionsCommand adds options to the NODE_OPTIONS a CI server
+// plugin's setup sets, in the test's shell.
+func pluginOptionsCommand(options string) string {
+	return `export NODE_OPTIONS="${NODE_OPTIONS:-} ` + options + `"`
+}
+
 // providerScopedCommand moves the preload a provider's setup appends to
 // NODE_OPTIONS into the framework's scoped variable (DD_CUCUMBER_NODE_OPTIONS
 // or DD_WDIO_NODE_OPTIONS), with the ESM loader and options, such as an
@@ -212,6 +218,12 @@ func javascriptPluginSetupRequest(root, framework, site string, terms ciSetupTer
 	request := ciSetupRequest{Language: "js", Site: site, Service: packageName(root)}
 	if setupImportsESM(framework) || framework == "mocha" {
 		request.After = []string{pluginESMImportCommand}
+	}
+	if options := scopedProviderOptions(root, framework); options != "" {
+		// Native ESM Cucumber also needs the Istanbul ESM loader, which the
+		// plugin's NODE_OPTIONS reaches the tests with, as the scoped
+		// variable carries it on the other providers.
+		request.After = append(request.After, pluginOptionsCommand(options))
 	}
 	request.Notes = append(request.Notes, "The "+terms.Installer+" installs the latest dd-trace release with the build agent's default npm when each build runs (it cannot pin a release) and prepends its dd-trace preload to NODE_OPTIONS for "+terms.Later+". ddtest validates locally with the latest release and reports that it floats. The agents need npm on their default PATH, and the tests a Node version the latest dd-trace release supports (its package.json engines): ddtest checks the stated CI Node against the latest release, and a Node it excludes cannot use the "+terms.Installer+".",
 		"Set Node options inside the sh script that runs the tests (export NODE_OPTIONS=\"$NODE_OPTIONS ...\" before the test command): the "+terms.Installer+" sets NODE_OPTIONS once per build, so a NODE_OPTIONS in a stage's environment directive or withEnv is overwritten.")

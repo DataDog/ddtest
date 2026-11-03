@@ -2450,8 +2450,9 @@ func (r *jenkinsReader) shell(call *groovyCall, scope jenkinsScope, slot *jenkin
 		added := r.add(slot, call, step)
 		if stepReason == "" && state.apply(command, mergeEnvironment(env, state.env)) {
 			added.Run = ""
-		} else if run, assigned, ok := foldCommandEnvironment(command, known, state.dialect.projectVariable); ok {
-			added.Run, added.Env = run, mergeEnvironment(added.Env, assigned)
+		} else {
+			added.readScopedPrefix()
+			added.foldInlineEnvironment(known, state.dialect.projectVariable)
 		}
 	}
 	if job := slot.job; job != nil && pathChange != "" && job.pathChange == "" {

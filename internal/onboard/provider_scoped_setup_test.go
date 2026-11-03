@@ -594,3 +594,47 @@ func TestProviderApplyPrescribesNYCForDirectCucumberAfterAnExistingSetup(t *test
 	check := checkCIRuntimes(t.Context(), root, nil, scopedRequirement, "cucumber")
 	require.Equal(t, StatusCompatible, check.Status, check.Jobs)
 }
+
+// A direct invocation inside a compound command gets no prescribed command:
+// the scoped prefix would reach only the command before it.
+func TestProviderDirectInvocationInACompoundCommand(t *testing.T) {
+	for _, provider := range scopedProviders {
+		for _, framework := range scopedFrameworks {
+			t.Run(provider.name+"/"+framework.name, func(t *testing.T) {
+				direct := "npm run build && ./node_modules/.bin/cucumber-js ./features"
+				if framework.name == "webdriverio" {
+					direct = "npm run build && npx wdio run wdio.conf.js"
+				}
+				root := scopedRepository(t, provider, provider.config("npm ci", direct), framework.pkg, framework.files)
+				_, err := PlanJavaScriptSetup(root, framework.name, "5.133.0", "datadoghq.com", ">=18")
+				var gap *SetupGap
+				require.ErrorAs(t, err, &gap)
+				var edit *EditThenApplyGap
+				require.False(t, errors.As(err, &edit), "no exact command: %v", err)
+				require.Contains(t, gap.Reason, "as part of a compound shell command")
+			})
+		}
+	}
+}
+
+// A direct WebdriverIO invocation reads its configuration from the
+// directory it runs in, not the checkout root's.
+func TestProviderDirectWebdriverIOReadsItsDirectorysConfig(t *testing.T) {
+	provider, framework := scopedProviders[0], scopedFrameworks[1]
+	files := map[string]string{
+		"e2e/wdio.conf.js": framework.files["wdio.conf.js"],
+		// The checkout root's runs in the browser, outside instrumentation.
+		"wdio.conf.js": "exports.config = {\n  runner: 'browser',\n  framework: 'mocha',\n  specs: ['./test/*.js'],\n}\n",
+	}
+	root := scopedRepository(t, provider, provider.config("npm ci", "cd e2e", "npx wdio run wdio.conf.js"), framework.pkg, files)
+	_, err := PlanJavaScriptSetup(root, "webdriverio", "5.133.0", "datadoghq.com", ">=18")
+	var gap *EditThenApplyGap
+	require.ErrorAs(t, err, &gap)
+	require.Contains(t, gap.Reason, "Change this CI command to exactly: "+webdriverIOScopedOptions+" npx wdio run wdio.conf.js.")
+
+	// Without one there, the root's is not read in its place.
+	require.NoError(t, os.Remove(filepath.Join(root, "e2e", "wdio.conf.js")))
+	_, err = PlanJavaScriptSetup(root, "webdriverio", "5.133.0", "datadoghq.com", ">=18")
+	require.Error(t, err)
+	require.False(t, errors.As(err, &gap), "%v", err)
+}

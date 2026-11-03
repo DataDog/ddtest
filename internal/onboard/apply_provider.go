@@ -206,7 +206,7 @@ func planProviderJavaScriptSetup(root string, provider ciProvider, workflows []c
 					continue
 				}
 				if framework == "webdriverio" {
-					if local, err := localWDIOLeaf(root, leaf.test.Command); err != nil {
+					if local, err := localWDIOLeaf(root, leaf.test.Directory, leaf.test.Command); err != nil {
 						return nil, &SetupGap{location, err.Error()}
 					} else if !local {
 						continue // Explicit browser runner remains outside instrumentation.

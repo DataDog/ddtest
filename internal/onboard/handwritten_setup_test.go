@@ -191,6 +191,10 @@ func TestHandWrittenJavaScriptSetups(t *testing.T) {
 				{name: "not a dependency", pkg: `{"devDependencies": {"jest": "30.0.0"}}`, env: agentless, status: StatusInconclusive, reason: "depends on dd-trace"},
 				{name: "production install", before: []string{"npm ci --omit=dev"}, env: agentless, status: StatusInconclusive, reason: "installs production dependencies only"},
 				{name: "optional dependency", pkg: `{"devDependencies": {"jest": "30.0.0"}, "optionalDependencies": {"dd-trace": "5.40.0"}}`, before: []string{"npm ci --omit=dev"}, env: agentless, configured: true, status: StatusCompatible},
+				{name: "optional dependency omitted", pkg: `{"devDependencies": {"jest": "30.0.0"}, "optionalDependencies": {"dd-trace": "5.40.0"}}`, before: []string{"npm ci --omit=optional"}, env: agentless, status: StatusInconclusive, reason: "installs the dependencies without the optional ones"},
+				{name: "optional dependency omitted, then a full install", pkg: `{"devDependencies": {"jest": "30.0.0"}, "optionalDependencies": {"dd-trace": "5.40.0"}}`, before: []string{"npm ci --omit=optional", "npm ci"}, env: agentless, configured: true, status: StatusCompatible},
+				{name: "saved optional dependency pruned", pkg: `{"devDependencies": {"jest": "30.0.0"}}`, before: []string{"npm ci", "npm install --save-optional --save-exact dd-trace@5.40.0", "npm prune --omit=optional"}, env: agentless, status: StatusInconclusive, reason: "The job removes dd-trace (npm prune --omit=optional at"},
+				{name: "production install including the devDependencies", before: []string{"NODE_ENV=production npm ci --include=dev"}, env: agentless, configured: true, status: StatusCompatible},
 				{name: "install removed by npm ci", pkg: `{"devDependencies": {"jest": "30.0.0"}}`, before: []string{"npm install --no-save dd-trace@5.40.0", "npm ci"}, env: agentless, status: StatusInconclusive, reason: "which npm ci at"},
 				{name: "saved install before npm ci", pkg: `{"devDependencies": {"jest": "30.0.0"}}`, before: []string{"npm install --save-exact dd-trace@5.40.0", "npm ci"}, env: agentless, configured: true, status: StatusCompatible},
 				{name: "install in another package", pkg: `{"devDependencies": {"jest": "30.0.0"}}`, before: []string{"npm ci", "npm install --no-save --prefix tools dd-trace@5.40.0"}, env: agentless, status: StatusInconclusive, reason: "outside the checkout root, where the tests run"},
@@ -837,11 +841,11 @@ func TestHandWrittenProductionInstallEnvironment(t *testing.T) {
 		{Run: "npm ci", Env: map[string]string{"NODE_ENV": "production"}},
 		{Run: "npx jest"},
 	}}
-	require.True(t, javascriptOmitsDevelopment(ciWorkflow{}, job, 1, ".", "."))
+	require.True(t, javascriptOmitsGroup(ciWorkflow{}, job, 1, ".", ".", javascriptDevelopment))
 	job.Steps[0].Env, job.Steps[1].Env = nil, map[string]string{"NODE_ENV": "production"}
-	require.False(t, javascriptOmitsDevelopment(ciWorkflow{}, job, 1, ".", "."))
+	require.False(t, javascriptOmitsGroup(ciWorkflow{}, job, 1, ".", ".", javascriptDevelopment))
 	job.Env = map[string]string{"NODE_ENV": "production"}
-	require.True(t, javascriptOmitsDevelopment(ciWorkflow{}, job, 1, ".", "."), "the job's variables reach the install too")
+	require.True(t, javascriptOmitsGroup(ciWorkflow{}, job, 1, ".", ".", javascriptDevelopment), "the job's variables reach the install too")
 }
 
 // The last install where the tests run decides whether they find the
@@ -858,7 +862,42 @@ func TestHandWrittenFinalInstallDecidesDevelopment(t *testing.T) {
 		{runtimeStep{Run: "npm ci", WorkingDirectory: "docs"}, true},
 	} {
 		job := runtimeJob{Steps: []runtimeStep{{Run: "npm ci --omit=dev"}, tc.later, {Run: "npx jest"}}}
-		require.Equal(t, tc.omitted, javascriptOmitsDevelopment(ciWorkflow{}, job, 2, ".", "."), tc.later)
+		require.Equal(t, tc.omitted, javascriptOmitsGroup(ciWorkflow{}, job, 2, ".", ".", javascriptDevelopment), tc.later)
+	}
+}
+
+// npm's --include, or npm_config_include, installs a group whatever omits
+// it; npm_config_omit omits one as --omit does; and the optional
+// dependencies are left out as the devDependencies are.
+func TestHandWrittenInstallGroupOverrides(t *testing.T) {
+	for _, tc := range []struct {
+		command string
+		env     map[string]string
+		group   string
+		omitted bool
+	}{
+		{"npm ci --include=dev", map[string]string{"NODE_ENV": "production"}, javascriptDevelopment, false},
+		{"npm ci --include dev", map[string]string{"NODE_ENV": "production"}, javascriptDevelopment, false},
+		{"npm ci --omit=dev --include=dev", nil, javascriptDevelopment, false},
+		{"npm ci", map[string]string{"NODE_ENV": "production", "npm_config_include": "dev"}, javascriptDevelopment, false},
+		{"npm ci --omit=dev", map[string]string{"NPM_CONFIG_INCLUDE": "dev"}, javascriptDevelopment, false},
+		{"npm ci --include=optional", map[string]string{"NODE_ENV": "production"}, javascriptDevelopment, true},
+		{"npm ci", map[string]string{"npm_config_omit": "dev"}, javascriptDevelopment, true},
+		{"yarn install --production=false", map[string]string{"NODE_ENV": "production"}, javascriptDevelopment, false},
+		{"pnpm install --include=dev", map[string]string{"NODE_ENV": "production"}, javascriptDevelopment, true},
+		{"npm ci --omit=optional", nil, javascriptOptional, true},
+		{"npm ci --omit optional", nil, javascriptOptional, true},
+		{"npm ci --no-optional", nil, javascriptOptional, true},
+		{"yarn install --ignore-optional", nil, javascriptOptional, true},
+		{"pnpm install --no-optional", nil, javascriptOptional, true},
+		{"npm ci", map[string]string{"npm_config_omit": "dev optional"}, javascriptOptional, true},
+		{"npm ci --omit=optional --include=optional", nil, javascriptOptional, false},
+		{"npm ci --omit=dev", map[string]string{"NODE_ENV": "production"}, javascriptOptional, false},
+		{"npm ci --omit=optional", nil, "", false},
+	} {
+		words, err := staticCommands(tc.command)
+		require.NoError(t, err)
+		require.Equal(t, tc.omitted, javascriptOmitsGroupCommand(tc.env, words[0], tc.group), "%s %v (%s)", tc.command, tc.env, tc.group)
 	}
 }
 
@@ -876,4 +915,35 @@ func TestFoldCommandEnvironmentKeepsArgumentExpansion(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, `npx jest "$TEST_TARGET"`, run)
 	require.Equal(t, map[string]string{"DD_ENV": "ci"}, env)
+}
+
+// On Jenkins, the CI command onboard --apply prescribes for a direct
+// Cucumber invocation reads as the other providers read it: its scoped
+// prefix and impacted-tests workaround are the command's, so the next apply
+// certifies it instead of prescribing the same edit again.
+func TestHandWrittenJenkinsDirectCucumberRoundTrip(t *testing.T) {
+	pipeline := func(command string) string {
+		return "pipeline {\n  agent { docker { image 'node:22' } }\n  environment {\n    DD_CIVISIBILITY_AGENTLESS_ENABLED = 'true'\n    DD_SITE = 'datadoghq.com'\n    DD_API_KEY = credentials('datadog-api-key')\n  }\n  stages {\n    stage('Test') {\n      steps {\n        sh 'npm ci'\n        withEnv(['NODE_OPTIONS=-r dd-trace/ci/init --import dd-trace/register.js']) {\n          sh '" + command + "'\n        }\n      }\n    }\n  }\n}\n"
+	}
+	root := jenkinsRepository(t, pipeline("npx cucumber-js"))
+	writeFile(t, root, "package.json", `{"scripts": {"test": "cucumber-js"}, "devDependencies": {"@cucumber/cucumber": "11.0.1", "nyc": "17.1.0", "dd-trace": "5.40.0"}}`)
+	require.NoError(t, os.RemoveAll(filepath.Join(root, "jest.config.js")))
+	_, err := PlanJavaScriptSetup(root, "cucumber", "5.133.0", "datadoghq.com", ">=18")
+	var gap *EditThenApplyGap
+	require.ErrorAs(t, err, &gap)
+	_, after, ok := strings.Cut(gap.Reason, "Change this CI command to exactly: ")
+	require.True(t, ok, gap.Reason)
+	written, _, _ := strings.Cut(after, ". Then rerun onboard --apply")
+	require.True(t, strings.HasPrefix(written, scopedPrefix("DD_CUCUMBER_NODE_OPTIONS")+" "+cucumberImpactedWorkaround+" "), written)
+
+	writeFile(t, root, "Jenkinsfile", pipeline(written))
+	steps := jenkinsJobs(t, pipeline(written))["Test"].Steps
+	last := steps[len(steps)-1]
+	require.Equal(t, "DD_CUCUMBER_NODE_OPTIONS", last.scopedVariable, "%+v", last)
+	require.True(t, last.impactedWorkaround)
+	require.Equal(t, "npx --no-install nyc -- cucumber-js", last.Run)
+	plan, err := PlanJavaScriptSetup(root, "cucumber", "5.133.0", "datadoghq.com", ">=18")
+	require.NoError(t, err)
+	require.True(t, plan.Configured(), "the prescribed command completes the setup")
+	require.Equal(t, StatusCompatible, handWrittenRuntime(t, root, "cucumber").Status)
 }

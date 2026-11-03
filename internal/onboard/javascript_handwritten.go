@@ -213,10 +213,10 @@ func javascriptInstallsDependencies(words []string) bool {
 func javascriptHandWrittenTracer(setup *handWrittenSetup, root, directory string, workflow ciWorkflow, job runtimeJob, index int, env map[string]string) (version, source string) {
 	// uninstalled is a command that removes dd-trace, whichever install it
 	// came from (package.json's too), when no later one installs it again.
-	// saved reports an install the job saves to package.json, and
-	// development one it saves as a devDependency, which a later command
-	// that omits devDependencies (npm prune --omit=dev) removes.
-	removed, uninstalled, saved, development := "", "", false, false
+	// saved reports an install the job saves to package.json, and group
+	// the dependency group it saves it in: a later command that omits that
+	// group (npm prune --omit=dev for a devDependency) removes it.
+	removed, uninstalled, saved, group := "", "", false, ""
 	for _, step := range job.Steps[:index] {
 		where := step.Source
 		if where == "" {
@@ -241,7 +241,7 @@ func javascriptHandWrittenTracer(setup *handWrittenSetup, root, directory string
 			elsewhere := moved || installDirectory != directory || javascriptInstallsElsewhere(words)
 			release, global, ok := javascriptTracerInstall(words)
 			if !ok {
-				uninstall := javascriptRemovesTracer(words) || version != "" && development && javascriptOmitsDevelopmentCommand(mergeEnvironment(handWrittenEnvironment(workflow, job, step), javascriptAssigned(words)), words)
+				uninstall := javascriptRemovesTracer(words) || version != "" && saved && javascriptOmitsGroupCommand(mergeEnvironment(handWrittenEnvironment(workflow, job, step), javascriptAssigned(words)), words, group)
 				if !uninstall && (version == "" && uninstalled == "" || version != "" && saved || !javascriptReinstalls(words)) {
 					// A saved install is in the manifest and lockfile the job
 					// reinstalls from.
@@ -295,7 +295,7 @@ func javascriptHandWrittenTracer(setup *handWrittenSetup, root, directory string
 			}
 			version, source, removed, uninstalled = release, strings.Join(words, " ")+" at "+where, "", ""
 			saved = words[0] != "npm" || !slices.Contains(words, "--no-save")
-			development = saved && javascriptSavesDevelopment(root, directory, words)
+			group = javascriptSavedGroup(root, directory, words)
 		}
 	}
 	if version != "" {
@@ -306,7 +306,7 @@ func javascriptHandWrittenTracer(setup *handWrittenSetup, root, directory string
 		setup.missing("The job removes dd-trace (" + uninstalled + ") before the tests, and no later command installs it, so -r dd-trace/ci/init cannot load: remove that command, or install an exact release after it.")
 		return "", ""
 	}
-	declared, manifest, development := javascriptDeclaredTracer(root, directory)
+	declared, manifest, group := javascriptDeclaredTracer(root, directory)
 	switch {
 	case manifest == "" && removed != "":
 		setup.missing("The job installs dd-trace (" + removed + ": package.json does not declare dd-trace), so -r dd-trace/ci/init cannot load: install the exact release after the last dependency install, or add dd-trace to package.json as a devDependency with an exact release.")
@@ -314,8 +314,11 @@ func javascriptHandWrittenTracer(setup *handWrittenSetup, root, directory string
 	case manifest == "":
 		setup.missing("No package.json in " + displayDirectory(directory) + " or above it depends on dd-trace, and no command of the job installs it, so -r dd-trace/ci/init cannot load: add dd-trace as a devDependency with an exact release (npm install --save-dev --save-exact dd-trace@<release>) and commit the lockfile.")
 		return "", ""
-	case development && javascriptOmitsDevelopment(workflow, job, index, directory, filepath.Dir(filepath.FromSlash(manifest))):
+	case group == javascriptDevelopment && javascriptOmitsGroup(workflow, job, index, directory, filepath.Dir(filepath.FromSlash(manifest)), group):
 		setup.missing("dd-trace is a devDependency of " + manifest + ", but the job installs production dependencies only, so -r dd-trace/ci/init cannot load: install the devDependencies too, or make dd-trace a dependency.")
+		return "", ""
+	case group == javascriptOptional && javascriptOmitsGroup(workflow, job, index, directory, filepath.Dir(filepath.FromSlash(manifest)), group):
+		setup.missing("dd-trace is an optionalDependency of " + manifest + ", but the job installs the dependencies without the optional ones, so -r dd-trace/ci/init cannot load: install the optional dependencies too, or make dd-trace a devDependency.")
 		return "", ""
 	case exactRelease(strings.TrimPrefix(declared, "=")):
 		return strings.TrimPrefix(declared, "="), manifest
@@ -410,10 +413,18 @@ func javascriptTracerInstall(words []string) (release string, global, ok bool) {
 	return release, global, ok
 }
 
+// The dependency groups of a package.json that an install can leave out.
+const (
+	javascriptDevelopment = "dev"
+	javascriptOptional    = "optional"
+)
+
 // javascriptDeclaredTracer finds the package.json that resolves dd-trace in
 // directory, there or in a parent within the repository: its requested
-// release, its repository path and whether only devDependencies has it.
-func javascriptDeclaredTracer(root, directory string) (requested, manifest string, development bool) {
+// release, its repository path and its group: javascriptDevelopment when
+// only devDependencies has it, javascriptOptional when optionalDependencies
+// does, or "" for dependencies.
+func javascriptDeclaredTracer(root, directory string) (requested, manifest, group string) {
 	for current := directory; ; current = filepath.Dir(current) {
 		data, err := os.ReadFile(filepath.Join(root, current, "package.json"))
 		if err == nil {
@@ -423,36 +434,46 @@ func javascriptDeclaredTracer(root, directory string) (requested, manifest strin
 			if json.Unmarshal(data, &pkg) == nil {
 				for _, dependencies := range []map[string]string{pkg.Dependencies, pkg.OptionalDependencies, pkg.DevDependencies} {
 					if version, ok := dependencies["dd-trace"]; ok {
-						// Optional dependencies install without devDependencies too.
-						_, inProduction := pkg.Dependencies["dd-trace"]
-						_, optional := pkg.OptionalDependencies["dd-trace"]
-						return strings.TrimSpace(version), path.Join(filepath.ToSlash(current), "package.json"), !inProduction && !optional
+						// Optional dependencies install without devDependencies
+						// too, and npm reads optionalDependencies over
+						// dependencies.
+						group := ""
+						if _, optional := pkg.OptionalDependencies["dd-trace"]; optional {
+							group = javascriptOptional
+						} else if _, inProduction := pkg.Dependencies["dd-trace"]; !inProduction {
+							group = javascriptDevelopment
+						}
+						return strings.TrimSpace(version), path.Join(filepath.ToSlash(current), "package.json"), group
 					}
 				}
 			}
 		}
 		if current == "." || current == "" {
-			return "", "", false
+			return "", "", ""
 		}
 	}
 }
 
-// javascriptSavesDevelopment reports a saved dd-trace install (see
-// javascriptTracerInstall) that adds it as a devDependency: with -D,
-// --save-dev or --dev, or, without an option that saves it elsewhere, when
-// the package.json that resolves dd-trace in directory already has it only
-// there, where npm and Yarn keep it.
-func javascriptSavesDevelopment(root, directory string, words []string) bool {
-	if slices.ContainsFunc(words, func(word string) bool { return slices.Contains([]string{"-D", "--save-dev", "--dev"}, word) }) {
-		return true
+// javascriptSavedGroup is the dependency group (see
+// javascriptDeclaredTracer) a dd-trace install (see javascriptTracerInstall)
+// saves it in: javascriptDevelopment with -D, --save-dev or --dev,
+// javascriptOptional with -O, --save-optional or --optional, "" with -P,
+// --save-prod or --prod, and otherwise the group of the package.json that
+// resolves dd-trace in directory, where npm and Yarn keep it.
+func javascriptSavedGroup(root, directory string, words []string) string {
+	has := func(options ...string) bool {
+		return slices.ContainsFunc(words, func(word string) bool { return slices.Contains(options, word) })
 	}
-	if slices.ContainsFunc(words, func(word string) bool {
-		return slices.Contains([]string{"-P", "--save-prod", "-O", "--save-optional", "--optional", "--prod"}, word)
-	}) {
-		return false
+	switch {
+	case has("-D", "--save-dev", "--dev"):
+		return javascriptDevelopment
+	case has("-O", "--save-optional", "--optional"):
+		return javascriptOptional
+	case has("-P", "--save-prod", "--prod"):
+		return ""
 	}
-	_, manifest, development := javascriptDeclaredTracer(root, directory)
-	return manifest != "" && development
+	_, _, group := javascriptDeclaredTracer(root, directory)
+	return group
 }
 
 // javascriptAssigned is the variables a command assigns for itself (see
@@ -462,13 +483,13 @@ func javascriptAssigned(words []string) map[string]string {
 	return assigned
 }
 
-// javascriptOmitsDevelopment reports whether the last command before index
-// in job that decides which dependencies are installed leaves the
-// devDependencies out (see javascriptOmitsDevelopmentCommand), wherever it
-// runs. Only an npm ci or install without such an option in directory,
-// where the tests run, or in manifest's directory (the package.json that
-// declares dd-trace) installs them again; a prune without one keeps them.
-func javascriptOmitsDevelopment(workflow ciWorkflow, job runtimeJob, index int, directory, manifest string) bool {
+// javascriptOmitsGroup reports whether the last command before index in job
+// that decides which dependencies are installed leaves group out (see
+// javascriptOmitsGroupCommand), wherever it runs. Only an npm ci or install
+// without such an option in directory, where the tests run, or in
+// manifest's directory (the package.json that declares dd-trace) installs
+// them again; a prune without one keeps them.
+func javascriptOmitsGroup(workflow ciWorkflow, job runtimeJob, index int, directory, manifest, group string) bool {
 	omitted := false
 	for _, step := range job.Steps[:index] {
 		commands, err := staticCommands(step.Run)
@@ -488,7 +509,7 @@ func javascriptOmitsDevelopment(workflow ciWorkflow, job runtimeJob, index int, 
 				continue
 			}
 			switch {
-			case javascriptOmitsDevelopmentCommand(env, words):
+			case javascriptOmitsGroupCommand(env, words, group):
 				omitted = true
 			case slices.Contains([]string{"ci", "install", "i"}, command[1]) && !moved && !javascriptInstallsElsewhere(command) && (installDirectory == directory || installDirectory == manifest):
 				omitted = false
@@ -498,19 +519,35 @@ func javascriptOmitsDevelopment(workflow ciWorkflow, job runtimeJob, index int, 
 	return omitted
 }
 
-// javascriptOmitsDevelopmentCommand reports a package manager command
-// (words, with the variables it assigns for itself) that installs or prunes
-// the dependencies without the devDependencies: --production, --omit=dev
-// (or --omit dev), --only=production and the like, or NODE_ENV=production
-// in its environment (env).
-func javascriptOmitsDevelopmentCommand(env map[string]string, words []string) bool {
+// javascriptOmitsGroupCommand reports a package manager command (words,
+// with the variables it assigns for itself) that installs or prunes the
+// dependencies without group (see javascriptDeclaredTracer). The
+// devDependencies are left out with --production, --omit=dev (or --omit
+// dev), --only=production and the like, or NODE_ENV=production in its
+// environment (env); the optional ones with --omit=optional, --no-optional
+// or Yarn's --ignore-optional. npm's --include (or npm_config_include)
+// installs a group whatever omits it, and npm_config_omit omits one as
+// --omit does; Yarn and npm's --production=false install the
+// devDependencies whatever NODE_ENV says.
+func javascriptOmitsGroupCommand(env map[string]string, words []string, group string) bool {
 	_, words = handWrittenCommand(words)
-	if len(words) < 2 || !slices.Contains([]string{"npm", "yarn", "pnpm"}, words[0]) || !slices.Contains([]string{"ci", "install", "i", "prune"}, words[1]) {
+	if group == "" || len(words) < 2 || !slices.Contains([]string{"npm", "yarn", "pnpm"}, words[0]) || !slices.Contains([]string{"ci", "install", "i", "prune"}, words[1]) {
 		return false
 	}
-	if strings.TrimSpace(env["NODE_ENV"]) == "production" {
-		return true
+	npm := words[0] == "npm"
+	var included, omitted []string
+	if npm {
+		// npm reads its configuration variables whatever their case.
+		for key, value := range env {
+			switch strings.ToLower(key) {
+			case "npm_config_include":
+				included = append(included, strings.FieldsFunc(value, javascriptListSeparator)...)
+			case "npm_config_omit":
+				omitted = append(omitted, strings.FieldsFunc(value, javascriptListSeparator)...)
+			}
+		}
 	}
+	production, development := strings.TrimSpace(env["NODE_ENV"]) == "production", false
 	for i, word := range words[2:] {
 		next := ""
 		if i+3 < len(words) {
@@ -521,14 +558,31 @@ func javascriptOmitsDevelopmentCommand(env map[string]string, words []string) bo
 			value = next
 		}
 		switch {
+		case option == "--include" && npm:
+			included = append(included, value)
+		case option == "--omit":
+			omitted = append(omitted, value)
 		case slices.Contains([]string{"--production", "--production=true", "--prod"}, word) || word == "-P" && words[0] == "pnpm",
-			option == "--omit" && value == "dev",
 			option == "--only" && slices.Contains([]string{"production", "prod"}, value):
-			return true
+			production = true
+		case word == "--production=false" && words[0] != "pnpm":
+			development = true
+		case slices.Contains([]string{"--no-optional", "--ignore-optional"}, word):
+			omitted = append(omitted, javascriptOptional)
 		}
 	}
-	return false
+	switch {
+	case slices.Contains(included, group):
+		return false
+	case slices.Contains(omitted, group):
+		return true
+	}
+	return group == javascriptDevelopment && production && !development
 }
+
+// javascriptListSeparator separates the entries of an npm list
+// configuration variable, such as npm_config_omit="dev optional".
+func javascriptListSeparator(r rune) bool { return r == ' ' || r == ',' }
 
 // javascriptLockedTracer is the single dd-trace release the lockfile that
 // covers directory resolves, there or in a parent within the repository:

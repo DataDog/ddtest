@@ -124,6 +124,9 @@ func directScopedCommand(step runtimeStep, test TestCommand, framework string) (
 		if err := inlineAssignmentsError(step); err != nil {
 			return "", err
 		}
+		if err := compoundCommandError(command); err != nil {
+			return "", err
+		}
 		return scopedPrefix(scopedEnvironment(framework)) + " " + command, nil
 	}
 	if step.scopedVariable == scopedEnvironment(framework) && test.usesNYC && (step.impactedWorkaround || handWrittenFalse(step.Env["DD_CIVISIBILITY_IMPACTED_TESTS_DETECTION_ENABLED"])) {
@@ -133,6 +136,9 @@ func directScopedCommand(step runtimeStep, test TestCommand, framework string) (
 		return "", err
 	}
 	command = strings.TrimSpace(strings.TrimPrefix(command, cucumberImpactedWorkaround+" "))
+	if err := compoundCommandError(command); err != nil {
+		return "", err
+	}
 	if !test.usesNYC {
 		start, end, insertion, err := cucumberCoverageEdit(command)
 		if err != nil {
@@ -141,6 +147,21 @@ func directScopedCommand(step runtimeStep, test TestCommand, framework string) (
 		command = command[:start] + insertion + command[end:]
 	}
 	return scopedPrefix(scopedEnvironment(framework)) + " " + cucumberImpactedWorkaround + " " + command, nil
+}
+
+// compoundCommandError explains why ddtest prescribes no scoped command for
+// a CI command that is not one simple command, such as
+// npm run build && npx cucumber-js: the variables the scoped prefix assigns
+// would reach only its first command, not necessarily the tests.
+func compoundCommandError(command string) error {
+	file, ok := parseCIShell(command)
+	if ok && len(file.Stmts) == 1 {
+		stmt := file.Stmts[0]
+		if call, simple := stmt.Cmd.(*syntax.CallExpr); simple && len(call.Args) > 0 && !stmt.Background && !stmt.Negated && !stmt.Coprocess {
+			return nil
+		}
+	}
+	return fmt.Errorf("CI runs %s as part of a compound shell command, which ddtest does not rewrite into the scoped command: the variables its prefix assigns would reach only the first command. Run the test command as a CI command of its own, then rerun onboard --apply", command)
 }
 
 // inlineAssignmentsError explains why ddtest does not rebuild a direct
@@ -270,7 +291,7 @@ func scopedSetupEdits(root, framework string, directLeaves bool) ([]setupEdit, s
 			return nil, "", &SetupGap{"package.json / scripts / " + name, "Custom framework wrapper requires an explicit scoped initialization; preserve its command."}
 		}
 		if framework == "webdriverio" {
-			local, err := localWDIOLeaf(root, script)
+			local, err := localWDIOLeaf(root, ".", script)
 			if err != nil {
 				return nil, "", &SetupGap{"package.json / scripts / " + name, err.Error()}
 			}
@@ -392,7 +413,10 @@ func wdioConfigSource(root, config string) string {
 	return config
 }
 
-func localWDIOLeaf(root, script string) (bool, error) {
+// localWDIOLeaf reports whether the WebdriverIO command script, run in
+// directory (relative to root), runs its tests with the local runner: its
+// configuration, read relative to directory, or one it extends, says so.
+func localWDIOLeaf(root, directory, script string) (bool, error) {
 	parts, err := staticCommands(script)
 	if err != nil || len(parts) != 1 {
 		return false, fmt.Errorf("wDIO leaf needs a literal CLI command")
@@ -402,7 +426,7 @@ func localWDIOLeaf(root, script string) (bool, error) {
 		if filepath.Base(word) != "wdio" || i+2 >= len(words) || words[i+1] != "run" {
 			continue
 		}
-		config := words[i+2]
+		config := filepath.Join(filepath.FromSlash(directory), words[i+2])
 		for range 4 {
 			if !filepath.IsLocal(config) {
 				return false, fmt.Errorf("wDIO config must be repository-local")
