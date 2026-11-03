@@ -43,6 +43,13 @@ type WorkflowEvidence struct {
 	EarlierVaryingTests []string `json:"earlier_varying_tests,omitempty"`
 }
 
+// gitExclusionReason asks for the Git exclusion of the retained reports. The
+// fix comes first: summaries shorten a long reason at its end, and the list
+// of reports grows with a package below the root.
+func gitExclusionReason(reports []string) string {
+	return "Add /.testoptimization/ to the repository .gitignore: every retained report must be ignored (" + strings.Join(reports, ", ") + ")."
+}
+
 func (t *Testdrive) verifyReportExclusions(ctx context.Context) []onboard.WorkflowCheck {
 	reports := slices.Clone(retainedReports)
 	// A run in a package below the repository root keeps its reports at the
@@ -60,7 +67,7 @@ func (t *Testdrive) verifyReportExclusions(ctx context.Context) []onboard.Workfl
 	ignored := strings.Fields(string(data))
 	if err != nil || slices.ContainsFunc(reports, func(report string) bool { return !slices.Contains(ignored, report) }) {
 		git.Status = "failed"
-		git.Reason = "Every retained report (" + strings.Join(reports, ", ") + ") must be ignored; add /.testoptimization/ to the repository .gitignore."
+		git.Reason = gitExclusionReason(reports)
 	}
 	tracked, trackErr := t.executor.CombinedOutput(ctx, "git", append([]string{"ls-files", "--"}, reports...), nil)
 	if trackErr != nil || len(strings.TrimSpace(string(tracked))) > 0 {

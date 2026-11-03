@@ -236,3 +236,14 @@ func TestPackageRunsLockTheSharedReportRoot(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, lock.Close())
 }
+
+// The Git exclusion's fix survives the summary's shortening, even with the
+// four reports of a package below the root listed after it.
+func TestGitExclusionFixSurvivesTheSummary(t *testing.T) {
+	reports := []string{"../../.testoptimization/testdrive.json", "../../.testoptimization/report.html", "../../.testoptimization/testdrive-command.json", "../../.testoptimization/report-command.html"}
+	reason := gitExclusionReason(reports)
+	require.Contains(t, reason, "retained report")
+	require.Contains(t, reason, "must be ignored")
+	brief := briefValidationText("workflow git_report_exclusions: failed — " + reason)
+	require.Contains(t, brief, "Add /.testoptimization/ to the repository .gitignore:")
+}
