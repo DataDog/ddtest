@@ -45,6 +45,8 @@ func (rubyDiscovery) displayName() string { return "Ruby" }
 
 func (rubyDiscovery) actionLanguage() string { return "ruby" }
 
+func (rubyDiscovery) runtimeSetupAction() string { return "ruby/setup-ruby" }
+
 func (rubyDiscovery) bootstrap(string) string { return rubyBootstrap }
 
 func (rubyDiscovery) resolvesTestSteps(string) bool { return true }

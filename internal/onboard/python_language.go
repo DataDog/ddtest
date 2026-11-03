@@ -25,6 +25,8 @@ func (pythonDiscovery) displayName() string { return "Python" }
 
 func (pythonDiscovery) actionLanguage() string { return "python" }
 
+func (pythonDiscovery) runtimeSetupAction() string { return "actions/setup-python" }
+
 func (pythonDiscovery) bootstrap(string) string { return pythonBootstrap }
 
 func (pythonDiscovery) resolvesTestSteps(framework string) bool { return framework == "pytest" }

@@ -26,6 +26,8 @@ func (javascriptDiscovery) displayName() string { return "JavaScript" }
 
 func (javascriptDiscovery) actionLanguage() string { return "js" }
 
+func (javascriptDiscovery) runtimeSetupAction() string { return setupNodeSource }
+
 func (javascriptDiscovery) bootstrap(framework string) string {
 	if framework == "cucumber" {
 		return javascriptBootstrap + "\n\nFor Cucumber, also set DD_CIVISIBILITY_IMPACTED_TESTS_DETECTION_ENABLED=false on the test step. This avoids a tracer crash on Cucumber Background/Rule nodes; basic reporting is unaffected."

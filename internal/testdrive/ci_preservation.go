@@ -15,6 +15,11 @@ import (
 
 // The first local check is the baseline, including any pre-existing user edits.
 // Keep it inside the report rather than adding another customer-repo artifact.
+//
+// The baseline and the current matrix are read at the same root: the report
+// root (see UseReportRoot). A focused run in a package below the repository
+// root shares the root's report, and the CI configuration is at that root,
+// not in the package.
 func checkCIPreservation(root string, result *validationResult) error {
 	if !frameworkFeaturePolicies[result.Framework].PreserveCIMatrix {
 		return nil
@@ -22,7 +27,7 @@ func checkCIPreservation(root string, result *validationResult) error {
 	// An unreadable saved report has no usable baseline; the fresh results
 	// written by this run replace it.
 	previous, _ := readPreviousValidation(root)
-	current, err := onboard.CIMatrixRows(root, result.Framework)
+	current, err := onboard.CIMatrixRows(reportRoot(root), result.Framework)
 	if err != nil {
 		result.CIPreservation = &verdict{Status: "inconclusive", Reason: reportText(err.Error())}
 	} else {

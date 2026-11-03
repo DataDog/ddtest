@@ -247,3 +247,37 @@ func TestGitExclusionFixSurvivesTheSummary(t *testing.T) {
 	brief := briefValidationText("workflow git_report_exclusions: failed — " + reason)
 	require.Contains(t, brief, "Add /.testoptimization/ to the repository .gitignore:")
 }
+
+// A focused run in a package below the repository root compares the CI
+// matrix with the baseline of the root's report, both read at the root,
+// where the CI configuration is: the package has none. A removed entry
+// still fails.
+func TestFocusedPackageRunReadsTheCIMatrixAtTheRepositoryRoot(t *testing.T) {
+	root := workspace.CanonicalRoot(t.TempDir())
+	pkg := filepath.Join(root, "test")
+	workflow := filepath.Join(root, ".github", "workflows", "test.yml")
+	require.NoError(t, os.MkdirAll(pkg, 0o700))
+	require.NoError(t, os.MkdirAll(filepath.Dir(workflow), 0o700))
+	const pipeline = "jobs:\n  test:\n    strategy:\n      matrix:\n        node: [%s]\n    steps:\n      - run: cd test && npx --no-install nyc -- npm test\n"
+	requireWriteFile(t, workflow, fmt.Sprintf(pipeline, "20, 22"))
+	all := validationResult{Framework: "mocha", All: true}
+	require.NoError(t, checkCIPreservation(root, &all))
+	require.Len(t, all.CIBaseline, 2)
+	require.NoError(t, os.MkdirAll(filepath.Dir(validationPath(root)), 0o700))
+	data, err := json.Marshal(all)
+	require.NoError(t, err)
+	requireWriteFile(t, validationPath(root), string(data))
+
+	useReportRoot(t, pkg, root)
+	focused := validationResult{Framework: "mocha", FocusedCommand: true}
+	require.NoError(t, checkCIPreservation(pkg, &focused))
+	require.Equal(t, "passed", focused.CIPreservation.Status, focused.CIPreservation.Reason)
+	require.Equal(t, all.CIBaseline, focused.CIBaseline)
+
+	requireWriteFile(t, workflow, fmt.Sprintf(pipeline, "22"))
+	focused = validationResult{Framework: "mocha", FocusedCommand: true}
+	require.NoError(t, checkCIPreservation(pkg, &focused))
+	require.Equal(t, "failed", focused.CIPreservation.Status)
+	require.Equal(t, 1, focused.CIPreservation.DifferenceCount)
+	require.Contains(t, focused.CIPreservation.Differences[0], `"node":20`)
+}

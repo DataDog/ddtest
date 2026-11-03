@@ -16,6 +16,10 @@ type discoveryLanguage interface {
 	displayName() string
 	// actionLanguage is the language's value in the setup action's languages input.
 	actionLanguage() string
+	// runtimeSetupAction is the official GitHub action that installs the
+	// language's runtime, such as actions/setup-node. It runs no repository
+	// code (see setupOnlyActions).
+	runtimeSetupAction() string
 	// bootstrap explains how the existing test step loads the tracer.
 	bootstrap(framework string) string
 	// resolvesTestSteps reports whether resolveTestStep statically resolves

@@ -72,6 +72,22 @@ var lockfileInstall = map[string]string{
 	"bun.lock":            "bun install --frozen-lockfile",
 }
 
+// lockfileReinstall is the reinstall a reverted lockfile at name, relative
+// to the repository root, needs. Every package manager installs the package
+// in its working directory, so a lockfile below the root reinstalls in its
+// own directory: (cd test && npm ci), not npm ci at a root that may have no
+// package.json.
+func lockfileReinstall(name string) (string, bool) {
+	install, ok := lockfileInstall[path.Base(name)]
+	if !ok {
+		return "", false
+	}
+	if directory := path.Dir(name); directory != "." {
+		install = "(cd " + shellquote.Join(directory) + " && " + install + ")"
+	}
+	return install, true
+}
+
 // repositoryChangesHandoff lists the changes and the exact commands that
 // revert them, including the reinstall a reverted lockfile needs.
 func repositoryChangesHandoff(changes []repositoryChange) string {
@@ -88,7 +104,7 @@ func repositoryChangesHandoff(changes []repositoryChange) string {
 			modified = append(modified, change.Path)
 		}
 		names = append(names, label)
-		if install, ok := lockfileInstall[path.Base(change.Path)]; ok && !slices.Contains(reinstall, install) {
+		if install, ok := lockfileReinstall(change.Path); ok && !slices.Contains(reinstall, install) {
 			reinstall = append(reinstall, install)
 		}
 	}

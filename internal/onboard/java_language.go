@@ -24,6 +24,8 @@ func (javaDiscovery) displayName() string { return "Java" }
 
 func (javaDiscovery) actionLanguage() string { return "java" }
 
+func (javaDiscovery) runtimeSetupAction() string { return "actions/setup-java" }
+
 func (javaDiscovery) bootstrap(string) string { return javaBootstrap }
 
 func (javaDiscovery) resolvesTestSteps(string) bool { return true }

@@ -795,3 +795,50 @@ func TestShellWrappersFollowDirectoryChanges(t *testing.T) {
 		require.Equal(t, want, mayStartTestsIn(root, root, runtimeStep{Run: script}, "vitest", 0), script)
 	}
 }
+
+// Official checkout, setup, cache and artifact actions can't start tests, at
+// a tag or a commit SHA: a job of them and an unread publish package runs no
+// test and gets the caveat. Any other action keeps its job in scope.
+func TestSetupOnlyActionsKeepAJobOutsideTheTests(t *testing.T) {
+	root := newJestRepository(t, `jobs:
+  publish:
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af
+        with:
+          node-version: 22
+      - uses: actions/cache/restore@v4
+      - run: npx @acme/deploy
+      - uses: actions/upload-artifact@v4
+  unknown:
+    steps:
+      - uses: actions/checkout@v4
+      - uses: acme/deploy-action@v1
+      - run: npx @acme/deploy
+  unpinned:
+    steps:
+      - uses: actions/checkout
+      - run: npx @acme/deploy
+  test:
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm test
+`)
+	scope, err := DiscoverValidationScope(root, "jest")
+	require.NoError(t, err)
+	unresolved := strings.Join(scope.Unresolved, "\n")
+	caveats := strings.Join(scope.Caveats, "\n")
+	require.NotContains(t, unresolved, "publish /")
+	require.Contains(t, caveats, "publish: CI job without the Datadog setup that runs no jest test ddtest can find (it uses packages ddtest doesn't read: @acme/deploy)")
+	require.Contains(t, unresolved, "unknown / ", "a third-party action may run anything")
+	require.NotContains(t, caveats, "unknown:")
+	require.Contains(t, unresolved, "unpinned / ", "an action without a ref is not recognized")
+	for uses, want := range map[string]bool{
+		"actions/checkout@v4": true, "Actions/Checkout@v4": true, "actions/checkout@0ad4b8fadaa221de15dcec353f45205ec38ea70b": true,
+		"actions/download-artifact@v4": true, "ruby/setup-ruby@v1": true, "actions/cache/save@v4": true,
+		"actions/checkout": false, "actions/checkout@": false, "acme/checkout@v4": false, "./.github/actions/setup": false,
+		"docker://node:22": false, "cypress-io/github-action@v6": false, "actions/github-script@v7": false,
+	} {
+		require.Equal(t, want, setupOnlyAction(uses), uses)
+	}
+}

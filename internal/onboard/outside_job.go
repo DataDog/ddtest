@@ -19,7 +19,8 @@ import (
 // A deploy or packaging job (sentry-cli, git archive, web-ext build, upload
 // scripts) never starts the selected framework when nothing it runs names
 // it: not its commands, the package scripts they run, nor the repository
-// scripts those run. Opaque actions and unreadable configuration may.
+// scripts those run. Actions and unreadable configuration may, except the
+// checkout, setup, cache and artifact actions of setupOnlyAction.
 //
 // Published packages ddtest doesn't read, imported by those scripts or a
 // package merely named publish, release or deploy that a package runner runs
@@ -34,7 +35,7 @@ func (javascriptDiscovery) outsideFrameworkJob(root string, workflow ciWorkflow,
 			continue
 		}
 		if strings.TrimSpace(step.Run) == "" {
-			if step.Uses != "" || step.ResolutionError != "" {
+			if step.ResolutionError != "" || (step.Uses != "" && !setupOnlyAction(step.Uses)) {
 				return false, nil
 			}
 			continue
@@ -45,6 +46,35 @@ func (javascriptDiscovery) outsideFrameworkJob(root string, workflow ciWorkflow,
 		}
 	}
 	return true, unread.names
+}
+
+// setupOnlyActions are official GitHub Actions that check out the
+// repository, install a runtime, or save and restore caches and artifacts,
+// with each registered language's runtime setup action (see
+// discoveryLanguage.runtimeSetupAction: actions/setup-node and the other
+// languages' setup actions). None runs a project script or command, so none
+// can start the project's tests, and a job of them and steps that can't
+// start tests runs none. They may change test inputs (a restored cache, a
+// downloaded artifact), so a job that runs tests still reads them as it
+// reads any other action (see mayStartTestsIn). Any other action,
+// third-party or unknown, may run anything and keeps its job in scope. Keep
+// this list explicit: add an action only when it can't run repository code.
+var setupOnlyActions = []string{
+	"actions/checkout",
+	"actions/setup-go", "actions/setup-dotnet",
+	"actions/cache", "actions/cache/restore", "actions/cache/save",
+	"actions/upload-artifact", "actions/download-artifact",
+}
+
+// setupOnlyAction reports whether uses names one of setupOnlyActions, or a
+// registered language's runtime setup action, at a tag, branch or commit SHA
+// (actions/checkout@v4, actions/checkout@<sha>).
+func setupOnlyAction(uses string) bool {
+	name, ref, pinned := strings.Cut(strings.ToLower(strings.TrimSpace(uses)), "@")
+	if !pinned || ref == "" {
+		return false
+	}
+	return slices.Contains(setupOnlyActions, name) || slices.ContainsFunc(discoveryLanguages, func(language discoveryLanguage) bool { return language.runtimeSetupAction() == name })
 }
 
 // mentionsFramework reports whether shell text, or a package or repository
