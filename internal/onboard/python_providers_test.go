@@ -202,6 +202,56 @@ func TestPythonProviderReplayKeepsTheJobsEnvironment(t *testing.T) {
 	require.Equal(t, map[string]string{"PYTHONPATH": pythonTracerPath + ":src", "PYTEST_ADDOPTS": "--ddtrace -x"}, exported)
 }
 
+// A setup for several languages puts Python's tracer path before a
+// PYTHONPATH the job sets and --ddtrace before its pytest options; that part
+// does not reach another language's local replay, the job's own does.
+func TestPythonSetupExportsStayOutOfOtherLanguagesReplays(t *testing.T) {
+	exported, ok := otherLanguageSetupExport(javaDiscovery{}, "PYTHONPATH")
+	require.True(t, ok)
+	require.Equal(t, pythonTracerPath+":", exported)
+	exported, ok = otherLanguageSetupExport(javaDiscovery{}, "PYTEST_ADDOPTS")
+	require.True(t, ok)
+	require.Equal(t, "--ddtrace", exported)
+	_, ok = otherLanguageSetupExport(pythonDiscovery{}, "PYTHONPATH")
+	require.False(t, ok)
+
+	setup := gitLabSetupEntry(strings.Replace(gitLabJavaSetup, `"java"`, `"java python"`, 1))
+	root := gitLabJavaRepository(t, "test:\n  image: maven:3.9-eclipse-temurin-21\n  variables:\n    PYTHONPATH: src\n    PYTEST_ADDOPTS: -x\n  script:\n"+setup+"    - mvn -B verify\n")
+	scope, err := DiscoverValidationScope(root, "junit5")
+	require.NoError(t, err)
+	require.Empty(t, scope.Unresolved)
+	require.Len(t, scope.Commands, 1)
+	require.Equal(t, "src", scope.Commands[0].Environment["PYTHONPATH"])
+	require.Equal(t, "-x", scope.Commands[0].Environment["PYTEST_ADDOPTS"])
+}
+
+// The shared CI value rules reach pytest jobs on GitLab as they reach Java's:
+// a value only the provider defines, or a conditional export the tests don't
+// read, is left out with a caveat; one in pytest's options stays unresolved.
+func TestPythonGitLabJobsFollowTheSharedCIRules(t *testing.T) {
+	setup := gitLabSetupEntry(gitLabPythonSetup)
+	condition := func(name, value string) string {
+		return `    - if [[ "$CI_COMMIT_BRANCH" == "main" ]]; then export ` + name + `=` + value + `; fi` + "\n"
+	}
+	root := gitLabPythonRepository(t, "test:\n  image: python:3.12\n  variables:\n    BUILD_REF: $CI_COMMIT_SHA\n  script:\n"+setup+condition("REPORT_LABEL", "main")+"    - python -m pytest tests\nlint:\n  image: node:22\n  script:\n    - npx markdownlint-cli2 README.md\n")
+	scope, err := DiscoverValidationScope(root, "pytest")
+	require.NoError(t, err)
+	require.Empty(t, scope.Unresolved)
+	require.Len(t, scope.Commands, 1)
+	require.Equal(t, []string{"BUILD_REF", "REPORT_LABEL"}, scope.Commands[0].WithoutCIValues)
+	caveats := strings.Join(scope.Caveats, "\n")
+	require.Contains(t, caveats, "validated without the CI values of BUILD_REF")
+	require.Contains(t, caveats, "REPORT_LABEL (set only on some paths of the CI script")
+	require.Contains(t, strings.Join(scope.Review, "\n"), ".gitlab-ci.yml / lint: no pytest environment identified")
+	check := pythonRuntimeCheck(t, root)
+	require.Equal(t, "compatible", check.Status, pythonFindings(check))
+
+	root = gitLabPythonRepository(t, "test:\n  image: python:3.12\n  script:\n"+setup+condition("PYTEST_ADDOPTS", "-x")+"    - python -m pytest tests\n")
+	scope, err = DiscoverValidationScope(root, "pytest")
+	require.NoError(t, err)
+	require.Contains(t, strings.Join(scope.Unresolved, "\n"), "sets it only on some paths of")
+}
+
 // A step that only activates a virtual environment, prints the Python
 // version or runs a linter or uploader is not an unresolved test entry
 // point, here on GitHub Actions too; the environment's Python is checked.
