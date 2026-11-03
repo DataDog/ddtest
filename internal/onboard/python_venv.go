@@ -50,9 +50,10 @@ func pythonActivated(stmt *syntax.Stmt) string {
 }
 
 // pythonWithoutActivations removes the statements of a shell command that
-// only activate a virtual environment, also at the start of an && chain,
-// returning the rest of the command and the environments activated. A
-// command that cannot be parsed, or activates none, is returned unchanged.
+// only activate a virtual environment or deactivate one, also at the start of
+// an && chain, returning the rest of the command and the environments
+// activated. A command that cannot be parsed, or holds neither, is returned
+// unchanged.
 func pythonWithoutActivations(command string) (rest string, activated []string) {
 	file, err := syntax.NewParser(syntax.Variant(syntax.LangBash)).Parse(strings.NewReader(command), "")
 	if err != nil {
@@ -61,6 +62,7 @@ func pythonWithoutActivations(command string) (rest string, activated []string) 
 	// strip removes the activations leading a statement, through the left
 	// operands of an && chain, which the parser associates to the left
 	// (a && b && c is (a && b) && c); nil when nothing else remains.
+	stripped := false
 	var strip func(*syntax.Stmt) *syntax.Stmt
 	strip = func(stmt *syntax.Stmt) *syntax.Stmt {
 		if binary, chain := stmt.Cmd.(*syntax.BinaryCmd); chain && binary.Op == syntax.AndStmt && len(stmt.Redirs) == 0 && !stmt.Negated && !stmt.Background {
@@ -72,6 +74,11 @@ func pythonWithoutActivations(command string) (rest string, activated []string) 
 		}
 		if directory := pythonActivated(stmt); directory != "" {
 			activated = append(activated, directory)
+			stripped = true
+			return nil
+		}
+		if pythonDeactivates(stmt) {
+			stripped = true
 			return nil
 		}
 		return stmt
@@ -82,7 +89,7 @@ func pythonWithoutActivations(command string) (rest string, activated []string) 
 			kept = append(kept, stmt)
 		}
 	}
-	if len(activated) == 0 {
+	if !stripped {
 		return command, nil
 	}
 	var lines []string
@@ -94,6 +101,12 @@ func pythonWithoutActivations(command string) (rest string, activated []string) 
 		lines = append(lines, text.String())
 	}
 	return strings.Join(lines, "\n"), activated
+}
+
+// pythonDeactivates reports a statement that only runs deactivate.
+func pythonDeactivates(stmt *syntax.Stmt) bool {
+	call, ok := stmt.Cmd.(*syntax.CallExpr)
+	return ok && !stmt.Negated && !stmt.Background && !stmt.Coprocess && len(stmt.Redirs) == 0 && len(call.Assigns) == 0 && len(call.Args) == 1 && call.Args[0].Lit() == "deactivate"
 }
 
 // pythonVenvs follows the virtual environments a job's steps create and

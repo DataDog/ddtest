@@ -250,6 +250,16 @@ func TestPythonGitLabJobsFollowTheSharedCIRules(t *testing.T) {
 	scope, err = DiscoverValidationScope(root, "pytest")
 	require.NoError(t, err)
 	require.Contains(t, strings.Join(scope.Unresolved, "\n"), "sets it only on some paths of")
+
+	// The script entries share a shell: deactivate ends the activation.
+	root = gitLabPythonRepository(t, "test:\n  image: python:3.12\n  script:\n    - python -m venv venv\n    - source venv/bin/activate\n    - pip install .[dev]\n"+setup+"    - pytest tests\n    - deactivate\n")
+	scope, err = DiscoverValidationScope(root, "pytest")
+	require.NoError(t, err)
+	require.Empty(t, scope.Unresolved)
+	require.Len(t, scope.Commands, 1)
+	require.Equal(t, "pytest tests", scope.Commands[0].Command)
+	check = pythonRuntimeCheck(t, root)
+	require.Equal(t, "compatible", check.Status, pythonFindings(check))
 }
 
 // A step that only activates a virtual environment, prints the Python
@@ -302,6 +312,15 @@ func TestPythonVirtualEnvironmentsAndToolSteps(t *testing.T) {
 	rest, activated = pythonWithoutActivations("pip install . && source venv/bin/activate && pytest -x")
 	require.Equal(t, "pip install . && source venv/bin/activate && pytest -x", rest)
 	require.Empty(t, activated)
+	// A bare deactivate only ends the activation, which pythonVenvs follows.
+	rest, activated = pythonWithoutActivations("source venv/bin/activate\npytest -x\ndeactivate\necho done")
+	require.Equal(t, "pytest -x\necho done", rest)
+	require.Equal(t, []string{"venv"}, activated)
+	rest, activated = pythonWithoutActivations("deactivate")
+	require.Empty(t, rest)
+	require.Empty(t, activated)
+	rest, _ = pythonWithoutActivations("deactivate > log")
+	require.Equal(t, "deactivate > log", rest)
 }
 
 // An installation may name extras of a requirement or of a local project, but
