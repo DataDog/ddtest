@@ -159,8 +159,9 @@ func planProviderJavaScriptSetup(root string, provider ciProvider, workflows []c
 			if UnsupportedNode(node) {
 				continue // No tracer release runs here; validation reports it as not tried.
 			}
-			if plugin && node != "" && job.SetupUnsupported == "" && handWritten == nil {
-				// The plugin installs the latest dd-trace whatever the Node.
+			if plugin && node != "" && job.SetupUnsupported == "" && handWritten == nil && version != snippetProbeRelease {
+				// The plugin installs the latest dd-trace whatever the Node. A
+				// probe (see handWrittenSetupGap) reads only the repository.
 				if err := floatingNodeGap(root, provider, workflow, job, location, node); err != nil {
 					return nil, err
 				}
@@ -222,10 +223,11 @@ func planProviderJavaScriptSetup(root string, provider ciProvider, workflows []c
 			}
 			if handWritten != nil {
 				if problem := handWritten.problem(); problem != "" {
-					return nil, &SetupGap{location, problem + " Then rerun onboard --apply."}
+					return nil, &handWrittenGap{SetupGap{location, problem + " Then rerun onboard --apply."}}
 				}
 				if framework == "cucumber" {
-					if gap := handWrittenCucumberGap(provider, location, workflow, job, matched, direct, options); gap != nil {
+					// A direct invocation needs NYC in the CI command itself.
+					if gap := directCucumberCoverageGap(provider, location, workflow, job, direct, "the job's hand-written setup stays."); gap != nil {
 						return nil, gap
 					}
 				}
@@ -395,6 +397,25 @@ func pluginSetupApplies(root, framework, site string) bool {
 	_, err := planProviderSetup(root, framework, site, snippetProbeRelease)
 	var edit *EditThenApplyGap
 	return err == nil || errors.As(err, &edit)
+}
+
+// handWrittenSetupGap is the gap onboard --apply reports in a CI job's
+// hand-written JavaScript setup of framework in root, reporting to site
+// (empty: the default), on a provider whose configuration it edits: it
+// plans the same edit, so onboard --agent asks for the edit that completes
+// that setup instead of handing off an apply that refuses it. nil when the
+// plan finds none.
+func handWrittenSetupGap(root, framework, site string) *handWrittenGap {
+	provider, err := currentCIProvider(root)
+	if err != nil || provider.sharedSyntax() || !provider.editsSetup() {
+		return nil
+	}
+	_, err = PlanJavaScriptSetup(root, framework, snippetProbeRelease, site, "")
+	var gap *handWrittenGap
+	if errors.As(err, &gap) {
+		return gap
+	}
+	return nil
 }
 
 // pluginSetupWritable reports whether onboard --apply would write the
@@ -635,22 +656,6 @@ func cucumberLoaderReached(workflow ciWorkflow, job runtimeJob, steps []matchedT
 		}
 	}
 	return len(steps) > 0
-}
-
-// handWrittenCucumberGap explains what a job whose hand-written setup is
-// otherwise complete still lacks for Cucumber, or is nil. onboard --apply
-// adds NYC and the Istanbul ESM loader only to the selected package scripts,
-// through the scoped variable the provider's setup exports, so a direct
-// invocation needs NYC in the CI command itself, and native ESM (options)
-// needs the loader in the hand-written NODE_OPTIONS.
-func handWrittenCucumberGap(provider ciProvider, location string, workflow ciWorkflow, job runtimeJob, steps []matchedTestStep, direct []directLeaf, options string) error {
-	if gap := directCucumberCoverageGap(provider, location, workflow, job, direct, "the job's hand-written setup stays."); gap != nil {
-		return gap
-	}
-	if options != "" && !cucumberLoaderReached(workflow, job, steps) {
-		return &SetupGap{location, "The job's hand-written setup leaves the tracer's preload in NODE_OPTIONS without the " + options + " native ESM coverage needs. Add it to the NODE_OPTIONS that preloads dd-trace/ci/init, then rerun onboard --apply; the job's hand-written setup stays."}
-	}
-	return nil
 }
 
 // directCucumberCoverageGap prescribes NYC for the first direct Cucumber

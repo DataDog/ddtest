@@ -392,6 +392,8 @@ func jobHandWrittenSetup(root string, workflow ciWorkflow, job runtimeJob, first
 	token := setupActionLanguage(language)
 	var setup *handWrittenSetup
 	var untraced []string
+	// The test steps checked, for what only they together show.
+	var tested []int
 	for i := first; i < len(job.Steps); i++ {
 		step := job.Steps[i]
 		label := "step " + strconv.Itoa(stepNumber(step, i))
@@ -412,6 +414,7 @@ func jobHandWrittenSetup(root string, workflow ciWorkflow, job runtimeJob, first
 				continue
 			}
 		}
+		tested = append(tested, i)
 		current := handWrittenCISetup(root, workflow, job, i, nil, language, framework, site)
 		if current == nil {
 			untraced = append(untraced, "The "+framework+" test command at "+label+" ("+step.Run+") gets none of the hand-written setup, so its tests run untraced: give that command the same setup, or set it once for the job's later commands after its dependency install.")
@@ -447,7 +450,22 @@ func jobHandWrittenSetup(root string, workflow ciWorkflow, job runtimeJob, first
 	for _, problem := range untraced {
 		setup.missing(problem)
 	}
+	if checker, ok := discoveryLanguageNamed(language).(handWrittenJobChecker); ok {
+		for _, problem := range checker.handWrittenJobProblems(root, workflow, job, tested, framework) {
+			setup.missing(problem)
+		}
+	}
 	return setup
+}
+
+// handWrittenJobChecker is a language whose hand-written setups may also
+// lack what only a job's test steps together show (see
+// jobHandWrittenSetup).
+type handWrittenJobChecker interface {
+	// handWrittenJobProblems lists what the hand-written setup of job's
+	// test steps (indexes into job.Steps) lacks for framework, each with
+	// the change that completes it.
+	handWrittenJobProblems(root string, workflow ciWorkflow, job runtimeJob, steps []int, framework string) []string
 }
 
 // handWrittenLanguageName names language in messages, such as Python.

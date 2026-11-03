@@ -37,6 +37,14 @@ type EditThenApplyGap struct{ SetupGap }
 
 func (g *EditThenApplyGap) Unwrap() error { return &g.SetupGap }
 
+// handWrittenGap is a SetupGap in a CI job's hand-written setup, which
+// onboarding keeps: it lacks a piece only the user's edit to that setup
+// adds, so onboard --apply writes nothing until then. onboard --agent asks
+// for the same edit first (see handWrittenSetupGap).
+type handWrittenGap struct{ SetupGap }
+
+func (g *handWrittenGap) Unwrap() error { return &g.SetupGap }
+
 func (g *SetupGap) Error() string { return g.Location + ": " + g.Reason }
 
 // DirtyWorkflowGap names target files with uncommitted changes; committing or

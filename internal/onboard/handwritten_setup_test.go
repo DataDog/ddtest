@@ -6,10 +6,13 @@
 package onboard
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -420,7 +423,12 @@ func TestProviderSetupsExportNoDDTracePackage(t *testing.T) {
 			require.Contains(t, result.Jobs[len(result.Jobs)-1].Reason, "reads $DD_TRACE_PACKAGE, which only the Datadog GitHub Actions setup exports")
 			scope, err := DiscoverValidationScope(".", "jest")
 			require.NoError(t, err)
-			require.Contains(t, strings.Join(scope.Unresolved, "\n"), "reads $DD_TRACE_PACKAGE, which only the Datadog GitHub Actions setup exports", "discovery names the cause too")
+			unresolved := strings.Join(scope.Unresolved, "\n")
+			require.Contains(t, unresolved, "reads $DD_TRACE_PACKAGE, which only the Datadog GitHub Actions setup exports", "discovery names the cause too")
+			// It quotes what the configuration writes, never the model's
+			// GitHub Actions expression for the setup's preload.
+			require.Contains(t, unresolved, "its CI value -r $DD_TRACE_PACKAGE reads")
+			require.NotContains(t, unresolved, "${{")
 			result = check(extends)
 			require.Equal(t, StatusCompatible, result.Status, "%+v", result)
 		})
@@ -946,4 +954,84 @@ func TestHandWrittenJenkinsDirectCucumberRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, plan.Configured(), "the prescribed command completes the setup")
 	require.Equal(t, StatusCompatible, handWrittenRuntime(t, root, "cucumber").Status)
+}
+
+// onboard --agent and onboard --apply agree on a hand-written setup that
+// onboard --apply refuses as incomplete, such as a preload in the job's
+// variables that reaches the dependency install too: the handoff asks for
+// the edit that completes the setup, with the reason onboard --apply gives,
+// and keeps it, rather than handing off an apply that refuses it. Once the
+// setup is complete, it hands off onboard --apply, which accepts it.
+func TestHandWrittenIncompleteSetupHandoffAgreesWithApply(t *testing.T) {
+	agentless := handWrittenAgentless("-r dd-trace/ci/init")
+	// jobPreload sets the preload in the job's variables, which reach every
+	// command of the job, npm ci too.
+	jobPreload := func(config string) string {
+		return regexp.MustCompile(`( *)DD_SITE: 'datadoghq.com'\n`).ReplaceAllString(config, "${0}${1}NODE_OPTIONS: '-r dd-trace/ci/init'\n")
+	}
+	start := func(t *testing.T) (AgentResult, error) {
+		t.Helper()
+		var out bytes.Buffer
+		err := StartWithOptions(&out, StartOptions{Format: "json"})
+		var state AgentResult
+		require.NoError(t, json.Unmarshal(out.Bytes(), &state), out.String())
+		return state, err
+	}
+	// agree checks that onboard --agent asks for exactly the edit onboard
+	// --apply refuses the setup without.
+	agree := func(t *testing.T, root, framework, problem string) {
+		t.Helper()
+		_, err := PlanJavaScriptSetup(root, framework, "5.133.0", "datadoghq.com", ">=18")
+		var gap *SetupGap
+		require.ErrorAs(t, err, &gap)
+		require.Contains(t, gap.Reason, problem)
+		state, err := start(t)
+		require.Error(t, err)
+		require.Equal(t, "needs_input", state.Status)
+		require.Equal(t, "ci_setup_required", state.Code)
+		require.Equal(t, "apply_source_edit", state.NextAction)
+		require.Contains(t, state.Reason, "Jobs that set it up by hand keep their setup")
+		require.Contains(t, state.Reason, strings.TrimSuffix(gap.Reason, " Then rerun onboard --apply."), "the reason onboard --apply gives")
+		require.Contains(t, state.Instruction, problem)
+		require.Contains(t, state.Instruction, "Run resume_command once, after the edits above")
+		require.Contains(t, strings.Join(state.ResumeCommand, " "), "onboard --framework "+framework+" --apply --yes")
+	}
+	for _, provider := range handWrittenProviders {
+		t.Run(provider.name, func(t *testing.T) {
+			config := jobPreload(provider.config(with(agentless, "NODE_OPTIONS", ""), []string{"npm ci"}, "npx jest"))
+			require.Contains(t, config, "NODE_OPTIONS: '-r dd-trace/ci/init'")
+			root := handWrittenRepository(t, provider, handWrittenPackage, config, nil)
+			agree(t, root, "jest", "NODE_OPTIONS preloads dd-trace for npm ci at ")
+			agree(t, root, "jest", "Set NODE_OPTIONS for the test commands only (inline on each, or for the commands after the install).")
+
+			// Every other piece the setup lacks is asked for the same way.
+			writeFile(t, root, provider.file, provider.config(with(agentless, "DD_SITE", "datadoghq.eu"), []string{"npm ci"}, "npx jest"))
+			agree(t, root, "jest", "set DD_SITE=datadoghq.com")
+			writeFile(t, root, provider.file, provider.config(with(agentless, "DD_API_KEY", "0123456789abcdef"), []string{"npm ci"}, "npx jest"))
+			agree(t, root, "jest", "never commit the key")
+
+			// The preload set after the install completes it.
+			writeFile(t, root, provider.file, provider.config(agentless, []string{"npm ci"}, "npx jest"))
+			plan, err := PlanJavaScriptSetup(root, "jest", "5.133.0", "datadoghq.com", ">=18")
+			require.NoError(t, err)
+			require.True(t, plan.Configured())
+			state, err := start(t)
+			require.NoError(t, err)
+			require.Equal(t, "ready", state.Status)
+			require.Contains(t, strings.Join(state.NextCommand, " "), "onboard --framework jest --apply --yes")
+		})
+		// Native ESM Cucumber needs the Istanbul ESM loader in the
+		// hand-written NODE_OPTIONS, which onboard --apply cannot add.
+		t.Run(provider.name+"/native ESM Cucumber", func(t *testing.T) {
+			pkg := `{"type": "module", "scripts": {"test": "cucumber-js"}, "devDependencies": {"@cucumber/cucumber": "11.0.1", "nyc": "17.1.0", "@istanbuljs/esm-loader-hook": "0.3.0", "dd-trace": "5.40.0"}}`
+			esm := handWrittenAgentless("-r dd-trace/ci/init --import dd-trace/register.js")
+			root := handWrittenRepository(t, provider, pkg, provider.config(esm, []string{"npm ci"}, "npm test"), nil)
+			agree(t, root, "cucumber", "without the "+cucumberESMLoaderHook)
+		})
+	}
+	// So does Jenkins, whose plugin setup onboard --apply writes.
+	const pipeline = "pipeline {\n  agent { docker { image 'node:22' } }\n  environment {\n    DD_CIVISIBILITY_AGENTLESS_ENABLED = 'true'\n    DD_API_KEY = credentials('datadog-api-key')\n    NODE_OPTIONS = '-r dd-trace/ci/init'\n  }\n  stages {\n    stage('Test') {\n      steps {\n        sh 'npm ci'\n        sh 'npx jest'\n      }\n    }\n  }\n}\n"
+	root := jenkinsRepository(t, pipeline)
+	writeFile(t, root, "package.json", handWrittenPackage)
+	agree(t, root, "jest", "NODE_OPTIONS preloads dd-trace for npm ci at Jenkinsfile:")
 }

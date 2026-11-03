@@ -25,6 +25,10 @@ func Run(output io.Writer) error { return run(output, nil) }
 type agentHandoff struct {
 	// site is the selected Datadog site; empty selects the default.
 	site string
+	// handWritten reports a handoff that completes a CI job's hand-written
+	// setup, which onboard --apply refuses until then, so its agent hands
+	// off validation even where onboard --apply writes the provider's setup.
+	handWritten bool
 }
 
 // run prints the onboarding guidance; a non-nil agent selects the agent's
@@ -132,7 +136,7 @@ func onboardCI(output io.Writer, provider ciProvider, repositoryRoot, language, 
 	}
 	text := instructions(language, name)
 	if registered := discoveryLanguageNamed(language); agent != nil && !provider.sharedSyntax() {
-		text = providerSetupInstructions(repositoryRoot, provider, language, name, agent.site, !providerAutomaticSetup(repositoryRoot, provider, registered, name, agent.site))
+		text = providerSetupInstructions(repositoryRoot, provider, language, name, agent.site, agent.handWritten || !providerAutomaticSetup(repositoryRoot, provider, registered, name, agent.site))
 	} else if agent != nil && registered != nil && registered.agentInstructions(name, agent.site) != "" {
 		text = registered.agentInstructions(name, agent.site)
 	}

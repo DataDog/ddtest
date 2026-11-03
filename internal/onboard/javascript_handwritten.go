@@ -140,6 +140,29 @@ func (javascriptDiscovery) handWrittenSetup(root string, provider ciProvider, wo
 	return setup
 }
 
+// Native ESM Cucumber needs the Istanbul ESM loader in the hand-written
+// NODE_OPTIONS of every test step: onboard --apply adds it only to the
+// package scripts it scopes, through the scoped variable the provider's
+// setup exports (see cucumberLoaderReached).
+func (javascriptDiscovery) handWrittenJobProblems(root string, workflow ciWorkflow, job runtimeJob, steps []int, framework string) []string {
+	if framework != "cucumber" {
+		return nil
+	}
+	options := scopedProviderOptions(root, framework)
+	if options == "" {
+		return nil
+	}
+	matched := make([]matchedTestStep, 0, len(steps))
+	for _, i := range steps {
+		step := job.Steps[i]
+		matched = append(matched, matchedTestStep{step, resolveTestStep(root, workflow, job, step, "javascript", framework).Tests})
+	}
+	if cucumberLoaderReached(workflow, job, matched) {
+		return nil
+	}
+	return []string{"The job's hand-written setup leaves the tracer's preload in NODE_OPTIONS without the " + options + " native ESM coverage needs: add it to the NODE_OPTIONS that preloads dd-trace/ci/init."}
+}
+
 // javascriptHandWrittenSetup recognizes a hand-written dd-trace setup of
 // the test command at index of job (see handWrittenSetup), and returns the
 // command's step with NODE_OPTIONS normalized for the shared bootstrap
