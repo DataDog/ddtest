@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := build
-.PHONY: clean fmt vet lint test build install run release
+.PHONY: clean fmt vet lint test test-fast build install run release
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X github.com/DataDog/ddtest/internal/buildinfo.Version=$(VERSION)
 GOBIN ?= $(shell go env GOBIN)
@@ -16,6 +16,8 @@ lint: vet
 	golangci-lint run --timeout=5m
 test:
 	go test ./...
+test-fast:
+	python3 scripts/ci_test_plan.py run --base "$(or $(TEST_BASE),origin/main)"
 build: test lint
 	go build -ldflags="$(LDFLAGS)" -o ddtest main.go
 install:

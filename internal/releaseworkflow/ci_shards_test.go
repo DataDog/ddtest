@@ -26,7 +26,7 @@ type ciTestJob struct {
 
 func ciTestJobs(t *testing.T) map[string]ciTestJob {
 	t.Helper()
-	data, err := os.ReadFile("../../.github/workflows/ci.yml")
+	data, err := os.ReadFile("../../.github/workflows/ci-full.yml")
 	require.NoError(t, err)
 	var workflow struct{ Jobs map[string]ciTestJob }
 	require.NoError(t, yaml.Unmarshal(data, &workflow))
