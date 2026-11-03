@@ -550,8 +550,9 @@ func pythonIgnoresEnvironment(words []string) bool {
 // uploaders Python CI runs beside pytest, which never start it.
 // Documentation builders are not among them: Sphinx executes the project's
 // conf.py and MkDocs its hooks, which may run anything (see
-// pythonCheckTools).
-var pythonNonTestTools = []string{"flake8", "black", "isort", "mypy", "ruff", "pylint", "bandit", "safety", "pyright", "pydocstyle", "pre-commit", "twine", "codecov", "coveralls", "check-manifest", "pip-audit", "build"}
+// pythonCheckTools). Nor is pre-commit, whose hooks may run pytest (see
+// checkAndPackageTools).
+var pythonNonTestTools = []string{"flake8", "black", "isort", "mypy", "ruff", "pylint", "bandit", "safety", "pyright", "pydocstyle", "twine", "codecov", "coveralls", "check-manifest", "pip-audit", "build"}
 
 // pythonSetupCommands are setup.py commands that build or check a
 // distribution; setup.py test runs tests.

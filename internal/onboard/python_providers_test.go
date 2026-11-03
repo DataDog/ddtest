@@ -270,6 +270,24 @@ func TestPythonGitLabJobsFollowTheSharedCIRules(t *testing.T) {
 	require.Equal(t, "compatible", check.Status, pythonFindings(check))
 }
 
+// A linter runs no tests, but pre-commit's hooks may run pytest: its entry
+// stays unresolved rather than outside the validation.
+func TestPythonPreCommitMayRunTests(t *testing.T) {
+	setup := gitLabSetupEntry(gitLabPythonSetup)
+	root := gitLabPythonRepository(t, "test:\n  image: python:3.12\n  script:\n"+setup+"    - ruff check .\n    - python -m pytest tests/unit\n")
+	scope, err := DiscoverValidationScope(root, "pytest")
+	require.NoError(t, err)
+	require.Empty(t, scope.Unresolved)
+	require.Contains(t, strings.Join(scope.Review, "\n"), "ruff runs no tests")
+
+	root = gitLabPythonRepository(t, "test:\n  image: python:3.12\n  script:\n"+setup+"    - pre-commit run --all-files\n    - python -m pytest tests/unit\n")
+	scope, err = DiscoverValidationScope(root, "pytest")
+	require.NoError(t, err)
+	require.Contains(t, strings.Join(scope.Unresolved, "\n"), "Unresolved Python entry point: pre-commit run --all-files")
+	check := pythonRuntimeCheck(t, root)
+	require.Equal(t, "inconclusive", check.Status, pythonFindings(check))
+}
+
 // A step that only activates a virtual environment, prints the Python
 // version or runs a linter or uploader is not an unresolved test entry
 // point, here on GitHub Actions too; the environment's Python is checked.
