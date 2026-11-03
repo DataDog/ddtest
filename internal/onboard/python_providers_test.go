@@ -250,6 +250,14 @@ func TestPythonGitLabJobsFollowTheSharedCIRules(t *testing.T) {
 	scope, err = DiscoverValidationScope(root, "pytest")
 	require.NoError(t, err)
 	require.Contains(t, strings.Join(scope.Unresolved, "\n"), "sets it only on some paths of")
+	// The setup exported PYTEST_ADDOPTS, so a plain assignment changes the
+	// tests' environment too.
+	root = gitLabPythonRepository(t, "test:\n  image: python:3.12\n  script:\n"+setup+strings.Replace(condition("PYTEST_ADDOPTS", "-x"), "export ", "", 1)+"    - python -m pytest tests\n")
+	scope, err = DiscoverValidationScope(root, "pytest")
+	require.NoError(t, err)
+	require.Contains(t, strings.Join(scope.Unresolved, "\n"), "sets it only on some paths of")
+	check = pythonRuntimeCheck(t, root)
+	require.Equal(t, "inconclusive", check.Status, pythonFindings(check))
 
 	// The script entries share a shell: deactivate ends the activation.
 	root = gitLabPythonRepository(t, "test:\n  image: python:3.12\n  script:\n    - python -m venv venv\n    - source venv/bin/activate\n    - pip install .[dev]\n"+setup+"    - pytest tests\n    - deactivate\n")
