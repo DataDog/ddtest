@@ -823,7 +823,13 @@ runtime of a Node or Ruby image with a floating tag (`node:lts`,
 `node:latest`, an untagged `node`, `ruby:latest`): the agent's Docker pulls an
 image only when it has none (unless `alwaysPull` is set), so the tag runs the
 release that agent keeps. A GitLab, Buildkite or CircleCI image's floating tag
-stays inconclusive. An image
+stays inconclusive. A Java
+stage whose image has no Bash, such as `maven:3-alpine`, whose `sh` cannot parse
+Datadog's installer, runs ddtest's sh setup in its place: it downloads the exact
+dd-java-agent release and its SHA256 from Maven Central, checks it, and adds
+`-javaagent` to `MAVEN_OPTS` and `GRADLE_OPTS`. `onboard --apply` writes it,
+validation certifies it, and `final_response` says a Bash-capable image would be
+simpler and more reliable. For other languages, an image
 known to lack Bash, or curl and wget (Alpine, an official `-slim` image without
 an install before the snippet), is a setup problem. `DD_API_KEY` must reach the
 `sh` step from a Jenkins credential, with

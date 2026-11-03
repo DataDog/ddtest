@@ -113,6 +113,9 @@ type ciSetup struct {
 	// Jenkinsfile sh step: a step of its job in another shell does not have
 	// them (see ciShellOrigin).
 	shellLocal bool
+	// withoutBash reports a setup a POSIX shell runs alone, in an image
+	// without the Bash Datadog's installer needs (see ciShellSetup).
+	withoutBash bool
 	// Inputs are the installer inputs keyed by the setup action's input
 	// names: languages, api_key, site and <language>-tracer-version. Values
 	// are verbatim; unresolved references stay as written.

@@ -169,3 +169,52 @@ func TestJavaJenkinsContainerStageApply(t *testing.T) {
 	require.Contains(t, instructions, "1. Bind DD_API_KEY in those stages from a Jenkins credential")
 	require.Contains(t, instructions, "make this edit without waiting for the credential")
 }
+
+// In an image without Bash, which cannot parse Datadog's installer, a Java
+// container stage runs ddtest's sh setup: onboard --apply writes it, ddtest
+// recognizes and certifies it, and says a Bash-capable image would be simpler.
+func TestJavaJenkinsShellSetupWithoutBash(t *testing.T) {
+	root := javaJenkinsRepository(t, "pipeline {\n  agent none\n  stages {\n    stage('Test') {\n      agent { docker { image 'maven:3-alpine' } }\n      steps {\n        sh 'mvn -B verify'\n      }\n    }\n  }\n}\n")
+	require.Contains(t, setupImageNote(root, "java", "junit5", "datadoghq.com"), "In the sh script that runs their tests, put this setup, which a POSIX shell runs")
+	plan, err := PlanProviderSetup(root, "junit5", "")
+	require.NoError(t, err)
+	_, err = plan.Apply(true)
+	require.NoError(t, err, "the image's missing Bash no longer blocks the setup")
+	data, err := os.ReadFile(filepath.Join(root, "Jenkinsfile"))
+	require.NoError(t, err)
+	require.Contains(t, string(data), "dd-java-agent/"+javaRecommendedTracer+"/dd-java-agent-"+javaRecommendedTracer+".jar")
+	require.NotContains(t, string(data), "install_test_visibility")
+
+	confirmJavaJenkins(t, "8")
+	ci := JavaCIConfiguration(root, "junit5", "datadoghq.com")
+	require.Len(t, ci.Jobs, 1, ci.Reason)
+	job := ci.Jobs[0]
+	require.Empty(t, job.Code, job.Reason)
+	require.Equal(t, javaRecommendedTracer, job.TracerRequested)
+	require.Contains(t, job.SetupCaveats, javaShellSetupCaveat)
+	scope, err := DiscoverValidationScope(root, "junit5")
+	require.NoError(t, err)
+	require.Empty(t, scope.Unresolved)
+	require.Equal(t, "mvn -B verify", scope.Commands[0].Command)
+	require.Empty(t, scope.Commands[0].Environment["MAVEN_OPTS"], "the CI agent is local validation's")
+}
+
+func TestJavaShellSetupIsRecognizedAsWritten(t *testing.T) {
+	java := javaDiscovery{}
+	for _, tc := range []struct{ site, release string }{{"datadoghq.com", "1.67.1"}, {"datadoghq.eu", "1.68.0"}} {
+		file, parsed := parseCIShell(java.shellSetup(tc.site, tc.release, jenkinsSnippetForm))
+		require.True(t, parsed)
+		setup, consumed, ok := java.shellSetupAt(file.Stmts, 0, jenkinsSnippetForm)
+		require.True(t, ok)
+		require.Equal(t, 1, consumed)
+		require.Empty(t, setup.Problem)
+		require.True(t, setup.withoutBash && setup.Supported)
+		require.Equal(t, map[string]string{"languages": "java", "api_key": "$DD_API_KEY", "site": tc.site, "java-tracer-version": tc.release}, setup.Inputs)
+	}
+	edited := strings.Replace(java.shellSetup("datadoghq.com", "1.67.1", jenkinsSnippetForm), "GRADLE_OPTS=", "JAVA_OPTS=", 1)
+	file, parsed := parseCIShell(edited)
+	require.True(t, parsed)
+	setup, _, ok := java.shellSetupAt(file.Stmts, 0, jenkinsSnippetForm)
+	require.True(t, ok)
+	require.Contains(t, setup.Problem, "a form ddtest does not recognize", "an edited setup is never certified")
+}

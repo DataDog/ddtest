@@ -707,16 +707,21 @@ func (executor *buildkiteExecutor) keyReachProblem() string {
 // imageSetupProblem explains why the step's container cannot run the
 // Datadog installer, which needs Bash and curl or wget: an image ddtest
 // cannot resolve, or one known to lack them. curl reports an earlier
-// command that installed curl.
+// command that installed curl. A setup a POSIX shell runs needs no Bash.
 func (executor *buildkiteExecutor) imageSetupProblem(curl bool) string {
+	return executor.imageProblemFor(curl, true)
+}
+
+// imageProblemFor is imageSetupProblem for a setup that needs Bash or not.
+func (executor *buildkiteExecutor) imageProblemFor(curl, bash bool) string {
 	switch {
 	case executor.imageProblem != "" && executor.dockerfile != "":
 		return "The step's container cannot be checked: " + executor.imageProblem + ", so ddtest cannot tell whether the image it builds has the Bash and the curl or wget the Datadog installer needs. Make the Dockerfile's final FROM a literal image that has them, or validate this step's image separately."
 	case executor.imageProblem != "":
 		return "The step's container cannot be checked: " + executor.imageProblem + ", so ddtest cannot tell whether it has the Bash and the curl or wget the Datadog installer needs. Give the step a literal image that has them."
-	case !executor.bash && imageWithoutBash(executor.image) && executor.dockerfile != "":
+	case bash && !executor.bash && imageWithoutBash(executor.image) && executor.dockerfile != "":
 		return "The step's image is built from " + executor.dockerfile + ", whose final stage is FROM " + executor.image + ", which has no Bash, which the Datadog installer needs. Install bash in the Dockerfile (for Alpine: RUN apk add --no-cache bash), or build FROM the non-Alpine variant."
-	case !executor.bash && imageWithoutBash(executor.image):
+	case bash && !executor.bash && imageWithoutBash(executor.image):
 		return "The step's image " + executor.image + " has no Bash, which the Datadog installer needs. Use a Bash-capable image for this step, such as the non-Alpine variant, or a custom image with Bash preinstalled."
 	case !curl && !executor.downloader && imageWithoutDownloader(executor.image) && executor.dockerfile != "":
 		return "The step's image is built from " + executor.dockerfile + ", whose final stage is FROM " + executor.image + ", which has neither curl nor wget, and no RUN instruction of the Dockerfile installs them, so the Datadog installer cannot be downloaded and its tests would run untraced. Install curl in the Dockerfile (add curl to its apt-get install packages, or RUN " + buildkiteCurlInstall + "), or build FROM the full image (without -slim)."

@@ -52,7 +52,7 @@ func (jenkins) setupIgnores(edits []setupEdit) []string {
 }
 
 // jenkinsSnippetForm is the setup snippet Jenkins container stages run.
-var jenkinsSnippetForm = snippetForm{provider: jenkinsProvider, folder: jenkinsTracerFolder, keySet: true}
+var jenkinsSnippetForm = snippetForm{provider: jenkinsProvider, folder: jenkinsTracerFolder, keySet: true, shellSetups: true}
 
 // jenkinsCredentialID is the Jenkins credential onboard --apply binds
 // DD_API_KEY from, a Secret text the user stores the Datadog API key in.
@@ -75,6 +75,8 @@ type jenkinsContainer struct {
 func (jenkinsContainer) setupName() string { return "Datadog setup snippet" }
 
 func (jenkinsContainer) setupInput(name string) string { return buildkite{}.setupInput(name) }
+
+func (jenkinsContainer) snippetForm() snippetForm { return jenkinsSnippetForm }
 
 func (jenkinsContainer) setupProblem(setup ciSetup, tracerInput string, exact func(string) bool, example, site string) string {
 	return snippetSetupProblem(setup, tracerInput, exact, example, site)
@@ -322,12 +324,12 @@ func (r *jenkinsReader) jenkinsDockerfileAgent(call *groovyCall, scope jenkinsSc
 // to lack Bash, or curl and wget. curl reports an earlier statement of the
 // script that installed curl. An image ddtest cannot read is a caveat
 // instead (see jenkinsUnreadImageCaveat).
-func jenkinsImageSetupProblem(agent jenkinsAgent, curl bool) string {
+func jenkinsImageSetupProblem(agent jenkinsAgent, curl, bash bool) string {
 	if agent.image == "" {
 		return ""
 	}
 	executor := buildkiteExecutor{image: agent.image, dockerfile: agent.dockerfile, bash: agent.bash, downloader: agent.downloader}
-	return executor.imageSetupProblem(curl)
+	return executor.imageProblemFor(curl, bash)
 }
 
 // jenkinsUnreadImageCaveat is what ddtest cannot check about a container
@@ -367,7 +369,7 @@ func (r *jenkinsReader) snippetProblem(scope jenkinsScope, setup ciSetup, key st
 	default:
 		return "DD_API_KEY comes from " + key + ", which ddtest cannot tell is a Jenkins credential; bind it with withCredentials(" + jenkinsCredentialBinding + ") { … } or credentials('" + jenkinsCredentialID + "')."
 	}
-	return jenkinsImageSetupProblem(scope.agent, curl)
+	return jenkinsImageSetupProblem(scope.agent, curl, !setup.withoutBash)
 }
 
 // jenkinsResetMissing reports a setup snippet that does not first run the

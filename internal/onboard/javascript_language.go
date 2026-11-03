@@ -202,7 +202,7 @@ func (javascriptDiscovery) ciSetupRequest(root, framework, site string, terms ci
 	if framework == "mocha" {
 		request.Notes = append(request.Notes, "Keep the export after "+terms.Entry+" only for Mocha ESM test files; CommonJS suites need only the preload.")
 	}
-	if note := setupImageNote(root, "javascript", framework); note != "" {
+	if note := setupImageNote(root, "javascript", framework, site); note != "" {
 		request.Notes = append(request.Notes, note)
 	}
 	if note := handWrittenSetupNote(root, "javascript", framework, site); note != "" {

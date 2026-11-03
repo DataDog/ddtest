@@ -276,7 +276,13 @@ func jenkinsContainerTarget(root string, workflows []ciWorkflow, target ciSetupT
 	if key != "" && key != jenkinsSecret("DD_API_KEY") {
 		return jenkinsSnippetTarget{}, &SetupGap{location, "DD_API_KEY reaches this stage from " + key + ", not from a Jenkins credential ddtest can see; bind it with withCredentials(" + jenkinsCredentialBinding + ") { … } or credentials('" + jenkinsCredentialID + "') instead, then rerun onboard --apply."}
 	}
-	return jenkinsSnippetTarget{job: target.Job, call: origin.call, statement: origin.statement, lines: strings.Split(jenkinsSnippet(snippet, container.reset).shell(), "\n"), wrap: key == ""}, nil
+	written := jenkinsSnippet(snippet, container.reset)
+	lines := strings.Split(written.shell(), "\n")
+	// An image without Bash runs the language's setup for a POSIX shell.
+	if shell, ok := language.(ciShellSetup); ok && job.SetupImageShellOnly {
+		lines = append(slices.Clone(written.before), strings.Split(shell.shellSetup(site, release, jenkinsSnippetForm), "\n")...)
+	}
+	return jenkinsSnippetTarget{job: target.Job, call: origin.call, statement: origin.statement, lines: lines, wrap: key == ""}, nil
 }
 
 // jenkinsSnippetBefore reports a setup snippet before step among a

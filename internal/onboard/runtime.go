@@ -212,6 +212,10 @@ type runtimeJob struct {
 	// provider's setup, such as an image without curl, before any setup is
 	// written; empty when it can or the provider does not check.
 	SetupImageProblem string `yaml:"-"`
+	// SetupImageShellOnly reports a SetupImageProblem that is only the
+	// image's missing Bash: a language with a setup a POSIX shell runs
+	// (see ciShellSetup) sets the job up there.
+	SetupImageShellOnly bool `yaml:"-"`
 	// SetupUnsupported explains why the provider's setup mechanism cannot
 	// instrument the job at all, such as a container the Datadog Jenkins
 	// plugin does not reach; such a job is never certified.

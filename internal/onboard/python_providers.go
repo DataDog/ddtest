@@ -490,7 +490,7 @@ func pythonSetupRequest(root, framework, site string, terms ciSetupTerms) ciSetu
 		"A later command that sets PYTHONPATH or PYTEST_ADDOPTS must extend them with " + terms.Persist(`export PYTHONPATH="$PYTHONPATH:<paths>"`) + " (likewise PYTEST_ADDOPTS), never replace them. Do not add --ddtrace or set DD_CIVISIBILITY_ENABLED yourself. If CI disables pytest plugin autoload (PYTEST_DISABLE_PLUGIN_AUTOLOAD or --disable-plugin-autoload), load the plugin explicitly with -p ddtrace in the existing pytest command.",
 		"If CI runs pytest through tox, the " + terms.Installer + "'s variables must reach the tox environment: extend its pass_env (passenv in INI) with DD_*, PYTHONPATH and PYTEST_ADDOPTS, preserving its entries, and run tox on the same Python version as " + terms.Entry + ". For nox or another wrapper, the same variables must reach its pytest process.",
 		"ddtest reads the Python of each instrumented job from its image, such as python:3.12, python:3.12-slim, cimg/python:3.12 or ghcr.io/astral-sh/uv:python3.12-bookworm. A job on the runner's or agent's own Python, or in an image whose name selects no Python minor version (python:latest, python:3, an image by digest), stays unverified: ask the user which Python it runs and validate with --ci-runtime python=<version> (or <job>:python=<version>); never guess it. Those jobs also need python and pip on PATH for the installer.",
-		setupImageNote(root, "python", framework),
+		setupImageNote(root, "python", framework, site),
 		setupUnsupportedNote(root, "python", framework),
 		pythonUnsupportedEntriesNote(terms),
 		GitReportExclusion,

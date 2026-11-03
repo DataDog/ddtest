@@ -877,8 +877,10 @@ func setupUnsupportedNote(root, language, framework string) string {
 // container cannot run their setup mechanism as configured, such as an image
 // without curl, so the person learns it before the setup is written; empty
 // when there are none. Each job is named under its own setup mechanism (see
-// setupProviderFor). Fixing an image is not part of the prescribed setup.
-func setupImageNote(root, language, framework string) string {
+// setupProviderFor). Fixing an image is not part of the prescribed setup:
+// where the image lacks only Bash, a language with a setup a POSIX shell runs
+// (see ciShellSetup) prescribes that one, reporting to site.
+func setupImageNote(root, language, framework, site string) string {
 	provider, err := currentCIProvider(root)
 	if err != nil {
 		return ""
@@ -889,6 +891,9 @@ func setupImageNote(root, language, framework string) string {
 	}
 	var setups []string
 	problems := map[string][]string{}
+	shell, shellOnly := discoveryLanguageNamed(language).(ciShellSetup)
+	var shellJobs []string
+	var shellForm snippetForm
 	for _, workflow := range workflows {
 		for _, name := range slices.Sorted(maps.Keys(workflow.Jobs)) {
 			job := workflow.Jobs[name]
@@ -898,6 +903,10 @@ func setupImageNote(root, language, framework string) string {
 			if slices.ContainsFunc(job.Steps, func(step runtimeStep) bool {
 				return resolveTestStep(root, workflow, job, step, language, framework).Matched
 			}) {
+				if form, ok := setupProviderFor(provider, job).(ciSnippetFormer); ok && shellOnly && job.SetupImageShellOnly && form.snippetForm().shellSetups {
+					shellJobs, shellForm = append(shellJobs, workflow.Path+" / "+name), form.snippetForm()
+					continue
+				}
 				setup := setupProviderFor(provider, job).setupName()
 				if !slices.Contains(setups, setup) {
 					setups = append(setups, setup)
@@ -906,7 +915,17 @@ func setupImageNote(root, language, framework string) string {
 			}
 		}
 	}
-	notes := make([]string, 0, len(setups))
+	notes := make([]string, 0, len(setups)+1)
+	if len(shellJobs) > 0 {
+		release := "<exact release>"
+		if recommended, ok := discoveryLanguageNamed(language).(ciRecommendedTracer); ok {
+			release = recommended.recommendedTracer()
+		}
+		if site == "" {
+			site = defaultDatadogSite
+		}
+		notes = append(notes, "These CI steps run in an image without Bash, which Datadog's installer needs: "+strings.Join(shellJobs, ", ")+". In the sh script that runs their tests, put this setup, which a POSIX shell runs, where the setup snippet would go, in place of it:\n```sh\n"+shell.shellSetup(site, release, shellForm)+"\n```\nTell the user, in the final report, that a Bash-capable image would let Datadog's installer set Test Optimization up instead, which is simpler and more reliable.")
+	}
 	for _, setup := range setups {
 		notes = append(notes, "These CI steps cannot run the "+setup+" in their current image, so their tests would stay untraced even with it in place; changing an image or Dockerfile is not part of this setup, so tell the user and ask before making it:\n"+strings.Join(problems[setup], "\n"))
 	}
