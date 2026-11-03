@@ -107,7 +107,28 @@ public class StepDefinitions {
 	// relative durations.
 	scenarios := []string{"junit5", "junit4", "testng", "spock", "cucumber junit4 runner", "cucumber java8 lambdas", "cucumber platform suite", "karate parallel runner", "karate junit5 runner", "scalatest", "scalatest junit runner", "munit", "gradle junit5", "gradle junit4",
 		"no application coverage", "instrumentation-only failure", "incomplete reactor", "publishing goal", "agent workflow"}
-	weights := map[string]int{"junit5": 20, "gradle junit5": 20, "gradle junit4": 8, "scalatest": 6, "scalatest junit runner": 2, "munit": 6, "agent workflow": 16, "no application coverage": 6, "instrumentation-only failure": 6, "incomplete reactor": 2, "publishing goal": 1}
+	// Relative seconds from the slower of the pinned/latest CI measurements.
+	weights := map[string]int{
+		"junit5":                       123,
+		"junit4":                       57,
+		"testng":                       61,
+		"spock":                        69,
+		"cucumber junit4 runner":       62,
+		"cucumber java8 lambdas":       63,
+		"cucumber platform suite":      57,
+		"karate parallel runner":       94,
+		"karate junit5 runner":         92,
+		"scalatest":                    134,
+		"scalatest junit runner":       52,
+		"munit":                        76,
+		"gradle junit5":                224,
+		"gradle junit4":                105,
+		"no application coverage":      60,
+		"instrumentation-only failure": 68,
+		"incomplete reactor":           10,
+		"publishing goal":              1,
+		"agent workflow":               120,
+	}
 	selected := shard.SelectedIntegrationScenarios(t, scenarios, weights)
 	run := func(name string, test func(t *testing.T)) {
 		t.Helper()
