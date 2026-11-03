@@ -182,6 +182,31 @@ func ciPredefinedReads(value string, prefixes ...string) bool {
 	})
 }
 
+// conditionalCIPrefix starts the written text of a conditionalCIValue.
+const conditionalCIPrefix = "\x00set only on some paths of "
+
+// conditionalCIValue marks a variable a CI script sets only under a
+// condition ddtest cannot decide, in statement: it may keep its earlier
+// value or take the new one. It is an unresolvedCIValue, so every value that
+// reads it is unresolved too.
+func conditionalCIValue(statement string) string {
+	return unresolvedCIValue(conditionalCIPrefix + statement)
+}
+
+// conditionalCIStatement is the statement of a value that is exactly a
+// conditionalCIValue marker.
+func conditionalCIStatement(value string) (string, bool) {
+	match := unresolvedCIMarker.FindStringSubmatch(value)
+	if match == nil || match[0] != value {
+		return "", false
+	}
+	written, err := strconv.Unquote(match[1])
+	if err != nil {
+		return "", false
+	}
+	return strings.CutPrefix(written, conditionalCIPrefix)
+}
+
 // unresolvedCIError explains a value holding an unresolvedCIValue marker.
 func unresolvedCIError(value string) error {
 	match := unresolvedCIMarker.FindStringSubmatch(value)
@@ -191,6 +216,9 @@ func unresolvedCIError(value string) error {
 	written, err := strconv.Unquote(match[1])
 	if err != nil {
 		written = match[1]
+	}
+	if statement, conditional := strings.CutPrefix(written, conditionalCIPrefix); conditional {
+		return fmt.Errorf("the CI script sets it only on some paths of %s, under a condition ddtest cannot decide locally", statement)
 	}
 	written = displayCIValue(written)
 	if strings.Contains(written, "$DD_TRACE_PACKAGE") || strings.Contains(written, "${DD_TRACE_PACKAGE") {

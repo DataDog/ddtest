@@ -122,8 +122,8 @@ pathlib.Path(sys.argv[1]).write_text(json.dumps(result))
 func pythonProbeCommand(command string, args []string) (string, []string, error) {
 	base := strings.TrimSuffix(filepath.Base(command), ".exe")
 	if platform.IsPythonExecutable(command) {
-		if index, _ := onboard.PythonModule(args); index >= 0 {
-			return command, slices.Clone(args[:index]), nil
+		if options, ok := onboard.PythonInterpreterOptions(args); ok {
+			return command, options, nil
 		}
 		return command, nil, nil
 	}

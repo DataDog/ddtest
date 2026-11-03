@@ -97,7 +97,72 @@ JavaScript and Ruby support every provider, Java every provider but Jenkins, and
 Python GitHub Actions only.
 Other CI files (Travis CI, Azure Pipelines and others) are never parsed: when
 they mention the framework they are listed as outside this validation, and they
-never fail onboarding.
+never fail onboarding. `--ci-provider` is not `--platform`, which selects the
+language of the tests (`javascript`, `python`, `ruby`, `java`); a CI provider
+name given to `--platform` is rejected with a pointer to `--ci-provider`.
+
+On every provider, a test command whose output a step pipes only into output
+filters (`tee`, `cucumber-junit`, a TAP reporter such as `tap-xunit` or
+`faucet`, run directly, from `node_modules/.bin` or through `npx`, `yarn` or
+`pnpm exec`, with literal arguments and output redirected to files), as in
+`cucumber-js … --format json | cucumber-junit > report.xml` or `npx jest 2>&1
+| tee jest.log`, is validated as the test command alone. Without `set -o
+pipefail` the shell takes such a step's exit status from the pipeline's last
+command, so the configuration carries a caveat that failing tests may not fail
+the CI step; ddtest neither requires pipefail nor changes the step. Any other
+pipeline stays unresolved. Python interpreter options before `-m pytest` are
+read as Python reads them, clustered or not (`python -Im pytest`, `python -IBu
+-m pytest`, `python -X dev -W error -m pytest`).
+
+### JavaScript packages below the repository root
+
+CI checks out the whole repository and runs a package's steps in its directory
+(`cd test`, `npm --prefix test`, a GitHub `working-directory`, a Docker Compose
+`working_dir` or Dockerfile `WORKDIR`, a Jenkins `dir('test')`). Onboarding
+does the same, wherever it starts:
+
+- From the package directory, when the package has no CI configuration of
+  its own and the Git root has one, `onboard` and `testdrive --all`/`--report`
+  run from the Git root with that package selected for platform and framework
+  detection; ddtest says so on stderr. CI discovery maps each step's working
+  directory to its package, so the result is the same as starting at the root.
+- At a root without `package.json`, Python project configuration, `Gemfile`
+  or `pom.xml`, the one package below it that the CI configuration names as a
+  path or working directory is selected. Otherwise the `platform_unresolved`
+  reason lists the packages, those CI names first, and what to run
+  (`cd <package> && ddtest onboard`, or `--platform javascript --framework
+  <framework>` at the root). `--platform node` and similar spellings name
+  `--platform javascript`.
+- A focused `testdrive` (`--command`, `--check-only` or a plain run) started
+  in the package still runs its command there.
+- Validation copies the whole checkout, not only the package, so tests that
+  read files outside their package (`require('../schema.json')`) run as in CI.
+  The copy follows the existing rules: `.testoptimization` is skipped, Git
+  metadata and installed dependencies are kept, ignored outputs are skipped
+  only when preparation rebuilds them, and free space is checked first. It is
+  copy-on-write where the filesystem supports it (APFS, Btrfs, XFS); elsewhere
+  it costs the size of the checkout per configuration.
+- Reports are kept once, in the Git root's `.testoptimization`, for every run
+  above, so the root `.gitignore` entry `/.testoptimization/` covers them.
+  A focused run in the package after an `--all` run writes
+  `testdrive-command.json` and `report-command.html` there too, beside the
+  kept `--all` report, which its `kept_report` names relative to the package
+  (`../.testoptimization/testdrive.json`).
+  `package_report_exclusions` is `not applicable` when that root has no
+  `package.json`, when its `package.json` has no name or version (npm cannot
+  pack it), when it is private, and for a package below the root, whose
+  tarball cannot contain the root's reports.
+
+A package with CI configuration of its own (for example its own Jenkinsfile),
+or a repository without CI configuration at the Git root, is onboarded in the
+current directory as before. With `--ci-provider`, only that provider's
+configuration counts, in the package and at the root: a package's own
+Jenkinsfile does not keep `--ci-provider github` from the root's workflows.
+A focused run in the package and a run at the root share the root's reports,
+so they never run at the same time, and `testdrive --report` at the root
+checks a focused run's report against the package inputs it validated.
+A relative `--facts` path is read from where the command started. Ruby, Python and Java projects in a subdirectory
+are not moved to the root.
 
 ### Runtimes and facts only the user can state
 
@@ -187,6 +252,18 @@ local`, string includes and `*` patterns), with `extends`, `!reference`,
 `default` and top-level defaults, `inherit`, `variables`, `parallel: matrix`,
 hidden template jobs and `before_script`/`script`. Script entries share one
 shell, so literal `export`, assignments and `cd` carry into later entries.
+An `if` whose `[ … ]`, `test` or Bash `[[ … ]]` condition reads only known
+values is followed; under a condition ddtest cannot decide (`if [[
+"$CI_COMMIT_BRANCH" == main ]]; then export SIMPLECOV=0; fi`), a variable it
+exports or assigns may or may not be set. Only what reads it is unresolved:
+a test step whose command line expands it, a value computed from it, or a
+variable the shell, runtime, package tools, test runner or tracer read
+(`RUBYOPT`, `NODE_OPTIONS`, `SPEC_OPTS`, `PYTEST_ADDOPTS` and the like).
+Otherwise the configuration is validated without it, unset even when this
+machine sets it, and the report says so as a caveat. A `cd` inside such
+control flow still makes the later entries unresolved. The checkout, `$CI_PROJECT_DIR`, is a CI path too: a variable
+holding a path in it is left out of local runs in the same way, and findings
+write it as `$CI_PROJECT_DIR`.
 `parallel: matrix` entries that differ only by the variable selecting the
 job's `image:` (such as `RUBY_IMAGE`) share one local configuration, and each
 entry's runtime is still checked statically; an `if` on such a variable
@@ -204,7 +281,13 @@ under `gitlab.com/components/`, `danger-review` and `gem-release` under
 `gitlab.com/gitlab-org/components/`, and the `Jobs/` and `Security/` SAST,
 secret detection, dependency, container and license scanning, code quality
 and `Workflows/` pipeline templates (the list is `gitLabNonTestComponents`
-and `gitLabNonTestTemplates`). A JavaScript job without the setup that never
+and `gitLabNonTestTemplates`). An include input that hands one a command
+(an input named like a script, command, hook or `before`/`after`, such as
+`gem-release`'s `smoke_test_script`) is read as a step of the component's
+own job: a command that can't start the selected framework leaves that job
+a caveat, one that may (such as `bundle exec rspec` or `rake spec`) blocks
+and names the input, and a value ddtest can't read (not a literal string,
+or one that expands a variable) keeps the include unresolved. A JavaScript job without the setup that never
 runs the selected framework (nothing it runs, following package and
 repository scripts, names it, and every other executable is a known file,
 release, deploy, bundler or linter tool; package runners such as `npx`,
@@ -220,10 +303,15 @@ then lists the steps it ran ("Reviewed preparation run (opted in with
 source edit first (such as wrapping a Mocha command with NYC), its result
 asks for that edit and resumes with `onboard --apply`. Anything ddtest cannot read locally stays an
 unresolved blocker: remote, project, template and
-component includes, include inputs and `spec:` headers, includes whose rules
+component includes, inputs of a local include and `spec:` headers, includes whose rules
 depend on the pipeline, triggers and child
-pipelines, unknown `extends`/`!reference` targets, `rules:variables`, state
-changed inside shell control flow, and tests in `after_script`.
+pipelines, unknown `extends`/`!reference` targets, `rules:variables`, a
+directory change inside shell control flow, and tests in `after_script`.
+Each is named after what ddtest could not read, such as `(unresolved include
+gitlab.com/org/ci/test@1.0)` or `(unresolved configuration ci/suite.yml)`,
+and ddtest never asks which runtime such configuration runs: it has no
+readable job to state one for. Inputs of a component GitLab only uses to
+scan, review or release add nothing to resolve.
 
 CI setup uses Datadog's GitLab setup script
 ([test-optimization-gitlab-script](https://github.com/DataDog/test-optimization-gitlab-script)),
@@ -242,7 +330,21 @@ curl, unless an earlier entry runs `apt-get install -y curl`) or on images
 ddtest cannot resolve (`image: $NODE_IMAGE`) are refused with that reason;
 other images are assumed to have both. Runtimes come from the job's `image:`
 (`node:22`, `ruby:3.3-slim`); floating tags such as `latest` stay
-inconclusive.
+inconclusive. An image behind a registry prefix that is only variables, such
+as the dependency proxy's `${GITLAB_DEPENDENCY_PROXY}ruby:3.3`,
+`$CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX/ruby:3.3` or
+`${REGISTRY}/library/node:22`, is read as the literal image after the prefix;
+CircleCI `docker` images (an unresolved `<< parameters.registry >>/` prefix),
+Buildkite step, `docker` plugin and Compose images and Jenkins `docker`
+agents read the same way. The registry is part of an image's name, so the
+prefix must be one dependency proxy variable (a name containing
+`DEPENDENCY_PROXY`), or end in its own `/` and either read a Docker Hub mirror
+variable (a name containing `MIRROR`, `DOCKER_HUB` or `DOCKERHUB`) or come before a
+namespaced name (`library/node`, `cimg/node`, `$CI_REGISTRY/group/project`).
+`${REGISTRY}/node:22` or `$CI_REGISTRY_IMAGE/ruby:3.3` may be any image stored
+at that path, and `${IMAGE_PREFIX}node:22` may name `custom-node:22`, so they
+are images ddtest cannot resolve. An image whose name or tag reads a variable
+(`${RUBY_IMAGE}:3.3`, `${REGISTRY}/ruby:${VERSION}`) is never guessed.
 
 `onboard --apply` inserts the script entry, as a block scalar, before the first
 JavaScript test command of each test job, plus the `--import` loader export for
@@ -531,7 +633,10 @@ but every `sh` starts a fresh shell. `sh 'x'`, `sh "x"`, triple-quoted scripts
 and `sh(script: …)` are read when the whole script is literal; a GString reads
 known values only: a literal `environment` value or `env.X =` assignment, a
 literal Groovy variable, a `parameters` default (`${params.X}`) and
-`${WORKSPACE}`. Top-level statements run in source order, so a literal `def`
+`${WORKSPACE}`, which findings write as `${WORKSPACE}`. An `environment` value
+holding a path in the workspace (`VENV_DIR = "${WORKSPACE}/venv"`) has no local
+equivalent: a step whose command line does not read it is validated without
+it, with a caveat. Top-level statements run in source order, so a literal `def`
 before `pipeline { … }` is visible inside it and one after it is not. An
 `env.X =` assignment (or `env['X'] =`, `env.setProperty('X', …)`) changes the
 build's value for the rest of the build, from
@@ -664,8 +769,11 @@ the tests, before the test command, since each `sh` starts a fresh shell. A
 container block runs only its own steps in the container: they become a job
 of their own, named after the job and the container
 (`Test (docker.image('node:22').inside)`), also inside a job that already runs
-in another container, whose image they do not run. The snippet's Jenkins
-form differs from Buildkite's where Jenkins needs it:
+in another container, whose image they do not run. A `docker` agent or
+`docker.image(…)` image whose registry prefix only interpolates variables
+ddtest cannot resolve (`"${REGISTRY}/library/node:22"`) is read as the
+literal image after the prefix, under the GitLab rule above. The snippet's
+Jenkins form differs from Buildkite's where Jenkins needs it:
 
 - It exports `DD_TRACER_FOLDER="$(mktemp -d "$PWD/.datadog-ci-container.XXXXXX")"`,
   a new folder of the workspace for each shell, where the installer installs
@@ -1217,17 +1325,113 @@ Checks and source-edit hashes stay in the bounded JSON; full output stays in HTM
 
 `onboard --apply` selects a tracer every CI row it instruments can run: when the default release needs a newer Node than a CI job provides, it picks the verified release that supports all of them, or stops and names the rows that need different majors; every configuration it validates uses that one release, and a stop names the recommended release in its resume command. Configurations that can never run locally, such as WebdriverIO cloud grids and multiremote, don't constrain the tracer: a cloud grid whose credentials are CI secrets is instrumented and reported as a caveat, and other such configurations stay unedited and are reported as blockers. When a CI path, such as the Cypress action API, runs on a Node major the local host lacks, ddtest validates on the local Node if both the framework and the tracer support it, and records the substitution in `runtime_substitution`. That evidence completes only with `--accept-substitute-runtime`, a decision for the user; otherwise the result is `needs_input` (`substitute_runtime_unaccepted`) with the accepting resume command. When the local Node is unsupported, the result is `blocked_environment` (`local_runtime_mismatch`) naming the CI runtime. Either way, an existing installation of the CI runtime first on PATH validates without substitution; ddtest never downloads a runtime.
 
-Only CI that can reach a selected test is in scope. Jobs whose steps can't start
-one (system packages, coverage merging, linting, publishing, another framework)
-are listed as not a test consumer, and unresolved steps after a job's last
-possible test are listed as outside the test path. Before the test, a
-check-only step (it only reads or prints, or upgrades the package manager
-itself with `npm install -g npm@latest`) is listed rather than blocking, since
-each step's shell ends with it. Unknown executables, actions, repository files
-and package scripts whose body could start a test still block, and so do
-`source`/`eval`, interpreter invocations (`bash -c`, a script file, `node -e`
-code that spawns processes or loads a repository module) and npm settings that
-change how scripts execute (`ignore-scripts`, `script-shell`). A Cucumber alias
+Only CI that can reach a selected test is in scope: a step blocks validation
+only when it may start the selected framework's tests or may change what they
+run. A step may start them when it runs the framework's runner, directly or
+through a package script, alias, wrapper or repository script that resolves to
+it, or when ddtest can't tell. Jobs whose steps can't start one are reported as
+a caveat ("CI job ... that never runs …; it is outside this validation"), and
+so are jobs that run no test ddtest can find but use published packages
+ddtest doesn't read: packages their Node scripts import (an upload script's
+`njwt`) or a package merely named `publish`, `release` or `deploy`
+(`npx @manuscripts/publish`); the caveat names them, and their earlier steps
+are not preparation of a test. In a job that also runs tests, the same
+packages block. Other unknown package runners (`npx company-runner`), the
+repository's own workspace or `file:` packages and names that suggest tests
+(`@acme/test-runner`) keep the job in scope. Caveats too are unresolved
+steps after a job's last possible test ("… runs after the
+job's last … test and can't start …") and unresolved commands after the tests
+in the same step (`npm run test && node scripts/report.js`), which the handoff
+names as work the step runs outside this validation. Such a command stays
+unresolved when a later test follows it, in the same step, the script calling
+it or a later step of the job that runs on the same matrix row, since it may
+prepare that test. What ddtest
+recognizes as unable to start a test:
+
+- system packages, file, archive, coverage-report and version-control tools,
+  linters, formatters, type checkers and code-quality scanners
+  (`sonar-scanner`), Git hook installers (`husky`), and each language's own
+  lint, audit and packaging tools (`twine`, `ruff`, `rubocop`, `brakeman`,
+  `gem build`/`push`, `bundle install`), all invoked by name: a repository path
+  such as `./ci/ruff` is followed as a script whatever its name. Documentation
+  builders are not among them: Sphinx executes the project's `conf.py` and
+  MkDocs its hooks, so `sphinx-build`, `python -m sphinx` and `python -m mkdocs`
+  may start a test;
+- `pip` installing published packages or wheels, and `pip install .`,
+  `python -m build` or `check-manifest` when the project's build backend runs
+  none of its code: setuptools without `setup.py`, command classes or `attr`
+  versions, Hatchling without build hooks, Flit without dynamic metadata,
+  Poetry without a build script, PDM without a build hook. A `setup.py`, an
+  in-tree or unknown backend, a source archive or a requirements file ddtest
+  can't read may start a test;
+- another framework's runner, including `./node_modules/.bin/<runner>`;
+- a repository Node or TypeScript script, followed through its local imports
+  (with Node's and TypeScript's extensions, `./util.js` for `util.ts`, folder
+  indexes and JSON data), that neither names the framework (outside comments
+  and local import paths) nor starts a process whose literal command and
+  arguments (`spawnSync('npm', ['test'])`), read in the folder the script was
+  invoked from, may run it, whose command or arguments are computed (a
+  template value in the executable, a subcommand, a script name or a whole
+  argument, as in `` execSync(`npm ${task}`) ``; a value inside a literal path,
+  `` `src/locales/${name}` ``, only names a file), whose options select
+  another directory or after a directory change (`process.chdir`), nor imports
+  a path alias, a worker, a local module ddtest can't find, or a package other
+  than Node's built-in modules and a short list of libraries that start no
+  runner or process: the bundlers, compilers and linters above, file, path and
+  glob helpers (`fs-extra`, `glob`), archivers (`archiver`, `adm-zip`, `tar`),
+  HTTP clients and URL parsers (`node-fetch`, `axios`, `got`, `undici`,
+  `urijs`), terminal output and argument parsers (`chalk`, `commander`,
+  `yargs`, except Commander's executable subcommands and yargs's
+  `commandDir`), and version, environment and data helpers (`semver`,
+  `dotenv`, `yaml`). Process launchers such as `execa`, `shelljs` and `zx`, and
+  any other package (an internal `@acme/ci` may start the runner), may; and a
+  repository shell script whose commands can't start one;
+- `docker push`, `tag`, `login`, `pull` and other image commands, and
+  `docker build` when no `RUN` of the Dockerfile it builds (separated by spaces
+  or tabs) can start a test
+  (a remote context, a stdin or variable Dockerfile, a custom frontend or a
+  `RUN` heredoc may);
+- `ng <target>` when the target's builder in `angular.json` is one Angular
+  ships and its configuration doesn't name the framework (`@angular-devkit/build-angular:karma`
+  runs Karma, not Jest; the `unit-test` builder runs Vitest unless it selects
+  Karma);
+- a publishing CLI: `npm publish`/`pack` or a known publish-only tool
+  (`gh-pages`, `vsce`, `ovsx`, `surge`, `jsr`, `pkg-pr-new`; a package merely
+  named `publish`, `release` or `deploy`, such as `npx @acme/deploy`, may run
+  anything and stays unresolved in a job that runs tests), when none of the
+  publish and version lifecycle scripts (`prepublishOnly`, `prepack`,
+  `prepare`, `postpack`, `publish`, `postpublish`, `vscode:prepublish`,
+  `preversion`, `version`, `postversion`) of the package it publishes can start
+  a test: the current one, or the repository folder it names
+  (`npm publish ./build`). A workspace selection, a tarball or a generated
+  folder may. `semantic-release` can't when its JSON or YAML configuration
+  (or `release` in `package.json`) loads only official plugins that run no
+  project command (commit analyzer, release notes, changelog, GitHub, GitLab,
+  Git) and `@semantic-release/npm`, whose `pkgRoot` package is checked like a
+  publication; the exec plugin, any other or local plugin, `extends`, a
+  JavaScript configuration and command-line options that select plugins or
+  configuration (`--extends`, `--plugins`) may. Tools that run tests or hooks
+  of their own (`np`, `release-it`) stay possible test paths.
+
+Before the test, a step that can't start one may still change what it runs: it
+blocks, and its reason says so ("Runs before the job's … tests and may change
+what they run, which ddtest can't replay"), unless it is a check-only step (it
+only reads or prints, or upgrades the package manager itself with
+`npm install -g npm@latest`), which is listed rather than blocking since each
+step's shell ends with it, or setup ddtest knows how to treat: dependency
+installs, replayed preparation, and Rails database tasks
+(`bin/rails db:reset`, `rake db:setup`), which prepare the test database and
+are listed for the user to prepare locally, unless a repository Rakefile or
+task file both extends database tasks and names the framework. A Ruby test
+step may also run lint, audit or gem release tools before or after the test
+(`bundle exec rubocop && bundle exec rspec`); without autocorrection they are
+named as work outside this validation. Unknown executables, actions,
+repository files and package scripts whose body could start a test still
+block, and so do `source`/`eval`, interpreter invocations (`bash -c`, `node -e`
+code that spawns processes or loads a repository module, a script ddtest can't
+read) and npm settings that change how scripts execute (`ignore-scripts`,
+`script-shell`). A missing package script blocks too: the package manager
+exits with an error there, so the CI step fails. A Cucumber alias
 chain such as `pnpm test:unit && pnpm test:bdd` resolves to its Cucumber leaf
 when that leaf is the chain's only and last link. An unquoted pathname pattern
 in a JavaScript test command, such as `"test": "mocha *.test.js"`, is expanded
@@ -1305,8 +1509,17 @@ get instrumentation guidance, which needs the user's approval like any edit ddte
 did not prescribe. The final response lists every uncommitted change outside CI and
 ignore files in `repository_changes`, with the commands that revert it, including
 the reinstall a reverted lockfile needs. Agents never rename tests, rewrite CI or
-package scripts so ddtest can parse them, disable an instrumentation ddtest did not
-prescribe disabling, or download a runtime; they report the blocker.
+package scripts so ddtest can parse them, retry variants of a CI edit until ddtest
+accepts one, disable an instrumentation ddtest did not prescribe disabling, or
+download a runtime; they report the blocker. Unresolved CI scope
+(`scope_unresolved`, `scope_decision_required` and `unresolved CI scope`
+blockers) is a limit of ddtest's static analysis: every such result tells the
+agent to report each step and its options to the user (run the tests in a CI
+step ddtest can read, once the user approves that change, or keep the step
+reported as not validated) and not to edit CI configuration (steps, conditions,
+variables or whitespace) to make ddtest accept it unless a result prescribes
+that exact edit. An incomplete `final_response` with such blockers says the
+same to the user.
 A final result tells the agent to relay `final_response` verbatim. An incomplete or
 failed verdict starts with `NOT COMPLETE:`, so a paraphrase cannot turn it into a
 completion claim.

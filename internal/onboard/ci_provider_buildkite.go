@@ -39,7 +39,8 @@ type buildkite struct{}
 
 func (buildkite) name() string { return buildkiteProvider }
 
-func (buildkite) displayName() string { return "Buildkite" }
+func (buildkite) displayName() string       { return "Buildkite" }
+func (buildkite) checkoutReference() string { return "$BUILDKITE_BUILD_CHECKOUT_PATH" }
 
 func (buildkite) environment() map[string]string {
 	return map[string]string{"CI": "true", "BUILDKITE": "true"}
@@ -618,7 +619,7 @@ func (c *buildkiteConfig) steps(name string, scope buildkiteScope, commands *yam
 				continue
 			}
 			statement := buildkiteStatementText(text, file.Stmts, i, i+1)
-			command := gitLabResolveBranches(statement, known)
+			command := state.dialect.resolveBranches(statement, known)
 			state.curl = state.curl || installsCurl(command)
 			problem := ""
 			if reads := buildkiteReads(statement, unknown); len(reads) > 0 {

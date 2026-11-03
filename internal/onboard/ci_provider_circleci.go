@@ -40,7 +40,8 @@ type circleCI struct{}
 
 func (circleCI) name() string { return circleCIProvider }
 
-func (circleCI) displayName() string { return "CircleCI" }
+func (circleCI) displayName() string       { return "CircleCI" }
+func (circleCI) checkoutReference() string { return "$CIRCLE_WORKING_DIRECTORY" }
 
 func (circleCI) environment() map[string]string {
 	return map[string]string{"CI": "true", "CIRCLECI": "true"}
@@ -723,7 +724,7 @@ func (c *circleConfig) circleExecutor(job *circleJob, fields map[string]*yaml.No
 		job.template = gitLabScalar(primary["image"])
 		job.image = c.substitute(job.template, scope)
 		job.imageProblem = ""
-		if circleReads(job.image) {
+		if circleReads(mirroredImage(job.image)) {
 			job.imageProblem = "its image " + job.template + " depends on a parameter ddtest cannot resolve"
 		}
 		job.env = mergeEnvironment(job.env, c.environment(primary["environment"], scope, job))
@@ -814,7 +815,7 @@ func (c *circleConfig) workflow() ciWorkflow {
 	c.gaps = slices.Compact(c.gaps)
 	for i, gap := range c.gaps {
 		name := fmt.Sprintf("(unresolved configuration %d)", i+1)
-		workflow.Jobs[name] = runtimeJob{Steps: []runtimeStep{{Number: 1, Source: circleCIFile, ResolutionError: "CircleCI: " + circleCIFile + ": " + gap + "; its jobs may run tests. Supply the resolved configuration in the repository, or validate those jobs separately."}}}
+		workflow.Jobs[name] = runtimeJob{Unread: true, Steps: []runtimeStep{{Number: 1, Source: circleCIFile, ResolutionError: "CircleCI: " + circleCIFile + ": " + gap + "; its jobs may run tests. Supply the resolved configuration in the repository, or validate those jobs separately."}}}
 	}
 	slices.Sort(c.review)
 	workflow.Review = slices.Compact(c.review)

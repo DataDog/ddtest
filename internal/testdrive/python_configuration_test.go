@@ -113,7 +113,7 @@ func TestPytestControlledModeWithDisabledAutoload(t *testing.T) {
 }
 
 func TestPytestObserverWithEnvironmentIgnored(t *testing.T) {
-	for _, flag := range []string{"-I", "-E", "-bE"} {
+	for _, flag := range []string{"-I", "-E", "-bE", "-Im", "-IBum"} {
 		t.Run(flag, func(t *testing.T) { testPytestPathsExecuteOnlyInsideCopy(t, flag) })
 	}
 }
@@ -362,6 +362,10 @@ func testPytestPathsExecuteOnlyInsideCopy(t *testing.T, mode string) {
 		}
 	} else if mode != "direct" {
 		args = append([]string{mode}, args...)
+		if strings.HasSuffix(mode, "m") {
+			// A clustered -Im replaces -m.
+			args = append([]string{mode}, args[2:]...)
+		}
 		contents, err := os.ReadFile(file)
 		require.NoError(t, err)
 		requireWriteFile(t, file, string(contents)+"    import sys\n    assert sys.flags.ignore_environment\n")

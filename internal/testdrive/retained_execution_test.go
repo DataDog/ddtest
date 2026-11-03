@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func pairedReport(session, featureStatus string) validationResult {
@@ -133,4 +134,99 @@ func TestBlockedDiscoveryRetainsPartialExecutionDiagnostics(t *testing.T) {
 		require.Equal(t, "npm run test:ci", got.Retained.Result.Runs[0].Command)
 		require.Equal(t, "Chrome failed to start", got.Retained.Result.Runs[0].Diagnostic)
 	}
+}
+
+// The B06 shape: a run of one command after an --all run is written beside
+// the --all report, so a focused probe never erases it; a later --all run,
+// or a run after a focused report, replaces the saved report as before.
+func TestFocusedRunKeepsTheAllReport(t *testing.T) {
+	root := t.TempDir()
+	all := pairedReport("full", "passed")
+	all.All = true
+	require.NoError(t, finishValidation(&bytes.Buffer{}, root, all))
+	requireWriteFile(t, htmlReportPath(root), "full findings")
+
+	focused := pairedReport("probe", "passed")
+	focused.FocusedCommand = true
+	var output bytes.Buffer
+	require.NoError(t, finishValidation(&output, root, focused))
+	kept := readValidationReport(t, root)
+	require.Equal(t, "full", kept.Session, "the --all report stays where --report reads it")
+	html, err := os.ReadFile(htmlReportPath(root))
+	require.NoError(t, err)
+	require.Equal(t, "full findings", string(html))
+	data, err := os.ReadFile(filepath.Join(root, ".testoptimization", focusedValidationFilename))
+	require.NoError(t, err)
+	var beside validationResult
+	require.NoError(t, json.Unmarshal(data, &beside))
+	require.Equal(t, "probe", beside.Session)
+	require.Equal(t, ".testoptimization/testdrive.json", beside.KeptReport)
+	require.Contains(t, beside.Summary.FinalResponse, "did not replace the --all report")
+	require.Contains(t, beside.Summary.FinalResponse, focusedValidationFilename)
+	require.Contains(t, beside.Summary.Facts, "Report: .testoptimization/"+focusedValidationFilename)
+	require.Contains(t, output.String(), "Results JSON: .testoptimization/"+focusedValidationFilename)
+	require.Contains(t, output.String(), "Kept the --all report .testoptimization/testdrive.json")
+
+	// A repeated probe replaces only its own report.
+	again := pairedReport("probe again", "passed")
+	require.NoError(t, finishValidation(&bytes.Buffer{}, root, again))
+	require.Equal(t, "full", readValidationReport(t, root).Session)
+	data, err = os.ReadFile(filepath.Join(root, ".testoptimization", focusedValidationFilename))
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(data, &beside))
+	require.Equal(t, "probe again", beside.Session)
+
+	// An explicit --all rerun replaces the --all report.
+	rerun := pairedReport("full again", "passed")
+	rerun.All = true
+	require.NoError(t, finishValidation(&bytes.Buffer{}, root, rerun))
+	require.Equal(t, "full again", readValidationReport(t, root).Session)
+
+	// Without an --all report, a focused run replaces the saved report.
+	plain := t.TempDir()
+	require.NoError(t, finishValidation(&bytes.Buffer{}, plain, pairedReport("first", "passed")))
+	require.NoError(t, finishValidation(&bytes.Buffer{}, plain, pairedReport("second", "passed")))
+	require.Equal(t, "second", readValidationReport(t, plain).Session)
+	require.NoFileExists(t, filepath.Join(plain, ".testoptimization", focusedValidationFilename))
+}
+
+// Reports written before All existed are --all reports when their workflow
+// command says so; a coordinated run of one command is not.
+func TestKeptReportRecognizesEarlierAllReports(t *testing.T) {
+	for command, keeps := range map[string]bool{"--all": true, "--command": false} {
+		root := t.TempDir()
+		saved := pairedReport("saved", "passed")
+		saved.Workflow = &WorkflowEvidence{ValidationCommand: []string{"ddtest", "testdrive", command}}
+		data, err := json.Marshal(saved)
+		require.NoError(t, err)
+		require.NoError(t, os.MkdirAll(filepath.Dir(validationPath(root)), 0755))
+		requireWriteFile(t, validationPath(root), string(data))
+		require.Equal(t, keeps, keepsSavedReport(root, "jest", pairedReport("probe", "passed")), command)
+		require.False(t, keepsSavedReport(root, "vitest", pairedReport("probe", "passed")), "another framework's report is not this one's")
+		checkOnly := pairedReport("check", "passed")
+		checkOnly.CheckOnly = true
+		require.False(t, keepsSavedReport(root, "jest", checkOnly))
+	}
+}
+
+// The coordinator reads back the report this operation wrote, beside the
+// --all report or in its place.
+func TestCoordinatorReadsTheReportBesideTheAllReport(t *testing.T) {
+	root := t.TempDir()
+	all := pairedReport("full", "passed")
+	all.All = true
+	require.NoError(t, finishValidation(&bytes.Buffer{}, root, all))
+	started := time.Now()
+	require.NoError(t, finishValidation(&bytes.Buffer{}, root, pairedReport("probe", "passed")))
+	current, err := readCurrentOnboardingResult(root, started)
+	require.NoError(t, err)
+	require.Equal(t, "probe", current.Session)
+	require.Equal(t, filepath.Join(root, ".testoptimization", focusedValidationFilename), current.jsonReportPath(root))
+	rerun := pairedReport("full again", "passed")
+	rerun.All = true
+	started = time.Now()
+	require.NoError(t, finishValidation(&bytes.Buffer{}, root, rerun))
+	current, err = readCurrentOnboardingResult(root, started)
+	require.NoError(t, err)
+	require.Equal(t, "full again", current.Session)
 }

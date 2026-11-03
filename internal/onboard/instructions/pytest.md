@@ -63,6 +63,13 @@ selected test environment and validate its actual Python/pytest command.
    experiments. Matching pre-existing failures are acceptable. Missing results,
    missing events, configuration differences, or failed probes block completion.
 
+Unresolved CI scope is a limit of ddtest's static analysis, not a defect to fix:
+report each such step and its options to the user (run pytest in a CI step
+ddtest can read, once the user approves that change, or keep the step reported
+as not validated). Do not edit CI configuration (steps, conditions, variables or
+whitespace) to make ddtest accept a step unless ddtest prescribes that exact
+edit, and do not try variants until one is accepted.
+
 Editable installations pointing at the original checkout block execution. Use a
 separate environment with the test dependencies and select local source through
 PYTHONPATH or pytest's pythonpath setting.

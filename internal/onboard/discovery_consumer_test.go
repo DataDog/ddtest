@@ -397,7 +397,7 @@ func TestKnownPackageScriptsStartTestsOnlyThroughTheirBody(t *testing.T) {
 		"docs": "npm --prefix ./website run build", "smoke": "node scripts/smoke.js",
 	})
 	for run, want := range map[string]bool{"pnpm build": false, "npm run build": false, "pnpm test": true, "pnpm docs": true, "pnpm smoke": true, "pnpm missing": true} {
-		require.Equal(t, want, mayStartTestsIn(root, runtimeStep{Run: run}, "cucumber", 0), run)
+		require.Equal(t, want, mayStartTestsIn(root, root, runtimeStep{Run: run}, "cucumber", 0), run)
 	}
 	require.True(t, mayStartTests(runtimeStep{Run: "pnpm build"}, "cucumber"), "without the package, a script stays a possible wrapper")
 }

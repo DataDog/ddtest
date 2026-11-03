@@ -24,6 +24,8 @@ func (javaDiscovery) displayName() string { return "Java" }
 
 func (javaDiscovery) actionLanguage() string { return "java" }
 
+func (javaDiscovery) runtimeSetupAction() string { return "actions/setup-java" }
+
 func (javaDiscovery) bootstrap(string) string { return javaBootstrap }
 
 func (javaDiscovery) resolvesTestSteps(string) bool { return true }
@@ -239,3 +241,6 @@ func (javaDiscovery) ciShellAfter(ciWorkflow, runtimeJob, runtimeStep, string, c
 
 // No shell runtime selection is modeled for this language.
 func (javaDiscovery) selectsShellRuntime([]string) bool { return false }
+
+// Java's build tools may run tests; ddtest classifies them in its own rules.
+func (javaDiscovery) checkTool(string, string, []string) (bool, bool) { return false, false }

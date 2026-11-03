@@ -598,7 +598,7 @@ Frameworks without a controlled adapter retain their ordinary feature-enabled te
 
 ## Validate all discovered Jest configurations
 
-Use `ddtest testdrive --framework jest --all --yes` to validate every discovered Jest CI configuration. Known build prerequisites run in disposable copies. Use `--all --check-only` to inspect configurations without builds or tests. `--command` selects one command, without validating unrelated CI configurations. Both modes retain one HTML/JSON report pair.
+Use `ddtest testdrive --framework jest --all --yes` to validate every discovered Jest CI configuration. Known build prerequisites run in disposable copies. Use `--all --check-only` to inspect configurations without builds or tests. `--command` selects one command, without validating unrelated CI configurations. Both modes retain one HTML/JSON report pair. A run of one command after an `--all` run never replaces the `--all` report, which `--report` reads and which alone certifies onboarding: it writes `.testoptimization/testdrive-command.json` and `report-command.html` beside it, names the kept report in `kept_report` and in its final response, and replaces only its own earlier focused report when rerun. Another `--all` run replaces the `--all` report, and without a saved `--all` report a focused run replaces the saved report as before.
 
 
 ### Configuration execution and preparation

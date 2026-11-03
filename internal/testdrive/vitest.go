@@ -135,6 +135,7 @@ func (t *Testdrive) inspectVitest(ctx context.Context, directory string, probe .
 		Node       string
 		Executable string
 		Arguments  []string
+		RunCommand bool
 		Reporters  []any
 		Projects   []vitestProject
 		Files      []string
@@ -150,6 +151,7 @@ func (t *Testdrive) inspectVitest(ctx context.Context, directory string, probe .
 	}
 	if !t.usesVitestRunner() {
 		resolved := append(slices.Clone(t.args[:len(t.args)-len(args)]), config.Arguments...)
+		t.vitestRunCommand = config.RunCommand
 		if selectedProbe != "" {
 			t.vitestProbeArguments, t.vitestProbeInspected = resolved, true
 		} else {
@@ -306,7 +308,13 @@ func (t *Testdrive) runVitest(ctx context.Context, output io.Writer, session *wo
 		return run, fmt.Errorf("vitest arguments have not been inspected")
 	}
 	run.ReplacedReporters = slices.Clone(t.vitestReporters)
-	validationArgs := []string{"--run", "--no-cache", "--reporter=default", "--reporter=json", "--outputFile=" + resultPath, "--coverage.reportsDirectory=" + filepath.Join(directory, "coverage"), "--coverage.thresholds.autoUpdate=false"}
+	// Inspection removed the command's own run and cache options; an explicit
+	// run subcommand already runs once, so adding --run would only repeat it.
+	var validationArgs []string
+	if !t.vitestRunCommand {
+		validationArgs = append(validationArgs, "--run")
+	}
+	validationArgs = append(validationArgs, "--no-cache", "--reporter=default", "--reporter=json", "--outputFile="+resultPath, "--coverage.reportsDirectory="+filepath.Join(directory, "coverage"), "--coverage.thresholds.autoUpdate=false")
 	if probePath != "" {
 		validationArgs = append(validationArgs, "--testNamePattern=^"+probeName+"$", "--no-coverage.thresholds", "--retry=0")
 		env["DDTEST_PROBE_MODE"] = probeMode

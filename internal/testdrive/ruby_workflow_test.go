@@ -433,7 +433,8 @@ func TestRubyGemPackagingUsesCopyAndChecksReportMembership(t *testing.T) {
 	if _, err := exec.LookPath("ruby"); err != nil {
 		t.Skip("Ruby is required")
 	}
-	for _, glob := range []string{"lib/**/*", "{lib,.testoptimization}/**/*", "git-index"} {
+	// The focused pair a run after --all leaves counts too.
+	for _, glob := range []string{"lib/**/*", "{lib,.testoptimization}/**/*", "{lib/**/*,.testoptimization/*-command.*}", "git-index"} {
 		t.Run(glob, func(t *testing.T) {
 			root := t.TempDir()
 			require.NoError(t, os.MkdirAll(filepath.Join(root, "lib"), 0700))
@@ -460,7 +461,7 @@ func TestRubyGemPackagingUsesCopyAndChecksReportMembership(t *testing.T) {
 			require.NoError(t, err)
 			drive := &Testdrive{repositoryRoot: root, language: "ruby", executor: &ext.DefaultCommandExecutor{}}
 			result := drive.rubyPackageExclusions(t.Context())
-			if glob != "{lib,.testoptimization}/**/*" {
+			if !strings.Contains(glob, ".testoptimization") {
 				require.Equal(t, "passed", result.Status, result.Reason)
 			} else {
 				require.Equal(t, "failed", result.Status, result.Reason)

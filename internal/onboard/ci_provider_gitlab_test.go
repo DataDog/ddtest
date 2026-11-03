@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"go.yaml.in/yaml/v3"
 )
 
 // gitLabSetupEntry is the README's setup entry with the given variables.
@@ -423,7 +424,8 @@ dynamic:
 	require.Equal(t, "packages/web/tests", last.WorkingDirectory)
 	require.Equal(t, map[string]string{"SUITE": "unit"}, last.Env, "LOCAL=1 stays a shell variable")
 	require.Empty(t, last.ResolutionError)
-	require.Contains(t, jobs["conditional"].Steps[1].ResolutionError, "exports variables conditionally")
+	require.Empty(t, jobs["conditional"].Steps[1].ResolutionError, "a conditional export only leaves its variable maybe set")
+	require.Equal(t, conditionalCIValue(`if [ -n "$CI" ]; then export SUITE=ci; fi`), jobs["conditional"].Steps[1].Env["SUITE"])
 	require.Contains(t, jobs["outside"].Steps[1].ResolutionError, "outside the repository")
 	require.Equal(t, unresolvedCIValue("$(…)"), jobs["dynamic"].Steps[1].Env["VERSION"], "a computed value stays unresolved")
 }
@@ -732,4 +734,95 @@ func TestGitLabReferencedVariablesWithIncludes(t *testing.T) {
 	jobs, _ := gitLabJobs(t, root)
 	require.Equal(t, map[string]string{"SUITE": "unit"}, jobs["test"].Env)
 	require.Empty(t, unresolved(t, root))
+}
+
+// The B03 shape: configuration ddtest cannot read is named after its
+// include, inputs of a component GitLab only uses to scan or release add no
+// gap unless they hand it a command to run, and nobody is asked which
+// runtime unread configuration runs.
+func TestGitLabUnreadIncludesAreNamedAndNeedNoRuntime(t *testing.T) {
+	useCIProvider(t, "gitlab")
+	root := gitLabRubyRepository(t, `include:
+  - component: gitlab.com/gitlab-org/components/gem-release/gem-release@~latest
+    inputs:
+      stage: release
+  - component: gitlab.com/components/sast/sast@~latest
+    inputs:
+      before_script: [bundle exec rspec]
+  - component: gitlab.com/org/ruby/test@1.0
+    inputs:
+      stage: test
+  - local: ci/suite.yml
+    inputs:
+      suite: unit
+specs:
+  image: ruby:3.3
+  script:
+    - bundle exec rspec
+`)
+	writeFile(t, root, "ci/suite.yml", "spec:\n  inputs:\n    suite:\n---\nsuite:\n  image: ruby:3.3\n  script: [bundle exec rspec]\n")
+	jobs, _ := gitLabJobs(t, root)
+	var unread []string
+	for name, job := range jobs {
+		if job.Unread {
+			unread = append(unread, name)
+		}
+	}
+	require.ElementsMatch(t, []string{"(unresolved include gitlab.com/org/ruby/test@1.0)", "(unresolved include ci/suite.yml)", "(unresolved configuration ci/suite.yml)", "(unresolved include gitlab.com/components/sast/sast@~latest)"}, unread)
+	require.NotContains(t, jobs, "(unresolved include gitlab.com/gitlab-org/components/gem-release/gem-release@~latest)", "inputs of a release component that run nothing add no gap")
+	require.Contains(t, jobs["(unresolved include gitlab.com/components/sast/sast@~latest)"].Steps[0].ResolutionError, "is GitLab's SAST scanning component, but its inputs before_script give it commands ddtest cannot read (not a literal command)")
+	require.Contains(t, jobs["(unresolved include ci/suite.yml)"].Steps[0].ResolutionError, "include inputs make ci/suite.yml depend on values ddtest cannot supply")
+	require.Nil(t, RequiredCIRuntimes(t.Context(), root, "ruby", "rspec"), "unread configuration has no runtime to ask for")
+	scope, err := DiscoverValidationScope(root, "rspec")
+	require.NoError(t, err)
+	require.Contains(t, strings.Join(scope.Unresolved, "\n"), ".gitlab-ci.yml / (unresolved include gitlab.com/org/ruby/test@1.0)")
+	require.NotContains(t, strings.Join(scope.Unresolved, "\n"), "(empty)")
+}
+
+// A known component's command inputs, such as gem-release's
+// smoke_test_script, are steps of the component's own job, which runs no
+// tests of its own: one that can't start the selected framework is a caveat
+// (gitlab-styles, B03), one that may blocks and names its input, and a value
+// ddtest can't read blocks.
+func TestGitLabComponentCommandInputsAreTheComponentsSteps(t *testing.T) {
+	useCIProvider(t, "gitlab")
+	const component = "gitlab.com/gitlab-org/components/gem-release/gem-release@~latest"
+	discover := func(t *testing.T, inputs string) ValidationScope {
+		t.Helper()
+		root := gitLabRubyRepository(t, "include:\n  - component: "+component+"\n    inputs:\n"+inputs+"specs:\n  image: ruby:3.3\n  script:\n    - bundle exec rspec\n")
+		writeFile(t, root, "Rakefile", "require 'rspec/core/rake_task'\nRSpec::Core::RakeTask.new(:spec)\ntask default: :spec\n")
+		scope, err := DiscoverValidationScope(root, "rspec")
+		require.NoError(t, err)
+		return scope
+	}
+	// gitlab-styles' include.
+	scope := discover(t, "      smoke_test_script: \"ruby -r 'gitlab/styles' -e \\\"puts Gitlab::Styles::VERSION\\\"\"\n")
+	require.Empty(t, scope.Unresolved)
+	require.Len(t, scope.Commands, 1)
+	require.Contains(t, strings.Join(scope.Caveats, "\n"), ".gitlab-ci.yml / (component include "+component+"): CI job without the Datadog setup that never runs rspec; it is outside this validation")
+	require.Contains(t, strings.Join(scope.Review, "\n"), "the commands its inputs smoke_test_script give it are read as its job's steps")
+	for _, command := range []string{"bundle exec rspec", "rake spec", "bundle exec rake", "./bin/smoke"} {
+		t.Run(command, func(t *testing.T) {
+			scope := discover(t, "      smoke_test_script: "+command+"\n      stage: release\n")
+			unresolved := strings.Join(scope.Unresolved, "\n")
+			require.Contains(t, unresolved, ".gitlab-ci.yml / (component include "+component+") / step 1 ("+command+"): the component's input smoke_test_script runs this command in the component's own job, where it may start rspec tests")
+			require.Len(t, scope.Commands, 1, "the component's command is not validated as a test command")
+		})
+	}
+	for _, inputs := range []string{"      smoke_test_script: \"$SMOKE\"\n", "      smoke_test_script: [bundle exec rspec]\n", "      run_command: {a: b}\n"} {
+		scope := discover(t, inputs)
+		require.Contains(t, strings.Join(scope.Unresolved, "\n"), "(unresolved include "+component+")", inputs)
+		require.Contains(t, strings.Join(scope.Unresolved, "\n"), "give it commands ddtest cannot read", inputs)
+	}
+	// Inputs that hand it no command keep it a caveat of its own.
+	scope = discover(t, "      stage: release\n")
+	require.Empty(t, scope.Unresolved)
+	require.Contains(t, strings.Join(scope.Caveats, "\n"), "only scan, review or release run no tests")
+
+	var inputs yaml.Node
+	require.NoError(t, yaml.Unmarshal([]byte("stage: release\nruby_version: '3.3'\nrunner_tag: x\npost_hook: y\nbefore_script: [a]\n"), &inputs))
+	names, commands, opaque := gitLabCommandInputs(inputs.Content[0])
+	require.Equal(t, []string{"post_hook"}, names)
+	require.Equal(t, []string{"y"}, commands)
+	require.Equal(t, []string{"before_script"}, opaque)
 }

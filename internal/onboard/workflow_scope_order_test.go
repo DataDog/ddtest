@@ -150,7 +150,15 @@ func TestFactBackedRuntimeRequiresFactsOnlyForActiveConsumers(t *testing.T) {
 				result := checkCIRuntimes(ctx, root, nil, func(context.Context, string, string) (tracerRequirement, error) {
 					return tracerRequirement{Version: "5.132.0", Node: ">=18"}, nil
 				}, framework)
-				blocked := scenario == "shared setup without facts" || scenario == "unknown excluded setup"
+				// setup.js only writes a file: it can't start a test, so the
+				// runtime check passes it by; validation still waits for its
+				// facts before replaying it.
+				if scenario == "shared setup without facts" {
+					require.True(t, slices.ContainsFunc(scope.Commands, func(entry TestCommand) bool {
+						return slices.ContainsFunc(entry.Prerequisites, func(build BuildCommand) bool { return build.Kind == PreparationNeedsFacts && build.FactSource == "" })
+					}), scope.Commands)
+				}
+				blocked := scenario == "unknown excluded setup"
 				if blocked {
 					require.NotEqual(t, StatusCompatible, result.Status)
 					require.True(t, slices.ContainsFunc(result.Jobs, func(f RuntimeFinding) bool { return f.Code == CodeUnresolvedCommand }), result.Jobs)

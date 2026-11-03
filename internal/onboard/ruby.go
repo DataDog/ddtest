@@ -31,6 +31,9 @@ func resolveRubyStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 	if rubyMaintenanceStep(step.Run) {
 		return commandResolution{Review: true, Reason: "Documentation, lint or release tooling is maintenance, outside " + framework + " test scope."}
 	}
+	if resolution, ok := rubyDatabaseSetup(root, directory, step.Run, framework); ok {
+		return resolution
+	}
 	if resolution, handled := resolveRubyStepWithSetup(root, workflow, job, step, framework); handled {
 		return resolution
 	}
@@ -57,6 +60,9 @@ func resolveRubyStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 				return commandResolution{Review: true, Reason: "Ruby maintenance task is outside test validation."}
 			}
 			if resolution, done := resolveRubyRakeTargets(root, directory, step.Run, parts[0], words, framework); done {
+				for i := range resolution.Tests {
+					resolution.Tests[i].StepScopeNotes = append(resolution.Tests[i].StepScopeNotes, outputPipeNotes(step.Run, resolution.Tests[i].Command)...)
+				}
 				return resolution
 			}
 		}
@@ -90,7 +96,8 @@ func resolveRubyStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 	if err != nil || len(parts) != 1 || len(parts[0]) == 0 || strings.Contains(parts[0][0], "=") {
 		return unresolvedCommand("Ruby test entry point requires a single explicit command; ddtest cannot replay its shell setup: " + step.Run)
 	}
-	return commandResolution{Matched: true, Tests: []TestCommand{{Directory: directory, Command: shellquote.Join(parts[0]...)}}}
+	command := shellquote.Join(parts[0]...)
+	return commandResolution{Matched: true, Tests: []TestCommand{{Directory: directory, Command: command, StepScopeNotes: outputPipeNotes(step.Run, command)}}}
 }
 
 // rubyArtifactCommands only create directories, move or copy files, or
@@ -111,9 +118,12 @@ func resolveRubyStepWithSetup(root string, workflow ciWorkflow, job runtimeJob, 
 	if !ok || len(file.Stmts) == 0 {
 		return commandResolution{}, false
 	}
-	if len(file.Stmts) == 1 {
+	// Commands joined by && run in order, like separate lines; only a test
+	// and the tools rubyOutsideTool accepts may be joined so.
+	statements, chained := rubySequence(file.Stmts)
+	if len(statements) == 1 {
 		// One statement is the single-command rules' unless it extends RUBYOPT.
-		call, isCall := file.Stmts[0].Cmd.(*syntax.CallExpr)
+		call, isCall := statements[0].Cmd.(*syntax.CallExpr)
 		if !isCall || !slices.ContainsFunc(call.Args, func(word *syntax.Word) bool { _, ok := rubyExtendedOptions(word); return ok }) {
 			return commandResolution{}, false
 		}
@@ -122,10 +132,14 @@ func resolveRubyStepWithSetup(root string, workflow ciWorkflow, job runtimeJob, 
 	env := map[string]string{}
 	test := -1
 	var command string
+	var notes []string
 	extended := false
-	for i, stmt := range file.Stmts {
+	for i, stmt := range statements {
 		if stmt.Background || stmt.Coprocess || stmt.Negated || len(stmt.Redirs) > 0 {
 			return unresolved, len(file.Stmts) > 1
+		}
+		if _, call := stmt.Cmd.(*syntax.CallExpr); chained[i] && !call {
+			return unresolved, true
 		}
 		switch cmd := stmt.Cmd.(type) {
 		case *syntax.DeclClause:
@@ -146,6 +160,19 @@ func resolveRubyStepWithSetup(root string, workflow ciWorkflow, job runtimeJob, 
 				return unresolved, len(file.Stmts) > 1
 			}
 			name, _ := rubyLiteralWord(cmd.Args[0])
+			// A lint, audit or release tool can't start the tests, and it
+			// leaves the sources they run as they are.
+			if tool, ok := rubyOutsideTool(cmd); ok {
+				position := "before"
+				if test >= 0 {
+					position = "after"
+				}
+				notes = append(notes, "This CI step also runs "+tool+" "+position+" its "+framework+" tests; it can't start "+framework+" and is outside this validation.")
+				continue
+			}
+			if chained[i] && test >= 0 {
+				return unresolved, true
+			}
 			if test >= 0 && slices.Contains(rubyArtifactCommands, name) {
 				for _, word := range cmd.Args[1:] {
 					text, literal := rubyLiteralWord(word)
@@ -183,7 +210,7 @@ func resolveRubyStepWithSetup(root string, workflow ciWorkflow, job runtimeJob, 
 			return unresolved, len(file.Stmts) > 1
 		}
 	}
-	if test < 0 || len(file.Stmts) == 1 && !extended {
+	if test < 0 || len(statements) == 1 && !extended {
 		return commandResolution{}, false
 	}
 	single := step
@@ -206,7 +233,76 @@ func resolveRubyStepWithSetup(root string, workflow ciWorkflow, job runtimeJob, 
 		env["RUBYOPT"] = strings.Join(strings.Fields(inherited+" "+extra), " ")
 	}
 	resolution.Tests[0].Environment = mergeEnvironment(resolution.Tests[0].Environment, env)
+	resolution.Tests[0].StepScopeNotes = append(resolution.Tests[0].StepScopeNotes, notes...)
+	if len(notes) > 0 {
+		resolution.ReviewReason = joinDiagnostic(resolution.ReviewReason, strings.Join(notes, " "))
+	}
 	return resolution, true
+}
+
+// rubySequence flattens statements joined by && into the commands they run in
+// order, reporting which ones came from such a chain. Any other operator
+// stays one statement, which the caller rejects.
+func rubySequence(statements []*syntax.Stmt) ([]*syntax.Stmt, []bool) {
+	var flat []*syntax.Stmt
+	var chained []bool
+	for _, stmt := range statements {
+		if binary, ok := stmt.Cmd.(*syntax.BinaryCmd); ok && binary.Op == syntax.AndStmt && !stmt.Background && !stmt.Coprocess && !stmt.Negated && len(stmt.Redirs) == 0 {
+			inner, _ := rubySequence([]*syntax.Stmt{binary.X, binary.Y})
+			flat = append(flat, inner...)
+			for range inner {
+				chained = append(chained, true)
+			}
+			continue
+		}
+		flat, chained = append(flat, stmt), append(chained, false)
+	}
+	return flat, chained
+}
+
+// rubyAutocorrectCluster matches short options combined with -a, -A or -x.
+var rubyAutocorrectCluster = regexp.MustCompile(`^-[a-zA-Z]*[aAx][a-zA-Z]*$`)
+
+// Options that make a Ruby lint or format tool rewrite sources.
+var rubyAutocorrectOptions = []string{"-a", "-A", "-x", "--autocorrect", "--autocorrect-all", "--auto-correct", "--auto-correct-all", "--fix", "--fix-layout", "--write", "-w", "--fix-unsafely"}
+
+// rubyOutsideTool reports a command, as in bundle exec rubocop --parallel,
+// that runs a Ruby lint, audit, documentation or gem release tool, which can't
+// start tests, without autocorrection: tests before or after it in the job
+// run the same code.
+func rubyOutsideTool(call *syntax.CallExpr) (string, bool) {
+	if len(call.Assigns) > 0 {
+		return "", false
+	}
+	var words []string
+	for _, word := range call.Args {
+		text, literal := rubyLiteralWord(word)
+		if !literal {
+			return "", false
+		}
+		words = append(words, text)
+	}
+	tool := words
+	if len(tool) > 2 && tool[0] == "bundle" && tool[1] == "exec" {
+		tool = tool[2:]
+	}
+	if len(tool) == 0 || strings.ContainsAny(tool[0], "$=") {
+		return "", false
+	}
+	name := strings.TrimPrefix(tool[0], "bin/")
+	switch {
+	case slices.Contains(rubyMaintenanceTools, name) && strings.Count(tool[0], "/") <= 1:
+		if slices.ContainsFunc(tool[1:], func(arg string) bool {
+			option, _, _ := strings.Cut(arg, "=")
+			return slices.Contains(rubyAutocorrectOptions, option) || rubyAutocorrectCluster.MatchString(arg)
+		}) {
+			return "", false
+		}
+	case len(tool) > 1 && slices.Contains(rubyReleaseSubcommands[name], tool[1]) && tool[1] != "build":
+	default:
+		return "", false
+	}
+	return strings.Join(words, " "), true
 }
 
 // rubyReportPaths are directories that only hold test reports and coverage.
@@ -1093,9 +1189,10 @@ var rubyImage = regexp.MustCompile(`^(?:cimg/|circleci/|(?:docker\.io/)?(?:libra
 // rubyImageRuntime is the Ruby version a CI job's image selects, or the
 // engine the tracer cannot instrument (JRuby, TruffleRuby, Ruby head). Both
 // are empty when the image selects no static Ruby: no image, another image,
-// a floating tag such as latest, or an unresolved variable.
+// a floating tag such as latest, or an unresolved variable other than a
+// registry prefix (see mirroredImage).
 func rubyImageRuntime(image string) (version, engine string) {
-	match := rubyImage.FindStringSubmatch(strings.TrimSpace(image))
+	match := rubyImage.FindStringSubmatch(mirroredImage(image))
 	if match == nil {
 		return "", ""
 	}
@@ -1144,4 +1241,71 @@ func rubyImageGemsProblem(ruby, rubygems string, provider ciProvider) string {
 		}
 	}
 	return "The Ruby " + ruby + " image ships RubyGems older than 3.3.22, which the " + provider.setupName() + "'s installer requires. Run gem update --system 3.4.22 before it in this job."
+}
+
+var rubyDatabaseTask = regexp.MustCompile(`^db:[a-z0-9_:]+$`)
+
+// rubyDatabaseSetup resolves a step that only runs Rails database tasks, as in
+// RAILS_ENV=test bin/rails db:create db:schema:load: they prepare the test
+// database, which CI sets up and local validation doesn't replay, and they
+// can't start tests. A repository Rakefile or task file that names the
+// framework's task may hook one into them, so it stays unresolved.
+func rubyDatabaseSetup(root, directory, run, framework string) (commandResolution, bool) {
+	parts, err := staticCommands(run)
+	if err != nil || len(parts) != 1 {
+		return commandResolution{}, false
+	}
+	words := parts[0]
+	for len(words) > 0 && shellAssignment(words[0]) {
+		words = words[1:]
+	}
+	if len(words) > 2 && words[0] == "bundle" && words[1] == "exec" {
+		words = words[2:]
+	}
+	if len(words) < 2 || !slices.Contains([]string{"rails", "bin/rails", "./bin/rails", "rake", "bin/rake", "./bin/rake"}, words[0]) {
+		return commandResolution{}, false
+	}
+	var tasks []string
+	for _, word := range words[1:] {
+		switch {
+		case rubyDatabaseTask.MatchString(word):
+			tasks = append(tasks, word)
+		case shellAssignment(word) || word == "--trace":
+		default:
+			return commandResolution{}, false
+		}
+	}
+	if len(tasks) == 0 {
+		return commandResolution{}, false
+	}
+	own := "spec"
+	if framework == "minitest" {
+		own = "test"
+	}
+	// Task files may extend the database tasks, and seeds run with them.
+	names := regexp.MustCompile(`\b(?:` + own + `|` + framework + `)\b`)
+	for _, base := range slices.Compact([]string{filepath.Join(root, directory), root}) {
+		var files []string
+		for _, tree := range []string{"lib/tasks", "db/seeds"} {
+			_ = filepath.WalkDir(filepath.Join(base, tree), func(path string, entry os.DirEntry, err error) error {
+				if err == nil && !entry.IsDir() && (strings.HasSuffix(path, ".rake") || strings.HasSuffix(path, ".rb")) {
+					files = append(files, path)
+				}
+				return nil
+			})
+		}
+		for _, file := range append([]string{filepath.Join(base, "Rakefile"), filepath.Join(base, "db", "seeds.rb")}, files...) {
+			data, err := os.ReadFile(file)
+			if err != nil {
+				continue
+			}
+			text := string(data)
+			seeds := strings.Contains(filepath.ToSlash(file), "/db/seeds")
+			if (seeds || strings.Contains(text, "db:") || strings.Contains(text, ":db")) && names.MatchString(text) {
+				relative, _ := filepath.Rel(root, file)
+				return unresolvedCommand("Rails database task " + strings.Join(tasks, " ") + " runs before the tests, but " + filepath.ToSlash(relative) + " extends database tasks or seeds and names " + framework + ", so ddtest can't tell whether it runs tests: " + run), true
+			}
+		}
+	}
+	return commandResolution{Review: true, Reason: "Rails database setup (" + strings.Join(tasks, " ") + ") prepares the test database; it can't start " + framework + ". CI's database setup is not replayed: prepare the same test database locally before validation."}, true
 }

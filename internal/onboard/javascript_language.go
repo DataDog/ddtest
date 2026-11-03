@@ -26,6 +26,8 @@ func (javascriptDiscovery) displayName() string { return "JavaScript" }
 
 func (javascriptDiscovery) actionLanguage() string { return "js" }
 
+func (javascriptDiscovery) runtimeSetupAction() string { return setupNodeSource }
+
 func (javascriptDiscovery) bootstrap(framework string) string {
 	if framework == "cucumber" {
 		return javascriptBootstrap + "\n\nFor Cucumber, also set DD_CIVISIBILITY_IMPACTED_TESTS_DETECTION_ENABLED=false on the test step. This avoids a tracer crash on Cucumber Background/Rule nodes; basic reporting is unaffected."
@@ -265,10 +267,13 @@ func (javascriptDiscovery) runtimeVariable(name string) bool {
 	return slices.Contains([]string{"NODE_OPTIONS", "NODE_PATH", "NODE_ENV"}, name) || strings.HasPrefix(strings.ToLower(name), "npm_config_")
 }
 
-// Cypress reads every CYPRESS_ variable as a configuration override, as
-// CYPRESS_BASE_URL or CYPRESS_SPEC_PATTERN.
+// Node, the package managers and the JavaScript runners read these; Cypress
+// reads every CYPRESS_ variable as a configuration override, as
+// CYPRESS_BASE_URL or CYPRESS_SPEC_PATTERN. npm reads only npm_config_
+// variables (runtimeVariable): an NPM_TOKEN is a credential .npmrc reads.
 func (javascriptDiscovery) toolVariable(name string) bool {
-	return strings.HasPrefix(name, "CYPRESS_")
+	upper := strings.ToUpper(name)
+	return slices.ContainsFunc([]string{"NODE_", "YARN_", "PNPM_", "COREPACK_", "JEST_", "VITEST_", "MOCHA_", "CYPRESS_", "PLAYWRIGHT_", "WDIO_", "TS_NODE_"}, func(prefix string) bool { return strings.HasPrefix(upper, prefix) })
 }
 
 func (javascriptDiscovery) cacheVariable(name string) bool {
@@ -516,8 +521,11 @@ func javascriptImageRuntime(job runtimeJob) string {
 	if node := imageNode(job.Image); node != "" {
 		return node
 	}
-	if match := nodeImageTag.FindStringSubmatch(withImplicitTag(job.Image)); match != nil && !job.FloatingTagStated {
+	if match := nodeImageTag.FindStringSubmatch(withImplicitTag(mirroredImage(job.Image))); match != nil && !job.FloatingTagStated {
 		return match[1]
 	}
 	return ""
 }
+
+// JavaScript's tools are classified with the shared ones (see recognizedTool).
+func (javascriptDiscovery) checkTool(string, string, []string) (bool, bool) { return false, false }

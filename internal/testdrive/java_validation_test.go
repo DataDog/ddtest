@@ -789,6 +789,7 @@ func TestJavaPackageCheckFindsResourcesThatPackageTheReports(t *testing.T) {
 		{"whole root", `<resource><directory>.</directory></resource>`, "failed", "add <exclude>.testoptimization/**</exclude>"},
 		{"root json files", `<resource><directory>${basedir}</directory><includes><include>**/*.json</include></includes></resource>`, "failed", "including .testoptimization/"},
 		{"root with reports excluded", `<resource><directory>.</directory><excludes><exclude>.testoptimization/</exclude></excludes></resource>`, "passed", "none packages"},
+		{"root html except the saved report", `<resource><directory>.</directory><includes><include>**/*.html</include></includes><excludes><exclude>**/report.html</exclude></excludes></resource>`, "failed", "including .testoptimization/"},
 		{"unresolved directory", `<resource><directory>${shared}</directory></resource>`, "failed", "cannot resolve"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

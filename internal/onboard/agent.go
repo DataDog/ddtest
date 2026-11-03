@@ -399,7 +399,7 @@ func manualSetupHandoff(output io.Writer, options StartOptions, language, framew
 			Status: "needs_input", Phase: "discovery", Code: "scope_decision_required", NextAction: "supply_input",
 			Location:      strings.Join(unresolved, "; "),
 			RequiredInput: []string{"User decision for the CI steps in location: approve an explicit " + framework + " entry point in CI (for example its own step that runs only " + framework + "), then rerun this onboard command; or stop and report these steps as not validated."},
-			Reason:        "ddtest cannot tell which " + framework + " tests these CI steps run, so it has no configuration to validate locally and will not prescribe CI setup for them. Ask the user and report their decision; do not edit CI before they approve it, and do not combine --command with --all: a single command cannot stand in for a CI step. " + AgentScope + " " + notice,
+			Reason:        "ddtest cannot tell which " + framework + " tests these CI steps run, so it has no configuration to validate locally and will not prescribe CI setup for them. Stop here: report these steps and the options in required_input to the user, and continue only with their decision. " + ScopeBlockerInstruction + " Also, do not combine --command with --all: a single command cannot stand in for a CI step. " + AgentScope + " " + notice,
 		}))
 	}
 	if !options.SetupApplied && pluginSetupWritable(root, language, framework, options.Site) {
@@ -440,7 +440,7 @@ func manualSetupHandoff(output io.Writer, options StartOptions, language, framew
 		reason += "onboard --apply writes the CI configuration's part of this setup once one edit is made (" + edit + "): make it as the instructions show, then rerun onboard --agent. "
 	}
 	if len(unresolved) > 0 {
-		reason += fmt.Sprintf("%d CI step(s) listed as unresolved scope in agent_instruction cannot be validated and will remain blockers; tell the user now that they need a scope decision. ", len(unresolved))
+		reason += fmt.Sprintf("%d CI step(s) listed as unresolved scope in agent_instruction cannot be validated and will remain blockers; tell the user now that they need a scope decision. %s ", len(unresolved), ScopeBlockerInstruction)
 	}
 	var notes []string
 	for _, entry := range scope.Commands {
@@ -471,7 +471,12 @@ const validationWaitInstruction = "Finish any edits a result asks for before lau
 // AgentScope bounds what a coding agent changes during onboarding. Trials
 // showed agents editing builds, manifests and test names to satisfy checks,
 // and stopping a whole run to ask before an install ddtest itself prescribed.
-const AgentScope = "Edit CI workflow and ignore files only where a result asks for it. " + PrescribedEditInstruction + " Any edit ddtest did not prescribe needs the user's approval first. Never rename tests, rewrite CI or package scripts so ddtest can parse them, disable an instrumentation ddtest did not prescribe disabling, or download a runtime; report the blocker instead. CI rows below Node 18, the oldest dd-trace major ddtest supports, are skipped by ddtest itself and reported as not tried; that needs no user approval. Do not inspect the ddtest binary. " + ReadWholeInstruction
+const AgentScope = "Edit CI workflow and ignore files only where a result asks for it. " + PrescribedEditInstruction + " Any edit ddtest did not prescribe needs the user's approval first. Never rename tests, rewrite CI or package scripts so ddtest can parse them, retry variants of a CI edit until ddtest accepts one, disable an instrumentation ddtest did not prescribe disabling, or download a runtime; report the blocker instead. CI rows below Node 18, the oldest dd-trace major ddtest supports, are skipped by ddtest itself and reported as not tried; that needs no user approval. Do not inspect the ddtest binary. " + ReadWholeInstruction
+
+// ScopeBlockerInstruction tells a coding agent what an unresolved CI scope
+// entry asks of it. Trials showed agents rewriting a workflow condition in a
+// loop, and editing whitespace or a variable, until ddtest accepted a step.
+const ScopeBlockerInstruction = "Unresolved CI scope is a limit of ddtest's static analysis, not a defect to fix: report each such step and its options to the user (run the tests in a CI step ddtest can read, once the user approves that change, or keep the step reported as not validated). Do not edit CI configuration (steps, conditions, variables, error handling such as continue-on-error, or whitespace) to make ddtest accept a step unless a result prescribes that exact edit, and do not try variants until one is accepted."
 
 // PrescribedEditInstruction lets the agent make the exact non-CI edits ddtest
 // needs for validation (dev dependencies, package scripts, coverage config)

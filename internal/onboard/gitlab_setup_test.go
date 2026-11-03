@@ -664,7 +664,7 @@ func TestGitLabRenewedtabFixture(t *testing.T) {
 	// are replayed as reviewed preparation.
 	require.Equal(t, []string{"cp config.example.json config.json", "npm run trans:compile", "npm run trans:check"}, preparation)
 	review := strings.Join(scope.Review, "\n")
-	for _, want := range []string{"sentry / step 9 (sentry-cli releases new ${VERSION}): Uninstrumented CI job that never runs mocha", "chrome / step 4 (npm run upload:chrome chrome.zip): Uninstrumented CI job that never runs mocha", "webext / step 4 (npm run package:webext): Uninstrumented CI job that never runs mocha"} {
+	for _, want := range []string{"sentry / step 9 (sentry-cli releases new ${VERSION}): Uninstrumented CI job that never runs mocha", "Not a mocha test consumer: .gitlab-ci.yml / chrome / step 4 (npm run upload:chrome chrome.zip)", "webext / step 4 (npm run package:webext): Uninstrumented CI job that never runs mocha"} {
 		require.Contains(t, review, want)
 	}
 	require.NotContains(t, review, "${{", "unresolved values are named by their CI text")
@@ -821,8 +821,10 @@ func TestNodeLaunchersAreInspectedThroughImports(t *testing.T) {
 	writeFile(t, root, "lib/launch.js", "const Mocha = require('mocha')\nnew Mocha().run()\n")
 	writeFile(t, root, "spawner.js", "const { execSync } = require('child_process')\nexecSync('npm test')\n")
 	writeFile(t, root, "computed.js", "const { execSync } = require('child_process')\nexecSync(process.argv[2])\n")
-	writeFile(t, root, "generate.js", "const { execSync } = require('child_process')\nexecSync(`formatjs compile ${input} --out-file out.json`)\n")
-	for script, mayRun := range map[string]bool{"runner.js": true, "spawner.js": true, "computed.js": true, "generate.js": false} {
+	writeFile(t, root, "generate.js", "const { execSync } = require('child_process')\nexecSync(`formatjs compile src/locales/${item.name} --out-file src/compiled/${item.name}`)\n")
+	// A computed whole argument may be an option or, through the shell, another command.
+	writeFile(t, root, "computed-argument.js", "const { execSync } = require('child_process')\nexecSync(`formatjs compile ${input} --out-file out.json`)\n")
+	for script, mayRun := range map[string]bool{"runner.js": true, "spawner.js": true, "computed.js": true, "generate.js": false, "computed-argument.js": true} {
 		resolution := resolveTestStep(root, ciWorkflow{}, runtimeJob{}, runtimeStep{Run: "node " + script}, "javascript", "mocha")
 		if mayRun {
 			require.NotEmpty(t, resolution.Reason, script)
@@ -975,7 +977,33 @@ func TestNodeLauncherImportsAndComputedCommands(t *testing.T) {
 	writeFile(t, root, "mixed.js", "const { execSync } = require('child_process')\nexecSync('eslint .')\nexecSync(process.env.RUN_CMD)\n")
 	writeFile(t, root, "literal.js", "const { execSync } = require('child_process')\nexecSync('eslint .')\n")
 	for script, mayRun := range map[string]bool{"runner.js": true, "mixed.js": true, "literal.js": false} {
-		require.Equal(t, mayRun, nodeScriptMayRun(root, filepath.Join(root, script), "mocha", map[string]bool{}), script)
+		require.Equal(t, mayRun, nodeScriptMayRun(root, root, filepath.Join(root, script), "mocha", map[string]bool{}), script)
+	}
+}
+
+// A template expression that may choose what a process runs keeps the
+// command computed: in the executable, a subcommand, a script name or a
+// whole argument, in the command string or its argument list. A value
+// inside a literal path only names a file there.
+func TestNodeProcessCommandsWithComputedValues(t *testing.T) {
+	root := t.TempDir()
+	writeScripts(t, root, map[string]string{"test": "mocha", "build": "tsc"})
+	for source, mayRun := range map[string]bool{
+		"execSync(`npm ${process.env.CI_TASK}`)":                                            true,
+		"execSync(`npm run build:${target}`)":                                               true,
+		"execSync(`${bin} --version`)":                                                      true,
+		"execSync(`./node_modules/.bin/${tool}`)":                                           true,
+		"execSync(`npm run build ${flag}`)":                                                 true,
+		"spawnSync('npm', [`${task}`])":                                                     true,
+		"spawnSync('npm', ['run', `${script}`])":                                            true,
+		"spawnSync(`${runner}`, ['run'])":                                                   true,
+		"execSync(`git show HEAD:src/${file} > /tmp/en.json`)":                              false,
+		"spawnSync('formatjs', ['compile', `src/locales/${name}`, '--out-file', 'x.json'])": false,
+		"execSync('npm run build')":                                                         false,
+	} {
+		writeFile(t, root, "script.js", "const { execSync, spawnSync } = require('child_process')\n"+source+"\n")
+		require.Equal(t, mayRun, nodeScriptMayRun(root, root, filepath.Join(root, "script.js"), "mocha", map[string]bool{}), source)
+		require.Equal(t, mayRun, mayStartTestsIn(root, root, runtimeStep{Run: "node script.js"}, "mocha", 0), source)
 	}
 }
 

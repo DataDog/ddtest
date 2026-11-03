@@ -301,33 +301,69 @@ func pythonApplicationPath(workflow ciWorkflow, job runtimeJob, step runtimeStep
 	return result
 }
 
-// PythonModule identifies -m among interpreter options, returning its index and
-// the module followed by its arguments. Attached -mmodule is normalized.
-// Parsing stops at a script, -c, stdin or --; later -m belongs to that target.
+// PythonModule identifies -m among interpreter options, returning the index
+// of the argument holding it and the module followed by its arguments.
+// Attached -mmodule and clustered flags (-Im, -IBum) are normalized. Parsing
+// stops at a script, -c, stdin or --; later -m belongs to that target.
 // Unknown interpreter options remain unresolved rather than being skipped.
 func PythonModule(args []string) (int, []string) {
+	index, _, module := pythonModuleOptions(args)
+	return index, module
+}
+
+// PythonInterpreterOptions are the interpreter options before -m, one flag
+// per word as Python reads them: -IBu becomes -I -B -u and -Werror becomes
+// -W error. ok is false without a module.
+func PythonInterpreterOptions(args []string) (options []string, ok bool) {
+	index, options, _ := pythonModuleOptions(args)
+	return options, index >= 0
+}
+
+// pythonFlags are the interpreter's options without a value.
+const pythonFlags = "bBdEiIOPqRsSuvx"
+
+func pythonModuleOptions(args []string) (int, []string, []string) {
+	options := []string{}
 	for i := 0; i < len(args); i++ {
-		arg := args[i]
-		switch {
-		case arg == "-m":
-			if i+1 < len(args) {
-				return i, args[i+1:]
+		at, arg := i, args[i]
+		if arg == "--check-hash-based-pycs" {
+			if i+1 >= len(args) {
+				return -1, nil, nil
 			}
-			return -1, nil
-		case strings.HasPrefix(arg, "-m"):
-			return i, append([]string{arg[2:]}, args[i+1:]...)
-		case arg == "-W" || arg == "-X" || arg == "--check-hash-based-pycs":
+			options = append(options, arg, args[i+1])
 			i++
-			if i >= len(args) {
-				return -1, nil
+			continue
+		}
+		if len(arg) < 2 || arg[0] != '-' || arg[1] == '-' {
+			return -1, nil, nil
+		}
+		// A cluster of flags ends at the first option that takes a value,
+		// which is the rest of the word or the next argument.
+		for j := 1; j < len(arg); j++ {
+			flag := arg[j]
+			if strings.IndexByte(pythonFlags, flag) >= 0 {
+				options = append(options, "-"+string(flag))
+				continue
 			}
-		case strings.HasPrefix(arg, "-W") || strings.HasPrefix(arg, "-X"):
-		case len(arg) > 1 && arg[0] == '-' && strings.Trim(arg[1:], "bBdEiIOPqRsSuvx") == "":
-		default:
-			return -1, nil
+			if flag != 'm' && flag != 'W' && flag != 'X' {
+				return -1, nil, nil
+			}
+			value, rest := arg[j+1:], args[i+1:]
+			if value == "" {
+				if len(rest) == 0 {
+					return -1, nil, nil
+				}
+				value, rest = rest[0], rest[1:]
+				i++
+			}
+			if flag == 'm' {
+				return at, options, append([]string{value}, rest...)
+			}
+			options = append(options, "-"+string(flag), value)
+			break
 		}
 	}
-	return -1, nil
+	return -1, nil, nil
 }
 
 func pythonRunnerArguments(words []string, runner string) ([]string, bool) {
@@ -498,17 +534,8 @@ func pythonIgnoresEnvironment(words []string) bool {
 	if len(words) == 0 || !platform.IsPythonExecutable(words[0]) {
 		return false
 	}
-	index, _ := PythonModule(words[1:])
-	for i := 1; i <= index; i++ {
-		switch option := words[i]; {
-		case option == "-W" || option == "-X" || option == "--check-hash-based-pycs":
-			i++
-		case strings.HasPrefix(option, "-W") || strings.HasPrefix(option, "-X"):
-		case strings.HasPrefix(option, "-") && strings.ContainsAny(option[1:], "EI"):
-			return true
-		}
-	}
-	return false
+	options, _ := PythonInterpreterOptions(words[1:])
+	return slices.Contains(options, "-E") || slices.Contains(options, "-I")
 }
 
 func resolvePythonStep(root string, workflow ciWorkflow, job runtimeJob, step runtimeStep) commandResolution {
@@ -518,9 +545,13 @@ func resolvePythonStep(root string, workflow ciWorkflow, job runtimeJob, step ru
 	if strings.TrimSpace(step.Run) == "" {
 		return commandResolution{}
 	}
-	commands, err := staticCommands(step.Run)
+	fragments, err := staticFragments(step.Run)
 	if err != nil {
 		return unresolvedCommand("Python shell command requires review: " + err.Error())
+	}
+	commands := make([][]string, len(fragments))
+	for i, fragment := range fragments {
+		commands[i] = fragment.Words
 	}
 	directory := stepDirectory(workflow, job, step)
 	if directory == "" {
@@ -543,7 +574,7 @@ func resolvePythonStep(root string, workflow ciWorkflow, job runtimeJob, step ru
 		return unresolvedCommand("Unsupported Python CI shell: " + shell)
 	}
 	result := commandResolution{}
-	for _, words := range commands {
+	for index, words := range commands {
 		if len(words) == 0 {
 			continue
 		}
@@ -560,7 +591,11 @@ func resolvePythonStep(root string, workflow ciWorkflow, job runtimeJob, step ru
 		}
 		if pythonInvocation(words) {
 			result.Matched = true
-			result.Tests = append(result.Tests, TestCommand{Directory: filepath.ToSlash(filepath.Clean(directory)), Command: shellquote.Join(words...), Environment: assignments})
+			test := TestCommand{Directory: filepath.ToSlash(filepath.Clean(directory)), Command: shellquote.Join(words...), Environment: assignments}
+			if pipe := fragments[index].Pipe; pipe != "" {
+				test.StepScopeNotes = []string{outputPipeNote(test.Command, pipe)}
+			}
+			result.Tests = append(result.Tests, test)
 			continue
 		}
 		if args, ok := pythonRunnerArguments(words, "tox"); ok {

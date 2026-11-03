@@ -22,19 +22,19 @@ import (
 // word; one that chooses a command or task leaves an unknown word, which may
 // run tests. Maven may also run goals MAVEN_ARGS or .mvn/maven.config add.
 // Actions are not read, as resolveJavaStep reads none as a test step.
-func (javaDiscovery) outsideFrameworkJob(root string, workflow ciWorkflow, job runtimeJob, row map[string]any, _ string) bool {
+func (javaDiscovery) outsideFrameworkJob(root string, workflow ciWorkflow, job runtimeJob, row map[string]any, _ string) (bool, []string) {
 	for _, step := range job.Steps {
 		if active, err := stepCondition(step, row, conditionEnvironment(workflow, job, runtimeStep{}, row)); err == nil && !active {
 			continue
 		}
 		if step.ResolutionError != "" {
-			return false
+			return false, nil
 		}
 		if strings.TrimSpace(step.Run) != "" && javaStepMayRunTests(root, workflow, job, step) {
-			return false
+			return false, nil
 		}
 	}
-	return true
+	return true, nil
 }
 
 // A step ddtest did not resolve may start Java tests only when its commands

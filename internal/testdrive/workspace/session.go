@@ -17,6 +17,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -133,13 +134,43 @@ func RemoveMarkedStorage(directory string) error {
 	var removeErr error
 	for _, entry := range entries {
 		if entry.Name() != OwnerMarker {
-			removeErr = errors.Join(removeErr, os.RemoveAll(filepath.Join(directory, entry.Name())))
+			removeErr = errors.Join(removeErr, removeSettledTree(filepath.Join(directory, entry.Name())))
 		}
 	}
 	if removeErr != nil {
 		return removeErr
 	}
-	return os.RemoveAll(directory)
+	return removeSettledTree(directory)
+}
+
+// removeAll is os.RemoveAll; tests replace it to interleave a late writer.
+var removeAll = os.RemoveAll
+
+// settleRetryDelays space the retries of a removal that a late writer
+// interrupted, about 1.5s in all. A process of the storage's invocation can
+// still be exiting when that invocation's cleanup, or a later one's recovery,
+// removes the storage: a Node process whose owner died writes its compile
+// cache (node-compile-cache/v24…, under the TMPDIR ddtest gave it) as it
+// exits, so a directory RemoveAll just emptied is not empty again when it
+// removes it (ENOTEMPTY; EBUSY for a file still open on some systems).
+// Recovery cannot wait for those processes: they belonged to an invocation
+// that is gone and ddtest keeps no PIDs, only ownership leases that close
+// with their owner, after which the processes stop on their own.
+var settleRetryDelays = []time.Duration{25 * time.Millisecond, 50 * time.Millisecond, 100 * time.Millisecond, 200 * time.Millisecond, 400 * time.Millisecond, 800 * time.Millisecond}
+
+// removeSettledTree removes path like os.RemoveAll, retrying briefly while a
+// late writer keeps adding entries; any other failure, or a writer that
+// outlasts the retries, is returned as is.
+func removeSettledTree(path string) error {
+	err := removeAll(path)
+	for _, delay := range settleRetryDelays {
+		if !errors.Is(err, syscall.ENOTEMPTY) && !errors.Is(err, syscall.EBUSY) {
+			return err
+		}
+		time.Sleep(delay)
+		err = removeAll(path)
+	}
+	return err
 }
 
 // Owner is the content of an OwnerMarker.

@@ -21,13 +21,13 @@ import (
 type configurationExecutor struct {
 	commandExecutor
 	environment map[string]string
-	// without names CI secrets the configuration's steps run without, which
-	// a value inherited from this host must not replace.
+	// without names CI secrets and variables the configuration's steps run
+	// without, which a value inherited from this host must not replace.
 	without []string
 }
 
 // commandEnvironment is a command's environment in the configuration. An
-// omitted secret is unset unless the command or configuration sets the
+// omitted secret or variable is unset unless the command or configuration sets the
 // variable itself, as a later CI step may.
 func (e configurationExecutor) commandEnvironment(env map[string]string) map[string]string {
 	merged := mergeConfigurationEnvironment(e.environment, env)
@@ -87,10 +87,9 @@ func (t *Testdrive) runPreparedConfiguration(ctx context.Context, output io.Writ
 	}
 	original, copyRoot := t.repositoryRoot, t.repositoryRoot
 	checkout := t.checkoutRoot()
-	sourceRoot := original
-	if t.lang().isolatesConfigurations() {
-		sourceRoot = checkout
-	}
+	// The copy is the whole checkout, as CI checks it out, with the package
+	// as the working directory: tests may read files outside their package.
+	sourceRoot := checkout
 	if t.lang().isolatesConfigurations() || !t.checkOnly && (len(item.Prerequisites) > 0 || len(item.Services) > 0 || t.usesVitestRunner() || t.framework.Name() == "mocha" || t.framework.Name() == "playwright" || t.framework.Name() == "cypress" || t.framework.Name() == "cucumber" || t.framework.Name() == "webdriverio") {
 		parent, err := os.MkdirTemp("", "ddtest-configuration-")
 		if err != nil {

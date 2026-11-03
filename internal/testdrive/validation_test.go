@@ -8,10 +8,12 @@ package testdrive
 import (
 	"bytes"
 	"encoding/json"
+	"github.com/DataDog/ddtest/internal/constants"
 	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
 	"github.com/stretchr/testify/require"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -59,6 +61,18 @@ func readValidationReport(t *testing.T, root string) validationResult {
 	require.NoError(t, err)
 	var report validationResult
 	require.NoError(t, json.Unmarshal(data, &report))
+	return report
+}
+
+// readFocusedValidationReport reads the report of a run of one command that
+// was written beside the saved --all report, and checks that it names it.
+func readFocusedValidationReport(t *testing.T, root string) validationResult {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(root, constants.PlanDirectory, focusedValidationFilename))
+	require.NoError(t, err)
+	var report validationResult
+	require.NoError(t, json.Unmarshal(data, &report))
+	require.Equal(t, filepath.ToSlash(validationPath("")), report.KeptReport)
 	return report
 }
 

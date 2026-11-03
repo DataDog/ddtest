@@ -338,8 +338,8 @@ func (t *Testdrive) checkRubyPackages(ctx context.Context, root string, specs []
 			return err
 		}
 	}
-	for _, report := range []string{"testdrive.json", "report.html"} {
-		path := filepath.Join(root, ".testoptimization", report)
+	for _, report := range retainedReports {
+		path := filepath.Join(root, filepath.FromSlash(report))
 		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 			return err
 		}
