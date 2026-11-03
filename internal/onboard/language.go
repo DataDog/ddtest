@@ -153,6 +153,10 @@ type discoveryLanguage interface {
 	// exports with the job's own value, for a value a scope narrower than
 	// the pipeline sets; empty when the plugin replaces it.
 	ciPluginComposes(key string) string
+	// ciPluginTracerRelease is the tracer release the CI server plugin's
+	// additionalVariables select for the language, as written; set is false
+	// when they select none and the plugin installs its default.
+	ciPluginTracerRelease(variables map[string]string) (release string, set bool)
 	// ciShellAfter reports whether a test step of job, which resolution
 	// resolved for framework, needs the commands that follow the setup in
 	// its own shell (ciSetupRequest.After) when the request has any, and

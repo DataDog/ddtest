@@ -148,14 +148,23 @@ func javaHandWrittenAgent(options string) string {
 func javaHandWrittenProperties(options string) map[string]string {
 	properties := map[string]string{}
 	for _, word := range strings.Fields(options) {
-		property, ok := strings.CutPrefix(strings.Trim(word, `"'`), "-Ddd.")
-		if !ok {
-			continue
+		if key, value, ok := javaAgentProperty(word); ok {
+			properties[key] = value
 		}
-		key, value, _ := strings.Cut(property, "=")
-		properties["DD_"+strings.ToUpper(strings.NewReplacer(".", "_", "-", "_").Replace(key))] = value
 	}
 	return properties
+}
+
+// javaAgentProperty reads a JVM option that sets a dd-java-agent system
+// property, -Ddd.<name>=<value>, as the DD_* variable it stands for and its
+// value; ok is false for any other option.
+func javaAgentProperty(word string) (key, value string, ok bool) {
+	property, ok := strings.CutPrefix(strings.Trim(word, `"'`), "-Ddd.")
+	if !ok {
+		return "", "", false
+	}
+	name, value, _ := strings.Cut(property, "=")
+	return "DD_" + strings.ToUpper(strings.NewReplacer(".", "_", "-", "_").Replace(name)), value, true
 }
 
 // javaHandWrittenFileOptions reads the JVM options a build file passes the

@@ -195,7 +195,9 @@ func unresolvedJavaWrapper(root string, workflow ciWorkflow, job runtimeJob, ste
 	// In a job without the Datadog action, any command that may start tests
 	// is shown, since nothing there reports them.
 	uninstrumented := parts != nil && javaOutsideUninstrumentedJob(root, workflow, job, framework)
-	if namesTests := strings.Contains(step.Run, "test") || strings.Contains(step.Run, "verify"); !namesTests && (!uninstrumented || !javaStepMayRunTests(root, workflow, job, step)) {
+	// A URL names a download, as https://dtdg.co/latest-java-tracer, not tests.
+	text := urlWord.ReplaceAllString(step.Run, "")
+	if namesTests := strings.Contains(text, "test") || strings.Contains(text, "verify"); !namesTests && (!uninstrumented || !javaStepMayRunTests(root, workflow, job, step)) {
 		return commandResolution{}
 	}
 	if uninstrumented {
@@ -203,6 +205,9 @@ func unresolvedJavaWrapper(root string, workflow ciWorkflow, job runtimeJob, ste
 	}
 	return unresolvedCommand("Test wrapper was not resolved; ddtest cannot tell which " + framework + " tests it runs: " + step.Run)
 }
+
+// urlWord is a URL in shell text.
+var urlWord = regexp.MustCompile(`[A-Za-z][A-Za-z0-9+.-]*://\S+`)
 
 // javaMetadataScript reports a script whose commands only print or move files
 // and run Maven for help goals, such as help:evaluate, or its version, which
@@ -374,8 +379,8 @@ var javaEarlyAccessTag = regexp.MustCompile(`(?:^|[-._])ea(?:$|[-+._0-9])`)
 
 // javaUnknownRuntimeReason explains a test step whose JDK ddtest cannot read:
 // on GitHub Actions one no setup-java step selects, elsewhere the job image's
-// or build agent's.
-func javaUnknownRuntimeReason(provider ciProvider, job runtimeJob, row map[string]any) string {
+// or, on host, the build agent's, which the user can state.
+func javaUnknownRuntimeReason(provider ciProvider, job runtimeJob, row map[string]any, host string) string {
 	switch {
 	case provider.sharedSyntax():
 		return "Select a static java-version with actions/setup-java before this test step; the runner's default JDK is not checked."
@@ -383,6 +388,9 @@ func javaUnknownRuntimeReason(provider ciProvider, job runtimeJob, row map[strin
 		return "The job's image cannot be read (" + job.ImageProblem + "), so ddtest cannot tell which JDK runs its tests."
 	case job.Image != "":
 		return "The job's image " + job.Image + " selects no JDK version ddtest reads; run the tests in an image whose name selects one, such as maven:3.9-eclipse-temurin-21, gradle:8.10-jdk17 or cimg/openjdk:17.0, to certify this job."
+	}
+	if host != "" {
+		return "The CI JDK is unknown: the tests run on " + host + ", and the configuration selects no JDK. Ask the user which Java version it runs (java -version there), then rerun testdrive with --ci-runtime java=<version> (or <job>:java=<version> per job); never guess it. Running the tests in an image whose name selects a JDK version, such as maven:3.9-eclipse-temurin-21, also certifies the job."
 	}
 	return "The job's tests run on the JDK of " + cmp.Or(runtimeHost(job, row, "Java"), "the build agent") + ", which ddtest cannot read; run them in an image whose name selects a JDK version, such as maven:3.9-eclipse-temurin-21, gradle:8.10-jdk17 or cimg/openjdk:17.0, to certify this job."
 }
@@ -558,8 +566,16 @@ func JavaCIConfiguration(root, framework, site string) RuntimeCheck {
 					continue
 				}
 				lastTest := javaLastTestStep(root, workflow, job, row, framework)
-				// The JDK is the job image's until a step selects one.
+				// The JDK is the job image's until a step selects one, or the
+				// one the user states for the host it runs on.
 				java, tracer, action, buildSystem := javaImageRuntime(job.Image), "", "", ""
+				host, stated := "", false
+				if !provider.sharedSyntax() && java == "" {
+					host = runtimeHost(job, row, "Java")
+					if version := job.Stated["java"]; host != "" && version != "" {
+						java, stated = version, true
+					}
+				}
 				var setup *ciSetup
 				var inputs map[string]string
 				skippedAction := false
@@ -591,6 +607,10 @@ func JavaCIConfiguration(root, framework, site string) RuntimeCheck {
 							if err == nil && selected {
 								action, setup = current.Reference, &current
 								tracer, _ = runtimeValue(current.Inputs["java-tracer-version"], row)
+								// A plugin that downloads the latest release pins none.
+								if _, set := current.Inputs["java-tracer-version"]; !set && current.Floating {
+									tracer = "latest"
+								}
 								var buildErr error
 								buildSystem, buildErr = runtimeValue(current.Inputs["java-instrumented-build-system"], row)
 								if buildErr != nil {
@@ -623,13 +643,37 @@ func JavaCIConfiguration(root, framework, site string) RuntimeCheck {
 						continue
 					}
 					tool := javaStepBuildTool(resolution, resolved.Run)
+					// Without a provider setup, the job may attach the agent by
+					// hand; each test step is checked on its own, since its
+					// options reach no other step.
+					var handWritten *handWrittenSetup
+					if action == "" && !skippedAction && resolution.Matched && conditionErr == nil && stepErr == nil && resolveErr == nil && !provider.sharedSyntax() {
+						rowJob := job
+						rowJob.Steps = slices.Clone(job.Steps)
+						rowJob.Steps[i] = resolved
+						handWritten = (javaDiscovery{}).handWrittenSetup(root, provider, workflow, rowJob, i, row, framework, site)
+					}
 					finding := RuntimeFinding{Location: (commandLocation{Workflow: workflow.Path, Job: name, Matrix: row, Step: stepNumber(step, i), Command: step.Run}).String(), Workflow: workflow.Path, Job: name, Step: stepNumber(step, i), Command: resolved.Run, Runtime: java, Action: action, TracerRequested: tracer, setupInputs: inputs, setupProvider: provider, Status: "inconclusive"}
 					if setup != nil {
 						finding.setupSupported, finding.setupReadProblem = setup.Supported, setup.Problem
+						if tracer == "latest" {
+							finding.TracerFloating, finding.SetupCaveats = true, javaFloatingCaveat(*setup)
+						} else {
+							finding.SetupCaveats = slices.Clone(setup.Caveats)
+						}
+					}
+					instrumented := action != ""
+					if handWritten != nil {
+						finding.handWritten = handWritten
+						finding.Action, finding.TracerRequested = handWritten.Reference, handWritten.Tracer
+						finding.AgentReporting = handWritten.reportsThroughAgent()
+					}
+					if host != "" {
+						finding.RuntimeHost, finding.UserStated = host, stated
 					}
 					runtimeReason, runtimeCode := javaRuntimeProblem(java)
 					if java == "" {
-						runtimeReason, runtimeCode = javaUnknownRuntimeReason(provider, job, row), ""
+						runtimeReason, runtimeCode = javaUnknownRuntimeReason(provider, job, row, host), ""
 					}
 					switch {
 					case conditionErr != nil || stepErr != nil || resolveErr != nil || actionErr != nil || resolution.Reason != "":
@@ -646,23 +690,35 @@ func JavaCIConfiguration(root, framework, site string) RuntimeCheck {
 					case action == "" && skippedAction:
 						finding.Status, finding.Code = "excluded", "excluded_runtime"
 						finding.Reason = "The " + provider.setupName() + " is explicitly skipped for this matrix entry. Its tests still run without instrumentation; this runtime is not validated with the tracer."
+					case handWritten != nil && handWritten.problem() != "":
+						finding.Code, finding.Reason = handWritten.code(), handWritten.problem()
+					case setup != nil && ciConfirmationProblem(provider, *setup) != "" && javaSetupProblem(finding, site) == "":
+						// Ask for every answer the user owes at once.
+						finding.Code, finding.Reason = "ci_setup_confirmation_required", ciConfirmationProblem(provider, *setup)
+						if java == "" {
+							finding.Reason += " " + runtimeReason
+						}
 					case runtimeReason != "":
 						finding.Code, finding.Reason = runtimeCode, runtimeReason
-					case action == "":
+					case action == "" && handWritten == nil:
 						finding.Reason = "No " + provider.setupName() + " selects java before this test step, so its tests are not instrumented."
+					case handWritten == nil && javaSetupProblem(finding, site) != "":
+						finding.Code, finding.Reason = CodeIncompleteCISetup, javaSetupProblem(finding, site)
 					case provider.sharedSyntax() && !exactJavaRelease.MatchString(tracer):
 						finding.Reason = "The Datadog action's java-tracer-version " + strconv.Quote(tracer) + " is not an exact release; set an exact version such as 1.67.1."
-					case javaSetupProblem(finding, site) != "":
-						finding.Code, finding.Reason = CodeIncompleteCISetup, javaSetupProblem(finding, site)
-					case javaReusableSecretProblem(workflows, workflow, finding.setupInputs["api_key"]) != "":
+					case handWritten == nil && javaReusableSecretProblem(workflows, workflow, finding.setupInputs["api_key"]) != "":
 						finding.Code, finding.Reason = CodeIncompleteCISetup, javaReusableSecretProblem(workflows, workflow, finding.setupInputs["api_key"])
 					default:
+						if handWritten != nil {
+							tracer = handWritten.Tracer
+						}
 						// Release notes, not version numbers, say which JDKs an agent
 						// release supports, so the pair is validated by running it.
 						finding.Status, finding.Reason = "not checked", "Validate dd-java-agent "+tracer+" on Java "+java+"; a static selection does not establish that this release supports this JDK."
 					}
-					// An explicitly uninstrumented row has no instrumentation to lose.
-					if reason := javaInstrumentationProblem(provider, workflow, job, step, row, action != "", buildSystem, tool); finding.Status != "excluded" && reason != "" {
+					// An explicitly uninstrumented row has no instrumentation to
+					// lose; a hand-written setup was read where it attaches the agent.
+					if reason := javaInstrumentationProblem(provider, workflow, job, step, row, instrumented, buildSystem, tool); finding.Status != "excluded" && reason != "" {
 						finding.Status, finding.Code, finding.Reason = "inconclusive", "", reason
 					}
 					result.Jobs = append(result.Jobs, finding)
@@ -710,9 +766,12 @@ func javaSetupProblem(job RuntimeFinding, site string) string {
 	if inputs == nil {
 		inputs = map[string]string{}
 	}
-	inputs["java-tracer-version"] = job.TracerRequested
+	// A plugin that downloads the latest release has no release input.
+	if !job.TracerFloating {
+		inputs["java-tracer-version"] = job.TracerRequested
+	}
 	supported := job.setupSupported || provider.sharedSyntax() && setupActionSupported(job.Action)
-	return provider.setupProblem(ciSetup{Reference: job.Action, Pinned: true, Supported: supported, Problem: job.setupReadProblem, Inputs: inputs}, "java-tracer-version", exactJavaRelease.MatchString, "1.67.1", site)
+	return provider.setupProblem(ciSetup{Reference: job.Action, Pinned: true, Supported: supported, Problem: job.setupReadProblem, Floating: job.TracerFloating, Inputs: inputs}, "java-tracer-version", exactJavaRelease.MatchString, "1.67.1", site)
 }
 
 // javaAgentVariable is where the provider's Datadog setup, per its

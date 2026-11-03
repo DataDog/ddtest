@@ -411,6 +411,9 @@ func javascriptShellSelection(words []string) (version, versionFile string, ok b
 
 func (javascriptDiscovery) statedRuntime() *statedRuntime { return javascriptStatedRuntime }
 
+// The plugin has no setting for this language's tracer release.
+func (javascriptDiscovery) ciPluginTracerRelease(map[string]string) (string, bool) { return "", false }
+
 func (javascriptDiscovery) ciPluginLanguage() string { return "JAVASCRIPT" }
 
 // The Datadog Jenkins plugin prepends its dd-trace preload to NODE_OPTIONS

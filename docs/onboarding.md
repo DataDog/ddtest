@@ -94,8 +94,7 @@ one to configure before discovery, edits or validation (agents receive
 `ci_provider_required` with `next_action: ask_user`), and follow-up commands
 keep the selected `--ci-provider`. A language without setup support on the
 selected provider gets `ci_provider_unsupported` instead of instructions:
-JavaScript, Ruby and Python support every provider, and Java every provider but
-Jenkins.
+JavaScript, Ruby, Python and Java support every provider.
 Other CI files (Travis CI, Azure Pipelines and others) are never parsed: when
 they mention the framework they are listed as outside this validation, and they
 never fail onboarding. `--ci-provider` is not `--platform`, which selects the
@@ -176,9 +175,9 @@ form, including `{group, labels}` and a runner a matrix row selects, such as
 `runs-on: ${{ matrix.os }}` with `os: [self-hosted, ubuntu-latest]`) without
 an `actions/setup-node` or `ruby/setup-ruby` step that runs before their
 tests and selects a version, and jobs whose image (such as
-`ubuntu:22.04`) names no Node, Ruby or Python version. Finding these jobs reads only
+`ubuntu:22.04`) names no Node, Ruby, Python or Java version. Finding these jobs reads only
 the repository; a Cypress GitHub action job's Node is the action's, not a
-question for the user. For JavaScript, Ruby and Python, `onboard` and
+question for the user. For JavaScript, Ruby, Python and Java, `onboard` and
 `testdrive --agent` then return `needs_input` with `code: ci_runtime_required`,
 `required_input: ["ci_runtime:<workflow> / <job>", …]` and `next_action:
 ask_user` before any setup or test runs. The agent asks the user and never
@@ -188,7 +187,7 @@ inconclusive, with the same question in its reason (see
 
 The answer comes back as `--ci-runtime [<job>:]<runtime>=<version>`,
 repeatable: `node` (or `js`) with `22`, `22.11` or `22.11.0`, `ruby` with
-`3.3` or `3.3.6`, or `python` with `3.12` or `3.12.7`. Without `<job>`, it applies to every job whose runtime is
+`3.3` or `3.3.6`, `python` with `3.12` or `3.12.7`, or `java` with `21` or `17.0.12`. Without `<job>`, it applies to every job whose runtime is
 unknown; `<job>` is the printed key (`.buildkite/pipeline.yml / :jest: Tests`)
 or the job name alone, and wins over a statement without one. Two statements that name the same job (by
 either key) with different versions are `invalid_options`; the same
@@ -1224,9 +1223,9 @@ to write instead (an edit-then-apply gap); native ESM Cucumber needs
 `NODE_OPTIONS` (or in every selected script), and `onboard --apply` stops with
 a setup gap before any edit until it is there.
 
-Python and Java hand-written setups are recognized but not validated yet:
-their CI checks read only the provider's setup. Where no provider setup
-precedes the test command, ddtest recognizes:
+Java hand-written setups are validated as above; Python ones are recognized
+but not validated yet: the pytest CI check reads only the provider's setup.
+Where no provider setup precedes the test command, ddtest recognizes:
 
 - Python: pytest runs with the ddtrace plugin enabled, through `--ddtrace` in
   the command, `PYTEST_ADDOPTS` (also as a prefix of the command) or the
@@ -1243,9 +1242,9 @@ precedes the test command, ddtest recognizes:
   latest-release link is reported as floating). `-DargLine` and
   `.mvn/jvm.config` stay unresolved.
 
-ddtest checks the same rules as above and lists what each setup lacks, but
-never certifies such a setup and never replaces it with the provider's
-setup: onboarding and testdrive return `status: unsupported` with
+For Python, ddtest checks the same rules as above and lists what each setup
+lacks, but never certifies such a setup and never replaces it with the
+provider's setup: onboarding and testdrive return `status: unsupported` with
 `code: ci_setup_unsupported`, naming each job, its setup and what it lacks,
 and tell the coding agent to keep the setup as it is and report the result.
 This applies on every provider without the shared workflow syntax, even where
@@ -1690,7 +1689,7 @@ Datadog backend processing remain untested.
 
 Java projects build with Maven or Gradle. `ddtest onboard --framework junit5`
 lists the Maven and Gradle CI test commands of the selected CI provider's
-configuration (GitHub Actions, GitLab CI, CircleCI or Buildkite) and prints
+configuration (GitHub Actions, GitLab CI, CircleCI, Buildkite or Jenkins) and prints
 their setup; select the framework the project uses (`junit4`, `junit5`,
 `testng`, `spock`, `cucumber-java`, `karate`, `scalatest` or `munit`). A
 repository with a `pom.xml` or Gradle settings or build files at its root is a
@@ -1708,8 +1707,30 @@ Gradle). A later command that replaces that variable instead of extending it
 (`export MAVEN_OPTS="$MAVEN_OPTS …"`) leaves the tests uninstrumented. The JDK a
 row is certified on is the one its job image names, such as
 `maven:3.9-eclipse-temurin-21`, `gradle:8.10-jdk17`, `eclipse-temurin:17-jdk` or
-`cimg/openjdk:17.0`; a job on the build agent's own JDK, or in an image whose
-name selects no JDK version, stays inconclusive.
+`cimg/openjdk:17.0`; a job in an image whose name selects no JDK version stays
+inconclusive, and for a job on the build agent's own JDK, the user states it
+(`--ci-runtime java=21`, see [Runtimes and facts only the user can
+state](#runtimes-and-facts-only-the-user-can-state)).
+
+On Jenkins, host-agent stages use the Datadog Jenkins plugin
+(`datadog(testOptimization: [enabled: true, serviceName: …, languages:
+['JAVA']])`). Its JavaConfigurator downloads dd-java-agent into the workspace
+(`.datadog/dd-java-agent.jar`, reused for 12 hours) and puts `-javaagent` before
+the `MAVEN_OPTS` and `GRADLE_OPTS` of every step, joined with a space, computed
+once per agent. It downloads the latest release unless
+`DATADOG_JENKINS_PLUGIN_TRACER_DISTRIBUTION_URL` in `additionalVariables`
+names one, such as Maven Central's `…/dd-java-agent/1.67.1/dd-java-agent-1.67.1.jar`,
+whose signature it then verifies: ddtest validates that release, or the
+latest one, reported as floating. ddtest asks the user for the plugin's facts
+(`--ci-confirm`) and the agents' JDK. Container stages use the setup snippet,
+as for the other languages (see [Jenkins](#jenkins)).
+
+Where no provider setup precedes the tests, the Java CI check reads a
+hand-written dd-java-agent setup (see [Hand-written setups outside GitHub
+Actions](#hand-written-setups-outside-github-actions)): a complete one is
+certified with the release it attaches, which local validation runs. Local
+replay drops the setup's `-javaagent` and its `-Ddd.*` system properties, as it
+drops the DD_* variables CI's agent reads, keeping tracer plugin settings.
 
 For Gradle, ddtest reads the build's settings (and the scripts they apply),
 build files and default version catalog without running Gradle, including the

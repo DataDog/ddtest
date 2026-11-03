@@ -1024,9 +1024,9 @@ func checkPythonCIRuntimes(ctx context.Context, root, localVersion, site string,
 						finding.Reason = "This job runs " + engine + " (image " + job.Image + "), which the tracer cannot instrument; keep its tests in a job without the " + provider.setupName() + "."
 					case selected != nil && pythonSetupProblem(provider, selected.setup, selected.inputs, requested, site) != "":
 						finding.Code, finding.Reason = CodeIncompleteCISetup, pythonSetupProblem(provider, selected.setup, selected.inputs, requested, site)
-					case selected != nil && pythonConfirmationProblem(provider, selected.setup) != "":
+					case selected != nil && ciConfirmationProblem(provider, selected.setup) != "":
 						// Ask for every answer the user owes at once.
-						finding.Code, finding.Reason = "ci_setup_confirmation_required", pythonConfirmationProblem(provider, selected.setup)
+						finding.Code, finding.Reason = "ci_setup_confirmation_required", ciConfirmationProblem(provider, selected.setup)
 						if python == "" {
 							finding.Reason += " " + pythonUnknownRuntimeReason(provider, job, host)
 						}

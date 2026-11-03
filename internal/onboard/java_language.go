@@ -39,7 +39,7 @@ func (javaDiscovery) coordinated() bool { return true }
 // installer: each runs the installer that attaches dd-java-agent to the build
 // JVM's options.
 func (javaDiscovery) supportsCIProvider(provider string) bool {
-	return provider == gitHubActionsProvider || provider == gitLabCIProvider || provider == circleCIProvider || provider == buildkiteProvider
+	return provider == gitHubActionsProvider || provider == gitLabCIProvider || provider == circleCIProvider || provider == buildkiteProvider || provider == jenkinsProvider
 }
 
 func (javaDiscovery) automaticCISetup() bool { return false }
@@ -103,8 +103,25 @@ func (javaDiscovery) variantValue(workflow ciWorkflow, job runtimeJob, _ runtime
 		return "", false, fmt.Errorf("%s extends workflow or job JVM options; validate with those options explicitly", key)
 	}
 	// The installer's agent, which a shell-sharing setup exported before the
-	// job's own options, is local validation's too.
-	return strings.TrimSpace(strings.ReplaceAll(inherited, javaInstallerAgent, "")), true, nil
+	// job's own options, is local validation's too, and so are the -Ddd.*
+	// properties a hand-written setup configures CI's agent with, as its
+	// DD_* variables: they would send the local agent's reports elsewhere.
+	return javaWithoutAgentProperties(strings.TrimSpace(strings.ReplaceAll(inherited, javaInstallerAgent, ""))), true, nil
+}
+
+// javaWithoutAgentProperties removes the -Ddd.* system properties of JVM
+// options, keeping those of tracer plugin settings, which change test
+// behavior as their DD_* variables do (see TracerPluginSetting).
+func javaWithoutAgentProperties(options string) string {
+	words := strings.Fields(options)
+	kept := slices.DeleteFunc(slices.Clone(words), func(word string) bool {
+		key, _, ok := javaAgentProperty(word)
+		return ok && !TracerPluginSetting(key)
+	})
+	if len(kept) == len(words) {
+		return options
+	}
+	return strings.Join(kept, " ")
 }
 
 // javaDeployCredentials are the environment variables that the job's
@@ -175,6 +192,9 @@ func (javaDiscovery) setupShellExports(current map[string]string) (map[string]st
 // ciSetupRequest is the Java part of a provider's setup: an exact agent
 // release, the build JVM options that carry it, and a JDK ddtest can read.
 func (javaDiscovery) ciSetupRequest(root, framework, site string, terms ciSetupTerms) ciSetupRequest {
+	if terms.Plugin {
+		return javaPluginSetupRequest(root, framework, site, terms)
+	}
 	request := ciSetupRequest{Language: "java", Site: site, TracerInput: "java-tracer-version", TracerVersion: "<exact dd-java-agent release>"}
 	request.Notes = []string{
 		"Replace <exact dd-java-agent release> with an exact dd-java-agent release, such as 1.67.1; local validation runs that release, and a floating one cannot be validated. Keep the existing build files, Maven or Gradle wrapper, JDK images, Maven goals or Gradle tasks, profiles, modules or projects, plugins, JVM options, test arguments and matrices. One Maven or Gradle command runs every framework the build declares: do not split it or filter it by " + framework + ". Local validation runs only the Maven test lifecycle or Gradle test tasks and never installs or publishes.",
@@ -201,10 +221,9 @@ func (javaDiscovery) handWrittenSetup(root string, provider ciProvider, workflow
 	return javaHandWrittenSetup(root, provider, workflow, job, index, framework, site)
 }
 
-// The Java CI check reads only the Datadog setup (see JavaCIConfiguration):
-// a hand-written dd-java-agent setup is recognized, kept and reported, never
-// certified, until it reads that setup too.
-func (javaDiscovery) validatesHandWrittenSetup() bool { return false }
+// The Java CI check reads a hand-written dd-java-agent setup where no
+// provider setup precedes the tests (see JavaCIConfiguration).
+func (javaDiscovery) validatesHandWrittenSetup() bool { return true }
 
 func (javaDiscovery) runtimeVariable(name string) bool {
 	return name == "JAVA_HOME" || name == "JAVA_TOOL_OPTIONS"
@@ -223,17 +242,58 @@ func (javaDiscovery) cacheVariable(name string) bool {
 // No CI components are modeled for this language.
 func (javaDiscovery) ciComponents(string) []ciComponent { return nil }
 
-// No CI runtime statements yet.
-func (javaDiscovery) statedRuntime() *statedRuntime { return nil }
+func (javaDiscovery) statedRuntime() *statedRuntime { return javaStatedRuntime }
 
 func (javaDiscovery) ciPluginLanguage() string { return "JAVA" }
 
-// Java has no CI plugin setup yet.
-func (javaDiscovery) ciPluginExports(map[string]string) (map[string]string, map[string]string) {
-	return nil, nil
+// The Datadog Jenkins plugin's JavaConfigurator puts -javaagent, with the
+// dd-java-agent it downloads into the workspace, before the existing value
+// of MAVEN_OPTS and GRADLE_OPTS, joined with a space. It also does so for
+// SBT_OPTS, ANT_OPTS and DD_TRACE_OPTS, which no build ddtest validates
+// reads.
+func (javaDiscovery) ciPluginExports(current map[string]string) (map[string]string, map[string]string) {
+	exported := map[string]string{}
+	for _, carrier := range javaPluginCarriers {
+		exported[carrier] = javaInstallerAgent
+		if existing, set := current[carrier]; set {
+			exported[carrier] += " " + existing
+		}
+	}
+	return exported, nil
 }
 
-func (javaDiscovery) ciPluginComposes(string) string { return "" }
+// javaPluginCarriers are the build JVM option variables the Datadog Jenkins
+// plugin adds dd-java-agent to that ddtest validates builds of.
+var javaPluginCarriers = []string{"MAVEN_OPTS", "GRADLE_OPTS"}
+
+// The plugin computes its variables once per agent, from the first step it
+// configures there, and sets them on every later step.
+func (javaDiscovery) ciPluginComposes(key string) string {
+	if !slices.Contains(javaPluginCarriers, key) {
+		return ""
+	}
+	return "on each agent it sets " + key + " for every step to its -javaagent option followed by a space and the " + key + " of the first step it configures there, so this value is lost, or, when its step is that first one, it reaches every later step on the agent. ddtest validates with the pipeline's " + key
+}
+
+// javaPluginTracerURL is the additionalVariables entry that replaces the
+// dd-java-agent download of the Datadog Jenkins plugin, which otherwise
+// downloads the latest release; the plugin verifies a replaced download's
+// signature.
+const javaPluginTracerURL = "DATADOG_JENKINS_PLUGIN_TRACER_DISTRIBUTION_URL"
+
+// The release a replaced download names, as Maven Central's
+// com/datadoghq/dd-java-agent/<release>/ path does; the URL itself when it
+// names none, which is not an exact release.
+func (javaDiscovery) ciPluginTracerRelease(variables map[string]string) (string, bool) {
+	url, set := variables[javaPluginTracerURL]
+	if !set {
+		return "", false
+	}
+	if match := javaHandWrittenURLRelease.FindStringSubmatch(url); match != nil {
+		return match[1], true
+	}
+	return url, true
+}
 
 func (javaDiscovery) ciShellAfter(ciWorkflow, runtimeJob, runtimeStep, string, commandResolution) (bool, string) {
 	return false, ""

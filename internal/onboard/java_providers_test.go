@@ -174,7 +174,7 @@ func TestJavaBuildkiteSetupCompleteness(t *testing.T) {
 	}{
 		{"complete", step(docker), "not checked", "Validate dd-java-agent 1.67.1 on Java 17"},
 		{"missing", strings.Replace(step(docker), snippet, "", 1), "inconclusive", "No Datadog setup snippet selects java"},
-		{"agent host", step(""), "inconclusive", "run them in an image whose name selects a JDK version"},
+		{"agent host", step(""), "inconclusive", "--ci-runtime java=<version>"},
 		// A build system exported before the snippet moves the agent to
 		// JAVA_TOOL_OPTIONS, which a later replacement removes.
 		{"all build systems, replaced JAVA_TOOL_OPTIONS", strings.Replace(step(docker), snippet, "      - export DD_INSTRUMENTATION_BUILD_SYSTEM_JAVA=all\n"+snippet+"      - export JAVA_TOOL_OPTIONS=-Xmx1g\n", 1), "inconclusive", "replacing the -javaagent option"},

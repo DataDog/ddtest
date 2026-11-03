@@ -409,31 +409,6 @@ func pythonSetupProblem(provider ciProvider, setup ciSetup, inputs map[string]st
 	return provider.setupProblem(ciSetup{Reference: setup.Reference, Pinned: true, Supported: setup.Supported, Problem: setup.Problem, Floating: setup.Floating, Inputs: resolved}, "python-tracer-version", exactPythonRelease.MatchString, pythonExampleRelease, site)
 }
 
-// pythonConfirmationProblem lists the provider facts the user has not
-// confirmed (--ci-confirm) that this entry's setup depends on, and how to
-// confirm them; empty when every one is confirmed.
-func pythonConfirmationProblem(provider ciProvider, setup ciSetup) string {
-	var missing []ciFactDefinition
-	for _, definition := range ciProviderFacts[provider.name()] {
-		if _, stated := statedFact(definition.Key); slices.Contains(setup.Confirmations, definition.Key) && !stated {
-			missing = append(missing, definition)
-		}
-	}
-	if len(missing) == 0 {
-		return ""
-	}
-	var questions, flags []string
-	for _, fact := range missing {
-		flag := fact.Key
-		if fact.Values != "" {
-			flag += "=" + fact.Values
-		}
-		questions = append(questions, strings.TrimSpace(fact.Key+": "+fact.Question+" "+fact.Remedy))
-		flags = append(flags, "--ci-confirm "+flag)
-	}
-	return "The " + provider.setupName() + " setup depends on facts no CI configuration shows, so ddtest cannot certify it until the user confirms them. Ask the user; never assume or check them from this machine. " + strings.Join(questions, " ") + " Then rerun testdrive adding " + strings.Join(flags, " ") + " with the values they confirmed."
-}
-
 // pythonUnknownRuntimeReason explains a test entry whose Python ddtest cannot
 // read outside GitHub Actions: the job's host's, an image that names no
 // minor version, or an image ddtest cannot read.

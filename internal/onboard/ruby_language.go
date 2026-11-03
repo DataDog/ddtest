@@ -605,6 +605,9 @@ func rubyShellSelection(words []string) (version, versionFile string, ok bool) {
 
 func (rubyDiscovery) statedRuntime() *statedRuntime { return rubyStatedRuntime }
 
+// The plugin has no setting for this language's tracer release.
+func (rubyDiscovery) ciPluginTracerRelease(map[string]string) (string, bool) { return "", false }
+
 func (rubyDiscovery) ciPluginLanguage() string { return "RUBY" }
 
 // The Datadog Jenkins plugin replaces RUBYOPT with the datadog-ci preload,

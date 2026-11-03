@@ -169,6 +169,9 @@ func (pythonDiscovery) ciComponents(string) []ciComponent { return nil }
 
 func (pythonDiscovery) statedRuntime() *statedRuntime { return pythonStatedRuntime }
 
+// The plugin has no setting for this language's tracer release.
+func (pythonDiscovery) ciPluginTracerRelease(map[string]string) (string, bool) { return "", false }
+
 func (pythonDiscovery) ciPluginLanguage() string { return "PYTHON" }
 
 // The Datadog Jenkins plugin prepends its tracer to PYTHONPATH and --ddtrace
