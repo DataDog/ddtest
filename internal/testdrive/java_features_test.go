@@ -440,8 +440,8 @@ func TestJavaProbesStopAtTheTestPhase(t *testing.T) {
 	drive.args = []string{"-B", "verify", "-Pcoverage"}
 	result := &validationResult{Framework: "junit5"}
 	require.NoError(t, drive.runFrameworkValidation(t.Context(), &bytes.Buffer{}, session, "/agent/dd-java-agent.jar", result))
-	require.Equal(t, []string{"-B", "verify", "-Pcoverage"}, maven.args[0], "the paired runs keep the selected command")
-	require.Equal(t, []string{"-B", "verify", "-Pcoverage"}, maven.args[1])
+	require.Equal(t, []string{"-B", "verify", "-Pcoverage", "-Dgpg.skip=true"}, maven.args[0], "the paired runs keep the selected command, without signing")
+	require.Equal(t, []string{"-B", "verify", "-Pcoverage", "-Dgpg.skip=true"}, maven.args[1])
 	for _, args := range maven.args[2:] {
 		require.Equal(t, []string{"-B", "test", "-Pcoverage"}, args[:3], "post-test checks such as license headers never judge the probe")
 		require.Contains(t, args, "-Dtest="+javaProbeClass)

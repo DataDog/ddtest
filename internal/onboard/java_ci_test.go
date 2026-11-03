@@ -218,11 +218,29 @@ func TestJavaValidatesWithoutCIOnlyOptions(t *testing.T) {
 	require.Equal(t, "mvn -B verify -Dsonar.token= -Dsigning.password=", scope.Commands[0].Command)
 	require.Equal(t, []string{"-Dsigning.password", "-Dsonar.token"}, scope.Commands[0].WithoutCIValues)
 
-	// A value that may select tests still requires review.
-	root = javaWorkflowFixture(t, "jobs:\n  tests:\n    steps:\n      - run: mvn -B verify -Dgroups=${{ secrets.GROUPS }}\n", nil)
-	scope, err = DiscoverValidationScope(root, "junit5")
-	require.NoError(t, err)
-	require.NotEmpty(t, scope.Unresolved)
+	// A value that may select tests still requires review, whatever the
+	// secret's name.
+	for _, secret := range []string{"GROUPS", "TEST_TOKEN"} {
+		root = javaWorkflowFixture(t, "jobs:\n  tests:\n    steps:\n      - run: mvn -B verify -Dgroups=${{ secrets."+secret+" }}\n", nil)
+		scope, err = DiscoverValidationScope(root, "junit5")
+		require.NoError(t, err)
+		require.NotEmpty(t, scope.Unresolved, secret)
+	}
+}
+
+func TestJavaReplayKeepsTheJobsJVMOptions(t *testing.T) {
+	java := javaDiscovery{}
+	for key, tc := range map[string]struct{ value, replay string }{
+		"JAVA_TOOL_OPTIONS": {`-Dname="a b" -Ddd.service="my service" -Xmx256m`, `-Dname="a b" -Xmx256m`},
+		"JAVA_OPTS":         {"-javaagent:dd-java-agent.jar -Ddd.civisibility.agentless.url=https://ci.example -Xmx1g", "-javaagent:dd-java-agent.jar -Xmx1g"},
+	} {
+		replay, replaced, err := java.variantValue(ciWorkflow{}, runtimeJob{}, runtimeStep{}, nil, key, tc.value)
+		require.NoError(t, err, key)
+		require.True(t, replaced, key)
+		require.Equal(t, tc.replay, replay, "the quoted option stays one option and CI's agent settings are dropped: %s", key)
+	}
+	_, _, err := java.variantValue(ciWorkflow{}, runtimeJob{}, runtimeStep{}, nil, "MAVEN_OPTS", "-Xmx1g -Ddd.civisibility.enabled=false")
+	require.ErrorContains(t, err, "explicitly disabled by -Ddd.civisibility.enabled=false in MAVEN_OPTS", "a disabled CI job is never certified")
 }
 
 func TestJavaReleaseGoalsWithUnreadValuesRunNoTests(t *testing.T) {

@@ -72,7 +72,8 @@ func TestHandWrittenJavaSetups(t *testing.T) {
 		{name: "not enabled", env: with(agentless, "DD_CIVISIBILITY_ENABLED", ""), command: "mvn test", problem: "set DD_CIVISIBILITY_ENABLED=true"},
 		{name: "literal key", env: with(agentless, "DD_API_KEY", "0123456789abcdef"), command: "mvn test", problem: "never commit the key"},
 		{name: "Gradle reads no MAVEN_OPTS", command: "./gradlew test", files: gradleBuild, problem: "this job runs Gradle, which does not read it"},
-		{name: "Gradle JVM arguments", env: with(agentless, "MAVEN_OPTS", ""), command: "./gradlew test -Dorg.gradle.jvmargs=-javaagent:dd-java-agent.jar", files: gradleBuild, reference: "hand-written dd-java-agent 1.67.1 setup (org.gradle.jvmargs)"},
+		{name: "Gradle JVM arguments", env: with(agentless, "MAVEN_OPTS", ""), command: "./gradlew test -Dorg.gradle.jvmargs=-javaagent:dd-java-agent.jar", files: gradleBuild, reference: "hand-written dd-java-agent 1.67.1 setup (org.gradle.jvmargs)", unresolved: "which local validation cannot remove from the build"},
+		{name: "APM tracing off", env: with(agentless, "DD_TRACE_ENABLED", "false"), command: "mvn test", reference: "hand-written dd-java-agent 1.67.1 setup (MAVEN_OPTS)"},
 		{name: "test JVMs only", env: with(agentless, "MAVEN_OPTS", ""), command: "mvn test -DargLine=-javaagent:dd-java-agent.jar", unresolved: "-DargLine attaches dd-java-agent to the forked test JVMs only"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

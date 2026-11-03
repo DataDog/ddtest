@@ -95,7 +95,7 @@ func (javaDiscovery) variantValue(workflow ciWorkflow, job runtimeJob, _ runtime
 	if slices.Contains(javaDeployCredentials(job), key) {
 		return "", true, nil
 	}
-	if key != "MAVEN_OPTS" && key != "GRADLE_OPTS" && key != "JAVA_TOOL_OPTIONS" {
+	if key != "MAVEN_OPTS" && key != "GRADLE_OPTS" && key != "JAVA_TOOL_OPTIONS" && key != "JAVA_OPTS" {
 		return value, false, nil
 	}
 	inherited := strings.NewReplacer("${{ env."+key+" }}", "", "${{env."+key+"}}", "").Replace(value)
@@ -106,6 +106,10 @@ func (javaDiscovery) variantValue(workflow ciWorkflow, job runtimeJob, _ runtime
 	// job's own options, is local validation's too, and so are the -Ddd.*
 	// properties a hand-written setup configures CI's agent with, as its
 	// DD_* variables: they would send the local agent's reports elsewhere.
+	// One that turns Test Optimization off in CI is never removed unseen.
+	if value := javaHandWrittenProperties(inherited)["DD_CIVISIBILITY_ENABLED"]; handWrittenFalse(value) {
+		return "", false, fmt.Errorf("CI instrumentation is explicitly disabled by -Ddd.civisibility.enabled=%s in %s", value, key)
+	}
 	return javaWithoutAgentProperties(strings.TrimSpace(strings.ReplaceAll(inherited, javaInstallerAgent, ""))), true, nil
 }
 
@@ -113,7 +117,7 @@ func (javaDiscovery) variantValue(workflow ciWorkflow, job runtimeJob, _ runtime
 // options, keeping those of tracer plugin settings, which change test
 // behavior as their DD_* variables do (see TracerPluginSetting).
 func javaWithoutAgentProperties(options string) string {
-	words := strings.Fields(options)
+	words := javaOptionWords(options)
 	kept := slices.DeleteFunc(slices.Clone(words), func(word string) bool {
 		key, _, ok := javaAgentProperty(word)
 		return ok && !TracerPluginSetting(key)

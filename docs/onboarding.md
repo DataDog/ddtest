@@ -1828,7 +1828,10 @@ Validation runs only the Maven test lifecycle up to `verify`: a CI step such as
 `mvn clean install` is validated as `mvn clean verify`, other goals are reported
 and left out, and `--command` refuses `install`, `deploy` and other goals, as
 validation does for goals in `MAVEN_ARGS` or `.mvn/maven.config`, so `~/.m2`
-artifacts are never overwritten and nothing is published. A dd-java-agent that
+artifacts are never overwritten and nothing is published. Every run passes
+`-Dgpg.skip=true`, since signing in `verify` needs CI's key, and
+`-D<property>=false` for a property that only turns Surefire's XML reports off,
+which validation reads. A dd-java-agent that
 `MAVEN_OPTS` or `JAVA_TOOL_OPTIONS` already attaches, as after the Datadog setup,
 is removed from both runs; the reporting run attaches only the selected agent.
 Validation refuses a dd-java-agent in `.mvn/jvm.config`, which no run could

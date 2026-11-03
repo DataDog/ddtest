@@ -189,10 +189,10 @@ func TestJavaRunsWriteTheXMLReportsAPropertyTurnsOff(t *testing.T) {
 	build, err := drive.javaBuild([]string{"verify"})
 	require.NoError(t, err)
 	args := []string{"verify"}
-	require.Equal(t, []string{"verify", "-DcloseTestReports=false"}, build.arguments(args, nil), "validation reads the reports")
+	require.Equal(t, []string{"verify", "-DcloseTestReports=false", "-Dgpg.skip=true"}, build.arguments(args, nil), "validation reads the reports and signs nothing")
 	require.Equal(t, []string{"verify"}, args)
 	probe := &javaProbe{args: []string{"-Dtest=" + javaProbeClass}}
-	require.Equal(t, []string{"test", "-Dtest=" + javaProbeClass, "-DcloseTestReports=false"}, build.arguments(args, probe), "probe runs read them too")
+	require.Equal(t, []string{"test", "-Dtest=" + javaProbeClass, "-DcloseTestReports=false", "-Dgpg.skip=true"}, build.arguments(args, probe), "probe runs read them too")
 }
 
 func TestJavaRefusesADatadogAgentInJVMConfig(t *testing.T) {

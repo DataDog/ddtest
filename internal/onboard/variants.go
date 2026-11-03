@@ -527,21 +527,21 @@ func ciControlVariable(key string) bool {
 // -Dsonar.token= or -Pgpg.passphrase=", with the option's property.
 var jvmOptionPrefix = regexp.MustCompile(`(?:^|[\s"'=])(-[DP]([\w.-]+))=["']?$`)
 
-// ciOnlyOption reports whether a value ddtest cannot resolve, named name,
-// that follows text, is one a JVM option passes only to signing, publishing
-// or reporting: a credential, as -Dgpg.passphrase=$GPG_PASSPHRASE or
-// -Dsonar.token=${{ secrets.SONAR }}, whose property or value name is a
-// credential's, or a Sonar scanner setting, as
+// ciOnlyOption reports whether a value ddtest cannot resolve that follows
+// text is one a JVM option passes only to signing, publishing or reporting:
+// the option's property names a credential, as
+// -Dgpg.passphrase=$GPG_PASSPHRASE, or a Sonar scanner setting, as
 // -Dsonar.host.url=$SONAR_HOST_URL. Such a value selects no tests, so
 // validation runs with it empty; option is the flag, as -Dgpg.passphrase.
-func ciOnlyOption(text, name string) (option string, ok bool) {
+// The value's own name never qualifies it: -Dgroups=${{ secrets.TEST_TOKEN }}
+// still selects tests.
+func ciOnlyOption(text string) (option string, ok bool) {
 	match := jvmOptionPrefix.FindStringSubmatch(text)
 	if match == nil {
 		return "", false
 	}
 	property := strings.NewReplacer(".", "_", "-", "_").Replace(match[2])
-	last := name[strings.LastIndexAny(name, ".")+1:]
-	return match[1], strings.HasPrefix(match[2], "sonar.") || credentialName.MatchString(property) || credentialName.MatchString(last)
+	return match[1], strings.HasPrefix(match[2], "sonar.") || credentialName.MatchString(property)
 }
 
 // withoutCIOnlyOptions empties the CI expressions JVM options pass in run
@@ -551,8 +551,7 @@ func withoutCIOnlyOptions(run string, without []string) (string, []string) {
 	var text strings.Builder
 	last := 0
 	for _, match := range workflowExpression.FindAllStringIndex(run, -1) {
-		name := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(run[match[0]:match[1]], "${{"), "}}"))
-		option, ok := ciOnlyOption(run[:match[0]], name)
+		option, ok := ciOnlyOption(run[:match[0]])
 		if !ok {
 			continue
 		}

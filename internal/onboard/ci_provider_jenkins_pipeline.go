@@ -502,7 +502,7 @@ func (r *jenkinsReader) interpolate(node *groovyString, scope jenkinsScope) (str
 			problem = "${" + part.expr + "}, which only the Jenkins build knows"
 		}
 		if problem != "" && r.ciOnly != nil {
-			if option, ok := ciOnlyOption(text.String(), strings.TrimPrefix(part.expr, "env.")); ok {
+			if option, ok := ciOnlyOption(text.String()); ok {
 				*r.ciOnly = append(*r.ciOnly, option)
 				continue
 			}

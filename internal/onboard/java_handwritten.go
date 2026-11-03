@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"unicode"
 
 	"github.com/DataDog/ddtest/internal/gradle"
 )
@@ -109,6 +110,8 @@ func javaHandWrittenSetup(root string, provider ciProvider, workflow ciWorkflow,
 	switch {
 	case carrier.name == "argLine":
 		setup.unresolved("-DargLine attaches dd-java-agent to the forked test JVMs only, not to the Maven build that Datadog's documented setup instruments (MAVEN_OPTS), so ddtest cannot tell whether it reports the build's test sessions and modules.")
+	case tool == javaGradle && (carrier.name == "org.gradle.jvmargs" || carrier.name == "gradle.properties"):
+		setup.unresolved(carrier.name + " attaches dd-java-agent through org.gradle.jvmargs, which local validation cannot remove from the build, so it cannot run the build without CI's agent; attach the agent through GRADLE_OPTS or JAVA_TOOL_OPTIONS to validate this setup.")
 	case carrier.name == ".mvn/jvm.config":
 		setup.unresolved(".mvn/jvm.config attaches dd-java-agent to every Maven build, local ones included, so local validation cannot run the build without it.")
 	case tool == javaGradle && (carrier.name == "MAVEN_OPTS"):
@@ -122,15 +125,18 @@ func javaHandWrittenSetup(root string, provider ciProvider, workflow ciWorkflow,
 	}
 	// -Ddd.* system properties in the agent's options configure it like
 	// DD_* variables, and take precedence over them.
-	handWrittenConfiguration(setup, provider, job, mergeEnvironment(commandEnv, javaHandWrittenProperties(carrier.value)), site, false, reportingFromEnvironment)
+	configuration := mergeEnvironment(commandEnv, javaHandWrittenProperties(carrier.value))
+	// dd-java-agent reports tests with APM tracing off.
+	delete(configuration, "DD_TRACE_ENABLED")
+	handWrittenConfiguration(setup, provider, job, configuration, site, false, reportingFromEnvironment)
 	return setup
 }
 
 // javaHandWrittenAgent is the dd-java-agent JAR a JVM option list attaches
 // (-javaagent:<path>), empty when it attaches none.
 func javaHandWrittenAgent(options string) string {
-	for _, word := range strings.Fields(options) {
-		jar, ok := strings.CutPrefix(strings.Trim(word, `"'`), "-javaagent:")
+	for _, word := range javaOptionWords(options) {
+		jar, ok := strings.CutPrefix(javaUnquoted(word), "-javaagent:")
 		if !ok {
 			continue
 		}
@@ -147,7 +153,7 @@ func javaHandWrittenAgent(options string) string {
 // DD_CIVISIBILITY_ENABLED.
 func javaHandWrittenProperties(options string) map[string]string {
 	properties := map[string]string{}
-	for _, word := range strings.Fields(options) {
+	for _, word := range javaOptionWords(options) {
 		if key, value, ok := javaAgentProperty(word); ok {
 			properties[key] = value
 		}
@@ -155,11 +161,47 @@ func javaHandWrittenProperties(options string) map[string]string {
 	return properties
 }
 
+// javaOptionWords splits JVM options as the JVM reads JAVA_TOOL_OPTIONS:
+// on whitespace outside quotes, so -Ddd.service="my service" is one option,
+// each kept as written.
+func javaOptionWords(options string) []string {
+	var words []string
+	start, quote := -1, rune(0)
+	for i, r := range options {
+		switch {
+		case quote != 0:
+			if r == quote {
+				quote = 0
+			}
+		case unicode.IsSpace(r):
+			if start >= 0 {
+				words, start = append(words, options[start:i]), -1
+			}
+		default:
+			if r == '"' || r == '\'' {
+				quote = r
+			}
+			if start < 0 {
+				start = i
+			}
+		}
+	}
+	if start >= 0 {
+		words = append(words, options[start:])
+	}
+	return words
+}
+
+// javaUnquoted is a JVM option without the quotes the JVM removes.
+func javaUnquoted(word string) string {
+	return strings.NewReplacer(`"`, "", `'`, "").Replace(word)
+}
+
 // javaAgentProperty reads a JVM option that sets a dd-java-agent system
 // property, -Ddd.<name>=<value>, as the DD_* variable it stands for and its
 // value; ok is false for any other option.
 func javaAgentProperty(word string) (key, value string, ok bool) {
-	property, ok := strings.CutPrefix(strings.Trim(word, `"'`), "-Ddd.")
+	property, ok := strings.CutPrefix(javaUnquoted(word), "-Ddd.")
 	if !ok {
 		return "", "", false
 	}
