@@ -890,6 +890,7 @@ func checkPythonCIRuntimes(ctx context.Context, root, localVersion, site string,
 				// expired is the source of a shell-local setup whose shell
 				// ended before the step (see ciSetup.shellLocal).
 				expired := ""
+				restorePath := pythonRestoredPaths(provider, workflow, job, row)
 				skipped, stated := false, false
 				if !shared {
 					// Outside GitHub Actions the job's image selects its Python,
@@ -1005,7 +1006,7 @@ func checkPythonCIRuntimes(ctx context.Context, root, localVersion, site string,
 						}
 					}
 					commands, commandsErr := pythonStepCommands(resolved.Run)
-					pathEdit := pythonInlinePathEdit(provider, commands)
+					pathEdit := pythonInlinePathEdit(provider, commands, restorePath[i])
 					finding.pathEdit = pathEdit
 					switch {
 					case conditionErr != nil:
@@ -1127,6 +1128,49 @@ func checkPythonCIRuntimes(ctx context.Context, root, localVersion, site string,
 		}
 	}
 	return result
+}
+
+// pythonRestoredPaths reports, for each step of job on row, whether the
+// export its PYTHONPATH rewrite adds must be undone after its command (see
+// pythonInlinePathEdit): the commands of the shell it runs in (on CircleCI,
+// of the job, which $BASH_ENV reaches) set different paths, and each keeps
+// its own.
+func pythonRestoredPaths(provider ciProvider, workflow ciWorkflow, job runtimeJob, row map[string]any) []bool {
+	restore := make([]bool, len(job.Steps))
+	if provider.sharedSyntax() {
+		return restore
+	}
+	start := 0
+	var values []string
+	end := func(next int) {
+		for i := start; i < next; i++ {
+			restore[i] = len(values) > 1
+		}
+		start, values = next, nil
+	}
+	for i, step := range job.Steps {
+		if i > 0 && !step.sameShell && provider.name() != circleCIProvider {
+			end(i)
+		}
+		if active, err := stepCondition(step, row, conditionEnvironment(workflow, job, step, row)); err == nil && !active {
+			continue
+		}
+		resolved, _, err := resolveVariantStep(workflow, job, step, row, "pytest")
+		if err != nil {
+			continue
+		}
+		commands, err := pythonStepCommands(resolved.Run)
+		if err != nil {
+			continue
+		}
+		for _, value := range pythonInlinePathValues(commands) {
+			if !slices.Contains(values, value) {
+				values = append(values, value)
+			}
+		}
+	}
+	end(len(job.Steps))
+	return restore
 }
 
 // pythonUnsupportedRuntime reports a static Python the release local
