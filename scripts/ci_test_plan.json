@@ -1,0 +1,114 @@
+{
+  "ignored": ["docs/**", "README.md", "AGENTS.md", "ddto/docs/**", "ddto/README.md"],
+  "shared": ["internal/testdrive/jest*.go"],
+  "always_run": [
+    "test-support", "test-shards", "test", "test-ddtest-instrument-shards",
+    "test-ddtest-instrument", "lint", "windows-probe-diagnostics",
+    "onboarding-evaluator-isolation", "integration-plan", "integration-evidence"
+  ],
+  "suites": {
+    "python": {
+      "jobs": ["pytest-compatibility", "testdrive-language-workflow"],
+      "inputs": [
+        "internal/compatibility/pytest*", "internal/framework/pytest*",
+        "internal/platform/python*", "internal/platform/scripts/python_*",
+        "internal/onboard/python*", "internal/onboard/instructions/pytest.md",
+        "internal/testdrive/python*", "internal/testdrive/pytest*",
+        "internal/testdrive/scripts/pytest_*"
+      ]
+    },
+    "ruby": {
+      "jobs": ["rspec-compatibility", "minitest-compatibility", "ruby-testdrive"],
+      "inputs": [
+        "internal/compatibility/rspec*", "internal/compatibility/minitest*",
+        "internal/framework/rspec*", "internal/framework/minitest*",
+        "internal/platform/ruby*", "internal/platform/scripts/ruby_*",
+        "internal/onboard/ruby*", "internal/onboard/instructions/ruby*",
+        "internal/onboard/python_ruby_parity_test.go",
+        "internal/testdrive/ruby*", "internal/testdrive/scripts/ruby_*",
+        "internal/testdrive/python_ruby_parity_test.go"
+      ]
+    },
+    "java": {
+      "jobs": ["java-testdrive"],
+      "inputs": [
+        "internal/framework/jvm*", "internal/platform/java*", "internal/gradle/**",
+        "internal/maven/**", "internal/onboard/java*", "internal/onboard/instructions/java*",
+        "internal/testdrive/java*"
+      ]
+    },
+    "javascript": {
+      "jobs": ["javascript-platform-compatibility"],
+      "inputs": [
+        "internal/platform/javascript*", "internal/platform/node_options*",
+        "internal/platform/scripts/javascript*", "internal/framework/javascript*",
+        "internal/onboard/javascript*", "internal/onboard/node_*"
+      ]
+    },
+    "jest": {
+      "jobs": ["jest-compatibility", "jest-testdrive-workflow"],
+      "depends_on": ["javascript"],
+      "inputs": ["internal/compatibility/jest*", "internal/framework/jest*", "internal/onboard/jest*", "internal/testdrive/jest*"]
+    },
+    "vitest": {
+      "jobs": ["vitest-compatibility", "testdrive-vitest-workflow"],
+      "depends_on": ["javascript"],
+      "inputs": [
+        "internal/compatibility/vitest*", "internal/framework/vitest*", "internal/framework/scripts/vitest*",
+        "internal/onboard/vitest*", "internal/onboard/instructions/vitest.md",
+        "internal/testdrive/vitest*", "internal/testdrive/scripts/vitest*"
+      ]
+    },
+    "mocha": {
+      "jobs": ["mocha-compatibility", "testdrive-mocha-workflow"],
+      "depends_on": ["javascript"],
+      "inputs": [
+        "internal/compatibility/mocha*", "internal/framework/mocha*", "internal/framework/scripts/mocha*",
+        "internal/onboard/mocha*", "internal/onboard/instructions/mocha.md",
+        "internal/testdrive/mocha*", "internal/testdrive/scripts/mocha*"
+      ]
+    },
+    "cypress": {
+      "jobs": ["cypress-compatibility", "testdrive-cypress-workflow"],
+      "depends_on": ["javascript"],
+      "inputs": [
+        "internal/compatibility/cypress*", "internal/framework/cypress*", "internal/framework/scripts/cypress*",
+        "internal/onboard/cypress*", "internal/onboard/instructions/cypress.md",
+        "internal/testdrive/cypress*", "internal/testdrive/scripts/cypress*"
+      ]
+    },
+    "playwright": {
+      "jobs": ["playwright-compatibility", "playwright-latest", "testdrive-playwright-workflow"],
+      "depends_on": ["javascript"],
+      "inputs": [
+        "internal/compatibility/playwright*", "internal/framework/playwright*", "internal/framework/scripts/playwright*",
+        "internal/onboard/playwright*", "internal/onboard/instructions/playwright.md",
+        "internal/testdrive/playwright*", "internal/testdrive/scripts/playwright*"
+      ]
+    },
+    "cucumber": {
+      "jobs": ["cucumber-compatibility", "testdrive-cucumber-workflow"],
+      "depends_on": ["javascript"],
+      "inputs": [
+        "internal/compatibility/cucumber*", "internal/framework/cucumber*",
+        "internal/onboard/cucumber*", "internal/onboard/instructions/cucumber.md",
+        "internal/testdrive/cucumber*", "internal/testdrive/scripts/cucumber*"
+      ]
+    },
+    "webdriverio": {
+      "jobs": ["testdrive-webdriverio-workflow"],
+      "depends_on": ["javascript"],
+      "inputs": [
+        "internal/framework/webdriverio*", "internal/framework/scripts/webdriverio*", "internal/platform/webdriverio*",
+        "internal/onboard/webdriverio*", "internal/onboard/instructions/webdriverio.md",
+        "internal/testdrive/webdriverio*"
+      ]
+    },
+    "onboarding": {
+      "jobs": ["onboard-apply-workflow"],
+      "depends_on": ["javascript", "vitest", "mocha", "cucumber", "webdriverio"],
+      "inputs": ["internal/testdrive/apply*"],
+      "additional_inputs": ["internal/onboard/**"]
+    }
+  }
+}

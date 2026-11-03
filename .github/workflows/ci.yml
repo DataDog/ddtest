@@ -6,6 +6,29 @@ on:
       - "**"
 
 jobs:
+  # Shadow mode: source decisions never gate the existing test jobs. Only a
+  # successful main run may become the baseline for a later source comparison.
+  integration-plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Compare integration inputs with passed main evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 scripts/ci_test_plan.py --github-baseline \
+            --output "$RUNNER_TEMP/plan.json" --summary "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ci-integration-shadow-plan
+          path: ${{ runner.temp }}/plan.json
+          if-no-files-found: error
+          retention-days: 14
+
   test-support:
     runs-on: ubuntu-latest
     steps:
@@ -1099,3 +1122,42 @@ jobs:
           echo "DDTEST_EVAL_TEST_IMAGE=$(docker image inspect --format '{{.Id}}' ddtest-eval-offline)" >> "$GITHUB_ENV"
       - name: Verify environment, signals and detached process isolation
         run: python -m unittest discover -s skills/ddtest-onboarding-eval/scripts -p test_container.py -v
+
+  # Publish exactly the source plan whose full integration matrix just passed.
+  # A skipped, failed or cancelled matrix must never certify those inputs.
+  integration-evidence:
+    if: ${{ always() }}
+    needs: [integration-plan, rspec-compatibility, minitest-compatibility,
+            pytest-compatibility, javascript-platform-compatibility, jest-compatibility,
+            vitest-compatibility, mocha-compatibility, cypress-compatibility,
+            playwright-compatibility, cucumber-compatibility, jest-testdrive-workflow,
+            testdrive-language-workflow, ruby-testdrive, java-testdrive,
+            testdrive-vitest-workflow, onboard-apply-workflow, testdrive-mocha-workflow,
+            playwright-latest, testdrive-playwright-workflow, testdrive-cypress-workflow,
+            testdrive-cucumber-workflow, testdrive-webdriverio-workflow]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require the complete integration matrix
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          failed = {name: job["result"] for name, job in json.loads(os.environ["RESULTS"]).items()
+                    if job["result"] != "success"}
+          if failed:
+              raise SystemExit(f"Integration evidence incomplete: {failed}")
+          PY
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: github.ref == 'refs/heads/main'
+        with:
+          name: ci-integration-shadow-plan
+          path: ${{ runner.temp }}/integration-evidence
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: github.ref == 'refs/heads/main'
+        with:
+          name: ci-integration-source-evidence-v1
+          path: ${{ runner.temp }}/integration-evidence/plan.json
+          if-no-files-found: error
+          retention-days: 30
