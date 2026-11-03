@@ -94,6 +94,9 @@ type RuntimeFinding struct {
 	// handWritten is the setup the job writes by hand before this entry,
 	// when no provider setup precedes it (see handWrittenSetup).
 	handWritten *handWrittenSetup
+	// pathEdit is the exact edit a pytest command needs to keep the setup's
+	// PYTHONPATH (see pythonInlinePathEdit), with or without the setup.
+	pathEdit string
 }
 
 // A composite call's condition sees the caller's environment and string inputs,
@@ -142,6 +145,11 @@ type runtimeStep struct {
 	// origin is the provider's private reference to the step's source, for
 	// prescribed edits.
 	origin any
+	// sameShell marks a step that runs in the shell of the step before it:
+	// a later statement of a script a provider splits into steps (GitLab CI
+	// script entries, a Buildkite step's commands, a Jenkins sh). Every other
+	// step starts a new shell, as GitHub Actions and CircleCI steps do.
+	sameShell bool
 	// windowsShell marks a step written for a Windows-only shell (Windows
 	// PowerShell) that is resolved as bash: its runner is Windows.
 	windowsShell bool

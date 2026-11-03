@@ -97,10 +97,10 @@ func newOnboardCommand(run func(io.Writer) error) *cobra.Command {
 					}
 					return onboard.ApplyPluginSetup(cmd.OutOrStdout(), startOptions(), onboard.PluginApplyOptions{Preview: !yes, AllowDirty: allowDirty, Text: !structured, Display: testdrive.FrameworkDisplayName})
 				}
-				if detected.Name() != "javascript" && testdrive.Coordinated(detected.Name()) || detected.Name() == "javascript" && !onboard.CIProviderEditsSetup() {
+				if detected.Name() != "javascript" && testdrive.StructuredValidation(detected.Name()) || detected.Name() == "javascript" && !onboard.CIProviderEditsSetup() {
 					// ddtest writes no CI setup for this language, or on this
 					// provider; the agent applies it from the handoff, which then
-					// resumes coordinated validation.
+					// resumes validation (standalone for Python).
 					return start()
 				}
 				if detected.Name() != "javascript" {

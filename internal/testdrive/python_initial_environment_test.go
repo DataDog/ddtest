@@ -50,3 +50,28 @@ func TestPreparePythonInspectsEffectiveCommandEnvironment(t *testing.T) {
 		})
 	}
 }
+
+// An explicit --site reaches plain (non-workflow) validation too, whose CI
+// check compares the setup's site with it.
+func TestPrepareKeepsTheSelectedSite(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX executable fixture")
+	}
+	root := t.TempDir()
+	t.Chdir(root)
+	t.Setenv("PATH", root)
+	t.Setenv("DD_SITE", "")
+	requireWriteFile(t, "pyproject.toml", "[tool.pytest.ini_options]\n")
+	metadata, err := json.Marshal(map[string]any{"executable": filepath.Join(root, ".venv", "bin", "python"), "version": "3.12.8", "pytest": true})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile("uv", []byte("#!/bin/sh\nfor last; do :; done\nprintf '%s' '"+string(metadata)+"' > \"$last\"\n"), 0755))
+	old := settings.Get().Command
+	settings.Get().Command = "uv run pytest"
+	t.Cleanup(func() { settings.Get().Command = old })
+	drive, err := Prepare(PrepareOptions{CheckOnly: true, TracerVersion: "4.16.1", Site: "datadoghq.eu"})
+	require.NoError(t, err)
+	require.Equal(t, "datadoghq.eu", drive.selectedSite)
+	drive, err = Prepare(PrepareOptions{CheckOnly: true, TracerVersion: "4.16.1"})
+	require.NoError(t, err)
+	require.Empty(t, drive.selectedSite)
+}

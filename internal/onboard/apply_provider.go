@@ -718,6 +718,18 @@ func directLeafReason(provider ciProvider, framework, leaf, command string, conf
 	return "CI runs " + leaf + " directly, not through a package script, so the command itself must read the tracer's preload from " + scopedEnvironment(framework) + ", as a scoped package script does. Change this CI command to exactly: " + command + ". Then rerun onboard --apply: " + edit
 }
 
+// outsideTestJobs reports whether the language tells that job runs none of
+// framework's tests (see discoveryLanguage.jobConsumer), as scope discovery
+// reads it; such a job needs neither the setup nor the user's answers.
+func outsideTestJobs(root string, workflow ciWorkflow, job runtimeJob, language, framework string) bool {
+	registered := discoveryLanguageNamed(language)
+	if registered == nil {
+		return false
+	}
+	consumer, handled := registered.jobConsumer(root, workflow, job, framework)
+	return handled && !consumer
+}
+
 // providerSetupConfigured reports whether, on a provider without the shared
 // workflow syntax, a complete setup for language (see
 // ciProvider.setupProblem) precedes the first test command of every job that
@@ -733,7 +745,7 @@ func providerSetupConfigured(root string, provider ciProvider, language, framewo
 	for _, workflow := range workflows {
 		for _, name := range slices.Sorted(maps.Keys(workflow.Jobs)) {
 			job := workflow.Jobs[name]
-			if disabledCondition(job.If) {
+			if disabledCondition(job.If) || outsideTestJobs(root, workflow, job, language, framework) {
 				continue
 			}
 			var setup *ciSetup
@@ -789,7 +801,7 @@ func existingSetupProblems(root, language, framework, site string) []string {
 	for _, workflow := range workflows {
 		for _, name := range slices.Sorted(maps.Keys(workflow.Jobs)) {
 			job := workflow.Jobs[name]
-			if disabledCondition(job.If) {
+			if disabledCondition(job.If) || outsideTestJobs(root, workflow, job, language, framework) {
 				continue
 			}
 			var setup *ciSetup

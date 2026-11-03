@@ -583,9 +583,20 @@ func otherLanguageSetupExport(current discoveryLanguage, key string) (string, bo
 		if value, ok := exported[key]; ok && value != "" {
 			return value, true
 		}
+		// A setup that changes key only where the job already set it, as
+		// Python's installer puts its tracer path before the job's
+		// PYTHONPATH, adds what surrounds the job's value.
+		exported, _ = language.setupShellExports(map[string]string{key: setupExportProbe})
+		if before, after, found := strings.Cut(exported[key], setupExportProbe); found && strings.TrimSpace(before+after) != "" {
+			return strings.TrimSpace(before + after), true
+		}
 	}
 	return "", false
 }
+
+// setupExportProbe stands for the job's own value of a variable when
+// otherLanguageSetupExport asks a setup what it adds to it.
+const setupExportProbe = "\x00job\x00"
 
 // readsKeptRuntimeVariable reports a word that reads such a variable.
 func readsKeptRuntimeVariable(word *syntax.Word) bool {

@@ -568,7 +568,14 @@ func finishValidation(output io.Writer, repositoryRoot string, result validation
 		}
 		_, _ = fmt.Fprintf(output, "Feature %s: %s — %s\n", label, feature.Status, feature.Reason)
 	}
-	_, _ = fmt.Fprintf(output, "\nValidation verdict: %s\nLocal validation: %s\n", result.Summary.Status, result.Summary.LocalValidation)
+	standalone := standaloneLanguage(result.Framework)
+	local := result.Summary.LocalValidation
+	if standalone && local == "PASSED" && result.Summary.Status != "PASSED" {
+		// Standalone output is what an agent reads: a bare PASSED beside an
+		// incomplete verdict was reported as success.
+		local += " (local checks only; they do not complete onboarding)"
+	}
+	_, _ = fmt.Fprintf(output, "\nValidation verdict: %s\nLocal validation: %s\n", result.Summary.Status, local)
 	if execution := result.Summary.ExecutedValidation; execution != nil {
 		_, _ = fmt.Fprintf(output, "Executed %s validations: %s — %s\n", displayName(result.Framework), execution.Status, execution.Reason)
 	}
@@ -607,6 +614,9 @@ func finishValidation(output io.Writer, repositoryRoot string, result validation
 		_, _ = fmt.Fprintf(output, "Kept the --all report %s: this run of one command is written beside it and does not replace it. Rerun --all to replace that report.\n", result.KeptReport)
 	}
 	_, _ = fmt.Fprintln(output, "Keep this JSON report and the HTML findings report after cleanup, including when validation fails.")
+	if standalone && !result.CheckOnly && result.Summary.FinalResponse != "" {
+		_, _ = fmt.Fprintf(output, "\nCoding agents: %s %s\nfinal_response:\n%s\n", onboard.FinalResponseInstruction, onboard.StandaloneVerdictInstruction(displayName(result.Framework)), strings.TrimRight(result.Summary.FinalResponse, "\n"))
+	}
 	if result.CheckOnly && result.ChecksPassed {
 		return nil
 	}

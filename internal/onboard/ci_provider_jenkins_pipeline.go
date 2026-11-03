@@ -2366,6 +2366,7 @@ func (r *jenkinsReader) shell(call *groovyCall, scope jenkinsScope, slot *jenkin
 	if state.references == nil {
 		state.references = map[string]string{}
 	}
+	state.markSetupExported(references)
 	for key, where := range scope.overrides {
 		if scope.setup != nil && scope.setup.covered[key] == where {
 			// Set where the option is: the plugin composes with it.
@@ -2404,7 +2405,7 @@ func (r *jenkinsReader) shell(call *groovyCall, scope jenkinsScope, slot *jenkin
 		stmt := file.Stmts[i]
 		known := mergeEnvironment(mergeEnvironment(env, state.env), state.references)
 		statement := strings.TrimSpace(jenkinsStatementText(script, file.Stmts, i))
-		step := runtimeStep{WorkingDirectory: state.directory, origin: jenkinsShellStep{call: call.Start, statement: int(stmt.Pos().Offset())}}
+		step := runtimeStep{WorkingDirectory: state.directory, origin: jenkinsShellStep{call: call.Start, statement: int(stmt.Pos().Offset())}, sameShell: i > 0}
 		if len(state.env) > 0 {
 			step.Env = maps.Clone(state.env)
 		}

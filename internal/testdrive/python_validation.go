@@ -171,7 +171,12 @@ pathlib.Path(sys.argv[1]).write_text(json.dumps(result))
 	} else {
 		check.Verdict.Status, check.Verdict.Reason = onboard.ComparePythonRequirement(metadata.Python, selection.RequiresPython)
 	}
-	ci := onboard.CheckPythonCIRuntimes(ctx, t.checkoutRoot(), selection.Version)
+	// Like onboarding, DD_SITE is the site the CI setup must report to.
+	site := t.selectedSite
+	if site == "" {
+		site = os.Getenv("DD_SITE")
+	}
+	ci := onboard.CheckPythonCIRuntimesForSite(ctx, t.checkoutRoot(), selection.Version, site)
 	if previous := result.CIRuntime; previous != nil && slices.ContainsFunc(previous.Review, func(finding onboard.RuntimeFinding) bool { return finding.Code == onboard.CodeNestedCIScope }) {
 		ci.Review = append(ci.Review, previous.Review...)
 		if ci.Status == onboard.StatusCompatible || ci.Status == onboard.StatusNotApplicable {

@@ -240,7 +240,7 @@ func StartWithOptions(output io.Writer, options StartOptions) error {
 			}
 		}
 	}
-	if !coordinatedLanguage(detected.Name()) {
+	if discoveryLanguageNamed(detected.Name()) == nil {
 		if options.Format != "" {
 			err := fmt.Errorf("controlled validation is not available for %s", detected.Name())
 			return errors.Join(err, WriteAgentResult(output, AgentResult{Status: "unsupported", Phase: "onboarding", Code: "framework_unsupported", Reason: err.Error(), NextAction: "report_result"}))
@@ -377,10 +377,22 @@ func manualSetupHandoff(output io.Writer, options StartOptions, language, framew
 		configured = "CI already sets up Test Optimization for every discovered " + framework + " test step, with the " + setup + " or a complete hand-written setup. "
 	}
 	if registered := discoveryLanguageNamed(language); handWrittenGap == nil && registered != nil && registered.ciSetupConfigured(root, framework, options.Site) {
+		if required := RequiredCIEdits(context.Background(), root, language, framework, false); required != nil {
+			// The setup is there, but a test command drops what it sets.
+			result := CIEditRequiredResult(required, command)
+			result.Capabilities = validationCapabilities
+			result.Reason += " " + AgentScope + " " + notice
+			return errors.Join(required, WriteAgentResult(output, result))
+		}
+		owns := " ddtest owns testdrive, report-exclusion checks and cleanup, and returns exact blockers for unsupported setup."
+		if !registered.coordinated() {
+			// Standalone validation checks no report exclusions.
+			owns = " Before next_command, " + strings.ToLower(GitReportExclusion[:1]) + GitReportExclusion[1:] + " ddtest owns testdrive and cleanup, and returns exact blockers for unsupported setup. It returns one structured result: when it asks the user (next_action ask_user), stop and ask them; finish by rendering its final_response unchanged. " + StandaloneVerdictInstruction(framework)
+		}
 		return WriteAgentResult(output, AgentResult{
 			Status: "ready", Phase: "onboarding", NextAction: "run_command", NextCommand: command,
 			Capabilities: validationCapabilities,
-			Reason:       strings.TrimSpace(configured + foregroundRunInstruction + " " + AgentScope + " " + validationWaitInstruction + " ddtest owns testdrive, report-exclusion checks and cleanup, and returns exact blockers for unsupported setup. No Datadog key is required locally. Do not launch a parallel preflight first. " + notice),
+			Reason:       strings.TrimSpace(configured + foregroundRunInstruction + " " + AgentScope + " " + validationWaitInstruction + owns + " No Datadog key is required locally. Do not launch a parallel preflight first. " + notice),
 		})
 	}
 	scope, err := DiscoverValidationScope(root, framework)
@@ -439,6 +451,9 @@ func manualSetupHandoff(output io.Writer, options StartOptions, language, framew
 	} else if edit := pluginSetupEditFirst(root, framework); edit != "" && !discoveryLanguageAutomaticSetup(language) {
 		reason += "onboard --apply writes the CI configuration's part of this setup once one edit is made (" + edit + "): make it as the instructions show, then rerun onboard --agent. "
 	}
+	if required := RequiredCIEdits(context.Background(), root, language, framework, true); required != nil {
+		reason += "With the setup, make exactly these edits to the test commands: " + strings.Join(ciEditList(required), " ") + " "
+	}
 	if len(unresolved) > 0 {
 		reason += fmt.Sprintf("%d CI step(s) listed as unresolved scope in agent_instruction cannot be validated and will remain blockers; tell the user now that they need a scope decision. %s ", len(unresolved), ScopeBlockerInstruction)
 	}
@@ -490,6 +505,13 @@ const ReadWholeInstruction = "Each result is one bounded JSON document: read it 
 // FinalResponseInstruction keeps the agent's answer factual: trials showed
 // paraphrases turning an incomplete verdict into a completion claim.
 const FinalResponseInstruction = "Begin your answer with final_response exactly, as its first block, and add context only after it. When it starts with NOT COMPLETE, do not call onboarding complete or successful, and do not record that result as expected or final in notes or memory."
+
+// StandaloneVerdictInstruction states what a standalone validation's verdict
+// certifies, after FinalResponseInstruction: trials called a pytest PASSED,
+// and an incomplete report beside a passing local validation, done.
+func StandaloneVerdictInstruction(framework string) string {
+	return framework + " validation is standalone: its passing verdict is PASSED, never COMPLETE LOCALLY, and only COMPLETE LOCALLY certifies onboarding as complete. Report a PASSED verdict as validated locally, in final_response's words; do not call onboarding done, complete or successful."
+}
 
 // humanOnboardingHandoff points at the preview, which writes nothing, before
 // the command that applies the edits and runs local validation.

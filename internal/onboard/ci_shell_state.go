@@ -48,6 +48,11 @@ type ciShellState struct {
 	env map[string]string
 	// references are values later entries may expand without exporting.
 	references map[string]string
+	// setupExported names the references a setup exported into the shell,
+	// such as the installer's PYTEST_ADDOPTS: their values stay out of
+	// local replay, but a later plain assignment changes the tests'
+	// environment.
+	setupExported map[string]bool
 	// job are the job's variables, which the shell exports.
 	job       map[string]string
 	directory string
@@ -69,6 +74,18 @@ func (s *ciShellState) applySetup(setup ciSetup, current map[string]string) {
 		exported, references := language.setupShellExports(mergeEnvironment(current, s.env))
 		maps.Copy(s.env, exported)
 		maps.Copy(s.references, references)
+		s.markSetupExported(references)
+	}
+}
+
+// markSetupExported records variables a setup exported whose values stay
+// references.
+func (s *ciShellState) markSetupExported(references map[string]string) {
+	for name := range references {
+		if s.setupExported == nil {
+			s.setupExported = map[string]bool{}
+		}
+		s.setupExported[name] = true
 	}
 }
 
@@ -308,7 +325,7 @@ func (s *ciShellState) assign(assigns []*syntax.Assign, known map[string]string,
 		// A plain assignment stays in the shell unless the variable is
 		// already exported, as the job's variables are.
 		_, exported := s.env[name]
-		if _, inJob := s.job[name]; inJob {
+		if _, inJob := s.job[name]; inJob || s.setupExported[name] {
 			exported = true
 		}
 		if input := s.setupVariable(name); input && assign.Value != nil {
@@ -369,7 +386,7 @@ func (s *ciShellState) unfollowed(stmt *syntax.Stmt) {
 				continue
 			}
 			_, exported := s.env[name]
-			if _, inJob := s.job[name]; inJob {
+			if _, inJob := s.job[name]; inJob || s.setupExported[name] {
 				exported = true
 			}
 			if export || exported || ciRunnerExported(name, s.dialect.runnerPrefixes) {

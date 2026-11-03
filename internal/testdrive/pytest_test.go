@@ -263,12 +263,13 @@ func TestPytestWorkflowPreservesStandaloneValidation(t *testing.T) {
 		name       string
 		options    WorkflowOptions
 		standalone bool
+		code       string
 	}{
-		{"standalone", WorkflowOptions{Format: "verbose"}, true},
-		{"agent coordinator", WorkflowOptions{Format: "agent"}, false},
-		{"automatic CI edits", WorkflowOptions{Format: "json", Apply: true}, false},
-		{"resume coordinator", WorkflowOptions{Format: "verbose", Resume: "previous-run"}, false},
-		{"setup facts", WorkflowOptions{Format: "verbose", FactsFile: "facts.json"}, false},
+		{"standalone", WorkflowOptions{Format: "verbose"}, true, ""},
+		{"structured standalone", WorkflowOptions{Format: "agent"}, true, "validation_incomplete"},
+		{"automatic CI edits", WorkflowOptions{Format: "json", Apply: true}, false, "framework_unsupported"},
+		{"resume coordinator", WorkflowOptions{Format: "verbose", Resume: "previous-run"}, false, "invalid_options"},
+		{"setup facts", WorkflowOptions{Format: "verbose", FactsFile: "facts.json"}, false, "invalid_options"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -279,8 +280,10 @@ func TestPytestWorkflowPreservesStandaloneValidation(t *testing.T) {
 				require.ErrorContains(t, err, "Python environment")
 				require.FileExists(t, validationPath(root))
 			} else {
-				require.ErrorContains(t, err, "framework_unsupported")
 				require.NoFileExists(t, validationPath(root))
+			}
+			if tc.code != "" {
+				require.ErrorContains(t, err, tc.code)
 			}
 		})
 	}

@@ -50,7 +50,8 @@ selected test environment and validate its actual Python/pytest command.
 
 1. Run `ddtest testdrive --framework pytest --all --check-only --yes` to inspect
    discovered commands, CI Python requirements, and tracer release agreement.
-2. Finish setup edits, then run
+2. Finish setup edits and exclude `.testoptimization/` from Git (add
+   `/.testoptimization/` to the repository `.gitignore`), then run
    `ddtest testdrive --framework pytest --all --tracer-version <resolved-release> --yes`.
    Use `--command '<existing pytest command>'` for a focused configuration.
    A standalone `--command` run reports PASSED when that command's local checks
@@ -85,5 +86,7 @@ backend are not exercised.
 
 `testdrive --report` reads saved pytest evidence as `historical_report` with
 `freshness_unverified`; it does not rerun tests or certify current source,
-dependencies or Python. Rerun testdrive before claiming current success. Python's
-structured onboarding coordinator remains unsupported.
+dependencies or Python. Rerun testdrive before claiming current success. pytest
+validation is standalone: `testdrive --agent` asks the same CI questions as the
+coordinator and returns its verdict with `final_response`, without the
+coordinator's checkpoint, `--resume` or `--facts`.

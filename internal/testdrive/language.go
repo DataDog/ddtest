@@ -374,3 +374,18 @@ func Coordinated(language string) bool {
 	registered := languageNamed(language)
 	return registered != nil && registered.coordinated()
 }
+
+// StructuredValidation reports whether testdrive --agent validates language:
+// through the coordinator, or standalone (Python), which asks the user the
+// same CI questions and returns its verdict with final_response.
+func StructuredValidation(language string) bool {
+	registered := languageNamed(language)
+	return registered != nil && (registered.coordinated() || len(registered.pairedFrameworks()) > 0)
+}
+
+// standaloneLanguage reports whether framework's language validates without
+// the coordinator, so its plain output is what a coding agent reads.
+func standaloneLanguage(framework string) bool {
+	registered := languageForFramework(framework)
+	return registered != nil && !registered.coordinated()
+}

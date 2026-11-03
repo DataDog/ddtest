@@ -25,7 +25,10 @@ func providerSetupInstructions(root string, provider ciProvider, language, frame
 		site = defaultDatadogSite
 	}
 	var text strings.Builder
-	keyAction := ""
+	var keyAction string
+	// request is the first setup mechanism's, whose tracer release local
+	// validation uses when it is not coordinated.
+	var request ciSetupRequest
 	lines, handWritten := handWrittenSetups(root, language, framework, site)
 	if handWritten {
 		// Every job already sets up the tracer by hand: those setups stay,
@@ -49,26 +52,42 @@ func providerSetupInstructions(root string, provider ciProvider, language, frame
 					terms.Beside = "the " + other.provider.setupName() + " of " + strings.Join(other.jobs, ", ")
 				}
 			}
-			request := registered.ciSetupRequest(root, framework, site, terms)
+			current := registered.ciSetupRequest(root, framework, site, terms)
 			if len(groups) > 1 || group.provider != provider {
 				// The provider sets its jobs up with several mechanisms.
-				request.Framework, request.Jobs = framework, group.jobs
+				current.Framework, current.Jobs = framework, group.jobs
 			}
 			if i > 0 {
 				text.WriteString("\n\n")
+			} else {
+				request = current
 			}
-			text.WriteString(group.provider.setupInstructions(request))
+			text.WriteString(group.provider.setupInstructions(current))
 		}
 		keyAction = groupsAPIKeyAction(provider, groups)
 	}
 	if site == defaultDatadogSite && !agent && !handWritten {
 		text.WriteString("\n\nIf the organization uses a Datadog site other than US1, replace " + defaultDatadogSite + " with that site.")
 	}
+	if agent && !registered.coordinated() {
+		text.WriteString("\n\n" + standaloneAgentValidation(framework))
+		return text.String()
+	}
 	if agent {
 		text.WriteString("\n\nDo not run testdrive, a configuration check or the tests yourself. Run resume_command once, after the edits above: it validates every discovered configuration and feature in disposable copies and returns the next action. When it returns setup_commands, run them as given, then its resume_command. Finish with its exact next_command and render final_response unchanged; only that coordinator result can certify `COMPLETE LOCALLY`.")
 		return text.String()
 	}
-	_, _ = fmt.Fprintf(&text, "\n\n## Try it locally\n\nRun the local, credential-free setup check:\n\n```shell\nddtest testdrive --framework %s --agent --all --yes%s\n```\n\nAfter it finishes, post every `Open report:` link to the user so they can open the local Test Optimization report.\n\n## Ask a human to connect Datadog\n\n%s Do not ask for the API key in chat, and do not try to create or read the variable yourself. After the human confirms it is ready, commit and push the CI change; the next pipeline verifies the real Datadog backend connection.", framework, ciProviderFollowUpFlag("."), keyAction)
+	check := fmt.Sprintf("Run the local, credential-free setup check:\n\n```shell\nddtest testdrive --framework %s --agent --all --yes%s\n```", framework, ciProviderFollowUpFlag("."))
+	if !registered.coordinated() {
+		// Without coordinated validation, the configuration check comes
+		// first, then validation with the release the setup installs.
+		tracer := ""
+		if request.TracerInput != "" {
+			tracer = " --tracer-version " + request.TracerVersion
+		}
+		check = fmt.Sprintf("Run the local, credential-free setup check: first the CI configuration alone, then, after the edits, the local validation with the release the setup installs:\n\n```shell\nddtest testdrive --framework %s --all --check-only --yes%s\nddtest testdrive --framework %s --all --yes%s%s\n```", framework, ciProviderFollowUpFlag("."), framework, tracer, ciProviderFollowUpFlag("."))
+	}
+	_, _ = fmt.Fprintf(&text, "\n\n## Try it locally\n\n%s\n\nAfter it finishes, post every `Open report:` link to the user so they can open the local Test Optimization report.\n\n## Ask a human to connect Datadog\n\n%s Do not ask for the API key in chat, and do not try to create or read the variable yourself. After the human confirms it is ready, commit and push the CI change; the next pipeline verifies the real Datadog backend connection.", check, keyAction)
 	return text.String()
 }
 
@@ -84,4 +103,11 @@ func groupsAPIKeyAction(provider ciProvider, groups []jobSetups) string {
 		references = append(references, group.provider.setupName())
 	}
 	return several.apiKeyActions(references, false)
+}
+
+// standaloneAgentValidation ends a coding agent's setup instructions for a
+// language whose validation is standalone (Python): resume_command validates
+// every discovered configuration once the edits are in place.
+func standaloneAgentValidation(framework string) string {
+	return "Do not run testdrive, a configuration check or the tests yourself. Run resume_command once, after the edits above: it validates every discovered configuration and feature in disposable copies, with the tracer release the CI setup installs, and returns one structured result. When it asks the user (next_action ask_user), stop and ask them; never answer for them. Finish by rendering its final_response unchanged. " + StandaloneVerdictInstruction(framework)
 }

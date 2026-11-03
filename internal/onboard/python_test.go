@@ -42,7 +42,7 @@ func pythonWorkflow(t *testing.T, contents string) string {
 
 func pythonRuntimeCheck(t *testing.T, root string) RuntimeCheck {
 	t.Helper()
-	return checkPythonCIRuntimes(t.Context(), root, "4.16.0", func(_ context.Context, version string) (PythonRelease, error) {
+	return checkPythonCIRuntimes(t.Context(), root, "4.16.0", "", func(_ context.Context, version string) (PythonRelease, error) {
 		return PythonRelease{version, ">=3.9,<3.15"}, nil
 	}, func(context.Context, string) (string, error) {
 		t.Fatal("explicit version must not resolve action default")
@@ -130,16 +130,16 @@ func TestPythonScopeIgnoresUnrelatedNodeVersion(t *testing.T) {
 	require.False(t, scope.Commands[0].UnsupportedNode)
 }
 
-func TestPythonStaticChecksRejectUnsupportedCIProvider(t *testing.T) {
+// Outside GitHub Actions a pytest job without the provider's setup is not
+// instrumented, as without the action.
+func TestPythonStaticChecksNameTheProviderSetup(t *testing.T) {
 	useCIProvider(t, "gitlab")
 	root := t.TempDir()
-	writeFile(t, root, ".gitlab-ci.yml", "tests:\n  script: python -m pytest\n")
-	err := CheckCIProviderSupport(root, "python", "pytest")
-	var unsupported *CIProviderUnsupportedError
-	require.ErrorAs(t, err, &unsupported)
-	require.Equal(t, "python", unsupported.Language)
+	writeFile(t, root, ".gitlab-ci.yml", "tests:\n  image: python:3.12\n  script: python -m pytest\n")
+	require.NoError(t, CheckCIProviderSupport(root, "python", "pytest"))
 	check := pythonRuntimeCheck(t, root)
-	require.Equal(t, "inconclusive", check.Status)
-	require.Empty(t, check.Jobs)
-	require.Contains(t, check.Reason, "GitLab")
+	require.Equal(t, "incompatible", check.Status)
+	require.Len(t, check.Jobs, 1)
+	require.Equal(t, "missing_instrumentation", check.Jobs[0].Code)
+	require.Contains(t, check.Jobs[0].Reason, "No Datadog setup script selecting python runs before this pytest command")
 }

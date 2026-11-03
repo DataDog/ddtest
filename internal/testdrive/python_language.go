@@ -188,8 +188,20 @@ func (pythonLanguage) standaloneReport(root string, validation *validationResult
 }
 
 func (pythonLanguage) defaultsToCITracer() bool { return false }
-func (pythonLanguage) ciRuntimes(ctx context.Context, root, framework string) onboard.RuntimeCheck {
-	return onboard.CheckCIRuntimes(ctx, root, framework)
+
+// ciPinnedTracer is the exact ddtrace release one CI job's setup installs; a
+// setup that installs the latest release when each build runs pins none.
+func (pythonLanguage) ciPinnedTracer(job onboard.RuntimeFinding) string {
+	if job.TracerRequested == "" || job.TracerFloating {
+		return ""
+	}
+	return strings.TrimPrefix(job.Tracer, "ddtrace@")
+}
+
+// Until preflight knows the local release, the pytest CI check runs without
+// comparing it; preflight then replaces it with the full check.
+func (pythonLanguage) ciRuntimes(ctx context.Context, root, _ string) onboard.RuntimeCheck {
+	return onboard.CheckPythonCIRuntimes(ctx, root, "")
 }
 
 func (pythonLanguage) ciRuntimeName() string { return "Python" }
