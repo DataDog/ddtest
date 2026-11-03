@@ -238,24 +238,17 @@ const CodeCIEditRequired = "ci_edit_required"
 // double quotes.
 var pythonLiteralPath = regexp.MustCompile(`^[A-Za-z0-9_./@%+,:=-]*$`)
 
-// pythonInlinePathEdit is the exact rewrite of a pytest or tox command whose
-// inline assignment replaces PYTHONPATH (PYTHONPATH=src pytest): every setup
-// puts the tracer on PYTHONPATH before the tests run (the installer exports
-// PYTHONPATH=<tracer>:<coverage>:$PYTHONPATH into the job's shell, the
-// action into the job's environment, the CI plugin into each step's), so the
-// command's own value drops it and its tests run untraced. The rewrite
-// extends the variable instead, in the form the CI check follows: an export
-// in the same script, or on GitHub Actions the step's env. A step's env
-// holds one PYTHONPATH, so a GitHub Actions step whose commands set
-// different ones is split first: each command keeps its own path. Empty when
-// no command needs it.
-func pythonInlinePathEdit(provider ciProvider, commands [][]string) string {
-	type pathCommand struct {
-		words, command []string
-		value          string
-	}
-	var needed []pathCommand
-	values := map[string]bool{}
+// pythonPathCommand is a pytest or tox command whose inline assignment
+// replaces PYTHONPATH: words as written, command without its assignments,
+// and the value it sets.
+type pythonPathCommand struct {
+	words, command []string
+	value          string
+}
+
+// pythonPathCommands are those of commands.
+func pythonPathCommands(commands [][]string) []pythonPathCommand {
+	var needed []pythonPathCommand
 	for _, words := range commands {
 		command, assignments, err := pythonCommandEnvironment(words)
 		value, set := assignments["PYTHONPATH"]
@@ -265,17 +258,50 @@ func pythonInlinePathEdit(provider ciProvider, commands [][]string) string {
 		if _, tox := pythonRunnerArguments(command, "tox"); !tox && !pythonInvocation(command) {
 			continue
 		}
-		needed = append(needed, pathCommand{words, command, value})
-		if value != "" {
-			values[value] = true
+		needed = append(needed, pythonPathCommand{words, command, value})
+	}
+	return needed
+}
+
+// pythonInlinePathValues are the distinct non-empty PYTHONPATH values those
+// of commands set: the rewrite extends PYTHONPATH with each.
+func pythonInlinePathValues(commands [][]string) []string {
+	var values []string
+	for _, c := range pythonPathCommands(commands) {
+		if c.value != "" && !slices.Contains(values, c.value) {
+			values = append(values, c.value)
 		}
 	}
-	if provider.sharedSyntax() && len(values) > 1 {
+	return values
+}
+
+// pythonInlinePathEdit is the exact rewrite of a pytest or tox command whose
+// inline assignment replaces PYTHONPATH (PYTHONPATH=src pytest): every setup
+// puts the tracer on PYTHONPATH before the tests run (the installer exports
+// PYTHONPATH=<tracer>:<coverage>:$PYTHONPATH into the job's shell, the
+// action into the job's environment, the CI plugin into each step's), so the
+// command's own value drops it and its tests run untraced. The rewrite
+// extends the variable instead, in the form the CI check follows: an export
+// in the same script, or on GitHub Actions the step's env. A step's env
+// holds one PYTHONPATH, so a GitHub Actions step whose commands set
+// different ones is split first: each command keeps its own path. restore
+// reports other commands of the export's shell (on CircleCI, of its job,
+// which $BASH_ENV reaches) that set another path: each export is then
+// undone after its command, which keeps every path to its own command, and
+// a CircleCI step whose commands set different ones is split first. Empty
+// when no command needs it.
+func pythonInlinePathEdit(provider ciProvider, commands [][]string, restore bool) string {
+	needed := pythonPathCommands(commands)
+	if len(pythonInlinePathValues(commands)) > 1 && (provider.sharedSyntax() || provider.name() == circleCIProvider) {
 		var listed []string
 		for _, c := range needed {
 			listed = append(listed, "`"+shellCommand(c.words)+"`")
 		}
-		return strings.Join(listed, ", ") + " set different PYTHONPATH values in one step, and each replaces the PYTHONPATH the " + provider.setupName() + " sets, which carries the tracer, so its tests run untraced. A step's env holds one PYTHONPATH: move each of these commands into its own step, unchanged and in the same order, with the step's other settings. ddtest then gives each step its own edit."
+		split := "A step's env holds one PYTHONPATH: move each of these commands into its own step, unchanged and in the same order, with the step's other settings."
+		if !provider.sharedSyntax() {
+			split = "$BASH_ENV extends PYTHONPATH for a whole run step: move each of these commands into its own run step, unchanged and in the same order, with the step's other settings."
+		}
+		return strings.Join(listed, ", ") + " set different PYTHONPATH values in one step, and each replaces the PYTHONPATH the " + provider.setupName() + " sets, which carries the tracer, so its tests run untraced. " + split + " ddtest then gives each step its own edit."
 	}
 	var edits []string
 	for _, c := range needed {
@@ -297,21 +323,35 @@ func pythonInlinePathEdit(provider ciProvider, commands [][]string) string {
 			edits = append(edits, replaces+" Run `"+kept+"` instead, and add PYTHONPATH: ${{ env.PYTHONPATH }}:"+value+" to the step's env, which extends the action's path.")
 			continue
 		}
-		export := `export PYTHONPATH="$PYTHONPATH:` + value + `"`
+		suffix := ":" + value
 		if !pythonLiteralPath.MatchString(value) {
-			export = `export PYTHONPATH="$PYTHONPATH":` + shellquote.Join(value)
+			suffix = ":" + shellquote.Join(value)
 		}
+		export := `export PYTHONPATH="$PYTHONPATH` + suffix + `"`
+		if !pythonLiteralPath.MatchString(value) {
+			export = `export PYTHONPATH="$PYTHONPATH"` + suffix
+		}
+		// The suffix the export added, matched literally.
+		undo := `export PYTHONPATH="${PYTHONPATH%` + suffix + `}"`
 		where := "in the same place of the same script"
 		switch provider.name() {
 		case circleCIProvider:
 			// A run step follows no exports; $BASH_ENV carries them.
+			if restore {
+				edits = append(edits, replaces+" Run `"+kept+"` in its place, add the step `"+provider.setupTerms().PersistEntry(export)+"` before that step, after the orb step, and the step `"+provider.setupTerms().PersistEntry(undo)+"` right after it: $BASH_ENV gives the step the extended path, and the later steps, which set other paths, the one they had.")
+				continue
+			}
 			edits = append(edits, replaces+" Run `"+kept+"` in its place, and add the step `"+provider.setupTerms().PersistEntry(export)+"` before that step, after the orb step: $BASH_ENV gives the step the extended path.")
 			continue
 		case buildkiteProvider:
-			export, kept = buildkiteEscape(export), buildkiteEscape(kept)
+			export, kept, undo = buildkiteEscape(export), buildkiteEscape(kept), buildkiteEscape(undo)
 			where = "in the same place of the step's commands (every $ written as $$)"
 		case jenkinsProvider:
 			where = "in the same place of the same sh script (inside a double-quoted Groovy string, write each $ as \\$)"
+		}
+		if restore {
+			edits = append(edits, replaces+" Replace it, "+where+", with the three commands `"+export+"`, `"+kept+"` and `"+undo+"`: the last one gives the later commands, which set other paths, the PYTHONPATH they had.")
+			continue
 		}
 		edits = append(edits, replaces+" Replace it, "+where+", with the two commands `"+export+"` and `"+kept+"`.")
 	}

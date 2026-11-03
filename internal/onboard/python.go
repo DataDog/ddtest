@@ -550,8 +550,9 @@ func pythonIgnoresEnvironment(words []string) bool {
 // uploaders Python CI runs beside pytest, which never start it.
 // Documentation builders are not among them: Sphinx executes the project's
 // conf.py and MkDocs its hooks, which may run anything (see
-// pythonCheckTools).
-var pythonNonTestTools = []string{"flake8", "black", "isort", "mypy", "ruff", "pylint", "bandit", "safety", "pyright", "pydocstyle", "pre-commit", "twine", "codecov", "coveralls", "check-manifest", "pip-audit", "build"}
+// pythonCheckTools). Nor is pre-commit, whose hooks may run pytest (see
+// checkAndPackageTools).
+var pythonNonTestTools = []string{"flake8", "black", "isort", "mypy", "ruff", "pylint", "bandit", "safety", "pyright", "pydocstyle", "twine", "codecov", "coveralls", "check-manifest", "pip-audit", "build"}
 
 // pythonSetupCommands are setup.py commands that build or check a
 // distribution; setup.py test runs tests.
@@ -833,6 +834,8 @@ type pythonProviderSetup struct {
 	setup     ciSetup
 	inputs    map[string]string
 	requested string
+	// step runs the setup.
+	step runtimeStep
 }
 
 func checkPythonCIRuntimes(ctx context.Context, root, localVersion, site string, resolve func(context.Context, string) (PythonRelease, error), actionDefault func(context.Context, string) (string, error)) RuntimeCheck {
@@ -867,6 +870,9 @@ func checkPythonCIRuntimes(ctx context.Context, root, localVersion, site string,
 			if !pythonJobCandidate(root, workflow, job) {
 				continue
 			}
+			// The job's own setup mechanism names its setup and sets its
+			// rules, such as a Jenkins container stage's setup snippet.
+			provider := setupProviderFor(provider, job)
 			rows, err := runtimeMatrix(job.Strategy.Matrix)
 			if err != nil {
 				result.Jobs = append(result.Jobs, RuntimeFinding{Workflow: workflow.Path, Job: name, Status: "inconclusive", Reason: err.Error()})
@@ -881,6 +887,10 @@ func checkPythonCIRuntimes(ctx context.Context, root, localVersion, site string,
 				var python, action, requested, engine, host string
 				var pythonErr, actionErr error
 				var selected *pythonProviderSetup
+				// expired is the source of a shell-local setup whose shell
+				// ended before the step (see ciSetup.shellLocal).
+				expired := ""
+				restorePath := pythonRestoredPaths(provider, workflow, job, row)
 				skipped, stated := false, false
 				if !shared {
 					// Outside GitHub Actions the job's image selects its Python,
@@ -896,6 +906,12 @@ func checkPythonCIRuntimes(ctx context.Context, root, localVersion, site string,
 				for i, step := range job.Steps {
 					if !step.sameShell {
 						venvs.shell()
+					}
+					if selected != nil && selected.setup.shellLocal && !sameShell(selected.step, step) {
+						// Its exports reach only the later commands of its own
+						// shell; this step runs in another one.
+						expired = selected.step.Source
+						action, requested, actionErr, selected = "", "", nil, nil
 					}
 					uses, _, _ := strings.Cut(strings.ToLower(step.Uses), "@")
 					current, isSetup := datadogSetup(step)
@@ -948,13 +964,13 @@ func checkPythonCIRuntimes(ctx context.Context, root, localVersion, site string,
 						// A setup for other languages leaves Python's in place.
 						chosen, err := setupSelectsLanguage(current, row, "python")
 						if err != nil || chosen {
-							action, requested, actionErr, selected, skipped = "", "", err, nil, false
+							action, requested, actionErr, selected, skipped, expired = "", "", err, nil, false, ""
 						}
 						if err == nil && chosen && stepErr != nil {
 							actionErr = stepErr
 						}
 						if err == nil && chosen && stepErr == nil && current.Pinned {
-							action, selected = current.Reference, &pythonProviderSetup{setup: current, inputs: map[string]string{}}
+							action, selected = current.Reference, &pythonProviderSetup{setup: current, inputs: map[string]string{}, step: step}
 							for key, value := range current.Inputs {
 								selected.inputs[key], _ = runtimeValue(value, row)
 								if selected.inputs[key] == "" && strings.Contains(value, "${{") {
@@ -990,7 +1006,7 @@ func checkPythonCIRuntimes(ctx context.Context, root, localVersion, site string,
 						}
 					}
 					commands, commandsErr := pythonStepCommands(resolved.Run)
-					pathEdit := pythonInlinePathEdit(provider, commands)
+					pathEdit := pythonInlinePathEdit(provider, commands, restorePath[i])
 					finding.pathEdit = pathEdit
 					switch {
 					case conditionErr != nil:
@@ -1019,6 +1035,9 @@ func checkPythonCIRuntimes(ctx context.Context, root, localVersion, site string,
 						finding.Reason = "This job runs Python " + python + ", which ddtrace@" + selection.Version + " does not support (" + selection.RequiresPython + "), without the " + provider.setupName() + ". Its tests still run without instrumentation; this runtime is not validated with the tracer."
 					case action == "":
 						finding.Status, finding.Code, finding.Reason = "incompatible", "missing_instrumentation", pythonMissingSetupReason(provider)
+						if expired != "" {
+							finding.Reason = "The " + provider.setupName() + " at " + expired + " runs in another shell than this pytest command, and its exports reach only the later commands of its own shell; run it in the same shell, before the test command."
+						}
 					case !shared && engine != "":
 						finding.Status = "incompatible"
 						finding.Reason = "This job runs " + engine + " (image " + job.Image + "), which the tracer cannot instrument; keep its tests in a job without the " + provider.setupName() + "."
@@ -1109,6 +1128,49 @@ func checkPythonCIRuntimes(ctx context.Context, root, localVersion, site string,
 		}
 	}
 	return result
+}
+
+// pythonRestoredPaths reports, for each step of job on row, whether the
+// export its PYTHONPATH rewrite adds must be undone after its command (see
+// pythonInlinePathEdit): the commands of the shell it runs in (on CircleCI,
+// of the job, which $BASH_ENV reaches) set different paths, and each keeps
+// its own.
+func pythonRestoredPaths(provider ciProvider, workflow ciWorkflow, job runtimeJob, row map[string]any) []bool {
+	restore := make([]bool, len(job.Steps))
+	if provider.sharedSyntax() {
+		return restore
+	}
+	start := 0
+	var values []string
+	end := func(next int) {
+		for i := start; i < next; i++ {
+			restore[i] = len(values) > 1
+		}
+		start, values = next, nil
+	}
+	for i, step := range job.Steps {
+		if i > 0 && !step.sameShell && provider.name() != circleCIProvider {
+			end(i)
+		}
+		if active, err := stepCondition(step, row, conditionEnvironment(workflow, job, step, row)); err == nil && !active {
+			continue
+		}
+		resolved, _, err := resolveVariantStep(workflow, job, step, row, "pytest")
+		if err != nil {
+			continue
+		}
+		commands, err := pythonStepCommands(resolved.Run)
+		if err != nil {
+			continue
+		}
+		for _, value := range pythonInlinePathValues(commands) {
+			if !slices.Contains(values, value) {
+				values = append(values, value)
+			}
+		}
+	}
+	end(len(job.Steps))
+	return restore
 }
 
 // pythonUnsupportedRuntime reports a static Python the release local

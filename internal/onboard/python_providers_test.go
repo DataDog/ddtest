@@ -250,6 +250,14 @@ func TestPythonGitLabJobsFollowTheSharedCIRules(t *testing.T) {
 	scope, err = DiscoverValidationScope(root, "pytest")
 	require.NoError(t, err)
 	require.Contains(t, strings.Join(scope.Unresolved, "\n"), "sets it only on some paths of")
+	// The setup exported PYTEST_ADDOPTS, so a plain assignment changes the
+	// tests' environment too.
+	root = gitLabPythonRepository(t, "test:\n  image: python:3.12\n  script:\n"+setup+strings.Replace(condition("PYTEST_ADDOPTS", "-x"), "export ", "", 1)+"    - python -m pytest tests\n")
+	scope, err = DiscoverValidationScope(root, "pytest")
+	require.NoError(t, err)
+	require.Contains(t, strings.Join(scope.Unresolved, "\n"), "sets it only on some paths of")
+	check = pythonRuntimeCheck(t, root)
+	require.Equal(t, "inconclusive", check.Status, pythonFindings(check))
 
 	// The script entries share a shell: deactivate ends the activation.
 	root = gitLabPythonRepository(t, "test:\n  image: python:3.12\n  script:\n    - python -m venv venv\n    - source venv/bin/activate\n    - pip install .[dev]\n"+setup+"    - pytest tests\n    - deactivate\n")
@@ -260,6 +268,24 @@ func TestPythonGitLabJobsFollowTheSharedCIRules(t *testing.T) {
 	require.Equal(t, "pytest tests", scope.Commands[0].Command)
 	check = pythonRuntimeCheck(t, root)
 	require.Equal(t, "compatible", check.Status, pythonFindings(check))
+}
+
+// A linter runs no tests, but pre-commit's hooks may run pytest: its entry
+// stays unresolved rather than outside the validation.
+func TestPythonPreCommitMayRunTests(t *testing.T) {
+	setup := gitLabSetupEntry(gitLabPythonSetup)
+	root := gitLabPythonRepository(t, "test:\n  image: python:3.12\n  script:\n"+setup+"    - ruff check .\n    - python -m pytest tests/unit\n")
+	scope, err := DiscoverValidationScope(root, "pytest")
+	require.NoError(t, err)
+	require.Empty(t, scope.Unresolved)
+	require.Contains(t, strings.Join(scope.Review, "\n"), "ruff runs no tests")
+
+	root = gitLabPythonRepository(t, "test:\n  image: python:3.12\n  script:\n"+setup+"    - pre-commit run --all-files\n    - python -m pytest tests/unit\n")
+	scope, err = DiscoverValidationScope(root, "pytest")
+	require.NoError(t, err)
+	require.Contains(t, strings.Join(scope.Unresolved, "\n"), "Unresolved Python entry point: pre-commit run --all-files")
+	check := pythonRuntimeCheck(t, root)
+	require.Equal(t, "inconclusive", check.Status, pythonFindings(check))
 }
 
 // A step that only activates a virtual environment, prints the Python
@@ -543,6 +569,37 @@ func TestPythonJenkinsEnvironmentPythonpath(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, UseCIStatements(nil, nil)) })
 	check := pythonRuntimeCheckForSite(t, root, "")
 	require.Equal(t, "compatible", check.Status, pythonFindings(check))
+
+	// The installer of a container stage's setup snippet puts its tracer
+	// before the stage's PYTHONPATH: the plugin's rule does not apply there.
+	root = jenkinsRepository(t, jenkinsContainerStage("docker { image 'python:3.12' }", "      environment { PYTHONPATH = 'src' }\n", jenkinsTestSnippet("python", "4.16.0", false)+"\n      pytest tests"))
+	writeFile(t, root, "pytest.ini", "[pytest]\n")
+	check = pythonRuntimeCheckForSite(t, root, "datadoghq.com")
+	require.Equal(t, "compatible", check.Status, pythonFindings(check))
+	scope, err := DiscoverValidationScope(root, "pytest")
+	require.NoError(t, err)
+	require.Len(t, scope.Commands, 1)
+	require.Equal(t, map[string]string{"PYTHONPATH": "src"}, scope.Commands[0].Environment)
+}
+
+// A container stage's setup snippet exports into its own sh script: a pytest
+// command in a later sh step runs without its tracer.
+func TestPythonJenkinsSnippetReachesOnlyItsShell(t *testing.T) {
+	stage := jenkinsContainerStage("docker { image 'python:3.12' }", "", jenkinsTestSnippet("python", "4.16.0", false)+"\n      pytest tests")
+	root := jenkinsRepository(t, stage)
+	writeFile(t, root, "pytest.ini", "[pytest]\n")
+	check := pythonRuntimeCheckForSite(t, root, "datadoghq.com")
+	require.Equal(t, "compatible", check.Status, pythonFindings(check))
+
+	later := strings.Replace(stage, "\n      pytest tests\n          '''\n", "\n          '''\n          sh 'pytest tests'\n", 1)
+	require.NotEqual(t, stage, later)
+	writeFile(t, root, "Jenkinsfile", later)
+	check = pythonRuntimeCheckForSite(t, root, "datadoghq.com")
+	require.Equal(t, "incompatible", check.Status, pythonFindings(check))
+	require.Len(t, check.Jobs, 1)
+	require.Equal(t, "missing_instrumentation", check.Jobs[0].Code)
+	require.Contains(t, check.Jobs[0].Reason, "The Datadog setup snippet at Jenkinsfile:")
+	require.Contains(t, check.Jobs[0].Reason, "runs in another shell than this pytest command")
 }
 
 // Every provider's instructions carry Python's setup values and rules, and

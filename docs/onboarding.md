@@ -1312,7 +1312,11 @@ the tracer path every setup puts on `PYTHONPATH`, so the check and the agent
 handoffs prescribe the exact rewrite (`ci_edit_required`: the export above
 before the unchanged command, written with `$$` on Buildkite, appended to
 `$BASH_ENV` on CircleCI, or the step's `env` on GitHub Actions), then the same
-validation command. A job without the setup whose
+validation command. When other commands of the same shell (on CircleCI, of the
+same job) set another path, each export is undone after its command (`export
+PYTHONPATH="${PYTHONPATH%:src}"`), so every command keeps its own path; commands
+of one GitHub Actions step or CircleCI run step that set different paths are
+first moved into steps of their own. A job without the setup whose
 Python ddtrace does not support (such as 3.15, or a PyPy image) is excluded,
 not missing; at least one job must be instrumented. Matrix entries keep their
 place, since pytest validation refuses a matrix whose entries changed after its

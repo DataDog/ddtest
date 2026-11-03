@@ -18,9 +18,9 @@ func TestPythonStandalonePreparationKeepsUnsupportedCIAdvisory(t *testing.T) {
 			t.Chdir(root)
 			requireWriteFile(t, filepath.Join(root, "pytest.ini"), "[pytest]\n")
 			requireWriteFile(t, filepath.Join(root, "test_app.py"), "def test_app():\n    pass\n")
-			// The Datadog Jenkins plugin cannot instrument tests in a container.
-			requireWriteFile(t, filepath.Join(root, "Jenkinsfile"), "pipeline {\n  agent { docker { image 'python:3.12' } }\n  stages {\n    stage('Test') { steps { sh 'python -m pytest' } }\n  }\n}\n")
-			onboard.UseCIProvider("jenkins")
+			// ddtest does not validate hand-written Python setups yet.
+			requireWriteFile(t, filepath.Join(root, ".gitlab-ci.yml"), "test:\n  image: python:3.12\n  variables:\n    PYTEST_ADDOPTS: --ddtrace\n    DD_CIVISIBILITY_AGENTLESS_ENABLED: \"true\"\n  script:\n    - pip install ddtrace==4.16.1 pytest\n    - python -m pytest\n")
+			onboard.UseCIProvider("gitlab")
 			t.Cleanup(func() { onboard.UseCIProvider("") })
 			previous := settings.Get().Command
 			t.Cleanup(func() { settings.Get().Command = previous })
@@ -30,7 +30,7 @@ func TestPythonStandalonePreparationKeepsUnsupportedCIAdvisory(t *testing.T) {
 			}
 			_, err := Prepare(PrepareOptions{All: mode == "all", CheckOnly: mode == "check-only", TracerVersion: "4.11.0"})
 			if mode == "all" || mode == "check-only" {
-				require.ErrorContains(t, err, "outside what the Datadog Jenkins plugin instruments")
+				require.ErrorContains(t, err, "does not validate hand-written Python setups")
 			} else {
 				require.NoError(t, err)
 			}

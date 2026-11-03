@@ -386,7 +386,7 @@ func (s *ciShellState) unfollowed(stmt *syntax.Stmt) {
 				continue
 			}
 			_, exported := s.env[name]
-			if _, inJob := s.job[name]; inJob {
+			if _, inJob := s.job[name]; inJob || s.setupExported[name] {
 				exported = true
 			}
 			if export || exported || ciRunnerExported(name, s.dialect.runnerPrefixes) {

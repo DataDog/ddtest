@@ -148,7 +148,7 @@ func TestPythonInlinePathEditForms(t *testing.T) {
 		{[]string{"PYTHONPATH=src", "python", "-m", "mypy"}, ""},
 		{[]string{"PYTHONPATH=src", "pytest", "--version"}, ""},
 	} {
-		edit := pythonInlinePathEdit(gitlab, [][]string{tc.command})
+		edit := pythonInlinePathEdit(gitlab, [][]string{tc.command}, false)
 		if tc.edit == "" {
 			require.Empty(t, edit, tc.command)
 			continue
@@ -211,11 +211,11 @@ func TestPythonAgentOnboardingPrescribesThePathEdit(t *testing.T) {
 // the single env edit.
 func TestPythonInlinePathEditSplitsConflictingSteps(t *testing.T) {
 	github := gitHubActions{}
-	edit := pythonInlinePathEdit(github, [][]string{{"PYTHONPATH=src/a", "pytest", "tests/a"}, {"PYTHONPATH=src/b", "pytest", "tests/b"}})
+	edit := pythonInlinePathEdit(github, [][]string{{"PYTHONPATH=src/a", "pytest", "tests/a"}, {"PYTHONPATH=src/b", "pytest", "tests/b"}}, false)
 	require.Contains(t, edit, "`PYTHONPATH=src/a pytest tests/a`, `PYTHONPATH=src/b pytest tests/b` set different PYTHONPATH values in one step")
 	require.Contains(t, edit, "move each of these commands into its own step")
 	require.NotContains(t, edit, "${{ env.PYTHONPATH }}")
-	edit = pythonInlinePathEdit(github, [][]string{{"PYTHONPATH=src", "pytest", "tests/a"}, {"PYTHONPATH=src", "pytest", "tests/b"}})
+	edit = pythonInlinePathEdit(github, [][]string{{"PYTHONPATH=src", "pytest", "tests/a"}, {"PYTHONPATH=src", "pytest", "tests/b"}}, false)
 	require.NotContains(t, edit, "set different PYTHONPATH values")
 	require.Contains(t, edit, "add PYTHONPATH: ${{ env.PYTHONPATH }}:src to the step's env")
 
@@ -233,4 +233,95 @@ func TestPythonInlinePathEditSplitsConflictingSteps(t *testing.T) {
 	require.Equal(t, "incompatible", check.Status, pythonFindings(check))
 	require.Contains(t, pythonFindings(check), "add PYTHONPATH: ${{ env.PYTHONPATH }}:src/b to the step's env")
 	require.NotContains(t, pythonFindings(check), "set different PYTHONPATH values")
+}
+
+// Commands of one shell that set different paths each keep their own: the
+// export each rewrite adds is undone after its command, or the second would
+// run with both paths. On CircleCI $BASH_ENV reaches the job's later steps,
+// and one run step's commands are split first.
+func TestPythonInlinePathEditKeepsEachCommandsPath(t *testing.T) {
+	circleConfig := func(steps string) string {
+		return "version: 2.1\norbs:\n  test-optimization-circleci-orb: datadog/test-optimization-circleci-orb@2\njobs:\n  test:\n    docker:\n      - image: cimg/python:3.12\n    steps:\n      - checkout\n      - " + strings.ReplaceAll(circlePythonOrb, "\n    ", "\n          ") + steps + "workflows:\n  main:\n    jobs: [test]\n"
+	}
+	persist := func(command string) string { return "      " + circleCI{}.setupTerms().PersistEntry(command) + "\n" }
+	for _, tc := range []struct {
+		name       string
+		repository func(t *testing.T, test string) string
+		inline     string
+		edits      []string
+		fix        string
+	}{
+		{
+			name: "gitlab",
+			repository: func(t *testing.T, test string) string {
+				return gitLabPythonRepository(t, "pytest:\n  image: python:3.12\n  script:\n"+gitLabSetupEntry(gitLabPythonSetup)+test)
+			},
+			inline: "    - PYTHONPATH=packages/a pytest packages/a/tests\n    - PYTHONPATH=packages/b pytest packages/b/tests\n",
+			edits: []string{
+				"Replace it, in the same place of the same script, with the three commands `export PYTHONPATH=\"$PYTHONPATH:packages/a\"`, `pytest packages/a/tests` and `export PYTHONPATH=\"${PYTHONPATH%:packages/a}\"`: the last one gives the later commands, which set other paths, the PYTHONPATH they had.",
+				"with the three commands `export PYTHONPATH=\"$PYTHONPATH:packages/b\"`, `pytest packages/b/tests` and `export PYTHONPATH=\"${PYTHONPATH%:packages/b}\"`",
+			},
+			fix: "    - export PYTHONPATH=\"$PYTHONPATH:packages/a\"\n    - pytest packages/a/tests\n    - export PYTHONPATH=\"${PYTHONPATH%:packages/a}\"\n    - export PYTHONPATH=\"$PYTHONPATH:packages/b\"\n    - pytest packages/b/tests\n    - export PYTHONPATH=\"${PYTHONPATH%:packages/b}\"\n",
+		},
+		{
+			name: "buildkite",
+			repository: func(t *testing.T, test string) string {
+				root := buildkiteRepository(t, qwedPipeline(true, test))
+				writeFile(t, root, "pytest.ini", "[pytest]\n")
+				return root
+			},
+			inline: "      - PYTHONPATH=packages/a pytest packages/a/tests\n      - PYTHONPATH=packages/b pytest packages/b/tests\n",
+			edits:  []string{"with the three commands `export PYTHONPATH=\"$$PYTHONPATH:packages/a\"`, `pytest packages/a/tests` and `export PYTHONPATH=\"$${PYTHONPATH%:packages/a}\"`"},
+			fix:    "      - export PYTHONPATH=\"$$PYTHONPATH:packages/a\"\n      - pytest packages/a/tests\n      - export PYTHONPATH=\"$${PYTHONPATH%:packages/a}\"\n      - export PYTHONPATH=\"$$PYTHONPATH:packages/b\"\n      - pytest packages/b/tests\n      - export PYTHONPATH=\"$${PYTHONPATH%:packages/b}\"\n",
+		},
+		{
+			name: "circleci",
+			repository: func(t *testing.T, steps string) string {
+				root := circleRepository(t, circleConfig(steps))
+				writeFile(t, root, "pytest.ini", "[pytest]\n")
+				return root
+			},
+			inline: "      - run: PYTHONPATH=packages/a pytest packages/a/tests\n      - run: PYTHONPATH=packages/b pytest packages/b/tests\n",
+			edits:  []string{"Run `pytest packages/a/tests` in its place, add the step `- run: echo 'export PYTHONPATH=\"$PYTHONPATH:packages/a\"' >> \"$BASH_ENV\"` before that step, after the orb step, and the step `- run: echo 'export PYTHONPATH=\"${PYTHONPATH%:packages/a}\"' >> \"$BASH_ENV\"` right after it"},
+			fix:    persist(`export PYTHONPATH="$PYTHONPATH:packages/a"`) + "      - run: pytest packages/a/tests\n" + persist(`export PYTHONPATH="${PYTHONPATH%:packages/a}"`) + persist(`export PYTHONPATH="$PYTHONPATH:packages/b"`) + "      - run: pytest packages/b/tests\n" + persist(`export PYTHONPATH="${PYTHONPATH%:packages/b}"`),
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := tc.repository(t, tc.inline)
+			check := pythonRuntimeCheckForSite(t, root, "")
+			require.Equal(t, "incompatible", check.Status, pythonFindings(check))
+			require.Len(t, check.Jobs, 2)
+			for _, edit := range tc.edits {
+				require.Contains(t, pythonFindings(check), edit)
+			}
+
+			root = tc.repository(t, tc.fix)
+			scope, err := DiscoverValidationScope(root, "pytest")
+			require.NoError(t, err)
+			require.Empty(t, scope.Unresolved)
+			require.Len(t, scope.Commands, 2)
+			require.Equal(t, "packages/a", scope.Commands[0].Environment["PYTHONPATH"])
+			require.Equal(t, "packages/b", scope.Commands[1].Environment["PYTHONPATH"])
+			check = pythonRuntimeCheckForSite(t, root, "")
+			require.Equal(t, "compatible", check.Status, pythonFindings(check))
+		})
+	}
+
+	// One path, or paths in different shells, keep the two-command edit.
+	edit := pythonInlinePathEdit(gitLabCI{}, [][]string{{"PYTHONPATH=src", "pytest", "tests/a"}, {"PYTHONPATH=src", "pytest", "tests/b"}}, false)
+	require.NotContains(t, edit, "three commands")
+	root := jenkinsRepository(t, "pipeline {\n  agent { label 'python' }\n  options { datadog(testOptimization: [enabled: true, serviceName: 'app', languages: ['PYTHON']]) }\n  stages {\n    stage('Test') { steps {\n      sh 'PYTHONPATH=packages/a pytest packages/a/tests'\n      sh 'PYTHONPATH=packages/b pytest packages/b/tests'\n    } }\n  }\n}\n")
+	writeFile(t, root, "pytest.ini", "[pytest]\n")
+	useCIStatements(t, []string{"python=3.12"}, jenkinsPluginFact, jenkinsModeFact+"=agent")
+	check := pythonRuntimeCheckForSite(t, root, "")
+	require.Contains(t, pythonFindings(check), "with the two commands `export PYTHONPATH=\"$PYTHONPATH:packages/b\"` and `pytest packages/b/tests`.")
+	require.NotContains(t, pythonFindings(check), "three commands")
+	writeFile(t, root, "Jenkinsfile", "pipeline {\n  agent { label 'python' }\n  options { datadog(testOptimization: [enabled: true, serviceName: 'app', languages: ['PYTHON']]) }\n  stages {\n    stage('Test') { steps { sh '''\n      PYTHONPATH=packages/a pytest packages/a/tests\n      PYTHONPATH=packages/b pytest packages/b/tests\n    ''' } }\n  }\n}\n")
+	check = pythonRuntimeCheckForSite(t, root, "")
+	require.Contains(t, pythonFindings(check), "with the three commands `export PYTHONPATH=\"$PYTHONPATH:packages/a\"`, `pytest packages/a/tests` and `export PYTHONPATH=\"${PYTHONPATH%:packages/a}\"`")
+
+	// One CircleCI run step's commands are split first.
+	edit = pythonInlinePathEdit(circleCI{}, [][]string{{"PYTHONPATH=packages/a", "pytest", "packages/a/tests"}, {"PYTHONPATH=packages/b", "pytest", "packages/b/tests"}}, true)
+	require.Contains(t, edit, "set different PYTHONPATH values in one step")
+	require.Contains(t, edit, "move each of these commands into its own run step")
 }
