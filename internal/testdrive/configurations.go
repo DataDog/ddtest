@@ -164,7 +164,8 @@ func matchingConfigurationPreparation(scope onboard.ValidationScope, scopeErr er
 
 // adoptConfigurationPreparation gives a selected command the preparation of
 // the one CI configuration it is: preparation and tests run with that
-// configuration's environment, and without its omitted secrets.
+// configuration's environment, and without its omitted secrets and
+// variables.
 func adoptConfigurationPreparation(plan *onboard.TestCommand, entry onboard.TestCommand) {
 	if plan.Command == "" {
 		plan.Command, plan.Directory = entry.Command, entry.Directory
@@ -175,8 +176,8 @@ func adoptConfigurationPreparation(plan *onboard.TestCommand, entry onboard.Test
 }
 
 // Never guess between two CI variants with different environments. Omitted
-// secrets are collected from every matching variant either way: the command
-// runs without each of them.
+// secrets and variables are collected from every matching variant either
+// way: the command runs without each of them.
 func matchingConfigurationEnvironment(scope onboard.ValidationScope, scopeErr error, root, framework, command string) (map[string]string, []string) {
 	if scopeErr != nil {
 		return nil, nil
@@ -246,10 +247,10 @@ func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) 
 		err = fmt.Errorf("no explicit %s CI invocations discovered; review discovery and use --command for local validation", t.framework.Name())
 	}
 	if err != nil {
-		result := validationResult{Session: workspace.PlanSession().ID(), Framework: t.framework.Name(), Tracer: t.tracerLabel, CheckOnly: t.checkOnly, Scope: &scope, Error: err.Error(), Compatibility: verdict{Status: "not exercised", Reason: "Discovery failed; no test commands were executed."}}
+		result := validationResult{Session: workspace.PlanSession().ID(), Framework: t.framework.Name(), Tracer: t.tracerLabel, CheckOnly: t.checkOnly, All: true, Scope: &scope, Error: err.Error(), Compatibility: verdict{Status: "not exercised", Reason: "Discovery failed; no test commands were executed."}}
 		return errors.Join(err, finishValidation(output, t.repositoryRoot, result))
 	}
-	result := validationResult{Session: workspace.PlanSession().ID(), Framework: t.framework.Name(), Tracer: "not selected", CheckOnly: t.checkOnly, Scope: &scope,
+	result := validationResult{Session: workspace.PlanSession().ID(), Framework: t.framework.Name(), Tracer: "not selected", CheckOnly: t.checkOnly, All: true, Scope: &scope,
 		Compatibility: verdict{Status: "compatible", Reason: "Every discovered configuration passed its own paired comparison; configurations were not compared against each other."}, Cleanup: &verdict{Status: "passed", Reason: "Temporary sessions removed for all configurations."}}
 	var models []reportModel
 	var runErrors []error
@@ -500,7 +501,7 @@ func writeConfigurationHTML(output io.Writer, root string, models []reportModel)
 	if err := writeValidation(htmlReportPath(root), content.Bytes()); err != nil {
 		return err
 	}
-	return writeHTMLReportLink(output, root)
+	return writeHTMLReportLink(output, root, validationResult{All: true})
 }
 
 func offsetSuiteTests(suites []reportSuite, offset int) []reportSuite {

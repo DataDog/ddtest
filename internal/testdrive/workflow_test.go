@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -36,7 +37,8 @@ func (e workflowCheckExecutor) CombinedOutput(_ context.Context, name string, ar
 	switch filepath.Base(name) {
 	case "git":
 		if args[0] == "check-ignore" {
-			return []byte(".testoptimization/testdrive.json\n.testoptimization/report.html\n"), nil
+			// The repository ignores .testoptimization/: every path is ignored.
+			return []byte(strings.Join(args[slices.Index(args, "--")+1:], "\n") + "\n"), nil
 		}
 		return nil, nil
 	case "npm":
@@ -55,7 +57,7 @@ func TestSharedWorkflowAcrossFrameworksPreservesAssertionsAndPackagingFailures(t
 			t.Run(runner.Name()+map[bool]string{true: "/package-leak", false: "/pass"}[leak], func(t *testing.T) {
 				root := t.TempDir()
 				t.Chdir(root)
-				requireWriteFile(t, filepath.Join(root, "package.json"), `{"name":"fixture"}`)
+				requireWriteFile(t, filepath.Join(root, "package.json"), `{"name":"fixture","version":"1.0.0"}`)
 				drive := &Testdrive{repositoryRoot: root, framework: runner, language: "javascript", tracerVersion: "latest", executor: workflowCheckExecutor{leak}, command: "vitest", nodeVersion: func() string { return "v24.0.0" }}
 				calls := 0
 				drive.workflowRun = func(ctx context.Context, out io.Writer) error {

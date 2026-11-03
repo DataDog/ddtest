@@ -213,7 +213,7 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 	if t.selectedSite == "" {
 		t.selectedSite = os.Getenv("DD_SITE")
 	}
-	lock, err := workspace.AcquireLock(t.repositoryRoot)
+	lock, err := lockReports(t.repositoryRoot)
 	if err != nil {
 		if errors.Is(err, workspace.ErrBusy) {
 			return fail("blocked_environment", "workflow_busy", err.Error(), "Wait for the running validation; do not start another one or delete lock files.")
@@ -275,7 +275,7 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 	result.Fingerprint = fingerprint
 	scope, err := onboard.DiscoverWorkflowScope(t.repositoryRoot, name)
 	if err != nil {
-		return fail("needs_input", "scope_unresolved", err.Error(), "Correct only the named CI/package parsing gap; preserve every selected framework configuration.")
+		return fail("needs_input", "scope_unresolved", err.Error(), "ddtest could not read the named CI or package configuration. "+onboard.ScopeBlockerInstruction)
 	}
 	onboard.AssignConfigurationIDs(&scope)
 	runtimeVersion := ""
@@ -383,7 +383,7 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 			if len(scope.Commands) == 0 && len(scope.Unresolved) == 0 {
 				reason = "No " + displayName(name) + " test command was found in " + onboard.CIProviderDisplayName() + " workflows or package scripts."
 			}
-			needs := "Facts can add prerequisites to discovered commands; they cannot erase unresolved CI or shrink scope. Do not rewrite CI or package scripts only so ddtest can parse them; report the unresolved entry as a blocker instead. Use --instructions only for this unsupported integration."
+			needs := "Facts can add prerequisites to discovered commands; they cannot erase unresolved CI or shrink scope. " + onboard.ScopeBlockerInstruction + " Use --instructions only for this unsupported integration."
 			// Manual CI edits follow; name the release CI's Node can run so agents
 			// don't pin a newer major themselves.
 			if !options.ExplicitVersion && t.projectTracer == "" {
@@ -706,22 +706,22 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 	var runtimeMetadata *platform.MetadataError
 	if errors.As(runErr, &runtimeMetadata) {
 		result.Capabilities = []string{workflowMetadataCapability(runtimeMetadata)}
-		result.JSONReport = validationPath(t.repositoryRoot)
+		result.JSONReport = validation.jsonReportPath(t.repositoryRoot)
 		return fail("blocked_environment", runtimeMetadata.Code, runErr.Error(), "Resolve only the named registry/storage capability, then rerun next_command. The failed attempt remains incomplete in json_report.")
 	}
 	var localRuntime *localRuntimeError
 	if errors.As(runErr, &localRuntime) {
 		result.Capabilities = []string{localRuntime.Capability()}
-		result.JSONReport = validationPath(t.repositoryRoot)
+		result.JSONReport = validation.jsonReportPath(t.repositoryRoot)
 		return fail("blocked_environment", "local_runtime_mismatch", runErr.Error(), "Provide only the named runtime: put an existing installation first on PATH (a version manager or a user-provided install), then run resume_command unchanged. Ask the user before downloading a runtime and never install one inside the repository. Do not change CI, the tracer or test scope to avoid this path.")
 	}
 	if workspace.FileDescriptorsExhausted(runErr) {
-		result.JSONReport = validationPath(t.repositoryRoot)
+		result.JSONReport = validation.jsonReportPath(t.repositoryRoot)
 		return fail("blocked_environment", fileDescriptorsExhaustedCode, runErr.Error(), "The host ran out of open file descriptors while isolating the checkout, often because other heavy processes share it. Wait for or stop those processes, or raise the open-file limit, then run next_command unchanged. If ddtest already edited CI, next_command recognizes those edits and makes no further change before validating again; do not edit or align them by hand. This says nothing about the tests or the tracer; do not change CI, the tracer or test scope.")
 	}
 	var supervision *processSupervisionError
 	if errors.As(runErr, &supervision) {
-		result.JSONReport = validationPath(t.repositoryRoot)
+		result.JSONReport = validation.jsonReportPath(t.repositoryRoot)
 		if supervision.Code == "unsupported_detached_spawn" {
 			return fail("unsupported", supervision.Code, supervision.Error(), "Preserve the original test command/configuration. This detached spawn cannot be supervised safely; it is not a pre-existing test failure or tracer comparison.")
 		}
@@ -762,9 +762,9 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 	}
 	result.Fingerprint = before
 	result.Checks = workflow.Checks
-	result.JSONReport = validationPath(t.repositoryRoot)
+	result.JSONReport = validation.jsonReportPath(t.repositoryRoot)
 	if validation.HTMLReportCurrent {
-		result.HTMLReport = htmlReportPath(t.repositoryRoot)
+		result.HTMLReport = validation.htmlReportPath(t.repositoryRoot)
 	}
 	result.Instruction = "Validation finished for this source snapshot. Finish any source edits, then run next_command as the final check and report its factual response. Further source edits invalidate completion. ddtest has already checked its owned cleanup and report exclusions; do not repeat cache or package audits."
 	result.NextAction = "run_command"
@@ -779,6 +779,12 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 			return fail("blocked_environment", "checkpoint_cleanup_failed", err.Error(), "Remove only the named owned checkpoint after restoring access.")
 		}
 		result.Status = "selected_passed"
+		if validation.KeptReport != "" {
+			// testdrive --report renders the kept --all report, not this run.
+			result.NextAction, result.NextCommand = "report_result", nil
+			result.FinalResponse = validation.Summary.FinalResponse
+			result.Instruction = "This run of one command passed. It was written beside the --all report " + validation.KeptReport + ", which it does not replace and which alone can certify onboarding. Report final_response unchanged; do not present this run as certification."
+		}
 		return onboard.RenderAgentResult(output, result, options.Format)
 	}
 	if workflowVerdict(validation) != "complete_locally" {
@@ -867,6 +873,12 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 			result.RequiredInput = append(result.RequiredInput, onboard.OneLineExcerpt(check))
 		}
 		needs := "Address only these current blockers, then rerun full validation. A failed feature or exclusion check remains failed."
+		if slices.ContainsFunc(actionable, isScopeBlocker) {
+			needs = "Address only these current blockers, then rerun full validation; unresolved CI scope blockers are not yours to address. A failed feature or exclusion check remains failed. " + onboard.ScopeBlockerInstruction
+			if !slices.ContainsFunc(actionable, func(check string) bool { return !isScopeBlocker(check) }) {
+				needs = "Report these blockers to the user with their options; there is nothing to rerun until the user decides. " + onboard.ScopeBlockerInstruction
+			}
+		}
 		if len(reportOnly) > 0 {
 			needs += " Report, without trying to fix, these tracer limitations: " + strings.Join(reportOnly, "; ") + "."
 		}
@@ -1117,6 +1129,13 @@ func workflowPreflight(ctx context.Context, run func() error) error {
 
 func readCurrentOnboardingResult(root string, started time.Time) (validationResult, error) {
 	var result validationResult
+	// A run of one command after an --all run writes beside that report.
+	if data, err := os.ReadFile(validationResult{KeptReport: validationPath("")}.jsonReportPath(root)); err == nil {
+		if json.Unmarshal(data, &result) == nil && !result.CheckOnly && !result.CompletedAt.Before(started) {
+			return result, nil
+		}
+		result = validationResult{}
+	}
 	data, err := os.ReadFile(validationPath(root))
 	if err != nil {
 		return result, err
@@ -1138,7 +1157,7 @@ func RenderReport(ctx context.Context, output io.Writer, format string) error {
 		return renderReportFailure(output, format, err)
 	}
 	root = workspace.CanonicalRoot(root)
-	lock, err := workspace.AcquireLock(root)
+	lock, err := lockReports(root)
 	if err != nil {
 		result := onboard.AgentResult{Status: "blocked_environment", Phase: "report", Code: "coordination_unavailable", Reason: "A validation is active or coordination storage is unavailable; wait before rendering saved evidence.", NextAction: "wait"}
 		if errors.Is(err, workspace.ErrBusy) {
@@ -1167,12 +1186,15 @@ func RenderReport(ctx context.Context, output io.Writer, format string) error {
 		validation = validation.Retained.Result
 	}
 	result := onboard.AgentResult{Status: "validation_failed", Phase: "report", NextAction: "report_result", JSONReport: validationPath(root)}
-	current, err := workflowFingerprint(ctx, root, validation.Framework)
+	// A focused run in a package below the root bound its evidence to the
+	// package: check the inputs it validated.
+	runRoot := reportRunRoot(root, *validation)
+	current, err := workflowFingerprint(ctx, runRoot, validation.Framework)
 	if err != nil {
 		return renderReportFailure(output, format, err)
 	}
 	receiptValid := verifyWorkflowReceipt(root, *validation) == nil
-	if validation.CheckOnly || validation.Workflow == nil || validation.Workflow.Fingerprint != current || !languageOrUnsupported(validation.Framework).reportRuntimeCurrent(root, *validation.Workflow) || !receiptValid {
+	if validation.CheckOnly || validation.Workflow == nil || validation.Workflow.Fingerprint != current || !languageOrUnsupported(validation.Framework).reportRuntimeCurrent(runRoot, *validation.Workflow) || !receiptValid {
 		result.Code = "stale_report"
 		plain := !validation.CheckOnly && validation.Workflow == nil
 		result.NextAction = "run_command"
@@ -1315,7 +1337,7 @@ const manualCITracerPrefix = " For manual CI edits use "
 // scopeUnresolvedNeeds sends unresolved CI to the manual instructions,
 // keeping the tracer release every CI Node runs that prior named for them.
 func scopeUnresolvedNeeds(prior string) string {
-	needs := "Run next_command for the unsupported CI integration, then validate the discovered commands with testdrive. Keep unresolved CI explicitly unvalidated and report it; do not rewrite CI or package scripts only so ddtest can parse them. Setup facts cannot resolve CI parsing or shrink scope; do not guess a facts schema, inspect the binary, or retry unchanged --apply."
+	needs := "Run next_command for the unsupported CI integration, then validate the discovered commands with testdrive. Keep unresolved CI explicitly unvalidated and report it. " + onboard.ScopeBlockerInstruction + " Setup facts cannot resolve CI parsing or shrink scope; do not guess a facts schema, inspect the binary, or retry unchanged --apply."
 	if _, tracer, found := strings.Cut(prior, manualCITracerPrefix); found {
 		needs += manualCITracerPrefix + tracer
 	}
@@ -1325,4 +1347,9 @@ func scopeUnresolvedNeeds(prior string) string {
 func (t *Testdrive) setPlanTracer(plan *onboard.ExecutionPlan, tracer string) {
 	plan.Tracer = tracer
 	plan.KnownLimitations = installedFeatureLimitations(t.repositoryRoot, plan.Framework, tracer)
+}
+
+// isScopeBlocker reports a blocker for CI scope ddtest could not resolve.
+func isScopeBlocker(check string) bool {
+	return strings.HasPrefix(check, "unresolved CI scope")
 }

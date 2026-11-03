@@ -15,14 +15,15 @@ import (
 
 // Resolve only declared scalar environment values and simple parameter reads.
 // Never evaluate a command substitution or inherit the evaluator's environment.
-func resolveVariantStep(workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any, frameworks ...string) (runtimeStep, map[string]string, error) {
+func resolveVariantStep(workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any, frameworks ...string) (_ runtimeStep, _ map[string]string, err error) {
+	// Findings name values in the provider's own syntax.
+	defer func() { err = displayCIError(err) }()
 	// An action's environment is not inherited by subsequent run steps. Keep
 	// opaque actions outside local validation; do not demand their CI secrets.
 	cypressAction := len(frameworks) > 0 && frameworks[0] == "cypress" && strings.HasPrefix(strings.ToLower(step.Uses), "cypress-io/github-action@")
 	if step.Run == "" && step.Uses != "" && step.ResolutionError == "" && !cypressAction {
 		return step, nil, nil
 	}
-	var err error
 	step.Run, err = interpolateMatrix(step.Run, row)
 	if err != nil {
 		return step, nil, err
@@ -78,13 +79,17 @@ func resolveVariantStep(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 	for _, layer := range []map[string]string{workflow.Env, job.Env, step.Env} {
 		maps.Copy(env, layer)
 	}
-	// A value only CI knows, as a secret, a CI context such as github.ref or a
-	// step output, is left out of local runs and named in the report: both
-	// paired runs miss it alike, so comparing them stays sound. A variable
-	// that controls the runtime, the tools or the tracer still requires
-	// review, and so does one the step's command line expands, below.
+	// A value only CI knows, as a secret, a CI context such as github.ref, a
+	// step output or a variable the provider predefines, is left out of local
+	// runs and named in the report: both paired runs miss it alike, so
+	// comparing them stays sound. As for a variable ciOnlyValue leaves out
+	// below, it still requires review when the test can be affected: when it
+	// controls the shell, the runtime, the tools or the tracer, or when the
+	// step's command line expands it, which the expansion check below finds
+	// unresolved once the value is left out. A value ciOnlyValue describes
+	// reaches it only because something reads it, so it requires review too.
 	withoutCIValue := func(key string, err error) error {
-		if ciControlVariable(key) {
+		if ciControlVariable(key) || ciOnlyValue(env[key]) != "" {
 			return fmt.Errorf("CI environment variable %s requires review: %w", key, err)
 		}
 		step.WithoutCIValues = append(step.WithoutCIValues, key)
@@ -93,6 +98,16 @@ func resolveVariantStep(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 	}
 	for _, key := range slices.Sorted(maps.Keys(env)) {
 		value := env[key]
+		// A variable the CI script sets only on some paths, or a path in the
+		// CI checkout, which local runs do not share, matters only to what
+		// reads it: validation runs without it unless the command line
+		// expands it or it controls the runtime, the tools or the tracer. A
+		// value that reads it stays unresolved below, as its marker remains.
+		if reason := ciOnlyValue(value); reason != "" && !shellReads(step.Run, key) && !ciControlVariable(key) {
+			step.LeftOut = append(step.LeftOut, key+" ("+reason+")")
+			delete(env, key)
+			continue
+		}
 		if err := unresolvedCIError(value); err != nil && !strings.HasPrefix(key, "DD_") {
 			// Only a value the provider says CI defines is left out: what the
 			// job's own commands or build logic compute is its setup.
@@ -258,6 +273,14 @@ func resolveVariantStep(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 	var commands []string
 	var visit func(*syntax.Stmt) bool
 	visit = func(stmt *syntax.Stmt) bool {
+		// Output filters after a command keep their literal text.
+		if head, filters, ok := outputPipeline(stmt); ok {
+			if !visit(head) || len(commands) == 0 {
+				return false
+			}
+			commands[len(commands)-1] += " | " + filters
+			return true
+		}
 		if len(stmt.Redirs) > 0 || stmt.Background || stmt.Negated || stmt.Coprocess {
 			return false
 		}
@@ -311,6 +334,36 @@ func resolveVariantStep(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 	// with && changes whether later tests run after a failed preparation.
 	step.Run = strings.Join(statements, "\n")
 	return step, env, nil
+}
+
+// ciOnlyValue says why a variable's CI value has no local equivalent that
+// validation may use: the script sets it only on some paths, or it is a path
+// in the CI checkout. It is "" for any other value.
+func ciOnlyValue(value string) string {
+	if _, conditional := conditionalCIStatement(value); conditional {
+		return "set only on some paths of the CI script, under conditions ddtest cannot decide"
+	}
+	if strings.Contains(value, ciProjectDirectory) && unresolvedCIError(value) == nil && strings.Count(value, "${{") == strings.Count(value, ciProjectDirectory) {
+		return "a path in the CI checkout, " + displayCIText(value)
+	}
+	return ""
+}
+
+// shellReads reports whether a shell command expands the variable name, or
+// may: a command ddtest cannot parse reads every variable.
+func shellReads(command, name string) bool {
+	file, ok := parseCIShell(command)
+	if !ok {
+		return true
+	}
+	reads := false
+	syntax.Walk(file, func(node syntax.Node) bool {
+		if parameter, ok := node.(*syntax.ParamExp); ok && parameter.Param != nil && parameter.Param.Value == name {
+			reads = true
+		}
+		return !reads
+	})
+	return reads
 }
 
 func localPreparation(root, directory string, words []string) (BuildCommand, bool) {
@@ -449,19 +502,27 @@ func TracerPluginSetting(key string) bool {
 	return ok && enabled && plugin != ""
 }
 
-// ciControlVariable reports a variable whose CI value decides how the
-// runtime, the build and test tools or the tracer run, so a local run without
-// it would validate something else: PATH, HOME, the startup files Bash and sh
-// source (BASH_ENV, ENV), the dynamic linker's variables, Datadog settings,
-// and the variables a language's runtime, caches and tools read.
+// ciControlVariable reports a variable whose CI value decides how the shell,
+// the runtime, the build and test tools or the tracer run, so a local run
+// without it would validate something else: PATH, HOME, the locale and time
+// zone, the startup files and settings Bash and sh read (BASH_ENV, ENV,
+// SHELLOPTS, CDPATH, IFS), the dynamic linker's variables, Datadog settings,
+// and the variables a language's runtime, caches and tools read. A
+// credential under a tool's prefix, as NODE_AUTH_TOKEN, only authenticates
+// the tool to a registry or service and is not one.
 func ciControlVariable(key string) bool {
-	if slices.Contains([]string{"PATH", "HOME", "BASH_ENV", "ENV", "LD_PRELOAD", "LD_LIBRARY_PATH", "DYLD_INSERT_LIBRARIES", "DYLD_LIBRARY_PATH"}, key) || strings.HasPrefix(key, "DD_") {
+	if ciRunnerExported(key, nil) || slices.Contains([]string{"BASH_ENV", "ENV", "SHELLOPTS", "CDPATH", "IFS"}, key) || strings.HasPrefix(key, "LD_") || strings.HasPrefix(key, "DYLD_") {
 		return true
 	}
 	return slices.ContainsFunc(discoveryLanguages, func(language discoveryLanguage) bool {
-		return language.runtimeVariable(key) || language.cacheVariable(key) || language.toolVariable(key)
+		return language.runtimeVariable(key) || language.cacheVariable(key) || language.toolVariable(key) && !credentialName.MatchString(key)
 	})
 }
+
+// credentialName is a variable name that ends with a credential, as in
+// NODE_AUTH_TOKEN, SONAR_LOGIN_PASSWORD or NPM_AUTH. A name that only
+// contains one, such as AUTH_MODE or PASSWORD_POLICY, is a setting.
+var credentialName = regexp.MustCompile(`(?i)(?:^|_)(?:TOKEN|SECRET|PASSWORD|PASSWD|PASSPHRASE|API_?KEY|ACCESS_?KEY|SECRET_?KEY|PRIVATE_?KEY|CREDENTIALS?|AUTH)$`)
 
 // remoteGridProviders maps credential variable prefixes to remote browser
 // grids whose sessions run outside the local machine.

@@ -36,7 +36,7 @@ func runtimeCondition(value string, row map[string]any, environments ...map[stri
 	}
 	result, err := p.expression(0)
 	if err != nil || strings.TrimSpace(p.rest) != "" {
-		reason := "unsupported syntax requires review, not a workflow rewrite"
+		reason := "ddtest can't evaluate this syntax; report it instead of rewriting the condition"
 		if err != nil {
 			reason += ": " + err.Error()
 		}

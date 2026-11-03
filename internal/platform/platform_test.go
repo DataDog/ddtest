@@ -153,6 +153,27 @@ func TestPlatformSanityChecksPropagateContext(t *testing.T) {
 	}
 }
 
+// A CI provider name passed as --platform points to --ci-provider, and the
+// listed platforms are the ones DetectPlatform selects.
+func TestUnsupportedPlatformNamesTheValidOnes(t *testing.T) {
+	err := UnsupportedPlatformError("gitlab")
+	want := "unsupported platform: gitlab; supported platforms: javascript, python, ruby, java. gitlab is a CI provider, not a platform: use --ci-provider gitlab instead (--platform selects the language of the tests)."
+	if err.Error() != want {
+		t.Fatalf("UnsupportedPlatformError() = %q, want %q", err.Error(), want)
+	}
+	for _, name := range Names() {
+		viper.Reset()
+		t.Setenv("DD_TEST_OPTIMIZATION_RUNNER_PLATFORM", name)
+		settings.Init()
+		detected, err := DetectPlatform()
+		if err != nil || detected.Name() != name {
+			t.Fatalf("DetectPlatform() with --platform %s = %v, %v", name, detected, err)
+		}
+	}
+	viper.Reset()
+	settings.Init()
+}
+
 func TestDetectPlatformUnsupported(t *testing.T) {
 	viper.Reset()
 	t.Cleanup(func() {

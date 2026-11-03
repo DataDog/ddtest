@@ -27,6 +27,10 @@ type ciProvider interface {
 	name() string
 	// displayName names the provider in output.
 	displayName() string
+	// checkoutReference is how the provider's configuration reads the
+	// checkout directory, such as $CI_PROJECT_DIR, which the shared model
+	// writes as ${{ github.workspace }} (see displayCIText).
+	checkoutReference() string
 	// configurationFiles lists the repository-relative CI configuration files
 	// the provider owns; none means the repository does not use it. Listing
 	// never parses them.
@@ -520,6 +524,27 @@ func currentCIProvider(root string) (ciProvider, error) {
 	}
 	return nil, UnknownCIProviderError(name)
 }
+
+// displayCIText writes the shared model's checkout expression, which every
+// provider's values use, in the selected provider's own syntax, for output.
+func displayCIText(text string) string {
+	reference := activeOrDefaultCIProvider().checkoutReference()
+	return strings.NewReplacer(ciProjectDirectory, reference, "${{github.workspace}}", reference).Replace(text)
+}
+
+// displayCIError is err with its message in the selected provider's syntax
+// (see displayCIText); it still wraps err.
+func displayCIError(err error) error {
+	if err == nil || !strings.Contains(err.Error(), "github.workspace") || activeOrDefaultCIProvider().checkoutReference() == ciProjectDirectory {
+		return err
+	}
+	return displayedCIError{err}
+}
+
+type displayedCIError struct{ err error }
+
+func (e displayedCIError) Error() string { return displayCIText(e.err.Error()) }
+func (e displayedCIError) Unwrap() error { return e.err }
 
 // activeOrDefaultCIProvider is the selected provider without consulting the
 // repository: the default until UseCIProvider selects another.

@@ -367,10 +367,15 @@ func TestVitestValidationFlagsPrecedeArgumentTerminator(t *testing.T) {
 type bareVitestExecutor struct {
 	t    *testing.T
 	runs *[][]string
+	// config replaces the inspection result; empty means a bare vitest.
+	config string
 }
 
 func (e bareVitestExecutor) CombinedOutput(_ context.Context, command string, args []string, _ map[string]string) ([]byte, error) {
 	if command == "node" && len(args) > 0 && args[0] == "--input-type=module" {
+		if e.config != "" {
+			return []byte(`__DDTEST_VITEST_CONFIG__` + e.config), nil
+		}
 		return []byte(`__DDTEST_VITEST_CONFIG__{"Version":"5.0.5","Arguments":[],"Projects":[{"name":"","root":"."}]}`), nil
 	}
 	*e.runs = append(*e.runs, append([]string{command}, args...))
@@ -391,7 +396,7 @@ func TestBareVitestReachesExecutionInRunMode(t *testing.T) {
 			drive := preparedTestdrive(t)
 			drive.command, drive.args = tc.command, tc.args
 			var runs [][]string
-			drive.executor = bareVitestExecutor{t, &runs}
+			drive.executor = bareVitestExecutor{t: t, runs: &runs}
 			drive.startIntake = func(string, intake.Scenario) (localIntake, error) {
 				return &fakeIntake{url: "http://127.0.0.1:1234"}, nil
 			}
@@ -405,6 +410,57 @@ func TestBareVitestReachesExecutionInRunMode(t *testing.T) {
 			require.Len(t, runs, 1)
 			require.Equal(t, tc.command, runs[0][0])
 			require.Contains(t, runs[0], "--run", "a bare vitest runs once, never in watch mode")
+		})
+	}
+}
+
+// Vitest rejects a repeated --run ("Expected a single value for option"), so
+// validation adds it once, and not at all after an explicit run subcommand.
+func TestVitestValidationAddsRunOnce(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		args   []string
+		config string
+		runs   int
+	}{
+		{"flag", []string{"--run", "--coverage", "--run"}, `{"Version":"3.2.4","Arguments":["--coverage"],"RunCommand":false}`, 1},
+		{"subcommand", []string{"run", "--run", "--coverage"}, `{"Version":"3.2.4","Arguments":["run","--coverage"],"RunCommand":true}`, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			drive := preparedTestdrive(t)
+			drive.command, drive.args = "vitest", tc.args
+			var runs [][]string
+			drive.executor = bareVitestExecutor{t: t, runs: &runs, config: tc.config}
+			drive.startIntake = func(string, intake.Scenario) (localIntake, error) {
+				return &fakeIntake{url: "http://127.0.0.1:1234"}, nil
+			}
+			session, err := workspace.NewSession()
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, session.Close()) })
+			_, _, _, err = drive.inspectVitest(t.Context(), t.TempDir())
+			require.NoError(t, err)
+			for _, probe := range []string{"", "probe.test.js"} {
+				runs = nil
+				if probe != "" {
+					_, _, _, err = drive.inspectVitest(t.Context(), t.TempDir(), probe)
+					require.NoError(t, err)
+				}
+				_, err = drive.runVitest(t.Context(), &bytes.Buffer{}, session, "/trace/ci/init.js", runSpec{Name: "run" + probe, Role: roleBaseline, ProbePath: probe})
+				require.NoError(t, err)
+				require.Len(t, runs, 1)
+				var repeated []string
+				for _, arg := range runs[0] {
+					if arg == "--run" || strings.HasPrefix(arg, "--run=") || arg == "--no-cache" {
+						repeated = append(repeated, arg)
+					}
+				}
+				expected := []string{"--no-cache"}
+				if tc.runs == 1 {
+					expected = []string{"--run", "--no-cache"}
+				}
+				require.Equal(t, expected, repeated, runs[0])
+				require.Equal(t, tc.args[0] == "run", slices.Contains(runs[0], "run"))
+			}
 		})
 	}
 }

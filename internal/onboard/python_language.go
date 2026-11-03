@@ -7,6 +7,8 @@ package onboard
 
 import (
 	_ "embed"
+	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 )
@@ -98,8 +100,8 @@ func (pythonDiscovery) automaticProviderSetup(string) bool { return false }
 func (pythonDiscovery) unsupportedImage(string) string { return "" }
 
 // Its own step rules decide which uninstrumented commands are outside scope.
-func (pythonDiscovery) outsideFrameworkJob(string, ciWorkflow, runtimeJob, map[string]any, string) bool {
-	return false
+func (pythonDiscovery) outsideFrameworkJob(string, ciWorkflow, runtimeJob, map[string]any, string) (bool, []string) {
+	return false, nil
 }
 
 // The shared scan follows this language's package and repository scripts.
@@ -124,8 +126,9 @@ func (pythonDiscovery) runtimeVariable(name string) bool {
 	return name == "PYTHONPATH" || name == "PYTHONHOME"
 }
 
+// The interpreter, pip, uv, pytest and tox read these.
 func (pythonDiscovery) toolVariable(name string) bool {
-	return slices.Contains([]string{"PYTHONWARNINGS", "PYTHONOPTIMIZE", "PYTEST_ADDOPTS", "PYTEST_PLUGINS", "PYTEST_DISABLE_PLUGIN_AUTOLOAD", "TOX_ENV", "TOXENV"}, name)
+	return slices.Contains([]string{"TOX_ENV", "TOXENV"}, name) || slices.ContainsFunc([]string{"PYTHON", "PYTEST_", "PIP_", "UV_", "VIRTUAL_ENV", "COVERAGE_"}, func(prefix string) bool { return strings.HasPrefix(name, prefix) })
 }
 
 func (pythonDiscovery) cacheVariable(name string) bool {
@@ -153,3 +156,75 @@ func (pythonDiscovery) ciShellAfter(ciWorkflow, runtimeJob, runtimeStep, string,
 
 // No shell runtime selection is modeled for this language.
 func (pythonDiscovery) selectsShellRuntime([]string) bool { return false }
+
+// pythonCheckTools never start a test runner: linters, formatters, type
+// checkers, audits and packaging upload tools. Documentation builders are
+// not among them: Sphinx executes the project's conf.py and MkDocs its
+// hooks, which may run anything.
+var pythonCheckTools = []string{"twine", "ruff", "flake8", "black", "isort", "mypy", "pyright", "pylint", "bandit", "pip-audit", "safety", "pydocstyle", "pycodestyle", "autopep8"}
+
+// pythonToolModules never start a test runner when run as python -m <module>.
+var pythonToolModules = []string{"twine", "ruff", "flake8", "black", "isort", "mypy", "pylint", "bandit", "venv", "virtualenv", "pip_audit", "pyflakes", "pycodestyle", "pydocstyle", "wheel", "codespell", "pyright", "setuptools_scm"}
+
+var (
+	pythonExecutable    = regexp.MustCompile(`^(?:python|pypy)(?:\d+(?:\.\d+)?)?$|^py$`)
+	pythonModuleCluster = regexp.MustCompile(`^-[IuBEsSOqbdvRPx]*m$`)
+	pythonOptionCluster = regexp.MustCompile(`^-[IuBEsSOqbdvRPx]+$`)
+)
+
+// Python's tools, and the interpreter running one as a module: coverage run
+// starts a program, its reports only read data; pip, build and check-manifest
+// may build the project, which runs its build backend (see
+// pythonProjectMayBuild). A script, inline code or any other module may run
+// anything.
+func (pythonDiscovery) checkTool(root, directory string, words []string) (bool, bool) {
+	name := strings.ToLower(filepath.Base(words[0]))
+	switch {
+	case slices.Contains(pythonCheckTools, name):
+		return false, true
+	case pipExecutable.MatchString(name):
+		return pipMayStart(root, directory, words[1:]), true
+	case name == "pyproject-build":
+		return pythonBuildMayStart(root, directory, words[1:]), true
+	case name == "check-manifest":
+		return checkManifestMayStart(root, directory, words[1:]), true
+	case name == "coverage":
+		return len(words) < 2 || !slices.Contains([]string{"report", "xml", "html", "json", "lcov", "combine", "erase", "debug", "annotate"}, words[1]), true
+	case pythonExecutable.MatchString(name):
+		module, ok := pythonModule(words[1:])
+		if !ok {
+			return true, true
+		}
+		switch module[0] {
+		case "coverage", "pip":
+			return pythonDiscovery{}.checkTool(root, directory, module)
+		case "build":
+			return pythonBuildMayStart(root, directory, module[1:]), true
+		case "check_manifest":
+			return checkManifestMayStart(root, directory, module[1:]), true
+		}
+		return !slices.Contains(pythonToolModules, module[0]), true
+	}
+	return false, false
+}
+
+// pythonModule returns the module and its arguments for python -m, skipping
+// the interpreter's own options, as in python -Im pip install. ok is false for
+// any other invocation: a script, inline code or stdin.
+func pythonModule(args []string) ([]string, bool) {
+	for i := 0; i < len(args); i++ {
+		switch arg := args[i]; {
+		case pythonModuleCluster.MatchString(arg):
+			if i+1 < len(args) {
+				return args[i+1:], true
+			}
+			return nil, false
+		case arg == "-W" || arg == "-X":
+			i++ // These options take a value.
+		case pythonOptionCluster.MatchString(arg):
+		default:
+			return nil, false
+		}
+	}
+	return nil, false
+}

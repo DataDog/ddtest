@@ -222,3 +222,28 @@ func TestJavaReplayKeepsQuotedJVMOptions(t *testing.T) {
 	require.True(t, handled)
 	require.Equal(t, `-Dmessage="a  b"`, value, "whitespace inside a quoted property survives")
 }
+
+// The shared CI-only value rule reaches Java jobs on GitLab: a conditional
+// export the tests don't read is left out with a caveat, and one in Maven's
+// options stays unresolved. A job that never runs Maven or Gradle keeps
+// Java's own review.
+func TestJavaGitLabJobsFollowTheSharedCIRules(t *testing.T) {
+	setup := gitLabSetupEntry(gitLabJavaSetup)
+	condition := func(name, value string) string {
+		return `    - if [[ "$CI_COMMIT_BRANCH" == "main" ]]; then export ` + name + `=` + value + `; fi` + "\n"
+	}
+	root := gitLabJavaRepository(t, "test:\n  image: maven:3.9-eclipse-temurin-21\n  script:\n"+setup+condition("REPORT_LABEL", "main")+"    - mvn -B verify\nlint:\n  image: node:22\n  script:\n    - npx markdownlint-cli2 README.md\n")
+	scope, err := DiscoverValidationScope(root, "junit5")
+	require.NoError(t, err)
+	require.Empty(t, scope.Unresolved)
+	require.Len(t, scope.Commands, 1)
+	require.Equal(t, []string{"REPORT_LABEL"}, scope.Commands[0].WithoutCIValues)
+	caveats := strings.Join(scope.Caveats, "\n")
+	require.Contains(t, caveats, "validated without the CI variable REPORT_LABEL (set only on some paths of the CI script")
+	require.Contains(t, strings.Join(scope.Review, "\n"), ".gitlab-ci.yml / lint: no junit5 invocation identified")
+
+	root = gitLabJavaRepository(t, "test:\n  image: maven:3.9-eclipse-temurin-21\n  script:\n"+setup+condition("MAVEN_ARGS", "-Pci")+"    - mvn -B verify\n")
+	scope, err = DiscoverValidationScope(root, "junit5")
+	require.NoError(t, err)
+	require.Contains(t, strings.Join(scope.Unresolved, "\n"), "sets it only on some paths of")
+}

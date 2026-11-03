@@ -16,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/DataDog/ddtest/internal/onboard"
+	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -173,4 +174,16 @@ func TestUnsupportedProviderIsReportedNotRetried(t *testing.T) {
 	require.Equal(t, "ci_provider_unsupported", result.Code)
 	require.Equal(t, "report_result", result.NextAction)
 	require.Contains(t, result.Reason, "rspec CI setup for ruby on Other CI")
+}
+
+// The --platform help and its error name the valid platforms and point CI
+// provider names, the A05 mistake, to --ci-provider.
+func TestPlatformFlagIsNotTheCIProvider(t *testing.T) {
+	require.ElementsMatch(t, onboard.CIProviderNames(), platform.CIProviderNames)
+	usage := rootCmd.PersistentFlags().Lookup("platform").Usage
+	for _, name := range platform.Names() {
+		require.Contains(t, usage, name)
+	}
+	require.Contains(t, usage, "--ci-provider")
+	require.Contains(t, platform.UnsupportedPlatformError("gitlab").Error(), "use --ci-provider gitlab instead")
 }

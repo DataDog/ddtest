@@ -332,8 +332,8 @@ func (rubyDiscovery) unsupportedImage(image string) string {
 }
 
 // Its own step rules decide which uninstrumented commands are outside scope.
-func (rubyDiscovery) outsideFrameworkJob(string, ciWorkflow, runtimeJob, map[string]any, string) bool {
-	return false
+func (rubyDiscovery) outsideFrameworkJob(string, ciWorkflow, runtimeJob, map[string]any, string) (bool, []string) {
+	return false, nil
 }
 
 // rubyGemsNote names the CI Ruby images whose RubyGems is older than the
@@ -499,8 +499,9 @@ func (rubyDiscovery) runtimeVariable(name string) bool {
 	return slices.Contains([]string{"RUBYOPT", "RUBYLIB", "GEM_HOME", "GEM_PATH"}, name) || strings.HasPrefix(name, "BUNDLE_")
 }
 
+// Ruby, Bundler, RubyGems, RSpec and Minitest read these.
 func (rubyDiscovery) toolVariable(name string) bool {
-	return slices.Contains([]string{"SPEC_OPTS", "TESTOPTS", "TEST", "TESTS"}, name)
+	return slices.Contains([]string{"SPEC_OPTS", "TESTOPTS", "TEST", "TESTS", "SEED"}, name) || slices.ContainsFunc([]string{"RUBY", "BUNDLE_", "GEM_"}, func(prefix string) bool { return strings.HasPrefix(name, prefix) })
 }
 
 func (rubyDiscovery) cacheVariable(name string) bool {
@@ -674,8 +675,30 @@ func rubyImageSelection(job runtimeJob) string {
 	if version, engine := rubyImageRuntime(job.Image); version+engine != "" {
 		return version + engine
 	}
-	if match := rubyImage.FindStringSubmatch(withImplicitTag(job.Image)); match != nil && !job.FloatingTagStated {
+	if match := rubyImage.FindStringSubmatch(withImplicitTag(mirroredImage(job.Image))); match != nil && !job.FloatingTagStated {
 		return match[2]
 	}
 	return ""
+}
+
+// rubyCheckTools never start a test runner: linters, formatters, audits and
+// documentation tools.
+var rubyCheckTools = []string{"rubocop", "standardrb", "brakeman", "bundle-audit", "bundler-audit", "reek", "rufo", "erb_lint", "erblint", "yard", "yardoc", "rdoc"}
+
+// Bundler subcommands that only manage the bundle.
+var rubyBundleSubcommands = []string{"install", "config", "update", "lock", "package", "cache", "check", "binstubs", "clean", "outdated", "add", "remove", "platform", "list", "info", "show", "doctor", "version", "--version", "-v"}
+
+// Ruby's tools: gem exec and bundle exec run an executable; gem and bundle
+// otherwise manage gems.
+func (rubyDiscovery) checkTool(_, _ string, words []string) (bool, bool) {
+	name := filepath.Base(words[0])
+	switch {
+	case slices.Contains(rubyCheckTools, name):
+		return false, true
+	case name == "gem":
+		return len(words) > 1 && words[1] == "exec", true
+	case name == "bundle":
+		return len(words) > 1 && !slices.Contains(rubyBundleSubcommands, words[1]), true
+	}
+	return false, false
 }

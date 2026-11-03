@@ -27,8 +27,9 @@ type testCI struct{}
 
 const testCIFile = ".testci.yml"
 
-func (testCI) name() string        { return "testci" }
-func (testCI) displayName() string { return "Test CI" }
+func (testCI) name() string              { return "testci" }
+func (testCI) displayName() string       { return "Test CI" }
+func (testCI) checkoutReference() string { return ciProjectDirectory }
 func (testCI) environment() map[string]string {
 	return map[string]string{"CI": "true", "TESTCI": "true"}
 }

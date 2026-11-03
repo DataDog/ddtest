@@ -80,15 +80,15 @@ func TestJavaReportsModulesOfOtherFrameworks(t *testing.T) {
 func TestJavaKeepsUnresolvedStepsInScope(t *testing.T) {
 	root := javaWorkflowFixture(t, "", nil)
 	for run, reason := range map[string]string{
-		"mvn -B verify | tee build.log":       "could not be resolved statically",
 		"mvn verify || true":                  "could not be resolved statically",
+		"mvn -B verify | grep -v WARN":        "could not be resolved statically",
 		"(cd service && mvn test)":            "could not be resolved statically",
 		"cd service && mvn test":              "single explicit command",
 		"mvn ${{ matrix.goals }}":             "expression was not resolved",
 		"./ci/test.sh":                        "Repository script",
 		"bash scripts/run-tests":              "Repository script",
 		"make test":                           "Test wrapper was not resolved",
-		"./gradlew test | tee build.log":      "Gradle command could not be resolved statically",
+		"./gradlew test | grep -v WARN":       "Gradle command could not be resolved statically",
 		"cd app && ./gradlew test":            "Gradle test step requires a single explicit command",
 		"mvn -f ../other/pom.xml verify":      "POM selection needs review",
 		"mvn compile && ./ci/integration.sh":  "Repository script",

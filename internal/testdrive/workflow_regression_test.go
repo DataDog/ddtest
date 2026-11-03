@@ -9,9 +9,11 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
+	"github.com/DataDog/ddtest/internal/ext"
 	"github.com/DataDog/ddtest/internal/framework"
 	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/stretchr/testify/require"
@@ -98,6 +100,30 @@ func TestWorkflowPreflightResolvesLocalFrameworkExecutables(t *testing.T) {
 			_, err = drive.selectWorkflowTracer(t.Context(), onboard.ValidationScope{Commands: []onboard.TestCommand{{Directory: ".", Command: runner.Name() + " test"}, {Directory: ".", Command: "unknown-command"}}}, false)
 			require.Error(t, err)
 			require.Equal(t, "6.16.0", drive.workflowPlan.Tracer, "a later blocker must retain an already resolved release")
+		})
+	}
+}
+
+// A focused run after --all leaves testdrive-command.json and
+// report-command.html beside the saved pair, so ignoring only that pair
+// leaves retained test output visible to Git.
+func TestWorkflowGitCheckCoversFocusedReports(t *testing.T) {
+	for _, tc := range []struct{ name, ignore, status string }{
+		{"saved pair only", "/.testoptimization/testdrive.json\n/.testoptimization/report.html\n", "failed"},
+		{"whole directory", "/.testoptimization/\n", "passed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			t.Chdir(root)
+			require.NoError(t, exec.Command("git", "init", "-q", root).Run())
+			requireWriteFile(t, filepath.Join(root, ".gitignore"), tc.ignore)
+			requireWriteFile(t, filepath.Join(root, "package.json"), `{"private":true}`)
+			drive := &Testdrive{repositoryRoot: root, executor: &ext.DefaultCommandExecutor{}}
+			checks := drive.verifyReportExclusions(t.Context())
+			require.Equal(t, "git_report_exclusions", checks[0].Name)
+			require.Equal(t, tc.status, checks[0].Status, checks[0].Reason)
+			require.Contains(t, checks[0].Command, ".testoptimization/report-command.html")
+			require.Contains(t, checks[0].Command, ".testoptimization/testdrive-command.json")
 		})
 	}
 }

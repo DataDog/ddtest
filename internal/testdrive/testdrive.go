@@ -97,6 +97,7 @@ type Testdrive struct {
 	vitestProbeArguments []string
 	// Inspection may legitimately resolve no options (a bare vitest).
 	vitestInspected, vitestProbeInspected bool
+	vitestRunCommand                      bool
 	vitestNode                            string
 	vitestExecutable                      string
 	vitestRunner                          bool
@@ -468,7 +469,7 @@ func (t *Testdrive) Preview(output io.Writer) {
 		if !t.checkOnly {
 			needsCopy := slices.ContainsFunc(scope.Commands, func(c onboard.TestCommand) bool { return len(c.Prerequisites) > 0 })
 			if needsCopy {
-				if size, err := configurationCopyEstimate(context.Background(), t.repositoryRoot, skipIgnoredOutput); err == nil {
+				if size, err := configurationCopyEstimate(context.Background(), t.checkoutRoot(), skipIgnoredOutput); err == nil {
 					_, _ = fmt.Fprintf(output, "Estimated copy per prepared configuration: up to %d bytes; ignored outputs excluded, dependencies and Git metadata retained. Copy-on-write when available.\n", size)
 				} else {
 					_, _ = fmt.Fprintf(output, "Copy estimate unavailable: %s\n", err)
@@ -587,7 +588,7 @@ func (t *Testdrive) Run(ctx context.Context, output io.Writer) (runErr error) {
 		// recovery would delete that live storage.
 		return t.runLocked(ctx, output, false)
 	}
-	lock, err := workspace.AcquireLock(t.repositoryRoot)
+	lock, err := lockReports(t.repositoryRoot)
 	if err != nil {
 		return err
 	}
@@ -676,11 +677,12 @@ func (t *Testdrive) publishCopiedRunReport(output io.Writer, result *validationR
 	if len(models) == 0 {
 		return nil
 	}
-	if err := writeHTMLReportFile(t.repositoryRoot, models[len(models)-1]); err != nil {
+	keepSavedReport(t.repositoryRoot, t.framework.Name(), result)
+	if err := writeHTMLReportFile(t.repositoryRoot, models[len(models)-1], *result); err != nil {
 		result.HTMLReportCurrent = false
 		return err
 	}
-	return announceHTMLReport(output, t.repositoryRoot, t.framework.Name())
+	return announceHTMLReport(output, t.repositoryRoot, t.framework.Name(), *result)
 }
 
 // setConfigurationScope credits this single run to the discovered

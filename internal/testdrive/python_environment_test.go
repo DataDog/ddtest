@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/DataDog/ddtest/internal/framework"
@@ -81,6 +82,9 @@ func TestPythonProbePreservesEnvironmentSelectors(t *testing.T) {
 		{"python3.13d", []string{"-W", "error", "-m", "pytest"}, []string{"-W", "error"}},
 		{"uv", []string{"run", "python3.13d", "-m", "pytest"}, []string{"run", "--no-sync", "python3.13d"}},
 		{"python_d.exe", []string{"-m", "pytest"}, []string{}},
+		{"python3", []string{"-Im", "pytest"}, []string{"-I"}},
+		{"python3", []string{"-X", "dev", "-IBu", "-m", "pytest"}, []string{"-X", "dev", "-I", "-B", "-u"}},
+		{"uv", []string{"run", "python", "-Im", "pytest"}, []string{"run", "--no-sync", "python", "-I"}},
 		{"uv", []string{"run", "--only-group", "test", "--all-groups", "--no-group=docs", "--no-dev", "--all-extras", "--no-extra", "slow", "pytest"}, []string{"run", "--no-sync", "--only-group", "test", "--all-groups", "--no-group=docs", "--no-dev", "--all-extras", "--no-extra", "slow", "python"}},
 		{"poetry", []string{"run", "python", "-m", "pytest"}, []string{"run", "python"}},
 	} {
@@ -95,6 +99,18 @@ func TestPythonProbePreservesEnvironmentSelectors(t *testing.T) {
 	require.ErrorContains(t, err, "cannot identify a Python interpreter")
 	_, _, err = pythonProbeCommand("uv", []string{"run", "python-wrapper", "-m", "pytest"})
 	require.ErrorContains(t, err, "python-wrapper")
+}
+
+// Isolated interpreters get the observer through a bootstrap, also when -I
+// is clustered with -m or other flags.
+func TestPytestObserverArgumentsReadClusteredFlags(t *testing.T) {
+	for args, want := range map[string][]string{
+		"-Im pytest -q":       {"-I", "-c", pytestObserverBootstrap, "observer", "tracer", "-q"},
+		"-X dev -IBum pytest": {"-X", "dev", "-I", "-B", "-u", "-c", pytestObserverBootstrap, "observer", "tracer"},
+		"-Bu -m pytest -q":    {"-Bu", "-m", "pytest", "-q"},
+	} {
+		require.Equal(t, want, pytestObserverArguments("python3", strings.Fields(args), "observer", "tracer"), args)
+	}
 }
 
 func TestUVPreflightReportsBeforeInstallation(t *testing.T) {

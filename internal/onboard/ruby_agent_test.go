@@ -186,6 +186,8 @@ func TestRubyAgentOnboardingAsksForAScopeDecisionWhenNothingResolves(t *testing.
 	require.Empty(t, state.Instruction, "no CI setup is prescribed for steps ddtest cannot validate")
 	require.Contains(t, state.Location, "bundle exec rake")
 	require.Contains(t, state.Reason, "do not combine --command with --all")
+	require.Contains(t, state.Reason, "Stop here: report these steps and the options in required_input to the user")
+	require.Contains(t, state.Reason, ScopeBlockerInstruction, "the agent reports the steps; it doesn't edit CI until ddtest accepts them")
 	require.NotEmpty(t, state.RequiredInput)
 }
 

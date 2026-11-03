@@ -94,16 +94,18 @@ type discoveryLanguage interface {
 	// runtimeVariable reports an environment variable the language's
 	// runtime or tools read, which images commonly export.
 	runtimeVariable(name string) bool
-	// toolVariable reports an environment variable that adds options or
-	// arguments to the language's build or test tools, as Maven's
-	// MAVEN_ARGS: CI's value for it decides what runs.
+	// toolVariable reports an environment variable the language's package
+	// tools, build or test tools, test runners or tracer read, as Maven's
+	// MAVEN_ARGS: CI's value for it decides what a test command runs even
+	// when its command line does not expand it.
 	toolVariable(name string) bool
 	// outsideFrameworkJob reports whether a CI job, on one matrix row,
 	// cannot run framework's tests: nothing it runs (following package and
 	// repository scripts) mentions the framework. Such a job without the
 	// setup and without a recognized test is reported, not a blocker.
-	// Languages without a static answer return false.
-	outsideFrameworkJob(root string, workflow ciWorkflow, job runtimeJob, row map[string]any, framework string) bool
+	// unread names the published packages it runs that ddtest doesn't read,
+	// which its caveat lists. Languages without a static answer return false.
+	outsideFrameworkJob(root string, workflow ciWorkflow, job runtimeJob, row map[string]any, framework string) (outside bool, unread []string)
 	// stepMayStartTests reports whether a CI step ddtest did not resolve may
 	// still start the language's tests, when the language reads its steps
 	// more precisely than the shared scan; handled is false otherwise.
@@ -162,6 +164,14 @@ type discoveryLanguage interface {
 	// job's runtime its configuration does not select (--ci-runtime); nil
 	// when it takes none.
 	statedRuntime() *statedRuntime
+
+	// checkTool classifies a command, as words with the executable first,
+	// that runs one of the language's lint, audit, packaging or package
+	// management tools: mayStart reports whether, as invoked, it may start a
+	// test runner. directory is the command's working directory ("" when
+	// unreadable), where it reads the project files the tool would run.
+	// handled is false for any other command.
+	checkTool(root, directory string, words []string) (mayStart, handled bool)
 }
 
 // discoveryLanguageFor returns the language that discovers framework's CI, or nil.

@@ -124,6 +124,10 @@ type runtimeStep struct {
 	// Setup is the Datadog setup this step runs, when its provider recognized
 	// one while reading the configuration (see ciProvider.setupStep).
 	Setup *ciSetup `yaml:"-"`
+	// LeftOut names, with why, the variables validation runs without: their
+	// CI values have no local equivalent (see ciOnlyValue), and neither the
+	// step's command line nor the runtime reads them.
+	LeftOut []string `yaml:"-"`
 	// Runtime holds the runtime versions this step selects for later steps,
 	// keyed by the language's installer token (js, ruby), as a known CI
 	// component such as a runtime installer reads them; an empty version
@@ -184,6 +188,14 @@ type runtimeJob struct {
 	Image string `yaml:"-"`
 	// ImageTemplate is the image as written, before variables are expanded.
 	ImageTemplate string `yaml:"-"`
+	// Unread marks a pseudo-job standing for configuration the provider
+	// could not read at all, such as a remote include: it has no runtime
+	// for the user to state, only its unresolved step.
+	Unread bool `yaml:"-"`
+	// componentInputs, on a pseudo-job standing for a known component's
+	// own job, name the include input each step's command comes from (see
+	// gitLabComponentCommands).
+	componentInputs []string
 	// ImageProblem explains why a provider that read the job's container
 	// cannot know its image, such as one built from a Dockerfile it could
 	// not resolve; empty when the image is known or there is no container.
@@ -329,8 +341,10 @@ func checkCIRuntimes(ctx context.Context, root string, resolveNode nodeResolver,
 			}
 			// A job discovery reports as never running the framework, without
 			// a test and without the setup, is not a consumer either.
-			if consumer && !slices.ContainsFunc(resolutions, func(resolution commandResolution) bool { return resolution.Matched }) && !jobSelectsSetup(job, "js") && (javascriptDiscovery{}).outsideFrameworkJob(root, workflow, job, nil, framework) {
-				consumer = false
+			if consumer && !slices.ContainsFunc(resolutions, func(resolution commandResolution) bool { return resolution.Matched }) && !jobSelectsSetup(job, "js") {
+				if outside, _ := (javascriptDiscovery{}).outsideFrameworkJob(root, workflow, job, nil, framework); outside {
+					consumer = false
+				}
 			}
 			if !consumer {
 				// No step can start a selected test, so no instrumented runtime runs here.
