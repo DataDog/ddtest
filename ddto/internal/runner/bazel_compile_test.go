@@ -3,6 +3,7 @@ package runner
 import (
 	"bytes"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -107,13 +108,113 @@ func TestBazelEditedCopiesNameTheOriginals(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	data, err := os.ReadFile(args[6])
+	edited := args[bazelSourceStart(args)]
+	data, err := os.ReadFile(edited)
 	if err != nil {
 		t.Fatal(err)
 	}
 	original := filepath.Join(root, "external", "pkg", "a.go")
-	if args[6] == c.argv[6] || !strings.HasPrefix(string(data), "//line "+original+":1\npackage pkg\n") || !strings.Contains(string(data), "//go:norace\n/*line :3:1*/func A") {
-		t.Fatalf("%s:\n%s", args[6], data)
+	if edited == c.argv[6] || !strings.HasPrefix(string(data), "//line "+original+":1\npackage pkg\n") || !strings.Contains(string(data), "//go:norace\n/*line :3:1*/func A") {
+		t.Fatalf("%s:\n%s", edited, data)
+	}
+}
+
+// //line preserves source positions, but the compiler also records the physical
+// input filenames in export data. Different scratch directories must not change
+// an archive built from the same edited, generated and extra sources.
+func TestBazelEditedCopiesAreReproducible(t *testing.T) {
+	root := t.TempDir()
+	sourceDir := filepath.Join(root, "source with spaces")
+	if err := os.Mkdir(sourceDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	source := filepath.Join(sourceDir, "source.go")
+	content := []byte("package pkg\n\ntype T struct { N int }\nfunc F() T { return T{1} }\n")
+	if err := os.WriteFile(source, content, 0600); err != nil {
+		t.Fatal(err)
+	}
+	config := filepath.Join(root, "importcfg")
+	if err := os.WriteFile(config, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	rewrite := sourceDir + "=>SOURCE"
+	for _, test := range []struct {
+		name      string
+		flags     []string
+		nested    bool
+		separator bool
+	}{
+		{name: "no trimpath"},
+		{name: "cmd go", flags: []string{"-trimpath=" + rewrite}},
+		{name: "rules go", flags: []string{"-trimpath", rewrite}, separator: true},
+		{name: "inside existing prefix", flags: []string{"-trimpath", rewrite}, nested: true},
+		{name: "last flag wins", flags: []string{"-trimpath=unused=>other", "-trimpath", rewrite}},
+		{name: "last equals flag wins", flags: []string{"-trimpath", "unused=>other", "-trimpath=" + rewrite}},
+		{name: "last double dash flag wins", flags: []string{"-trimpath=unused=>other", "--trimpath", rewrite}},
+		{name: "last double dash equals flag wins", flags: []string{"-trimpath", "unused=>other", "--trimpath=" + rewrite}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var archives [][]byte
+			for _, name := range []string{"a", "b"} {
+				scratchRoot := root
+				if test.nested {
+					scratchRoot = sourceDir
+				}
+				temp, err := os.MkdirTemp(scratchRoot, "ddtest-instrument-compile-")
+				if err != nil {
+					t.Fatal(err)
+				}
+				// SDK guards arrive as independently named temporary files,
+				// outside the compilation's own scratch directory.
+				extra, err := os.CreateTemp(root, "_ddtest-instrument-ci-guard-*.go")
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := extra.Close(); err != nil {
+					t.Fatal(err)
+				}
+				guard := "//line " + filepath.ToSlash(filepath.Join(sourceDir, "extra.go")) + ":1\npackage pkg\n\nfunc Extra() T { return T{3} }\n"
+				if err := os.WriteFile(extra.Name(), []byte(guard), 0600); err != nil {
+					t.Fatal(err)
+				}
+				output := filepath.Join(t.TempDir(), name+".a")
+				args := append([]string{"compile", "-p", "pkg", "-importcfg", config, "-pack", "-o", output}, test.flags...)
+				if test.separator {
+					args = append(args, "--")
+				}
+				args = append(args, source)
+				start := bazelSourceStart(args)
+				c := &bazelCompile{
+					argv: args, start: start, temp: temp,
+					replaced: map[int][]byte{start: content},
+					added:    map[string]string{"generated.go": "package pkg\n\nfunc Generated() T { return T{2} }\n"},
+					extra:    []string{extra.Name()},
+				}
+				args, err = c.finish()
+				if err != nil {
+					t.Fatal(err)
+				}
+				cmd := exec.Command("go", append([]string{"tool", "compile"}, args[1:]...)...)
+				if out, err := cmd.CombinedOutput(); err != nil {
+					t.Fatalf("compile edited sources: %v\n%s", err, out)
+				}
+				archive, err := os.ReadFile(output)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(test.flags) > 0 {
+					for _, name := range []string{"source.go", "extra.go"} {
+						if !bytes.Contains(archive, []byte("SOURCE/"+name)) && !bytes.Contains(archive, []byte(`SOURCE\`+name)) {
+							t.Fatalf("the archive lost the caller's rewrite for %s", name)
+						}
+					}
+				}
+				archives = append(archives, archive)
+			}
+			if !bytes.Equal(archives[0], archives[1]) {
+				t.Fatal("temporary source directories changed the archive")
+			}
+		})
 	}
 }
 

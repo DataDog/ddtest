@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -476,15 +477,55 @@ func (c *bazelCompile) finish() ([]string, error) {
 		out = append(out, path)
 		contents = append(contents, data)
 	}
-	for _, path := range c.extra {
+	for i, path := range c.extra {
 		data, err := os.ReadFile(path)
 		if err != nil {
+			return nil, err
+		}
+		// SDK guards and span hooks have independently random names. Stage
+		// them under the same stable rewrite as the other edited sources.
+		path = filepath.Join(c.temp, fmt.Sprintf("extra_%03d.go", i))
+		if err := os.WriteFile(path, data, 0600); err != nil {
 			return nil, err
 		}
 		out = append(out, path)
 		contents = append(contents, data)
 	}
-	return addStandardImports(out, contents, c.temp)
+	out, err = addStandardImports(out, contents, c.temp)
+	if err != nil {
+		return nil, err
+	}
+	return trimBazelTemporarySources(out, c.start, c.temp)
+}
+
+// //line preserves source positions, but Go also records physical input names
+// in export data. Hide the scratch directory before applying caller rewrites;
+// the first matching rewrite wins, even when the caller names its parent.
+func trimBazelTemporarySources(args []string, start int, temp string) ([]string, error) {
+	temp, err := filepath.Abs(temp)
+	if err != nil {
+		return nil, err
+	}
+	var original string
+	for i := 1; i < start; i++ {
+		// cmd/compile accepts either one or two leading dashes.
+		flag := strings.TrimPrefix(args[i], "-")
+		flag = strings.TrimPrefix(flag, "-")
+		if flag == "trimpath" && i+1 < start {
+			original = args[i+1]
+			i++
+		} else if value, ok := strings.CutPrefix(flag, "trimpath="); ok {
+			original = value
+		}
+	}
+	rewrite := filepath.ToSlash(temp) + "=>ddtest-instrumented"
+	if original != "" {
+		rewrite += ";" + original
+	}
+	if start > 0 && args[start-1] == "--" {
+		start--
+	}
+	return slices.Insert(args, start, "-trimpath", rewrite), nil
 }
 
 // addStandardImports adds to the compilation's import configuration the
