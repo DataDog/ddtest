@@ -415,7 +415,7 @@ func TestBuildkitePlugins(t *testing.T) {
 // guarded or not, with the loader registration inside the guard.
 func TestBuildkiteRecognizesTheSetupSnippet(t *testing.T) {
 	guarded := buildkiteSnippetText("js", "5.133.0", "datadoghq.com", "      ")
-	unguarded := "      - |\n        " + strings.ReplaceAll(buildkiteEscape(buildkiteSnippet{site: `"datadoghq.eu"`, languages: `"js"`, tracers: []string{`DD_SET_TRACER_VERSION_JS="5.133.0"`}, installer: buildkiteInstaller, checksum: buildkiteInstallerChecksum}.shell()), "\n", "\n        ") + "\n"
+	unguarded := "      - |\n        " + strings.ReplaceAll(buildkiteEscape(buildkiteSnippet{form: buildkiteSnippetForm, site: `"datadoghq.eu"`, languages: `"js"`, tracers: []string{`DD_SET_TRACER_VERSION_JS="5.133.0"`}, installer: buildkiteInstaller, checksum: buildkiteInstallerChecksum}.shell()), "\n", "\n        ") + "\n"
 	loader := buildkiteSnippetText("js", "5.133.0", "datadoghq.com", "      ", esmImportCommand)
 	pipeline := func(snippet string) string {
 		return "steps:\n" + buildkiteDockerStep("test", "node:22", "      - npm ci\n"+snippet+"      - npm test\n")

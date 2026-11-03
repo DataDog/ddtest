@@ -1,0 +1,14 @@
+{
+  "name": "jenkins-container-javascript-fixture",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "build": "tsc"
+  },
+  "devDependencies": {
+    "vitest": "3.2.4"
+  }
+}

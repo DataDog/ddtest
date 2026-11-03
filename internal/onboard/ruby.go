@@ -624,6 +624,15 @@ func RubyCIConfiguration(root, framework string) RuntimeCheck {
 // instrumented entry's Datadog action to report to the selected site (empty:
 // any site). An incomplete action keeps its entry inconclusive.
 func RubyCIConfigurationForSite(root, framework, site string) RuntimeCheck {
+	return RubyCIConfigurationFrom(root, root, framework, site)
+}
+
+// RubyCIConfigurationFrom is RubyCIConfigurationForSite for a copy of the
+// checkout at source, such as one local validation prepared: the
+// datadog-ci release a setup takes from the bundle (a plugin's, or the one
+// beside it) is the one source's Gemfile.lock pins, not one the copy's
+// bundle gained for local validation.
+func RubyCIConfigurationFrom(root, source, framework, site string) RuntimeCheck {
 	result := RuntimeCheck{Status: "not applicable", Reason: "No candidate Ruby CI commands found."}
 	provider, err := currentCIProvider(root)
 	if err != nil {
@@ -636,6 +645,7 @@ func RubyCIConfigurationForSite(root, framework, site string) RuntimeCheck {
 	for _, workflow := range workflows {
 		for _, name := range slices.Sorted(maps.Keys(workflow.Jobs)) {
 			job := workflow.Jobs[name]
+			provider := setupProviderFor(provider, job)
 			rows, err := runtimeMatrix(job.Strategy.Matrix)
 			if err != nil {
 				result.Jobs = append(result.Jobs, RuntimeFinding{Workflow: workflow.Path, Job: name, Status: "inconclusive", Reason: err.Error()})
@@ -658,10 +668,20 @@ func RubyCIConfigurationForSite(root, framework, site string) RuntimeCheck {
 				}
 				tracer, action, rubygems, gemsAtSetup := "", "", "", ""
 				var setup *ciSetup
+				var setupStep runtimeStep
+				// expired is the source of a shell-local setup whose shell
+				// ended before the step (see ciSetup.shellLocal).
+				expired := ""
 				var inputs map[string]string
 				skippedAction := false
 				var actionErr error
 				for i, step := range job.Steps {
+					if setup != nil && setup.shellLocal && !sameShell(setupStep, step) {
+						// Its exports reach only the later commands of its own
+						// shell; this step runs in another one.
+						expired = setupStep.Source
+						tracer, action, actionErr, inputs, setup = "", "", nil, nil, nil
+					}
 					uses, _, hasVersion := strings.Cut(strings.ToLower(step.Uses), "@")
 					current, isSetup := datadogSetup(step)
 					active, stepErr := rubyStepActive(workflow, job, step, row)
@@ -685,7 +705,7 @@ func RubyCIConfigurationForSite(root, framework, site string) RuntimeCheck {
 						hostRuby, statedRuby = false, false
 					}
 					if isSetup {
-						tracer, action, actionErr, inputs, setup = "", "", nil, nil, nil
+						tracer, action, actionErr, inputs, setup, expired = "", "", nil, nil, nil, ""
 					}
 					if version := rubyGemsUpdate(step.Run); version != "" {
 						rubygems = version
@@ -707,11 +727,11 @@ func RubyCIConfigurationForSite(root, framework, site string) RuntimeCheck {
 							actionErr = err
 							if err == nil && selected {
 								action = current.Reference
-								setup = &current
+								setup, setupStep = &current, step
 								tracer, _ = runtimeValue(current.Inputs["ruby-tracer-version"], row)
 								if current.Floating && tracer == "" {
 									// The mechanism uses a datadog-ci the bundle already pins.
-									tracer = rubyLockedTracer(root)
+									tracer = rubyLockedTracer(source)
 								}
 								inputs = map[string]string{}
 								for key, value := range current.Inputs {
@@ -735,10 +755,17 @@ func RubyCIConfigurationForSite(root, framework, site string) RuntimeCheck {
 						continue
 					}
 					finding := RuntimeFinding{Location: (commandLocation{Workflow: workflow.Path, Job: name, Matrix: row, Step: stepNumber(step, i), Command: step.Run}).String(), Workflow: workflow.Path, Job: name, Step: stepNumber(step, i), Command: resolved.Run, Runtime: ruby, Action: action, TracerRequested: tracer, setupInputs: inputs, setupProvider: provider, Status: "inconclusive", Reason: rubyMissingSetupReason(provider)}
+					if job.SetupUnsupported != "" && setup == nil {
+						finding.Reason = unsupportedSetupReason(provider, job)
+					}
+					if setup == nil && expired != "" {
+						finding.Reason = "The " + provider.setupName() + " at " + expired + " runs in another shell than this test command, and its exports reach only the later commands of its own shell; run it in the same shell, before the test command."
+					}
 					if setup != nil {
 						finding.setupSupported, finding.setupReadProblem = setup.Supported, setup.Problem
+						finding.SetupCaveats = slices.Clone(setup.Caveats)
 						if setup.Floating && tracer != "" {
-							finding.SetupCaveats = append(slices.Clone(setup.Caveats), "datadog-ci version: the "+setup.Reference+" uses the datadog-ci release the repository's Gemfile.lock pins ("+tracer+"), which ddtest validated; it installs the latest release instead if that pin is removed.")
+							finding.SetupCaveats = append(finding.SetupCaveats, "datadog-ci version: the "+setup.Reference+" uses the datadog-ci release the repository's Gemfile.lock pins ("+tracer+"), which ddtest validated; it installs the latest release instead if that pin is removed.", rubyPinnedPluginCaveat(setup.Reference))
 						}
 					}
 					if hostRuby {
@@ -764,6 +791,8 @@ func RubyCIConfigurationForSite(root, framework, site string) RuntimeCheck {
 					} else if ruby != "" && tracer != "" && action != "" {
 						finding.Status, finding.Reason = "not checked", "Check the selected Ruby with the bundled tracer's RubyGems requirements and compare tracer releases."
 						if reason := rubyActionProblem(finding, site); reason != "" {
+							finding.Status, finding.Code, finding.Reason = "inconclusive", CodeIncompleteCISetup, reason
+						} else if reason := rubyBesideProblem(source, setup, tracer); reason != "" {
 							finding.Status, finding.Code, finding.Reason = "inconclusive", CodeIncompleteCISetup, reason
 						} else if reason := rubyWorkspaceRootProblem(root, workflow, job, resolved, setup, provider); reason != "" {
 							finding.Status, finding.Code, finding.Reason = "inconclusive", CodeIncompleteCISetup, reason
@@ -951,6 +980,33 @@ func rubyLockedTracer(root string) string {
 				return version
 			}
 		}
+	}
+	return ""
+}
+
+// rubyPinnedPluginCaveat is how a setup that installs datadog-ci only when
+// the bundle lacks it (the Datadog Jenkins plugin) behaves with the pin, as
+// a real Jenkins run showed: it finds the pinned gem only once bundle
+// install has run on the agent.
+func rubyPinnedPluginCaveat(reference string) string {
+	return "With datadog-ci pinned, the " + reference + " finds it only after bundle install has run in the build: the steps before it get no Datadog variables (for each one it logs ERROR: [datadog] with a stack trace and tries again at the next step), so instrumentation starts at the first step after bundle install, and each of those attempts still runs bundle config set frozen false, which writes BUNDLE_FROZEN: \"false\" to the workspace's .bundle/config (or ~/.bundle/config without one). The tests are instrumented when they run after bundle install."
+}
+
+// rubyBesideProblem explains why a setup that installs datadog-ci tracer
+// cannot rely on that release while the build also runs another Datadog
+// setup for Ruby in the same workspace (see ciSetup.Beside), such as the
+// Datadog Jenkins plugin: unless Gemfile.lock pins datadog-ci, the plugin
+// runs bundle add datadog-ci there, which puts the latest release in the
+// Gemfile, and the installer then uses the bundle's release instead.
+func rubyBesideProblem(root string, setup *ciSetup, tracer string) string {
+	if setup == nil || setup.Beside == "" || setup.Floating {
+		return ""
+	}
+	switch locked := rubyLockedTracer(root); {
+	case locked == "":
+		return "The build also runs " + setup.Beside + ", for Ruby in the same workspace: without datadog-ci pinned in Gemfile.lock, it runs bundle add datadog-ci there, which puts the latest release in the Gemfile, and the installer then uses that release instead of datadog-ci " + tracer + ". Pin it: add gem \"datadog-ci\", \"" + tracer + "\", group: :test to the Gemfile at the checkout root and run bundle lock, so Gemfile.lock pins it, then commit both."
+	case locked != tracer:
+		return "Gemfile.lock pins datadog-ci " + locked + ", which the installer uses instead of the setup snippet's " + tracer + "; set DD_SET_TRACER_VERSION_RUBY=\"" + locked + "\" in it."
 	}
 	return ""
 }

@@ -10,13 +10,14 @@ import (
 	"maps"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 )
 
-// The Datadog Jenkins plugin sets up Test Optimization for a whole pipeline
-// enabled with datadog(testOptimization: [enabled: true, serviceName: …,
-// languages: […]]) in the declarative top-level options, or around a scripted
-// pipeline's nodes. On each step it installs the tracer on the build agent
+// The Datadog Jenkins plugin sets up Test Optimization for the steps in the
+// scope of datadog(testOptimization: [enabled: true, serviceName: …,
+// languages: […]]): in the declarative top-level options, a stage's options
+// (that stage and its nested stages), or around a scripted pipeline's nodes. On each step it installs the tracer on the build agent
 // with the agent's own toolchain (the latest release; a language whose
 // tracer joins the project's dependencies uses a release they already
 // pin), and sets the tracer's variables, the API key and the site from the
@@ -79,9 +80,18 @@ var jenkinsFacts = []ciFactDefinition{
 // jenkinsSetup is a datadog(testOptimization: …) the Jenkinsfile enables.
 type jenkinsSetup struct {
 	source string
-	// languages are the plugin's language tokens.
-	languages []string
-	service   string
+	// position is where the datadog(…) call starts in the Jenkinsfile,
+	// which tells apart two calls on one line.
+	position int
+	// preliminary reports a reading the same call's next one replaces (see
+	// pipelineSetup), and disabled an option that sets enabled: false
+	// literally, which configures no tracer.
+	preliminary, disabled bool
+	// languages are the plugin's language tokens; languagesUnread reports
+	// an option whose languages ddtest cannot read, which may enable any.
+	languages       []string
+	languagesUnread bool
+	service         string
 	// site is an additionalVariables DD_SITE.
 	site string
 	// variables are the additionalVariables the plugin sets for every step.
@@ -91,6 +101,121 @@ type jenkinsSetup struct {
 	// container, and steps the setup steps of every job in its scope.
 	containers []string
 	steps      []*ciSetup
+	// stage reports an option in a stage's options directive; base is the
+	// environment where it is, which the plugin's NODE_OPTIONS composes
+	// with, and covered the narrower values set there, by where.
+	stage   bool
+	base    map[string]string
+	covered map[string]string
+	// pipelineEnv is the pipeline's environment where the option is, which
+	// the plugin's variables compose with outside a stage (see
+	// pluginExports).
+	pipelineEnv map[string]string
+}
+
+// jenkinsContainerUnsupported is why a job that runs in a container cannot
+// use the plugin.
+const jenkinsContainerUnsupported = "the Datadog Jenkins plugin installs the tracer only on the build agent, with the agent's toolchain, and does not support tests inside containers"
+
+// arguments is what the plugin's per-build cache keeps of the option: its
+// variables come from the first option it configures for a language set on
+// an agent, whatever the arguments of the others, and so does the value its
+// NODE_OPTIONS composes with, the one where that option is.
+func (s *jenkinsSetup) arguments() string {
+	var variables []string
+	for _, key := range slices.Sorted(maps.Keys(s.variables)) {
+		variables = append(variables, key+"="+s.variables[key])
+	}
+	text := "serviceName " + strconv.Quote(s.service) + ", additionalVariables [" + strings.Join(variables, ", ") + "]"
+	base := s.base
+	if base == nil {
+		base = s.pipelineEnv
+	}
+	for _, key := range slices.Sorted(maps.Keys(base)) {
+		if slices.ContainsFunc(discoveryLanguages, func(language discoveryLanguage) bool {
+			return slices.Contains(s.languages, language.ciPluginLanguage()) && language.ciPluginComposes(key) != ""
+		}) {
+			text += ", composed with " + key + " " + strconv.Quote(base[key])
+		}
+	}
+	return text
+}
+
+// languageSet is the cache key's language part.
+func (s *jenkinsSetup) languageSet() string {
+	languages := slices.Sorted(slices.Values(s.languages))
+	return strings.Join(slices.Compact(languages), ", ")
+}
+
+// jenkinsArgumentConflicts explains, for each setup, why its arguments are
+// not the ones the plugin applies: another option of the Jenkinsfile with
+// the same languages differs. The plugin caches its variables per build,
+// agent and language set, so on an agent where both run, the second one's
+// serviceName and additionalVariables are ignored. ddtest cannot tell which
+// options share an agent, so all of them must agree. Every reading of a
+// call counts, such as one per matrix cell, as each may evaluate other
+// arguments; a disabled option configures nothing.
+func jenkinsArgumentConflicts(setups []*jenkinsSetup) map[*jenkinsSetup]string {
+	conflicts := map[*jenkinsSetup]string{}
+	groups := map[string][]*jenkinsSetup{}
+	for _, setup := range setups {
+		if len(setup.languages) > 0 && !setup.disabled {
+			groups[setup.languageSet()] = append(groups[setup.languageSet()], setup)
+		}
+	}
+	for languages, group := range groups {
+		var differing []string
+		for _, setup := range group {
+			if described := setup.source + " (" + setup.arguments() + ")"; setup.arguments() != group[0].arguments() && !slices.Contains(differing, described) {
+				differing = append(differing, described)
+			}
+		}
+		if len(differing) == 0 {
+			continue
+		}
+		problem := "The datadog(testOptimization: …) options at " + group[0].source + " (" + group[0].arguments() + ") and " + strings.Join(differing, ", ") + " enable the same languages (" + languages + ") with different arguments. The Datadog Jenkins plugin computes its variables once per build, build agent and set of languages, not per option, so on an agent where several of them run, the serviceName and additionalVariables of every option after the first it configures are ignored, and so are the values its variables compose with there (composed with …, the values where that first option is). Give every datadog(…) option for these languages the same arguments and the same composed values: set those in the pipeline's environment, not a stage's."
+		for _, setup := range group {
+			conflicts[setup] = problem
+		}
+	}
+	return conflicts
+}
+
+// stageCaveat is what ddtest could not check about a stage-level option.
+func (s *jenkinsSetup) stageCaveat() string {
+	return "The datadog(…) option at " + s.source + " is in a stage's options: the Datadog Jenkins plugin's README documents only the pipeline's top-level option. ddtest certifies a stage-level one from a real Jenkins run (plugin 10.0.0), where it set the tracer up for that stage, its nested stages and, in a parallel section, only its branch."
+}
+
+// jenkinsContainerEffect is a language whose tests in a container step
+// within the Datadog Jenkins plugin's scope ddtest has observed on a real
+// Jenkins: the plugin configures the tracer on the build agent, with the
+// agent's toolchain, and its step environment still reaches the container.
+type jenkinsContainerEffect interface {
+	// ciPluginContainerEffect says what then happens to the language's
+	// processes in the container, as a sentence fragment that starts with
+	// the language's name.
+	ciPluginContainerEffect() string
+}
+
+// jenkinsContainerEffects describes, for each of the plugin language tokens
+// a setup enables, what its variables do in a container step.
+func jenkinsContainerEffects(tokens []string) string {
+	var effects []string
+	generic := false
+	for _, language := range discoveryLanguages {
+		if !slices.Contains(tokens, language.ciPluginLanguage()) {
+			continue
+		}
+		if described, ok := language.(jenkinsContainerEffect); ok {
+			effects = append(effects, described.ciPluginContainerEffect())
+		} else {
+			generic = true
+		}
+	}
+	if generic || len(effects) == 0 {
+		effects = append(effects, "the plugin's tracer variables point at a tracer it installed with the build agent's toolchain, which the container may not have")
+	}
+	return strings.Join(effects, "; ")
 }
 
 // containerProblem explains why a setup whose scope includes jobs that run
@@ -114,8 +239,12 @@ func (s *jenkinsSetup) containerProblem() string {
 	if variables = slices.Compact(variables); len(variables) > 0 {
 		set += " (" + strings.Join(variables, ", ") + ")"
 	}
-	return "The datadog(testOptimization: …) option at " + s.source + " also applies to " + strings.Join(s.containers, ", ") + ", which run steps in a container. The Datadog Jenkins plugin sets " + set + " in every step of its scope, container steps included, but installs the tracer only on the build agent, so in those containers every process of the languages it enables, tests or not, loads a tracer the container may not have and can fail to start. ddtest does not certify a setup whose scope includes container stages: run those stages on a host agent, or keep them out of the option's scope (in a scripted pipeline, wrap only the node blocks that run on host agents)."
+	return "The datadog(testOptimization: …) option at " + s.source + " also applies to " + strings.Join(s.containers, ", ") + ", which run steps in a container. The Datadog Jenkins plugin sets " + set + " in every step of its scope, container steps included, but installs the tracer only on the build agent, with the agent's toolchain. In those containers, " + jenkinsContainerEffects(s.languages) + ". ddtest does not certify a setup whose scope includes container stages: " + jenkinsContainerRemedy + "."
 }
+
+// jenkinsContainerRemedy is how a pipeline keeps container stages out of
+// the plugin's scope.
+const jenkinsContainerRemedy = "run those stages on a host agent, or keep them out of the option's scope (in a declarative pipeline, an options { datadog(…) } directive in each host-agent stage that runs the tests instead of the top-level one, every one with the same arguments; in a scripted pipeline, wrap only the node blocks on host agents)"
 
 func (s *jenkinsSetup) problem() string {
 	if len(s.problems) == 0 {
@@ -135,18 +264,47 @@ func jenkinsTestOptimization(call *groovyCall) (string, groovyNode, bool) {
 	return "", nil, false
 }
 
+// jenkinsPositionalArgs reports a call that passes an argument without a
+// name, other than its closure, such as datadog([collectLogs: true]).
+func jenkinsPositionalArgs(call *groovyCall) bool {
+	return slices.ContainsFunc(call.Args, func(arg groovyArg) bool {
+		_, closure := arg.Value.(*groovyClosure)
+		return arg.Name == "" && !closure
+	})
+}
+
 // datadog reads a datadog(…) call; nil when it does not configure Test
-// Optimization (such as datadog(collectLogs: true)).
-func (r *jenkinsReader) datadog(call *groovyCall, scope jenkinsScope) *jenkinsSetup {
+// Optimization (such as datadog(collectLogs: true)). A preliminary reading
+// is replaced by the call's next one.
+func (r *jenkinsReader) datadog(call *groovyCall, scope jenkinsScope, preliminary bool) *jenkinsSetup {
+	setup := r.readDatadog(call, scope)
+	if setup == nil {
+		return nil
+	}
+	setup.position, setup.preliminary, setup.pipelineEnv = call.Start, preliminary, maps.Clone(scope.pipelineEnv)
+	r.options = append(slices.DeleteFunc(r.options, func(other *jenkinsSetup) bool {
+		return other.preliminary && other.position == setup.position
+	}), setup)
+	return setup
+}
+
+// readDatadog reads a datadog(…) call that configures Test Optimization.
+func (r *jenkinsReader) readDatadog(call *groovyCall, scope jenkinsScope) *jenkinsSetup {
 	key, value, ok := jenkinsTestOptimization(call)
 	if !ok {
 		return nil
 	}
 	setup := &jenkinsSetup{source: r.where(call), variables: map[string]string{}}
 	fail := func(problem string) { setup.problems = append(setup.problems, problem) }
+	if jenkinsPositionalArgs(call) {
+		// Groovy passes the named arguments as one more map, and a Pipeline
+		// step takes a single one: Jenkins rejects the call.
+		fail("The datadog(…) call at " + setup.source + " passes a positional argument, such as a map, beside its named arguments, which Jenkins rejects; write every argument as a named one, such as datadog(collectLogs: true, " + key + ": [...]).")
+	}
 	options, literal := value.(*groovyMap)
 	if !literal {
 		fail("The datadog(" + key + ": …) option at " + setup.source + " is not a literal map, so ddtest cannot tell what it enables; write [enabled: true, serviceName: '<service>', languages: [...]] literally.")
+		setup.languagesUnread = true
 		return setup
 	}
 	fields := map[string]groovyNode{}
@@ -154,16 +312,19 @@ func (r *jenkinsReader) datadog(call *groovyCall, scope jenkinsScope) *jenkinsSe
 		fields[entry.Name] = entry.Value
 	}
 	if enabled, ok := fields["enabled"].(*groovyLiteral); !ok || enabled.Text != "true" {
+		setup.disabled = ok && enabled.Text == "false"
 		fail("The datadog(" + key + ": …) option at " + setup.source + " does not set enabled: true literally, so the plugin does not enable Test Optimization; set enabled: true.")
 	}
 	languages, isList := fields["languages"].(*groovyList)
 	if !isList || len(languages.Items) == 0 {
 		fail("The datadog(" + key + ": …) option at " + setup.source + " has no literal languages list; list the plugin's language tokens, such as languages: ['" + jenkinsLanguageExample() + "'].")
+		setup.languagesUnread = true
 	} else {
 		for _, item := range languages.Items {
 			token, problem := r.value(item, scope)
 			if problem != "" {
 				fail("The datadog(" + key + ": …) option at " + setup.source + " lists a language ddtest cannot resolve: " + r.text(item) + ".")
+				setup.languagesUnread = true
 				continue
 			}
 			setup.languages = append(setup.languages, strings.ToUpper(token))
@@ -235,9 +396,24 @@ func (s *jenkinsSetup) ciSetup() ciSetup {
 		Reference: jenkinsPluginReference, Pinned: true, Supported: true, DefaultLatest: true, shaped: true,
 		Floating: true, WorkspaceRoot: true, Problem: s.problem(), Inputs: inputs, Exports: exports,
 		Confirmations: []string{jenkinsPluginFact, jenkinsModeFact},
-		Caveats:       []string{"The Datadog Jenkins plugin installs the tracer on each build agent when a build runs, with that agent's toolchain; ddtest read the Jenkinsfile, not the plugin's configuration or the agents."},
+		Caveats:       s.caveats(),
 	}
 }
+
+// caveats are what ddtest could not check about the plugin setup.
+func (s *jenkinsSetup) caveats() []string {
+	caveats := []string{
+		"The Datadog Jenkins plugin installs the tracer on each build agent when a build runs, with that agent's toolchain; ddtest read the Jenkinsfile, not the plugin's configuration or the agents.",
+		jenkinsWorkspaceCaveat,
+	}
+	if s.stage {
+		caveats = append(caveats, s.stageCaveat())
+	}
+	return caveats
+}
+
+// jenkinsWorkspaceCaveat is the plugin's noise on the first steps of a build.
+const jenkinsWorkspaceCaveat = "Until a build's workspace directory exists (the first steps of a build on a fresh agent or workspace, before the checkout or the first file it writes), the Datadog Jenkins plugin cannot configure the tracer: it logs ERROR: [datadog] with a stack trace for each such step and tries again at the next one. These errors are harmless: the steps that run the tests come later."
 
 func (jenkins) setupName() string { return jenkinsPluginReference }
 
@@ -260,6 +436,10 @@ func (jenkins) setupInput(name string) string {
 // from the project must be exact. The site is the one additionalVariables
 // sets, or the one the user confirmed for Agentless mode.
 func (jenkins) setupProblem(setup ciSetup, tracerInput string, exact func(string) bool, example, site string) string {
+	if jenkinsSnippetSetup(setup) {
+		// A container stage's setup snippet (see jenkinsContainer).
+		return jenkinsContainer{}.setupProblem(setup, tracerInput, exact, example, site)
+	}
 	if setup.Problem != "" {
 		return setup.Problem
 	}
@@ -319,10 +499,15 @@ func jenkinsPluginToken(language string) string {
 func (j jenkins) setupInstructions(request ciSetupRequest) string {
 	token := jenkinsPluginToken(request.Language)
 	var text strings.Builder
-	text.WriteString("Set up Datadog Test Optimization in Jenkins with the Datadog Jenkins plugin, enabled for the whole pipeline in the Jenkinsfile. The plugin installs the tracer on each build agent when a build runs and sets its variables for every step, so the Jenkinsfile only enables it.\n\n")
+	stages := ""
+	if len(request.Jobs) > 0 {
+		stages = " for the stages that run the tests on a host agent (" + strings.Join(request.Jobs, ", ") + ")"
+	}
+	text.WriteString("Set up Datadog Test Optimization in Jenkins" + stages + " with the Datadog Jenkins plugin, enabled in the Jenkinsfile for the pipeline (or for the host-agent stages that run the tests). The plugin installs the tracer on each build agent when a build runs and sets its variables for every step in the option's scope, so the Jenkinsfile only enables it.\n\n")
 	text.WriteString("1. Ask the user to have a Jenkins administrator install the Datadog plugin " + jenkinsPluginMinimum + " or newer on the Jenkins controller and configure it in Manage Jenkins > System > Datadog Plugin: Agentless mode with the Datadog API key stored as a Jenkins credential and the site " + request.Site + ", or Agent mode with a Datadog Agent the build agents reach. Never write the key into the repository, the Jenkinsfile or additionalVariables. ddtest cannot read Jenkins' configuration, so after the edit it asks the user to confirm the plugin and its mode (--ci-confirm) before it certifies anything.\n")
-	text.WriteString("2. In every Jenkinsfile that runs the tests listed above, enable Test Optimization for the pipeline. In a declarative pipeline, add the datadog option to the pipeline's top-level options directive (create the directive after agent if there is none; when it already has a datadog(…) call, add testOptimization to it and keep its other settings); stage-level options are not certified:\n\n```groovy\noptions {\n  datadog(testOptimization: [enabled: true, serviceName: '<service>', languages: ['" + token + "']])\n}\n```\n\nIn a scripted pipeline, wrap the node blocks that run the tests in it instead, re-indenting them and keeping every line:\n\n```groovy\ndatadog(testOptimization: [enabled: true, serviceName: '<service>', languages: ['" + token + "']]) {\n  node {\n    // existing stages\n  }\n}\n```\n\nReplace <service> with the service name the test results should report under, such as the repository name. When the pipeline already enables other languages, add '" + token + "' to the existing languages list. Keep every other line, stage, agent and step unchanged.\n")
-	text.WriteString("\n3. The plugin only instruments steps that run on a host agent (agent any, agent { label … }, node(…)). It does not instrument tests inside containers (agent { docker … }, dockerfile, kubernetes, a podTemplate's node(POD_LABEL), docker.image(…).inside, container(…), or docker run in an sh script): ddtest reports those stages as unsupported. The plugin still sets its tracer variables in container steps within its scope, where the tracer it installed on the agent may be missing, so ddtest does not certify a datadog option whose scope includes a stage that runs steps in a container, tests or not: such stages run on a host agent, or stay out of the option's scope (in a scripted pipeline, wrap only the node blocks on host agents). Do not move tests between agents to obtain a pass; tell the user and let them decide.\n")
+	text.WriteString("2. In every Jenkinsfile that runs the tests listed above, enable Test Optimization. In a declarative pipeline, add the datadog option to the pipeline's top-level options directive (create the directive after agent if there is none; when it already has a datadog(…) call, add testOptimization to it and keep its other settings):\n\n```groovy\noptions {\n  datadog(testOptimization: [enabled: true, serviceName: '<service>', languages: ['" + token + "']])\n}\n```\n\nWhen the pipeline also has stages that run steps in a container (see 3), add that options directive to each host-agent stage that runs the tests instead, after the stage's agent or environment, and not to the pipeline. Every datadog(…) option for the same languages in a Jenkinsfile must have the same arguments: the plugin keeps the variables of the first one it configures for a build, agent and set of languages, and ignores the serviceName and additionalVariables of the others. In a scripted pipeline, wrap the node blocks that run the tests in it instead, re-indenting them and keeping every line:\n\n```groovy\ndatadog(testOptimization: [enabled: true, serviceName: '<service>', languages: ['" + token + "']]) {\n  node {\n    // existing stages\n  }\n}\n```\n\nReplace <service> with the service name the test results should report under, such as the repository name. When the pipeline already enables other languages, add '" + token + "' to the existing languages list. Keep every other line, stage, agent and step unchanged.\n")
+	text.WriteString("\n3. The plugin supports only steps that run on a host agent (agent any, agent { label … }, node(…)), not tests inside containers (agent { docker … }, dockerfile, kubernetes, a podTemplate's node(POD_LABEL), docker.image(…).inside or container(…)): those stages set Test Optimization up with Datadog's setup snippet instead, as ddtest's instructions for them show, and ddtest reports tests that docker run starts in an sh script as unresolved. The plugin's variables still reach container steps within its scope: " + jenkinsContainerEffects([]string{token}) + ". So ddtest does not certify a datadog option whose scope includes a stage that runs steps in a container, tests or not: " + jenkinsContainerRemedy + ". Do not move tests between agents to obtain a pass; tell the user and let them decide.\n")
+	text.WriteString("\nThe first steps of a build on a fresh agent or workspace log ERROR: [datadog] with a stack trace: the plugin cannot configure the tracer until the workspace directory exists, and tries again at the next step. Tell the user these errors are expected.\n")
 	if len(request.After) > 0 {
 		text.WriteString("\n4. In the sh script of each stage that runs the tests, add this line before the test command (inside the same sh string, so it runs in the test's shell):\n\n```sh\n" + strings.Join(request.After, "\n") + "\n```\n")
 	}

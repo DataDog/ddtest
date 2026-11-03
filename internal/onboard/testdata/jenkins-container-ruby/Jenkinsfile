@@ -1,0 +1,50 @@
+// From umd-lib/archelon (Apache-2.0), Jenkinsfile, with the email
+// notification, static-analysis and cleanup stages removed and the Rails
+// test commands replaced by this project's Rake ones.
+pipeline {
+  agent {
+    dockerfile {
+      filename 'Dockerfile.ci'
+      // Pass JENKINS_EMAIL_SUBJECT_PREFIX and JENKINS_DEFAULT_EMAIL_RECIPIENTS
+      // into container as "env" arguments, so they are available inside the
+      // Docker container
+      args '-u root --env JENKINS_DEFAULT_EMAIL_RECIPIENTS=$JENKINS_DEFAULT_EMAIL_RECIPIENTS --env JENKINS_EMAIL_SUBJECT_PREFIX=$JENKINS_EMAIL_SUBJECT_PREFIX'
+    }
+  }
+
+  options {
+    buildDiscarder(
+      logRotator(
+        artifactDaysToKeepStr: '',
+        artifactNumToKeepStr: '',
+        numToKeepStr: '20'))
+  }
+
+  stages {
+    stage('build') {
+      steps {
+        sh '''
+          bundle install
+          ruby -v
+        '''
+      }
+    }
+
+    stage('test') {
+      steps {
+        sh '''
+          # Configure MiniTest to use JUnit-style reporter
+          export MINITEST_REPORTER=JUnitReporter
+
+          # Run the tests
+          bundle exec rake test
+        '''
+      }
+      post {
+        always {
+          junit '**/test/reports/*.xml'
+        }
+      }
+    }
+  }
+}

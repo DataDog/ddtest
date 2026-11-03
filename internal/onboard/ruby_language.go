@@ -214,6 +214,14 @@ func (rubyDiscovery) ciSetupRequest(root, framework, site string, terms ciSetupT
 		"If a job or matrix entry runs a Ruby the tracer cannot instrument (head, JRuby, TruffleRuby), keep its tests running uninstrumented in a job without " + terms.Entry + "; ddtest reports such jobs as excluded. To split a shared matrix, exclude those entries from the instrumented job " + terms.MatrixExclusion + " and run them in that separate job. Report each exclusion and its reason; do not drop entries, guard the tests or change Ruby versions to obtain a pass. At least one compatible instrumented job is required.",
 		"Exclude .testoptimization/ from Git (add /.testoptimization/ to the repository .gitignore)" + rubyGemPackaging(root),
 	}
+	if terms.Beside != "" {
+		// The other mechanism's bundle add would change the release.
+		request.Notes[0] = "The build also runs " + terms.Beside + ", for Ruby in the same workspace, which runs bundle add datadog-ci there unless Gemfile.lock pins it, and the " + terms.Installer + " then uses the bundle's release: pin datadog-ci exactly in the Gemfile and Gemfile.lock, as the instructions for those stages show, and replace <exact datadog-ci release> with that release. Keep the existing Ruby images, bundle exec/binstub/Rake/Rails entry points and test arguments. In a mixed RSpec/Minitest repository, scope this change to " + framework + "."
+		if locked := rubyLockedTracer(root); locked != "" {
+			request.TracerVersion = locked
+			request.Notes[0] = "Gemfile.lock pins datadog-ci " + locked + ", which the " + terms.Installer + " uses as is, and the build also runs " + terms.Beside + ": keep the pin, and keep the Gemfile, Gemfile.lock, Ruby images, bundle exec/binstub/Rake/Rails entry points and test arguments unchanged. In a mixed RSpec/Minitest repository, scope this change to " + framework + "."
+		}
+	}
 	request.Notes = slices.DeleteFunc(request.Notes, func(note string) bool { return note == "" })
 	if framework == "minitest" {
 		request.Notes = append(request.Notes, rubyShellForkSetup(terms))
@@ -224,11 +232,12 @@ func (rubyDiscovery) ciSetupRequest(root, framework, site string, terms ciSetupT
 // rubyPluginSetupRequest is the Ruby part of a CI server plugin's setup: the
 // plugin uses the datadog-ci the root bundle pins, so the bundle pins it.
 func rubyPluginSetupRequest(root, framework, site string, terms ciSetupTerms) ciSetupRequest {
-	request := ciSetupRequest{Language: "ruby", Site: site}
+	request := ciSetupRequest{Language: "ruby", Site: site, Service: rubyGemspecName(root)}
 	pin := "Pin datadog-ci in the bundle: add gem \"datadog-ci\", \"<exact datadog-ci release>\", group: :test to the Gemfile at the checkout root (in a group the tests load; keep every other line) and run bundle lock, so Gemfile.lock pins it, then commit both. Use an exact release compatible with every instrumented Ruby, such as 1.42.0; when Gemfile.lock already locks datadog-ci, keep that release. The " + terms.Installer + " uses a datadog-ci the bundle already has; without one it runs bundle config set frozen false and bundle add datadog-ci on the agent, installing the latest release, which ddtest cannot validate."
 	if locked := rubyLockedTracer(root); locked != "" {
 		pin = "The Gemfile.lock at the checkout root already pins datadog-ci " + locked + ", which the " + terms.Installer + " uses as is and ddtest validates; keep it pinned, and keep the Gemfile and Gemfile.lock unchanged."
 	}
+	pin += " With the pin, the " + terms.Installer + " finds datadog-ci only once bundle install has run in the build: run bundle install in a step before the tests. The steps before it get no Datadog variables, and for each the " + terms.Installer + " logs ERROR: [datadog] with a stack trace and still runs bundle config set frozen false; tell the user these errors are expected."
 	request.Notes = []string{
 		pin,
 		"The " + terms.Installer + " configures datadog-ci from the checkout root with the build agent's default ruby and bundle, so keep the Gemfile at the checkout root and run the " + framework + " tests from there: not inside dir(…), and without BUNDLE_GEMFILE. Keep the existing bundle exec/binstub/Rake/Rails entry points and test arguments.",
@@ -236,7 +245,7 @@ func rubyPluginSetupRequest(root, framework, site string, terms ciSetupTerms) ci
 		"The " + terms.Installer + " refuses Ruby older than 2.7 and RubyGems older than 3.3.22: on agents with Ruby 2.7 or 3.0, run gem update --system 3.4.22 on the agent (or in an earlier step) before the tests.",
 		rubyRakeOptionsNote(root),
 		setupUnsupportedNote(root, "ruby", framework),
-		"If a stage runs a Ruby the tracer cannot instrument (head, JRuby, TruffleRuby), tell the user: the " + terms.Installer + " instruments every stage of the pipeline, so it cannot leave that stage out. Report it; do not drop stages or change Ruby versions to obtain a pass.",
+		"If a stage runs a Ruby the tracer cannot instrument (head, JRuby, TruffleRuby), tell the user: the " + terms.Installer + " instruments every stage in its option's scope, so that stage stays out of it only when the option is in the stages' own options instead of the pipeline's. Report it; do not drop stages or change Ruby versions to obtain a pass.",
 		"Exclude .testoptimization/ from Git (add /.testoptimization/ to the repository .gitignore)" + rubyGemPackaging(root),
 	}
 	request.Notes = slices.DeleteFunc(request.Notes, func(note string) bool { return note == "" })
@@ -246,7 +255,29 @@ func rubyPluginSetupRequest(root, framework, site string, terms ciSetupTerms) ci
 	return request
 }
 
-// Agents apply Ruby setup by hand on every provider.
+// rubyGemspecName is the gem name the only gemspec at the checkout root
+// sets literally, or empty.
+func rubyGemspecName(root string) string {
+	specs, _ := filepath.Glob(filepath.Join(root, "*.gemspec"))
+	if len(specs) != 1 {
+		return ""
+	}
+	data, err := os.ReadFile(specs[0])
+	if err != nil {
+		return ""
+	}
+	if match := rubyGemspecNameAssignment.FindSubmatch(data); match != nil {
+		return string(match[1])
+	}
+	return ""
+}
+
+// rubyGemspecNameAssignment is a gemspec's literal name assignment.
+var rubyGemspecNameAssignment = regexp.MustCompile(`(?m)^\s*\w+\.name\s*=\s*["']([A-Za-z0-9_.-]+)["']`)
+
+// Agents apply Ruby setup by hand on every provider; where the provider's
+// setup is a plugin, onboard --apply enables it (see
+// providerWritesPluginSetup) and the rest stays the agent's.
 func (rubyDiscovery) automaticProviderSetup(string) bool { return false }
 
 // rubyShellForkSetup is the Minitest fork setup for a setup that runs in the
@@ -549,6 +580,11 @@ func (rubyDiscovery) ciPluginLanguage() string { return "RUBY" }
 // The Datadog Jenkins plugin replaces RUBYOPT.
 func (rubyDiscovery) ciPluginComposes(string) string { return "" }
 
+// Ruby's setup needs no command after it in the test's shell.
+func (rubyDiscovery) ciShellAfter(ciWorkflow, runtimeJob, runtimeStep, string, commandResolution) (bool, string) {
+	return false, ""
+}
+
 // Ruby version managers: rbenv, rvm, chruby, and sourcing the scripts that
 // load RVM or chruby.
 func (rubyDiscovery) selectsShellRuntime(words []string) bool {
@@ -562,6 +598,21 @@ func (rubyDiscovery) selectsShellRuntime(words []string) bool {
 		return len(words) > 1 && slices.Contains([]string{"rvm", "rvm.sh", "chruby.sh", "auto.sh"}, path.Base(words[1]))
 	}
 	return false
+}
+
+// ciPluginContainerEffect: a real Jenkins run showed the plugin's RUBYOPT
+// reaching docker.image(…).inside steps.
+func (rubyDiscovery) ciPluginContainerEffect() string {
+	return "for Ruby, the plugin's RUBYOPT (" + rubyInstallerPreload + ") makes every Ruby process in the container fail to start, bundle install and bundle exec included, which fails the build, because the plugin adds datadog-ci to the agent's gems, not the container's; with datadog-ci pinned in Gemfile.lock, the plugin's check on the agent never passes, so the container gets no variables and the tests run untraced"
+}
+
+// lockedTracer is the datadog-ci release Gemfile.lock pins, which the
+// installer uses as is.
+func (rubyDiscovery) lockedTracer(root string) string { return rubyLockedTracer(root) }
+
+// ciPluginReset removes the plugin's RUBYOPT, which replaces the step's.
+func (rubyDiscovery) ciPluginReset() string {
+	return `if [ "${RUBYOPT:-}" = "` + rubyInstallerPreload + `" ]; then unset RUBYOPT; fi`
 }
 
 func (rubyDiscovery) ciPluginExports(map[string]string) (map[string]string, map[string]string) {
@@ -588,12 +639,13 @@ func rubyTestStep(root string, workflow ciWorkflow, job runtimeJob, step runtime
 
 // rubyImageSelection is the Ruby version or engine a job's image selects, or
 // a Ruby image's floating tag (latest, current, or none): that image's runtime
-// is not the user's to state.
+// is not the user's to state, unless the job's agent keeps the release the
+// tag selects (FloatingTagStated).
 func rubyImageSelection(job runtimeJob) string {
 	if version, engine := rubyImageRuntime(job.Image); version+engine != "" {
 		return version + engine
 	}
-	if match := rubyImage.FindStringSubmatch(withImplicitTag(job.Image)); match != nil {
+	if match := rubyImage.FindStringSubmatch(withImplicitTag(job.Image)); match != nil && !job.FloatingTagStated {
 		return match[2]
 	}
 	return ""

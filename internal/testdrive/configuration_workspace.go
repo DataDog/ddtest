@@ -296,6 +296,15 @@ const fileDescriptorsExhaustedCode = "file_descriptors_exhausted"
 
 // A package command executes in its package directory while telemetry source
 // paths and cross-configuration native identities remain checkout-relative.
+// committedCheckout is the user's checkout a configuration copy was made
+// from (see configurationSourceRoot), or the checkout itself.
+func (t *Testdrive) committedCheckout() string {
+	if t.configurationSourceRoot != "" {
+		return t.configurationSourceRoot
+	}
+	return t.checkoutRoot()
+}
+
 func (t *Testdrive) checkoutRoot() string {
 	if t.configurationRoot != "" {
 		return t.configurationRoot

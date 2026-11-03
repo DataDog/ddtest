@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"maps"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -441,32 +442,43 @@ func PlanJavaScriptSetup(root, framework, version, site, nodeRequirement string)
 	return &SetupPlan{root: root, edits: edits, impact: impact}, nil
 }
 
-// ignoreSetupEdits excludes ddtest's report directory, and NYC's output when
-// coverage was added, from Git and npm packaging.
-func ignoreSetupEdits(root string, coverageAdded bool) ([]setupEdit, error) {
+// ignoreSetupEdits excludes ddtest's report directory, NYC's output when
+// coverage was added, and extra (patterns of what the CI setup leaves
+// in the workspace), from Git and npm packaging.
+func ignoreSetupEdits(root string, coverageAdded bool, extra ...string) ([]setupEdit, error) {
+	// ddtest writes .testoptimization/ at the root only. NYC writes
+	// .nyc_output/ in each covered command's directory, so its entry is
+	// unanchored and a root-only pattern doesn't cover it.
+	entries := []string{"/.testoptimization/"}
+	if coverageAdded {
+		entries = append(entries, ".nyc_output/")
+	}
+	return ignoreEdits(root, append(entries, extra...))
+}
+
+// ignoreEdits adds the entries that .gitignore, and an existing .npmignore,
+// do not cover yet.
+func ignoreEdits(root string, wanted []string) ([]setupEdit, error) {
 	var edits []setupEdit
-	for _, path := range []string{".gitignore", ".npmignore"} {
-		edit, err := readSetupEdit(root, path)
+	for _, file := range []string{".gitignore", ".npmignore"} {
+		edit, err := readSetupEdit(root, file)
 		if err != nil {
 			return nil, err
 		}
-		if path == ".npmignore" && edit.before == nil {
+		if file == ".npmignore" && edit.before == nil {
 			continue
 		} // Creating it would disable npm's .gitignore fallback.
-		// ddtest writes .testoptimization/ at the root only. NYC writes
-		// .nyc_output/ in each covered command's directory, so its entry is
-		// unanchored and a root-only pattern doesn't cover it.
-		entries := []string{"/.testoptimization/"}
-		if coverageAdded {
-			entries = append(entries, ".nyc_output/")
-		}
+		entries := slices.Clone(wanted)
 		for _, line := range strings.Split(strings.ReplaceAll(string(edit.before), "\r\n", "\n"), "\n") {
 			line = strings.TrimSpace(line)
 			entries = slices.DeleteFunc(entries, func(entry string) bool {
-				if entry == ".nyc_output/" {
+				switch entry {
+				case ".nyc_output/":
 					return strings.TrimSuffix(strings.TrimPrefix(line, "**/"), "/") == ".nyc_output"
+				case "/.testoptimization/":
+					return strings.Trim(line, "/") == ".testoptimization"
 				}
-				return strings.Trim(line, "/") == ".testoptimization"
+				return ignoreCovers(line, entry)
 			})
 		}
 		if len(entries) == 0 {
@@ -486,6 +498,32 @@ func ignoreSetupEdits(root string, coverageAdded bool) ([]setupEdit, error) {
 		edits = append(edits, edit)
 	}
 	return edits, nil
+}
+
+// ignoreCovers reports a .gitignore line whose pattern matches every folder
+// a single-name entry does: an entry anchored at the root (/name/) is
+// covered by a pattern for that name at the root or at any depth, and an
+// unanchored one (name/), which Git matches at any depth, only by a pattern
+// at any depth, such as .datadog-ci-container* or
+// **/.datadog-ci-container.*/ for .datadog-ci-container.*/.
+func ignoreCovers(line, entry string) bool {
+	if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "!") {
+		return false
+	}
+	pattern := strings.TrimSuffix(line, "/")
+	anchored := false
+	if rest, ok := strings.CutPrefix(pattern, "**/"); ok {
+		pattern = rest
+	} else if rest, ok := strings.CutPrefix(pattern, "/"); ok {
+		pattern, anchored = rest, true
+	}
+	// Git anchors a pattern with a slash in its middle at the root too, and
+	// it then names a path below a folder, not a single name.
+	if pattern == "" || strings.Contains(pattern, "/") || anchored && !strings.HasPrefix(entry, "/") {
+		return false
+	}
+	covered, err := path.Match(pattern, strings.Trim(entry, "/"))
+	return err == nil && covered
 }
 
 func setupMember(node *yaml.Node, key string) *yaml.Node {

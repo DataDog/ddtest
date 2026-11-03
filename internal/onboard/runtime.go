@@ -178,10 +178,20 @@ type runtimeJob struct {
 	// instrument the job at all, such as a container the Datadog Jenkins
 	// plugin does not reach; such a job is never certified.
 	SetupUnsupported string `yaml:"-"`
+	// SetupProvider is the provider whose setup mechanism the job uses when
+	// it is not its provider's own, such as Datadog's installer in a Jenkins
+	// stage that runs in a container (see setupProviderFor); nil otherwise.
+	SetupProvider ciProvider `yaml:"-"`
 	// Host describes the agent a job without an image runs on, such as a
 	// Jenkins agent label, for the user who knows its runtime; empty uses
 	// the provider's generic description.
 	Host string `yaml:"-"`
+	// FloatingTagStated marks a job whose runtime image's floating tag
+	// (node:lts, ruby:latest, an untagged node) runs the release its agent
+	// keeps, which only the user can tell, so it takes the user's statement
+	// as a host's runtime does: a Jenkins container, whose Docker pulls an
+	// image only when the agent has none (unless alwaysPull is set).
+	FloatingTagStated bool `yaml:"-"`
 	// Stated holds the runtime versions the user stated for this job, by
 	// installer token, when its image selects none (see --ci-runtime). They
 	// apply only on matrix rows whose runtimeHost is not empty.
@@ -672,8 +682,11 @@ func evaluateRuntimeTest(ctx context.Context, root string, workflow ciWorkflow, 
 			return finding
 		}
 		finding.Reason = "No Datadog JavaScript action runs before this test step for this matrix entry. It is not validated as instrumented."
-		if provider := activeOrDefaultCIProvider(); !provider.sharedSyntax() {
+		if provider := setupProviderFor(activeOrDefaultCIProvider(), job); !provider.sharedSyntax() {
 			finding.Reason = "No " + provider.setupName() + " selecting JavaScript runs before this test command. It is not validated as instrumented."
+			if job.SetupUnsupported != "" {
+				finding.Reason = unsupportedSetupReason(provider, job)
+			}
 		}
 		return finding
 	}
@@ -689,9 +702,10 @@ func evaluateRuntimeTest(ctx context.Context, root string, workflow ciWorkflow, 
 	}
 	finding.TracerFloating = finding.TracerRequested != "" && strings.TrimPrefix(finding.TracerRequested, "v") != requirement.Version
 	finding.Requirement = requirement.Node
+	finding.SetupCaveats = slices.Clone(state.caveats)
 	if state.floating {
 		// The exception to an exact release: the mechanism cannot pin one.
-		finding.SetupCaveats = append(slices.Clone(state.caveats), "dd-trace version: the "+state.action+" installs the latest dd-trace release when each build runs and cannot pin one; ddtest checked the CI runtime against, and validated locally with, dd-trace@"+requirement.Version+", the latest release when it ran. A later release can change behavior or drop support for the CI Node version.")
+		finding.SetupCaveats = append(finding.SetupCaveats, "dd-trace version: the "+state.action+" installs the latest dd-trace release when each build runs and cannot pin one; ddtest checked the CI runtime against, and validated locally with, dd-trace@"+requirement.Version+", the latest release when it ran. A later release can change behavior or drop support for the CI Node version.")
 	}
 	for _, entry := range resolution.Tests {
 		words, _ := shellquote.Split(entry.Command)
@@ -732,6 +746,10 @@ func evaluateRuntimeTest(ctx context.Context, root string, workflow ciWorkflow, 
 	if finding.Status == StatusInconclusive {
 		finding.Code = CodeRuntimeUnknown
 	}
+	if finding.Status == StatusIncompatible && state.floating {
+		// No other release can be selected: the setup itself cannot work.
+		finding.Code, finding.Reason = CodeIncompleteCISetup, floatingTracerNodeProblem(state.action, requirement, node)
+	}
 	if finding.Status == StatusCompatible {
 		reason := ""
 		if len(frameworks) > 0 && frameworks[0] == "cucumber" {
@@ -750,10 +768,38 @@ func evaluateRuntimeTest(ctx context.Context, root string, workflow ciWorkflow, 
 				// Nothing custom to preserve: the step only lacks the action's preload.
 				finding.Code = CodeMissingInitialization
 				finding.Reason = "The Datadog action runs, but this test step sets no NODE_OPTIONS to load its preload. Add NODE_OPTIONS: -r ${{ env.DD_TRACE_PACKAGE }} (with --import ${{ env.DD_TRACE_ESM_IMPORT }} for ESM) to the step; ddtest onboard --apply can add it."
+			} else if (reason == unverifiedPreloadReason || reason == mochaESMImportReason) && setupExports(job, step, "DD_TRACE_PATH") && checkJestBootstrap(workflow, job, step, row, false) == "" {
+				// A setup that exports the tracer's package path (a CI server
+				// plugin) loads the preload; only the ESM loader line is
+				// missing from the test's shell, before the test command.
+				finding.Code = CodeMissingInitialization
+				finding.Reason = "The CI setup loads the tracer's preload, but this test step's shell does not register its ESM loader before the test command. Add " + pluginESMImportCommand + " to the step's script before the test command; ddtest onboard --apply can add it."
 			}
 		}
 	}
 	return finding
+}
+
+// unsupportedSetupReason explains a test job the provider's setup
+// mechanism cannot instrument (runtimeJob.SetupUnsupported).
+func unsupportedSetupReason(provider ciProvider, job runtimeJob) string {
+	return "This job cannot use the " + provider.setupName() + ": " + job.SetupUnsupported + ". It is not validated as instrumented: the user's options are to run its tests where the " + provider.setupName() + " works, or to set up Test Optimization for it by hand, outside ddtest, which ddtest cannot validate."
+}
+
+// floatingTracerNodeProblem explains why a setup that installs the latest
+// dd-trace whatever the CI Node is (the Datadog Jenkins plugin) cannot work
+// on node: the latest release's engines exclude it.
+func floatingTracerNodeProblem(setup string, latest tracerRequirement, node string) string {
+	return "The " + setup + " installs the latest dd-trace release (" + latest.Version + ") on every build, whatever Node the CI runs, and that release requires Node " + latest.Node + " (its package.json engines), which Node " + node + " does not satisfy; the " + setup + " cannot install an older release. Run these tests on a Node version the latest dd-trace supports, or set up Test Optimization for them by hand; ddtest then checks the hand-written setup where it can."
+}
+
+// floatingTracerRequirement is the latest dd-trace release and its Node
+// range, which a setup that cannot pin the tracer installs.
+var floatingTracerRequirement = func(ctx context.Context) (tracerRequirement, error) {
+	client := &http.Client{Timeout: 10 * time.Second}
+	return cachedCIRequirement("floating\nlatest", func() (tracerRequirement, error) {
+		return resolveRequirement(ctx, client, "floating", "latest", platform.NewJavaScript().ResolveRegistryTracer)
+	})
 }
 
 func changesNodeRuntime(command string) bool {

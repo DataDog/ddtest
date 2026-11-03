@@ -20,16 +20,36 @@ func providerSetupInstructions(root string, provider ciProvider, language, frame
 	if registered == nil {
 		return ""
 	}
+	selected := site
 	if site == "" {
 		site = defaultDatadogSite
 	}
 	var text strings.Builder
 	_, _ = fmt.Fprintf(&text, "\n# Enable Datadog Test Optimization for %s on %s\n\n", framework, provider.displayName())
-	automatic := providerAutomaticSetup(provider, registered, framework)
+	automatic := providerAutomaticSetup(root, provider, registered, framework, selected)
 	if automatic {
 		text.WriteString(strings.ReplaceAll(javascriptAutomaticSetup, "ddtest testdrive", "ddtest testdrive --framework "+framework) + "\n\n")
+	} else if pluginSetupWritable(root, language, framework, selected) {
+		text.WriteString("`ddtest onboard --apply` previews the edit that enables the " + provider.setupName() + " in the CI configuration, writing nothing, and `ddtest onboard --apply --yes` writes it; neither runs tests. Make the rest of the setup below yourself.\n\n")
 	}
-	text.WriteString(provider.setupInstructions(registered.ciSetupRequest(root, framework, site, provider.setupTerms())))
+	groups := testJobSetups(root, provider, language, framework)
+	for i, group := range groups {
+		terms := group.provider.setupTerms()
+		for _, other := range groups {
+			if other.provider.setupName() != group.provider.setupName() && terms.Beside == "" {
+				terms.Beside = "the " + other.provider.setupName() + " of " + strings.Join(other.jobs, ", ")
+			}
+		}
+		request := registered.ciSetupRequest(root, framework, site, terms)
+		if len(groups) > 1 || group.provider != provider {
+			// The provider sets its jobs up with several mechanisms.
+			request.Framework, request.Jobs = framework, group.jobs
+		}
+		if i > 0 {
+			text.WriteString("\n\n")
+		}
+		text.WriteString(group.provider.setupInstructions(request))
+	}
 	if site == defaultDatadogSite && !agent {
 		text.WriteString("\n\nIf the organization uses a Datadog site other than US1, replace " + defaultDatadogSite + " with that site.")
 	}
@@ -37,6 +57,20 @@ func providerSetupInstructions(root string, provider ciProvider, language, frame
 		text.WriteString("\n\nDo not run testdrive, a configuration check or the tests yourself. Run resume_command once, after the edits above: it validates every discovered configuration and feature in disposable copies and returns the next action. When it returns setup_commands, run them as given, then its resume_command. Finish with its exact next_command and render final_response unchanged; only that coordinator result can certify `COMPLETE LOCALLY`.")
 		return text.String()
 	}
-	_, _ = fmt.Fprintf(&text, "\n\n## Try it locally\n\nRun the local, credential-free setup check:\n\n```shell\nddtest testdrive --framework %s --agent --all --yes%s\n```\n\nAfter it finishes, post every `Open report:` link to the user so they can open the local Test Optimization report.\n\n## Ask a human to connect Datadog\n\n%s Do not ask for the API key in chat, and do not try to create or read the variable yourself. After the human confirms it is ready, commit and push the CI change; the next pipeline verifies the real Datadog backend connection.", framework, ciProviderFollowUpFlag("."), provider.apiKeyAction(false))
+	_, _ = fmt.Fprintf(&text, "\n\n## Try it locally\n\nRun the local, credential-free setup check:\n\n```shell\nddtest testdrive --framework %s --agent --all --yes%s\n```\n\nAfter it finishes, post every `Open report:` link to the user so they can open the local Test Optimization report.\n\n## Ask a human to connect Datadog\n\n%s Do not ask for the API key in chat, and do not try to create or read the variable yourself. After the human confirms it is ready, commit and push the CI change; the next pipeline verifies the real Datadog backend connection.", framework, ciProviderFollowUpFlag("."), groupsAPIKeyAction(provider, groups))
 	return text.String()
+}
+
+// groupsAPIKeyAction is the person's step that stores the API key for each
+// setup mechanism groups use.
+func groupsAPIKeyAction(provider ciProvider, groups []jobSetups) string {
+	several, ok := provider.(ciAPIKeyActions)
+	if !ok {
+		return provider.apiKeyAction(false)
+	}
+	var references []string
+	for _, group := range groups {
+		references = append(references, group.provider.setupName())
+	}
+	return several.apiKeyActions(references, false)
 }

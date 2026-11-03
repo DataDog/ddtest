@@ -1,0 +1,20 @@
+# From umd-lib/archelon (Apache-2.0), Dockerfile.ci, with the Node and Yarn
+# installation removed.
+ARG RUBY_VERSION=3.2.9
+
+FROM docker.io/library/ruby:$RUBY_VERSION-slim
+
+# Install packages needed to build gems
+RUN apt-get update -qq && \
+    apt-get install --no-install-recommends -y build-essential curl git pkg-config && \
+    apt-get clean
+
+ARG BUNDLER_VERSION=4.0.14
+
+COPY Gemfile* /tmp/
+
+WORKDIR /tmp
+RUN gem install bundler:$BUNDLER_VERSION
+RUN bundle install
+
+WORKDIR /

@@ -6,10 +6,12 @@
 package onboard
 
 import (
+	"context"
 	"errors"
 	"maps"
 	"slices"
 	"strings"
+	"time"
 )
 
 // planProviderJavaScriptSetup plans the JavaScript setup on a CI provider
@@ -26,8 +28,8 @@ func planProviderJavaScriptSetup(root string, provider ciProvider, workflows []c
 		return nil, &SetupGap{"CI initialization", framework + " initializes the tracer through package scripts, which onboard --apply does not edit on " + provider.displayName() + ". Add the setup from onboard --instructions manually, then validate with testdrive --all."}
 	}
 	request := language.ciSetupRequest(root, framework, site, provider.setupTerms())
-	request.TracerVersion = version
-	var targets []ciSetupTarget
+	request.TracerVersion, request.Framework = version, framework
+	var targets, unsupported []ciSetupTarget
 	configured := 0
 	for _, workflow := range workflows {
 		for _, name := range slices.Sorted(maps.Keys(workflow.Jobs)) {
@@ -36,19 +38,42 @@ func planProviderJavaScriptSetup(root string, provider ciProvider, workflows []c
 				continue
 			}
 			location := workflow.Path + " / " + name
+			// The job's own setup mechanism, where the provider has several.
+			provider, request := setupProviderFor(provider, job), request
+			if job.SetupProvider != nil {
+				request = language.ciSetupRequest(root, framework, site, provider.setupTerms())
+				request.TracerVersion, request.Framework = version, framework
+			}
+			// A CI server plugin's setup is one option the provider merges
+			// into, so one that differs is completed instead of left for
+			// review.
+			plugin := provider.setupTerms().Plugin
 			first, setupIndex := -1, -1
 			var resolution commandResolution
 			var tests []TestCommand
+			// Steps that run the tests, and setups whose exports reach only
+			// the later commands of their own shell (see ciSetup.shellLocal),
+			// which each shell that runs the tests needs.
+			var testSteps, shellSetups []int
 			for i, step := range job.Steps {
 				if setup, ok := datadogSetup(step); ok {
 					if languages := setup.Inputs["languages"]; strings.Contains(languages, "$") {
 						return nil, &SetupGap{location, "The existing " + provider.setupName() + " selects its languages from " + languages + ", which ddtest cannot resolve; review it manually instead of adding a second setup."}
 					}
 					if selected, err := setupSelectsLanguage(setup, nil, request.Language); err == nil && selected {
-						if first >= 0 {
+						// A shell-local setup comes too late only for a test
+						// command of its own shell; another shell needs its own.
+						late := first >= 0
+						if setup.shellLocal {
+							late = slices.ContainsFunc(testSteps, func(test int) bool { return sameShell(job.Steps[test], step) })
+							shellSetups = append(shellSetups, i)
+						}
+						if late {
 							return nil, &SetupGap{location, "The " + provider.setupName() + " runs after the first " + framework + " test command; move it before the tests or review it manually without adding a second one."}
 						}
-						setupIndex = i
+						if !setup.shellLocal || first < 0 {
+							setupIndex = i
+						}
 					}
 				}
 				current := resolveTestStep(root, workflow, job, step, "javascript", framework)
@@ -57,12 +82,29 @@ func planProviderJavaScriptSetup(root string, provider ciProvider, workflows []c
 				}
 				// Every selected test command decides the loader and coverage.
 				tests = append(tests, current.Tests...)
+				testSteps = append(testSteps, i)
 				if first < 0 {
 					first, resolution = i, current
 				}
 			}
 			if first < 0 {
 				continue
+			}
+			// Shell-local setups count only in the shell they run in: one in
+			// a shell without tests sets up nothing, and a shell that runs
+			// the tests without one still needs it.
+			uncovered := false
+			if len(shellSetups) > 0 {
+				live := slices.DeleteFunc(slices.Clone(shellSetups), func(setup int) bool {
+					return !slices.ContainsFunc(testSteps, func(test int) bool { return test > setup && sameShell(job.Steps[setup], job.Steps[test]) })
+				})
+				if setupIndex >= 0 && !sameShell(job.Steps[setupIndex], job.Steps[first]) {
+					setupIndex = -1
+				}
+				uncovered = slices.ContainsFunc(testSteps, func(test int) bool {
+					return !slices.ContainsFunc(live, func(setup int) bool { return setup < test && sameShell(job.Steps[setup], job.Steps[test]) })
+				})
+				shellSetups = live
 			}
 			if resolution.OtherFramework {
 				return nil, &SetupGap{location, "The test command also runs another framework; initialize only the selected framework explicitly."}
@@ -83,12 +125,18 @@ func planProviderJavaScriptSetup(root string, provider ciProvider, workflows []c
 			if UnsupportedNode(node) {
 				continue // No tracer release runs here; validation reports it as not tried.
 			}
+			if plugin && node != "" && job.SetupUnsupported == "" {
+				// The plugin installs the latest dd-trace whatever the Node.
+				if err := floatingNodeGap(root, provider, workflow, job, location, node); err != nil {
+					return nil, err
+				}
+			}
 			esm := len(request.After) > 0
 			if framework == "mocha" {
 				esm = false
 				for _, command := range tests {
 					esm = esm || command.mochaESM
-					if !command.usesNYC && !command.mochaIstanbul && setupIndex < 0 {
+					if !command.usesNYC && !command.mochaIstanbul && (setupIndex < 0 || uncovered) {
 						// The GitHub Actions editor wraps the command with NYC; this
 						// editor only inserts the setup, so stop before any edit.
 						return nil, &EditThenApplyGap{SetupGap{location, MochaCoverageGap + command.Command + ". Wrap it with npx --no-install nyc -- in CI (adding nyc as a dev dependency if the project does not declare it), then rerun onboard --apply, which adds the Datadog setup."}}
@@ -111,20 +159,46 @@ func planProviderJavaScriptSetup(root string, provider ciProvider, workflows []c
 					return nil, &SetupGap{location, err.Error()}
 				}
 			}
-			if setupIndex >= 0 {
-				setup, _ := datadogSetup(job.Steps[setupIndex])
-				if problem := provider.setupProblem(setup, request.TracerInput, func(value string) bool { return value == version }, version, site); problem != "" {
-					return nil, &SetupGap{location, "Existing Datadog setup differs: " + problem + " Otherwise review it manually without adding a second setup."}
-				}
-				configured++
-				continue
-			}
 			target := ciSetupTarget{Workflow: workflow.Path, Job: name, Step: first}
 			if framework == "mocha" && !esm {
 				target.After = []string{}
 			}
+			existing := shellSetups
+			if len(existing) == 0 && setupIndex >= 0 {
+				existing = []int{setupIndex}
+			}
+			complete := len(existing) > 0
+			for _, index := range existing {
+				setup, _ := datadogSetup(job.Steps[index])
+				problem := provider.setupProblem(setup, request.TracerInput, func(value string) bool { return value == version }, version, site)
+				switch {
+				case plugin && (problem != "" || esm):
+					// The provider completes the option and adds the commands
+					// that follow it, keeping what is already there.
+					complete = false
+				case problem != "":
+					return nil, &SetupGap{location, "Existing Datadog setup differs: " + problem + " Otherwise review it manually without adding a second setup."}
+				}
+			}
+			if complete && len(shellSetups) == 0 {
+				configured++
+				continue
+			}
+			// Shell-local setups are the provider's to plan shell by shell:
+			// it adds the setup to each test shell without one and checks
+			// every shell, with the commands that follow the setup, before
+			// writing anything; a complete job keeps its configuration.
+			if job.SetupUnsupported != "" {
+				// The provider reports it; it decides the plan only when no
+				// other job runs the tests.
+				unsupported = append(unsupported, target)
+				continue
+			}
 			targets = append(targets, target)
 		}
+	}
+	if len(targets) == 0 && configured == 0 {
+		targets = unsupported
 	}
 	if len(targets) == 0 && configured == 0 {
 		return nil, &SetupGap{provider.displayName(), "No literal " + framework + " CI step found. Identify its real CI entry point before applying onboarding."}
@@ -137,7 +211,11 @@ func planProviderJavaScriptSetup(root string, provider ciProvider, workflows []c
 			return nil, err
 		}
 	}
-	ignored, err := ignoreSetupEdits(root, false)
+	var extra []string
+	if ignorer, ok := provider.(ciSetupIgnorer); ok {
+		extra = ignorer.setupIgnores(edits)
+	}
+	ignored, err := ignoreSetupEdits(root, false, extra...)
 	if err != nil {
 		return nil, err
 	}
@@ -146,6 +224,242 @@ func planProviderJavaScriptSetup(root string, provider ciProvider, workflows []c
 		return &SetupPlan{root: root, impact: impact}, nil
 	}
 	return &SetupPlan{root: root, edits: append(edits, ignored...), impact: impact}, nil
+}
+
+// ciSetupIgnorer is a provider whose setup leaves files in the CI
+// workspace, which the repository's .gitignore keeps untracked.
+type ciSetupIgnorer interface {
+	// setupIgnores are the .gitignore entries for what edits set up.
+	setupIgnores(edits []setupEdit) []string
+}
+
+// floatingNodeGap refuses a CI server plugin's setup for a job whose Node
+// the latest dd-trace, which the plugin installs on every build, does not
+// support: no other release can be selected.
+func floatingNodeGap(root string, provider ciProvider, workflow ciWorkflow, job runtimeJob, location, node string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	latest, err := floatingTracerRequirement(ctx)
+	if err != nil {
+		return &SetupGap{location, "ddtest could not read the latest dd-trace release's Node requirement, which the " + provider.setupName() + " installs on every build: " + err.Error()}
+	}
+	condition, err := setupRuntimeCondition(root, workflow, job, latest.Node, false)
+	var runtimeGap *NodeRuntimeGap
+	switch {
+	case errors.As(err, &runtimeGap) || err == nil && condition != "":
+		return &SetupGap{location, floatingTracerNodeProblem(provider.setupName(), latest, node)}
+	case err != nil:
+		return &SetupGap{location, err.Error()}
+	}
+	return nil
+}
+
+// providerWritesPluginSetup reports whether onboard --apply writes the
+// provider's setup for every language it supports: a CI server plugin that
+// the configuration only enables, whose one language input is the plugin's
+// language token (see discoveryLanguage.ciPluginLanguage). The language's
+// other setup, such as pinning its tracer in the project, stays
+// instructions.
+func providerWritesPluginSetup(provider ciProvider) bool {
+	return provider.editsSetup() && provider.setupTerms().Plugin
+}
+
+// CIProviderWritesPluginSetup reports whether onboard --apply writes the
+// selected CI provider's plugin setup for language, which has no automatic
+// setup of its own (see providerWritesPluginSetup).
+func CIProviderWritesPluginSetup(language string) bool {
+	return writesPluginSetup(activeOrDefaultCIProvider(), language)
+}
+
+// writesPluginSetup reports whether onboard --apply writes provider's plugin
+// setup for language, which has no automatic setup of its own.
+func writesPluginSetup(provider ciProvider, language string) bool {
+	registered := discoveryLanguageNamed(language)
+	return registered != nil && !registered.automaticCISetup() && languageSupportsCIProvider(language, provider) && providerWritesPluginSetup(provider)
+}
+
+// pluginSetupApplies reports whether the selected provider's plugin setup
+// can be written for framework in root, reporting to site (empty: any): the
+// edit is planned, or needs one source edit first that its refusal names
+// (see EditThenApplyGap). A refusal, such as a plugin that reports to
+// another site than the selected one, leaves the setup to the instructions.
+func pluginSetupApplies(root, framework, site string) bool {
+	_, err := planProviderSetup(root, framework, site, snippetProbeRelease)
+	var edit *EditThenApplyGap
+	return err == nil || errors.As(err, &edit)
+}
+
+// pluginSetupWritable reports whether onboard --apply would write the
+// selected provider's plugin setup for a language without automatic setup
+// of its own (see CIProviderWritesPluginSetup): it plans at least one edit.
+func pluginSetupWritable(root, language, framework, site string) bool {
+	if provider, err := currentCIProvider(root); err != nil || !writesPluginSetup(provider, language) {
+		return false
+	}
+	plan, err := PlanProviderSetup(root, framework, site)
+	return err == nil && !plan.Configured()
+}
+
+// pluginSetupRefusal is why onboard --apply cannot write the selected
+// provider's plugin setup for framework in root; empty when it can, or the
+// provider has none.
+func pluginSetupRefusal(root, framework string) string {
+	provider, err := currentCIProvider(root)
+	if err != nil || !providerWritesPluginSetup(provider) {
+		return ""
+	}
+	// A language whose onboard --apply selects the tracer release a setup
+	// snippet installs is refused for other reasons only.
+	release := ""
+	if language := discoveryLanguageFor(framework); language != nil && language.automaticProviderSetup(framework) {
+		release = snippetProbeRelease
+	}
+	_, err = planProviderSetup(root, framework, "", release)
+	var gap *SetupGap
+	var edit *EditThenApplyGap
+	if errors.As(err, &gap) && !errors.As(err, &edit) {
+		return gap.Error()
+	}
+	return ""
+}
+
+// pluginSetupEditFirst is the source edit onboard --apply needs before it
+// writes the selected provider's plugin setup for framework in root (see
+// EditThenApplyGap); empty when it needs none, or cannot write it.
+func pluginSetupEditFirst(root, framework string) string {
+	provider, err := currentCIProvider(root)
+	if err != nil || !providerWritesPluginSetup(provider) {
+		return ""
+	}
+	_, err = PlanProviderSetup(root, framework, "")
+	var edit *EditThenApplyGap
+	if errors.As(err, &edit) {
+		return edit.Error()
+	}
+	return ""
+}
+
+// PlanProviderSetup plans enabling the selected CI provider's plugin setup
+// (see providerWritesPluginSetup) for every job that runs framework's tests,
+// reporting to site (empty: any), without changing the repository. A job
+// whose setup is already complete keeps it; one that differs is completed.
+func PlanProviderSetup(root, framework, site string) (*SetupPlan, error) {
+	return planProviderSetup(root, framework, site, "")
+}
+
+// snippetProbeRelease is the tracer release a plan that only checks whether
+// the plugin's setup can be written gives a setup snippet (see
+// pluginSetupApplies): onboard --apply selects the one it writes.
+const snippetProbeRelease = "0.0.0"
+
+// planProviderSetup is PlanProviderSetup, with release the tracer release
+// of the setup snippets a provider adds beside its plugin (see
+// jenkinsContainer); empty uses the one the project's dependencies pin.
+func planProviderSetup(root, framework, site, release string) (*SetupPlan, error) {
+	provider, err := currentCIProvider(root)
+	if err != nil {
+		return nil, err
+	}
+	language := discoveryLanguageFor(framework)
+	if language == nil || !providerWritesPluginSetup(provider) {
+		return nil, &SetupGap{provider.displayName(), "onboard --apply does not edit the " + provider.displayName() + " configuration for " + framework + ". Add the setup from onboard --agent instructions, then validate with testdrive --all."}
+	}
+	workflows, err := readProviderWorkflows(provider, root)
+	if err != nil {
+		return nil, err
+	}
+	// An empty site accepts any the setup reports to.
+	request := language.ciSetupRequest(root, framework, site, provider.setupTerms())
+	request.Framework = framework
+	if locked, ok := language.(ciLockedTracer); ok && release == "" {
+		release = locked.lockedTracer(root)
+	}
+	request.TracerVersion = release
+	var targets []ciSetupTarget
+	for _, workflow := range workflows {
+		for _, name := range slices.Sorted(maps.Keys(workflow.Jobs)) {
+			job := workflow.Jobs[name]
+			if disabledCondition(job.If) {
+				continue
+			}
+			for i, step := range job.Steps {
+				if resolveTestStep(root, workflow, job, step, language.name(), framework).Matched {
+					targets = append(targets, ciSetupTarget{Workflow: workflow.Path, Job: name, Step: i})
+					break
+				}
+			}
+		}
+	}
+	if len(targets) == 0 {
+		return nil, &SetupGap{provider.displayName(), "No literal " + framework + " CI step found. Identify its real CI entry point before applying onboarding."}
+	}
+	edits, impact, err := provider.planSetupEdits(root, workflows, targets, request)
+	if err != nil {
+		return nil, err
+	}
+	if ignorer, ok := provider.(ciSetupIgnorer); ok && len(edits) > 0 {
+		if entries := ignorer.setupIgnores(edits); len(entries) > 0 {
+			ignored, err := ignoreEdits(root, entries)
+			if err != nil {
+				return nil, err
+			}
+			edits = append(edits, ignored...)
+		}
+	}
+	return &SetupPlan{root: root, edits: edits, impact: impact}, nil
+}
+
+// ciShellOrigin is a step origin that names the shell the step runs in,
+// such as a Jenkinsfile sh step's.
+type ciShellOrigin interface{ shell() int }
+
+// sameShell reports two steps a provider read from one shell.
+func sameShell(a, b runtimeStep) bool {
+	first, ok := a.origin.(ciShellOrigin)
+	second, same := b.origin.(ciShellOrigin)
+	return ok && same && first.shell() == second.shell()
+}
+
+// providerJobSetupProblem explains why a job of workflow does not run a
+// complete setup for language (see ciProvider.setupProblem, with site)
+// before every command that runs framework's tests; empty when it does, or
+// runs none.
+func providerJobSetupProblem(root string, provider ciProvider, workflow ciWorkflow, name, language, framework, site string) string {
+	job, ok := workflow.Jobs[name]
+	if !ok {
+		return "the job is missing."
+	}
+	token := setupActionLanguage(language)
+	var setup, other *ciSetup
+	var setupStep runtimeStep
+	for _, step := range job.Steps {
+		if current, ok := datadogSetup(step); ok {
+			if selected, err := setupSelectsLanguage(current, nil, token); err == nil && selected {
+				setup, setupStep = &current, step
+			} else if current.Problem != "" {
+				other = &current
+			}
+		}
+		resolution := resolveTestStep(root, workflow, job, step, language, framework)
+		if resolution.Review || !resolution.Matched && (resolution.Reason == "" || !stepMayStartTests(root, workflow, job, step, framework)) {
+			continue
+		}
+		switch {
+		case resolution.Reason != "":
+			return resolution.Reason
+		case setup == nil && other != nil:
+			return other.Problem
+		case setup == nil:
+			return "no " + setupProviderFor(provider, job).setupName() + " for the language runs before its tests."
+		case setup.shellLocal && !sameShell(setupStep, step):
+			// Its exports reach only the shell it runs in.
+			return "the " + setupProviderFor(provider, job).setupName() + " at " + setupStep.Source + " runs in another shell than the test command at " + step.Source + ", and its exports reach only the later commands of its own shell; each shell that runs the tests needs it before its test command."
+		}
+		if problem := provider.setupProblem(*setup, "", func(string) bool { return true }, "", site); problem != "" {
+			return problem
+		}
+	}
+	return ""
 }
 
 // providerSetupConfigured reports whether, on a provider without the shared
@@ -167,21 +481,26 @@ func providerSetupConfigured(root string, provider ciProvider, language, framewo
 				continue
 			}
 			var setup *ciSetup
+			var setupStep runtimeStep
 			for _, step := range job.Steps {
 				if current, ok := datadogSetup(step); ok {
 					if selected, err := setupSelectsLanguage(current, nil, token); err == nil && selected {
-						setup = &current
+						setup, setupStep = &current, step
 					}
 				}
 				resolution := resolveTestStep(root, workflow, job, step, language, framework)
 				if resolution.Review || !resolution.Matched && (resolution.Reason == "" || !stepMayStartTests(root, workflow, job, step, framework)) {
 					continue
 				}
-				if resolution.Reason != "" || setup == nil || provider.setupProblem(*setup, tracerInput, exact, "", site) != "" {
+				if resolution.Reason != "" || setup == nil || setup.shellLocal && !sameShell(setupStep, step) || provider.setupProblem(*setup, tracerInput, exact, "", site) != "" {
 					return false
 				}
 				instrumented = true
-				break
+				if !setup.shellLocal {
+					// Its exports reach every later step of the job; a
+					// shell-local one's only its own shell's.
+					break
+				}
 			}
 		}
 	}
@@ -274,9 +593,10 @@ func setupUnsupportedNote(root, language, framework string) string {
 }
 
 // setupImageNote names the CI jobs running the framework's tests whose
-// container cannot run the provider's setup as configured, such as an image
+// container cannot run their setup mechanism as configured, such as an image
 // without curl, so the person learns it before the setup is written; empty
-// when there are none. Fixing an image is not part of the prescribed setup.
+// when there are none. Each job is named under its own setup mechanism (see
+// setupProviderFor). Fixing an image is not part of the prescribed setup.
 func setupImageNote(root, language, framework string) string {
 	provider, err := currentCIProvider(root)
 	if err != nil {
@@ -286,7 +606,8 @@ func setupImageNote(root, language, framework string) string {
 	if err != nil {
 		return ""
 	}
-	var problems []string
+	var setups []string
+	problems := map[string][]string{}
 	for _, workflow := range workflows {
 		for _, name := range slices.Sorted(maps.Keys(workflow.Jobs)) {
 			job := workflow.Jobs[name]
@@ -296,12 +617,17 @@ func setupImageNote(root, language, framework string) string {
 			if slices.ContainsFunc(job.Steps, func(step runtimeStep) bool {
 				return resolveTestStep(root, workflow, job, step, language, framework).Matched
 			}) {
-				problems = append(problems, workflow.Path+" / "+name+": "+job.SetupImageProblem)
+				setup := setupProviderFor(provider, job).setupName()
+				if !slices.Contains(setups, setup) {
+					setups = append(setups, setup)
+				}
+				problems[setup] = append(problems[setup], workflow.Path+" / "+name+": "+job.SetupImageProblem)
 			}
 		}
 	}
-	if len(problems) == 0 {
-		return ""
+	notes := make([]string, 0, len(setups))
+	for _, setup := range setups {
+		notes = append(notes, "These CI steps cannot run the "+setup+" in their current image, so their tests would stay untraced even with it in place; changing an image or Dockerfile is not part of this setup, so tell the user and ask before making it:\n"+strings.Join(problems[setup], "\n"))
 	}
-	return "These CI steps cannot run the " + provider.setupName() + " in their current image, so their tests would stay untraced even with it in place; changing an image or Dockerfile is not part of this setup, so tell the user and ask before making it:\n" + strings.Join(problems, "\n")
+	return strings.Join(notes, "\n")
 }

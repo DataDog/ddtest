@@ -623,6 +623,13 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 			return fail("needs_input", "validation_preparation", err.Error(), "Resolve the named installed dependency or command prerequisite.")
 		}
 		t = prepared.withWorkflowState(t)
+		// A setup the edit just added may depend on facts only the CI server
+		// shows; the user states them before anything runs.
+		if required := onboard.RequiredCIConfirmations(t.repositoryRoot, t.language, name); required != nil {
+			asked := onboard.CIConfirmationRequiredResult(required)
+			result.Location, result.RequiredInput, result.Instruction = asked.Location, asked.RequiredInput, asked.Instruction
+			return fail("needs_input", asked.Code, asked.Reason, asked.Instruction)
+		}
 	}
 	t.setPlanTracer(plan, t.tracerVersion)
 	checkpoint.Engine = engineIdentity()

@@ -23,7 +23,7 @@ const jenkinsProvider = "jenkins"
 // a matrix cell, or a scripted stage) becomes one job of the shared model,
 // and each top-level statement of a literal sh script one step; each sh
 // starts a fresh shell. Its setup mechanism is the Datadog Jenkins plugin,
-// enabled for the whole pipeline with datadog(testOptimization: …) (see
+// enabled for a pipeline or its stages with datadog(testOptimization: …) (see
 // ci_provider_jenkins_setup.go). Anything ddtest cannot read statically, such
 // as shared library steps, computed scripts, Groovy functions or tests started
 // in containers, becomes an unresolved step: it is reported, never dropped or
@@ -41,9 +41,9 @@ func (jenkins) environment() map[string]string {
 
 func (jenkins) sharedSyntax() bool { return false }
 
-// Jenkinsfiles are edited by hand: onboarding gives every language
-// instructions.
-func (jenkins) editsSetup() bool { return false }
+// onboard --apply enables the Datadog Jenkins plugin in Jenkinsfiles (see
+// ci_provider_jenkins_edit.go).
+func (jenkins) editsSetup() bool { return true }
 
 // jenkinsDirectories are where Jenkinsfiles conventionally live besides the
 // repository root.
@@ -121,10 +121,4 @@ func (jenkins) setupStep(step runtimeStep) (ciSetup, bool) {
 		return ciSetup{}, false
 	}
 	return *step.Setup, true
-}
-
-// planSetupEdits never edits a Jenkinsfile: the setup is applied from the
-// instructions (see editsSetup).
-func (jenkins) planSetupEdits(string, []ciWorkflow, []ciSetupTarget, ciSetupRequest) ([]setupEdit, []string, error) {
-	return nil, nil, &SetupGap{"Jenkins", "onboard --apply does not edit Jenkinsfiles; add the Datadog Jenkins plugin setup from onboard --agent instructions, then validate with testdrive --all."}
 }
