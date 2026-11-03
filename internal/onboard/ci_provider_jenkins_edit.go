@@ -256,6 +256,13 @@ func jenkinsContainerTarget(root string, workflows []ciWorkflow, target ciSetupT
 			release = locked.lockedTracer(root)
 		}
 	}
+	// A tracer no dependency carries has the exact release ddtest
+	// recommends, as the setup instructions do.
+	if release == "" || strings.HasPrefix(release, "<") {
+		if recommended, ok := language.(ciRecommendedTracer); ok {
+			release = recommended.recommendedTracer()
+		}
+	}
 	if release == "" || strings.HasPrefix(release, "<") {
 		reason := "The setup snippet for this container stage installs an exact tracer release, which ddtest selects only from the project's dependencies, and they pin none."
 		if plugin {
@@ -284,6 +291,14 @@ func jenkinsSnippetBefore(job runtimeJob, step int) bool {
 
 // ciLockedTracer is a language whose project dependencies can pin its
 // tracer, which a setup snippet then installs.
+// ciRecommendedTracer is a language whose tracer no project dependency
+// carries, as dd-java-agent, so ddtest recommends an exact release itself.
+type ciRecommendedTracer interface {
+	// recommendedTracer is the exact release ddtest's setup instructions
+	// recommend.
+	recommendedTracer() string
+}
+
 type ciLockedTracer interface {
 	// lockedTracer is the exact release the dependencies at root pin, or
 	// empty.

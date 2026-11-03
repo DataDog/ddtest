@@ -6,6 +6,8 @@
 package onboard
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -79,7 +81,7 @@ func TestJavaJenkinsPluginPinnedRelease(t *testing.T) {
 	ci := JavaCIConfiguration(root, "junit5", "")
 	require.Len(t, ci.Jobs, 1, ci.Reason)
 	require.Equal(t, "not checked", ci.Jobs[0].Status, ci.Jobs[0].Reason)
-	require.Equal(t, javaHandWrittenExample, ci.Jobs[0].TracerRequested)
+	require.Equal(t, javaRecommendedTracer, ci.Jobs[0].TracerRequested)
 	require.False(t, ci.Jobs[0].TracerFloating)
 
 	root = javaJenkinsRepository(t, javaJenkinsfile(", additionalVariables: ["+javaPluginTracerURL+": 'https://dtdg.co/latest-java-tracer']"))
@@ -148,4 +150,22 @@ func TestJavaJenkinsValidatesWithoutCIOnlyOptions(t *testing.T) {
 	scope, err = DiscoverValidationScope(root, "junit5")
 	require.NoError(t, err)
 	require.NotEmpty(t, scope.Unresolved)
+}
+
+// dd-java-agent is no project dependency, so a container stage's snippet
+// installs the release ddtest recommends, and the Jenkins credential is a
+// human action after the edit, not a question before it.
+func TestJavaJenkinsContainerStageApply(t *testing.T) {
+	root := javaJenkinsRepository(t, "pipeline {\n  agent none\n  stages {\n    stage('Test') {\n      agent { docker { image 'maven:3.9-eclipse-temurin-17' } }\n      steps {\n        sh 'mvn -B verify'\n      }\n    }\n  }\n}\n")
+	plan, err := PlanProviderSetup(root, "junit5", "")
+	require.NoError(t, err)
+	_, err = plan.Apply(true)
+	require.NoError(t, err)
+	data, err := os.ReadFile(filepath.Join(root, "Jenkinsfile"))
+	require.NoError(t, err)
+	require.Contains(t, string(data), `DD_SET_TRACER_VERSION_JAVA="`+javaRecommendedTracer+`"`)
+
+	instructions := providerSetupInstructions(root, jenkins{}, "java", "junit5", "", true)
+	require.Contains(t, instructions, "1. Bind DD_API_KEY in those stages from a Jenkins credential")
+	require.Contains(t, instructions, "make this edit without waiting for the credential")
 }

@@ -25,11 +25,12 @@ import (
 // the Java CI check does not read it yet (see
 // javaDiscovery.validatesHandWrittenSetup), so it is never certified.
 
-// javaHandWrittenExample is an exact dd-java-agent release for messages.
-const javaHandWrittenExample = "1.67.1"
+// javaRecommendedTracer is the exact dd-java-agent release ddtest's setup
+// instructions and messages recommend.
+const javaRecommendedTracer = "1.67.1"
 
 // javaHandWrittenDownload is an exact-release download URL for messages.
-const javaHandWrittenDownload = "https://repo1.maven.org/maven2/com/datadoghq/dd-java-agent/" + javaHandWrittenExample + "/dd-java-agent-" + javaHandWrittenExample + ".jar"
+const javaHandWrittenDownload = "https://repo1.maven.org/maven2/com/datadoghq/dd-java-agent/" + javaRecommendedTracer + "/dd-java-agent-" + javaRecommendedTracer + ".jar"
 
 var (
 	// javaHandWrittenJarRelease is the release a dd-java-agent JAR's file

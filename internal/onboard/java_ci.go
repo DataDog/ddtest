@@ -705,7 +705,7 @@ func JavaCIConfiguration(root, framework, site string) RuntimeCheck {
 					case handWritten == nil && javaSetupProblem(finding, site) != "":
 						finding.Code, finding.Reason = CodeIncompleteCISetup, javaSetupProblem(finding, site)
 					case provider.sharedSyntax() && !exactJavaRelease.MatchString(tracer):
-						finding.Reason = "The Datadog action's java-tracer-version " + strconv.Quote(tracer) + " is not an exact release; set an exact version such as 1.67.1."
+						finding.Reason = "The Datadog action's java-tracer-version " + strconv.Quote(tracer) + " is not an exact release; set an exact version such as " + javaRecommendedTracer + "."
 					case handWritten == nil && javaReusableSecretProblem(workflows, workflow, finding.setupInputs["api_key"]) != "":
 						finding.Code, finding.Reason = CodeIncompleteCISetup, javaReusableSecretProblem(workflows, workflow, finding.setupInputs["api_key"])
 					default:
@@ -771,7 +771,7 @@ func javaSetupProblem(job RuntimeFinding, site string) string {
 		inputs["java-tracer-version"] = job.TracerRequested
 	}
 	supported := job.setupSupported || provider.sharedSyntax() && setupActionSupported(job.Action)
-	return provider.setupProblem(ciSetup{Reference: job.Action, Pinned: true, Supported: supported, Problem: job.setupReadProblem, Floating: job.TracerFloating, Inputs: inputs}, "java-tracer-version", exactJavaRelease.MatchString, "1.67.1", site)
+	return provider.setupProblem(ciSetup{Reference: job.Action, Pinned: true, Supported: supported, Problem: job.setupReadProblem, Floating: job.TracerFloating, Inputs: inputs}, "java-tracer-version", exactJavaRelease.MatchString, javaRecommendedTracer, site)
 }
 
 // javaAgentVariable is where the provider's Datadog setup, per its
