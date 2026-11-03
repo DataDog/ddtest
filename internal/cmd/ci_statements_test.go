@@ -46,6 +46,14 @@ func TestCIStatementFlagsRejectInvalidValues(t *testing.T) {
 
 // A statement for a job whose configuration selects another runtime is an
 // error before anything runs.
+func TestCIRuntimeHelpNamesEveryStatedRuntime(t *testing.T) {
+	usage := newOnboardCommand(nil).Flags().Lookup("ci-runtime").Usage
+	for _, name := range onboard.StatedRuntimeNames() {
+		require.Contains(t, usage, name)
+	}
+	require.Contains(t, usage, "java", "Java takes stated runtimes for Jenkins agents")
+}
+
 func TestCIRuntimeConflictStopsBeforeDiscovery(t *testing.T) {
 	ciProviderFixture(t)
 	t.Cleanup(func() { _ = onboard.UseCIStatements(nil, nil) })
