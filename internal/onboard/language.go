@@ -153,6 +153,9 @@ type discoveryLanguage interface {
 	// exports with the job's own value, for a value a scope narrower than
 	// the pipeline sets; empty when the plugin replaces it.
 	ciPluginComposes(key string) string
+	// ciStepVariables are the variables a CI wrapper step, such as Jenkins'
+	// withSonarQubeEnv, sets for the language's tools, with their values.
+	ciStepVariables(step string) map[string]string
 	// ciPluginTracerRelease is the tracer release the CI server plugin's
 	// additionalVariables select for the language, as written; set is false
 	// when they select none and the plugin installs its default.

@@ -209,6 +209,22 @@ func TestJavaResolvesMatrixExpressionsInsideValues(t *testing.T) {
 	require.Equal(t, []string{"suite-it", "suite-unit"}, modes, "each row runs with its own value")
 }
 
+func TestJavaValidatesWithoutCIOnlyOptions(t *testing.T) {
+	root := javaWorkflowFixture(t, "jobs:\n  tests:\n    steps:\n      - run: mvn -B verify -Dsonar.token=${{ secrets.SONAR_TOKEN }} -Dsigning.password=\"${{ secrets.SIGNING }}\"\n", nil)
+	scope, err := DiscoverValidationScope(root, "junit5")
+	require.NoError(t, err)
+	require.Empty(t, scope.Unresolved)
+	require.Len(t, scope.Commands, 1)
+	require.Equal(t, "mvn -B verify -Dsonar.token= -Dsigning.password=", scope.Commands[0].Command)
+	require.Equal(t, []string{"-Dsigning.password", "-Dsonar.token"}, scope.Commands[0].WithoutCIValues)
+
+	// A value that may select tests still requires review.
+	root = javaWorkflowFixture(t, "jobs:\n  tests:\n    steps:\n      - run: mvn -B verify -Dgroups=${{ secrets.GROUPS }}\n", nil)
+	scope, err = DiscoverValidationScope(root, "junit5")
+	require.NoError(t, err)
+	require.NotEmpty(t, scope.Unresolved)
+}
+
 func TestJavaReleaseGoalsWithUnreadValuesRunNoTests(t *testing.T) {
 	// As WriteThemFirst/approvals-java's release job does before its deploy,
 	// with the value quoted so it can't split into goals.

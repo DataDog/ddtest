@@ -112,3 +112,40 @@ func TestJavaJenkinsInstructions(t *testing.T) {
 		require.Contains(t, text, phrase)
 	}
 }
+
+// A credential or Sonar setting a JVM option passes, with a value only the
+// build knows, signs, publishes or reports, and selects no tests: validation
+// runs with it empty and says so, as kfgodel/bean2bean's pipeline does.
+func TestJavaJenkinsValidatesWithoutCIOnlyOptions(t *testing.T) {
+	root := javaJenkinsRepository(t, `pipeline {
+  agent { label 'java' }
+  options {
+    datadog(testOptimization: [enabled: true, serviceName: 'app', languages: ['JAVA']])
+  }
+  stages {
+    stage('Build') { steps { sh "mvn verify -Dgpg.passphrase=$GPG_PASSPHRASE -e" } }
+    stage('Sonar') {
+      steps {
+        withSonarQubeEnv(installationName: 'sonar') {
+          sh "mvn $SONAR_MAVEN_GOAL -Dsonar.host.url=$SONAR_HOST_URL -e"
+        }
+      }
+    }
+  }
+}
+`)
+	scope, err := DiscoverValidationScope(root, "junit5")
+	require.NoError(t, err)
+	require.Empty(t, scope.Unresolved)
+	require.Len(t, scope.Commands, 1)
+	require.Equal(t, "mvn verify -Dgpg.passphrase= -e", scope.Commands[0].Command)
+	require.Equal(t, []string{"-Dgpg.passphrase"}, scope.Commands[0].WithoutCIValues)
+	require.Contains(t, strings.Join(scope.Caveats, "\n"), "validated without the CI values of -Dgpg.passphrase")
+	require.Contains(t, strings.Join(scope.Review, "\n"), "(mvn sonar:sonar -Dsonar.host.url= -e): Maven goals outside the test lifecycle", "withSonarQubeEnv sets the scanner's goal")
+
+	// A value that may select tests still requires review.
+	root = javaJenkinsRepository(t, "pipeline {\n  agent { label 'java' }\n  stages {\n    stage('Test') { steps { sh \"mvn verify -Dgroups=$GROUPS\" } }\n  }\n}\n")
+	scope, err = DiscoverValidationScope(root, "junit5")
+	require.NoError(t, err)
+	require.NotEmpty(t, scope.Unresolved)
+}

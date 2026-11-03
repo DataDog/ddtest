@@ -707,3 +707,5 @@ func (rubyDiscovery) checkTool(_, _ string, words []string) (bool, bool) {
 	}
 	return false, false
 }
+
+func (rubyDiscovery) ciStepVariables(string) map[string]string { return nil }

@@ -304,3 +304,12 @@ func (javaDiscovery) selectsShellRuntime([]string) bool { return false }
 
 // Java's build tools may run tests; ddtest classifies them in its own rules.
 func (javaDiscovery) checkTool(string, string, []string) (bool, bool) { return false, false }
+
+// withSonarQubeEnv sets the Maven goal its scanner runs, sonar:sonar or the
+// plugin's qualified sonar goal, neither of which runs tests.
+func (javaDiscovery) ciStepVariables(step string) map[string]string {
+	if step == "withSonarQubeEnv" {
+		return map[string]string{"SONAR_MAVEN_GOAL": "sonar:sonar"}
+	}
+	return nil
+}

@@ -532,3 +532,5 @@ func javascriptImageRuntime(job runtimeJob) string {
 
 // JavaScript's tools are classified with the shared ones (see recognizedTool).
 func (javascriptDiscovery) checkTool(string, string, []string) (bool, bool) { return false, false }
+
+func (javascriptDiscovery) ciStepVariables(string) map[string]string { return nil }

@@ -193,6 +193,14 @@ type jenkinsReader struct {
 	unread []string
 	// cells counts the matrix cells expanded so far.
 	cells int
+	// ciOnly, while an sh script is read, collects the JVM options it
+	// passes, only to signing, publishing or reporting, a value only the
+	// Jenkins build knows, as -Dgpg.passphrase=$GPG_PASSPHRASE (see
+	// ciOnlyOption); each step of the script is validated without them.
+	ciOnly *[]string
+	// stepCIOnly are those options of the sh script whose steps are being
+	// added.
+	stepCIOnly []string
 }
 
 // readJenkinsfile reads one Jenkinsfile into a workflow.
@@ -488,6 +496,17 @@ func (r *jenkinsReader) interpolate(node *groovyString, scope jenkinsScope) (str
 			return "", "the interpolated string " + r.text(node)
 		}
 		value, problem := r.reference(part.expr, scope)
+		// A bound secret's value, Groovy interpolates as well, only the
+		// build knows.
+		if problem == "" && strings.Contains(value, "${{ secrets.") {
+			problem = "${" + part.expr + "}, which only the Jenkins build knows"
+		}
+		if problem != "" && r.ciOnly != nil {
+			if option, ok := ciOnlyOption(text.String(), strings.TrimPrefix(part.expr, "env.")); ok {
+				*r.ciOnly = append(*r.ciOnly, option)
+				continue
+			}
+		}
 		if problem != "" {
 			return "", problem
 		}
@@ -1970,6 +1989,21 @@ func (r *jenkinsReader) call(call *groovyCall, scope *jenkinsScope, slot *jenkin
 				next.overrides[key] = "withEnv at " + r.where(call)
 			}
 		}))
+	case name == "withSonarQubeEnv":
+		// The SonarQube Scanner for Jenkins sets its server's URL and token,
+		// which only the build knows, and what each language's scanner runs.
+		body(outer.with(func(next *jenkinsScope) {
+			for _, variable := range []string{"SONAR_HOST_URL", "SONAR_AUTH_TOKEN", "SONAR_CONFIG_NAME", "SONARQUBE_SCANNER_PARAMS"} {
+				next.env[variable] = jenkinsSecret(variable)
+				next.shadow[variable] = true
+			}
+			for _, language := range discoveryLanguages {
+				for key, value := range language.ciStepVariables(name) {
+					next.env[key] = value
+					next.shadow[key] = true
+				}
+			}
+		}))
 	case name == "withCredentials":
 		body(outer.with(func(next *jenkinsScope) {
 			for variable, binding := range r.jenkinsBindings(firstNode(positional)) {
@@ -2288,6 +2322,7 @@ func (r *jenkinsReader) add(slot *jenkinsSlot, node groovyNode, step runtimeStep
 		slot.job = &jenkinsJob{name: slot.name, scope: slot.scope}
 	}
 	step.Source = r.where(node)
+	step.WithoutCIValues = append(step.WithoutCIValues, r.stepCIOnly...)
 	if step.ResolutionError != "" {
 		step.ResolutionError = "Jenkinsfile " + slot.name + ": " + step.ResolutionError
 	}
@@ -2320,7 +2355,14 @@ func (r *jenkinsReader) shell(call *groovyCall, scope jenkinsScope, slot *jenkin
 		r.unresolved(slot, call, "sh has no script ddtest can read")
 		return
 	}
+	var ciOnly []string
+	r.ciOnly = &ciOnly
 	script, problem := r.value(node, scope)
+	r.ciOnly = nil
+	if len(ciOnly) > 0 {
+		r.stepCIOnly = ciOnly
+		defer func() { r.stepCIOnly = nil }()
+	}
 	if problem != "" {
 		run := ""
 		if text, ok := node.(*groovyString); ok {

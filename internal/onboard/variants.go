@@ -28,6 +28,7 @@ func resolveVariantStep(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 	if err != nil {
 		return step, nil, err
 	}
+	step.Run, step.WithoutCIValues = withoutCIOnlyOptions(step.Run, step.WithoutCIValues)
 	// GitHub evaluates expressions before the shell runs, even inside single
 	// quotes. Anything left after matrix substitution cannot be reproduced.
 	if expression := workflowExpression.FindString(step.Run); expression != "" {
@@ -522,6 +523,49 @@ func ciControlVariable(key string) bool {
 // credentialName is a variable name that ends with a credential, as in
 // NODE_AUTH_TOKEN, SONAR_LOGIN_PASSWORD or NPM_AUTH. A name that only
 // contains one, such as AUTH_MODE or PASSWORD_POLICY, is a setting.
+// jvmOptionPrefix ends text that passes a JVM option's value next, as
+// -Dsonar.token= or -Pgpg.passphrase=", with the option's property.
+var jvmOptionPrefix = regexp.MustCompile(`(?:^|[\s"'=])(-[DP]([\w.-]+))=["']?$`)
+
+// ciOnlyOption reports whether a value ddtest cannot resolve, named name,
+// that follows text, is one a JVM option passes only to signing, publishing
+// or reporting: a credential, as -Dgpg.passphrase=$GPG_PASSPHRASE or
+// -Dsonar.token=${{ secrets.SONAR }}, whose property or value name is a
+// credential's, or a Sonar scanner setting, as
+// -Dsonar.host.url=$SONAR_HOST_URL. Such a value selects no tests, so
+// validation runs with it empty; option is the flag, as -Dgpg.passphrase.
+func ciOnlyOption(text, name string) (option string, ok bool) {
+	match := jvmOptionPrefix.FindStringSubmatch(text)
+	if match == nil {
+		return "", false
+	}
+	property := strings.NewReplacer(".", "_", "-", "_").Replace(match[2])
+	last := name[strings.LastIndexAny(name, ".")+1:]
+	return match[1], strings.HasPrefix(match[2], "sonar.") || credentialName.MatchString(property) || credentialName.MatchString(last)
+}
+
+// withoutCIOnlyOptions empties the CI expressions JVM options pass in run
+// only to signing, publishing or reporting (see ciOnlyOption), adding each
+// option to without, the values validation runs without.
+func withoutCIOnlyOptions(run string, without []string) (string, []string) {
+	var text strings.Builder
+	last := 0
+	for _, match := range workflowExpression.FindAllStringIndex(run, -1) {
+		name := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(run[match[0]:match[1]], "${{"), "}}"))
+		option, ok := ciOnlyOption(run[:match[0]], name)
+		if !ok {
+			continue
+		}
+		text.WriteString(run[last:match[0]])
+		last = match[1]
+		if !slices.Contains(without, option) {
+			without = append(without, option)
+		}
+	}
+	text.WriteString(run[last:])
+	return text.String(), without
+}
+
 var credentialName = regexp.MustCompile(`(?i)(?:^|_)(?:TOKEN|SECRET|PASSWORD|PASSWD|PASSPHRASE|API_?KEY|ACCESS_?KEY|SECRET_?KEY|PRIVATE_?KEY|CREDENTIALS?|AUTH)$`)
 
 // remoteGridProviders maps credential variable prefixes to remote browser

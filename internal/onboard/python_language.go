@@ -268,3 +268,5 @@ func pythonModule(args []string) ([]string, bool) {
 	}
 	return nil, false
 }
+
+func (pythonDiscovery) ciStepVariables(string) map[string]string { return nil }
