@@ -308,12 +308,19 @@ func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) 
 		_, _ = fmt.Fprintf(output, "\nConfiguration %d/%d: %s\n", len(result.Configurations)+1, len(scope.Commands), displayed)
 
 		label := fmt.Sprintf("configuration %d: %s", len(result.Configurations)+1, displayed)
+		reportLabel := displayed
+		if entry.Directory != "" && filepath.Clean(entry.Directory) != "." {
+			reportLabel = entry.Directory + " › " + reportLabel
+		}
 		for _, key := range slices.Sorted(maps.Keys(environment)) {
+			var setting string
 			if environment[key] == "" {
-				label += " (" + key + " cleared)"
+				setting = " (" + key + " cleared)"
 			} else {
-				label += " (" + key + "=" + environment[key] + ")"
+				setting = " (" + key + "=" + environment[key] + ")"
 			}
+			label += setting
+			reportLabel += setting
 		}
 		child := *t
 		child.cypressSelected = entry
@@ -381,7 +388,7 @@ func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) 
 		}
 
 		for i := before; i < len(models); i++ {
-			labelConfigurationModel(&models[i], label)
+			models[i].Configuration = reportLabel
 		}
 	}
 	discloseConfigurationSideEffects(&result, leftovers, ambient)
@@ -432,24 +439,8 @@ func (t *Testdrive) configurationExecutable(command string) string {
 	return filepath.Join(t.repositoryRoot, "node_modules", ".bin", command)
 }
 
-func labelConfigurationModel(model *reportModel, command string) {
-	model.Configuration = command
-	if model.EvidenceName != "" {
-		command += " / " + model.EvidenceName
-	}
-	for i := range model.Tests {
-		model.Tests[i].Label = command + " › " + model.Tests[i].Label
-	}
-	for i := range model.Suites {
-		model.Suites[i].Name = command + " › " + model.Suites[i].Name
-	}
-	for i := range model.Cards {
-		model.Cards[i].Title = command + " — " + model.Cards[i].Title
-	}
-}
-
 func writeConfigurationHTML(output io.Writer, root string, models []reportModel) error {
-	model := reportModel{Aggregated: true, NoTestEvents: true, Summary: fmt.Sprintf("%d instrumented reporting snapshots retained, including repeated pairs. Aggregate execution counts include each primary reporting run once. See validation JSON for configuration completeness, compatibility and features.", len(models)), Artifacts: []reportArtifact{{Title: "Validation JSON", Href: validationFilename}}}
+	model := reportModel{Aggregated: true, NoTestEvents: true, Artifacts: []reportArtifact{{Title: "Validation JSON", Href: validationFilename}}}
 	var counts []*executionCounts
 	var commands, outputs, failures []string
 	for index, part := range models {
@@ -463,11 +454,25 @@ func writeConfigurationHTML(output io.Writer, root string, models []reportModel)
 			model.CoverageLevel = ""
 		}
 		model.NoTestEvents = model.NoTestEvents && part.NoTestEvents
-		label := fmt.Sprintf("Reporting snapshot %d: %s / %s / %s", index+1, part.Configuration, part.EvidenceName, part.Runtime.Command)
-		commands = append(commands, label)
-		outputs = append(outputs, label+"\n"+part.Runtime.Output)
-		if part.Runtime.Error != "" {
-			failures = append(failures, label+": "+part.Runtime.Error)
+		label := part.Configuration
+		if label == "" {
+			label = part.Runtime.Command
+		}
+		if part.EvidenceRole == roleRepeat {
+			label += " (repeat)"
+		}
+		if len(models) == 1 {
+			commands = append(commands, part.Runtime.Command)
+			outputs = append(outputs, part.Runtime.Output)
+			if part.Runtime.Error != "" {
+				failures = append(failures, part.Runtime.Error)
+			}
+		} else {
+			commands = append(commands, label)
+			outputs = append(outputs, label+"\n"+part.Runtime.Output)
+			if part.Runtime.Error != "" {
+				failures = append(failures, label+": "+part.Runtime.Error)
+			}
 		}
 		// Suite links address positions in the combined test table. Clone the
 		// rows because finding cards can share their source model's slices.
@@ -477,6 +482,18 @@ func writeConfigurationHTML(output io.Writer, root string, models []reportModel)
 		for i := range part.Cards {
 			part.Cards[i].Suites = offsetSuiteTests(part.Cards[i].Suites, offset)
 		}
+		if len(models) > 1 {
+			part.Tests = slices.Clone(part.Tests)
+			for i := range part.Tests {
+				part.Tests[i].Label = label + " › " + part.Tests[i].Label
+			}
+			for i := range part.Suites {
+				part.Suites[i].Name = label + " › " + part.Suites[i].Name
+			}
+			for i := range part.Cards {
+				part.Cards[i].Title = label + " — " + part.Cards[i].Title
+			}
+		}
 		model.Cards = append(model.Cards, part.Cards...)
 		model.Suites = append(model.Suites, part.Suites...)
 		model.Tests = append(model.Tests, part.Tests...)
@@ -485,14 +502,8 @@ func writeConfigurationHTML(output io.Writer, root string, models []reportModel)
 	model.Runtime.Output = strings.Join(outputs, "\n\n")
 	model.Runtime.Error = strings.Join(failures, "\n")
 	model.ExecutionCounts = combineExecutionCounts(counts)
-	model.Facts = []reportFact{{Label: "Reporting snapshots retained", Value: fmt.Sprint(len(models))}, {Label: "Reported test executions", Value: fmt.Sprint(len(model.Tests)), Tooltip: sourceIdentityScope}}
-	if model.ExecutionCounts != nil {
-		model.Facts[1].Value = fmt.Sprint(model.ExecutionCounts.TestExecutions)
-		identityFact := reportFact{Label: "Source-test identities", Value: "Unavailable", Tooltip: model.ExecutionCounts.Reason}
-		if model.ExecutionCounts.SourceTestIdentities != nil {
-			identityFact.Value, identityFact.Tooltip = fmt.Sprint(*model.ExecutionCounts.SourceTestIdentities), sourceIdentityScope
-		}
-		model.Facts = append(model.Facts, identityFact)
+	if model.ExecutionCounts != nil && model.ExecutionCounts.SourceTestIdentities == nil {
+		model.Facts = []reportFact{{Label: "Unique tests", Value: "Unavailable", Tooltip: "Not enough information to count unique tests."}}
 	}
 	var content bytes.Buffer
 	if err := testdriveReport.Execute(&content, model); err != nil {

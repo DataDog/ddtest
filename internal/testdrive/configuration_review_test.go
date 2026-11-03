@@ -196,9 +196,9 @@ func TestRepeatedReportingModelsRemainVisibleWithoutDoubleCounting(t *testing.T)
 	require.NoError(t, err)
 	require.Contains(t, string(page), "first output")
 	require.Contains(t, string(page), "repeat output")
-	require.Contains(t, string(page), "each primary reporting run once")
-	require.Contains(t, string(page), "1 reported test executions")
-	require.NotContains(t, string(page), "2 reported test executions")
+	require.NotContains(t, string(page), "<dt>Test results")
+	require.Contains(t, string(page), "1 test result")
+	require.NotContains(t, string(page), "2 test results")
 }
 
 func TestSnapshotPreservesUnrelatedLinksButBlocksEscapingConfiguration(t *testing.T) {

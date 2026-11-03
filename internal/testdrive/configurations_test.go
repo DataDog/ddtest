@@ -52,9 +52,9 @@ func TestAggregationKeepsFailedAndPendingConfigurations(t *testing.T) {
 
 func TestConfigurationReportsRemainOnePairAndKeepCommandLabels(t *testing.T) {
 	root := t.TempDir()
-	models := []reportModel{{Tests: []reportTest{{Label: "suite › test", Name: "test"}}, Suites: []reportSuite{{Name: "suite"}}}, {Tests: []reportTest{{Label: "suite › test", Name: "test"}}, Suites: []reportSuite{{Name: "suite"}}}}
-	labelConfigurationModel(&models[0], "jest")
-	labelConfigurationModel(&models[1], "jest --config production.ts")
+	models := []reportModel{{Runtime: reportRuntime{Framework: "Jest"}, Tests: []reportTest{{Label: "suite › test", Name: "test"}}, Suites: []reportSuite{{Name: "suite"}}}, {Runtime: reportRuntime{Framework: "Jest"}, Tests: []reportTest{{Label: "suite › test", Name: "test"}}, Suites: []reportSuite{{Name: "suite"}}}}
+	models[0].Configuration = "jest"
+	models[1].Configuration = "jest --config production.ts"
 	var output bytes.Buffer
 	require.NoError(t, writeConfigurationHTML(&output, root, models))
 	require.Contains(t, output.String(), "Open report:")
@@ -70,6 +70,13 @@ func TestConfigurationReportsRemainOnePairAndKeepCommandLabels(t *testing.T) {
 	require.Contains(t, string(html), "jest --config production.ts")
 	require.NotContains(t, string(html), "intake/")
 	require.Contains(t, string(html), `href="testdrive.json"`)
+	require.NotContains(t, string(html), "Test results with Datadog enabled.")
+	require.NotContains(t, string(html), "Test runs with Datadog")
+	require.NotContains(t, string(html), `class="empty-findings"`)
+	_, subtitle, found := strings.Cut(string(html), `<p class="subtitle">`)
+	require.True(t, found)
+	subtitle, _, _ = strings.Cut(subtitle, "</p>")
+	require.Equal(t, "Jest", strings.TrimSpace(subtitle))
 	entries, err := os.ReadDir(filepath.Dir(htmlReportPath(root)))
 	require.NoError(t, err)
 	require.Len(t, entries, 2)
@@ -94,7 +101,7 @@ func TestCombinedHTMLPreservesCoverageLinksAndFullCommandOutput(t *testing.T) {
 			SlowSuites:     []intake.SlowSuite{{Module: "module", Suite: "shared", Duration: 6 * time.Second}},
 		}
 		model := buildReport(root, facts, false, reportRuntime{Framework: "Jest", Tracer: "dd-trace", Command: fmt.Sprintf("jest --config variant-%d.ts", i), Output: strings.Repeat(fmt.Sprintf("variant-%d output\n", i), 200)})
-		labelConfigurationModel(&model, model.Runtime.Command)
+		model.Configuration = model.Runtime.Command
 		models = append(models, model)
 	}
 	for range 2 {
@@ -109,6 +116,57 @@ func TestCombinedHTMLPreservesCoverageLinksAndFullCommandOutput(t *testing.T) {
 		}
 		require.Contains(t, string(page), "Suite coverage")
 		require.Contains(t, string(page), "source.js")
+	}
+}
+
+func TestCombinedHTMLLabelsOnlyResultsThatNeedDistinguishing(t *testing.T) {
+	primary := reportModel{
+		Configuration: "npm test", EvidenceRole: roleReporting, EvidenceName: "reporting-only",
+		Runtime: reportRuntime{Framework: "Jest", Command: "npm test", Output: "first output", Error: "exit status 1"},
+		Tests:   []reportTest{{Label: "cart.test.js › rejects invalid coupons", Name: "rejects invalid coupons", Status: "Failed"}},
+		Suites:  []reportSuite{{Name: "cart.test.js"}},
+		Cards:   []reportCard{{Title: "Failed tests", Kind: "failed", Count: 1}},
+	}
+	other := primary
+	other.Configuration = "npm run test:integration"
+	other.Runtime.Command = other.Configuration
+	repeated := primary
+	repeated.EvidenceRole, repeated.EvidenceName = roleRepeat, "reporting-only-repeat"
+	repeated.Runtime.Output = "repeat output"
+	for _, tc := range []struct {
+		name   string
+		models []reportModel
+		titles []string
+	}{
+		{name: "one command", models: []reportModel{primary}, titles: []string{"Failed tests"}},
+		{name: "two commands", models: []reportModel{primary, other}, titles: []string{"npm test — Failed tests", "npm run test:integration — Failed tests"}},
+		{name: "repeated command", models: []reportModel{primary, repeated}, titles: []string{"npm test — Failed tests", "npm test (repeat) — Failed tests"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			for range 2 {
+				require.NoError(t, writeConfigurationHTML(&bytes.Buffer{}, root, tc.models))
+				data, err := os.ReadFile(htmlReportPath(root))
+				require.NoError(t, err)
+				report := string(data)
+				for _, title := range tc.titles {
+					require.Contains(t, report, `<h2 class="card-name">`+title+`</h2>`)
+				}
+				require.NotContains(t, report, "configuration 1")
+				require.NotContains(t, report, "reporting-only")
+				require.NotContains(t, report, "Test run 1")
+				if len(tc.models) == 1 {
+					require.Contains(t, report, `<code>npm test</code>`)
+					require.Contains(t, report, "Command failed: exit status 1")
+					require.NotContains(t, report, "npm test —")
+				}
+				for _, model := range tc.models {
+					require.Equal(t, "Failed tests", model.Cards[0].Title)
+					require.Equal(t, "cart.test.js", model.Suites[0].Name)
+					require.Equal(t, "cart.test.js › rejects invalid coupons", model.Tests[0].Label)
+				}
+			}
+		})
 	}
 }
 

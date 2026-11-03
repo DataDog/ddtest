@@ -115,6 +115,8 @@ func TestPublicJestConfigurations(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(html), "source.config.js")
 	require.Contains(t, string(html), "built.config.js")
+	require.NotContains(t, string(html), "configuration 1:")
+	require.NotContains(t, string(html), "reporting-only")
 	// A metadata-only rerun retains the pair without executing either build.
 	data, err = command(root, binary, "testdrive", "--framework", "jest", "--all", "--check-only", "--yes")
 	require.NoError(t, err, string(data))
