@@ -232,6 +232,59 @@ func applyScopeVerdict(result *validationResult) {
 	}
 }
 
+func configurationReportLabel(entry onboard.TestCommand, framework string) string {
+	command, environment := entry.Command, entry.Environment
+	if onboard.RedactsCommandKeys(framework) {
+		command, environment = onboard.RedactCypressCommand(command), onboard.RedactCypressEnvironment(environment)
+	}
+	if entry.Directory != "" && filepath.Clean(entry.Directory) != "." {
+		command = entry.Directory + " › " + command
+	}
+	for _, key := range slices.Sorted(maps.Keys(environment)) {
+		if environment[key] == "" {
+			command += " (" + key + " cleared)"
+		} else {
+			command += " (" + key + "=" + environment[key] + ")"
+		}
+	}
+	return command
+}
+
+// Only otherwise identical labels need preparation details. Retain the CI
+// entry number as a fallback when those details still don't distinguish them.
+func configurationReportLabels(commands []onboard.TestCommand, framework string) []string {
+	labels := make([]string, len(commands))
+	counts := make(map[string]int)
+	for i, entry := range commands {
+		labels[i] = configurationReportLabel(entry, framework)
+		counts[labels[i]]++
+	}
+	for i, entry := range commands {
+		if counts[labels[i]] < 2 {
+			continue
+		}
+		var preparation []string
+		for _, build := range entry.Prerequisites {
+			preparation = append(preparation, configurationReportLabel(onboard.TestCommand{Command: build.Command, Directory: build.Directory, Environment: build.Environment}, framework))
+		}
+		if len(preparation) == 0 {
+			labels[i] += " (without preparation)"
+		} else {
+			labels[i] += " (after " + strings.Join(preparation, "; ") + ")"
+		}
+	}
+	clear(counts)
+	for _, label := range labels {
+		counts[label]++
+	}
+	for i, label := range labels {
+		if counts[label] > 1 {
+			labels[i] += fmt.Sprintf(" [CI entry %d]", i+1)
+		}
+	}
+	return labels
+}
+
 // All evidence comes from this invocation. No earlier success is reused after
 // source, configuration, runtime or tracer edits. Each configuration has its own
 // paired comparison and feature controls, and shares only the final report pair.
@@ -258,7 +311,8 @@ func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) 
 	var leftovers []string
 	ambient := map[string]string{}
 	result.CIRuntime = t.lang().configurationsCIRuntime(t, scope)
-	for _, entry := range scope.Commands {
+	reportLabels := configurationReportLabels(scope.Commands, t.framework.Name())
+	for entryIndex, entry := range scope.Commands {
 		item := configurationResult{TestCommand: entry, Status: "not exercised", Compatibility: verdict{Status: "not exercised", Reason: "Configuration did not execute."}}
 		if ciInstrumentationDisabled(entry) {
 			result.Configurations = append(result.Configurations, excludedConfiguration(entry))
@@ -308,19 +362,12 @@ func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) 
 		_, _ = fmt.Fprintf(output, "\nConfiguration %d/%d: %s\n", len(result.Configurations)+1, len(scope.Commands), displayed)
 
 		label := fmt.Sprintf("configuration %d: %s", len(result.Configurations)+1, displayed)
-		reportLabel := displayed
-		if entry.Directory != "" && filepath.Clean(entry.Directory) != "." {
-			reportLabel = entry.Directory + " › " + reportLabel
-		}
 		for _, key := range slices.Sorted(maps.Keys(environment)) {
-			var setting string
 			if environment[key] == "" {
-				setting = " (" + key + " cleared)"
+				label += " (" + key + " cleared)"
 			} else {
-				setting = " (" + key + "=" + environment[key] + ")"
+				label += " (" + key + "=" + environment[key] + ")"
 			}
-			label += setting
-			reportLabel += setting
 		}
 		child := *t
 		child.cypressSelected = entry
@@ -388,7 +435,7 @@ func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) 
 		}
 
 		for i := before; i < len(models); i++ {
-			models[i].Configuration = reportLabel
+			models[i].Configuration = reportLabels[entryIndex]
 		}
 	}
 	discloseConfigurationSideEffects(&result, leftovers, ambient)
