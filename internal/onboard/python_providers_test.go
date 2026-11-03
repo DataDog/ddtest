@@ -543,6 +543,17 @@ func TestPythonJenkinsEnvironmentPythonpath(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, UseCIStatements(nil, nil)) })
 	check := pythonRuntimeCheckForSite(t, root, "")
 	require.Equal(t, "compatible", check.Status, pythonFindings(check))
+
+	// The installer of a container stage's setup snippet puts its tracer
+	// before the stage's PYTHONPATH: the plugin's rule does not apply there.
+	root = jenkinsRepository(t, jenkinsContainerStage("docker { image 'python:3.12' }", "      environment { PYTHONPATH = 'src' }\n", jenkinsTestSnippet("python", "4.16.0", false)+"\n      pytest tests"))
+	writeFile(t, root, "pytest.ini", "[pytest]\n")
+	check = pythonRuntimeCheckForSite(t, root, "datadoghq.com")
+	require.Equal(t, "compatible", check.Status, pythonFindings(check))
+	scope, err := DiscoverValidationScope(root, "pytest")
+	require.NoError(t, err)
+	require.Len(t, scope.Commands, 1)
+	require.Equal(t, map[string]string{"PYTHONPATH": "src"}, scope.Commands[0].Environment)
 }
 
 // Every provider's instructions carry Python's setup values and rules, and

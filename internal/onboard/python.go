@@ -867,6 +867,9 @@ func checkPythonCIRuntimes(ctx context.Context, root, localVersion, site string,
 			if !pythonJobCandidate(root, workflow, job) {
 				continue
 			}
+			// The job's own setup mechanism names its setup and sets its
+			// rules, such as a Jenkins container stage's setup snippet.
+			provider := setupProviderFor(provider, job)
 			rows, err := runtimeMatrix(job.Strategy.Matrix)
 			if err != nil {
 				result.Jobs = append(result.Jobs, RuntimeFinding{Workflow: workflow.Path, Job: name, Status: "inconclusive", Reason: err.Error()})
