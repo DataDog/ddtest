@@ -833,6 +833,8 @@ type pythonProviderSetup struct {
 	setup     ciSetup
 	inputs    map[string]string
 	requested string
+	// step runs the setup.
+	step runtimeStep
 }
 
 func checkPythonCIRuntimes(ctx context.Context, root, localVersion, site string, resolve func(context.Context, string) (PythonRelease, error), actionDefault func(context.Context, string) (string, error)) RuntimeCheck {
@@ -884,6 +886,9 @@ func checkPythonCIRuntimes(ctx context.Context, root, localVersion, site string,
 				var python, action, requested, engine, host string
 				var pythonErr, actionErr error
 				var selected *pythonProviderSetup
+				// expired is the source of a shell-local setup whose shell
+				// ended before the step (see ciSetup.shellLocal).
+				expired := ""
 				skipped, stated := false, false
 				if !shared {
 					// Outside GitHub Actions the job's image selects its Python,
@@ -899,6 +904,12 @@ func checkPythonCIRuntimes(ctx context.Context, root, localVersion, site string,
 				for i, step := range job.Steps {
 					if !step.sameShell {
 						venvs.shell()
+					}
+					if selected != nil && selected.setup.shellLocal && !sameShell(selected.step, step) {
+						// Its exports reach only the later commands of its own
+						// shell; this step runs in another one.
+						expired = selected.step.Source
+						action, requested, actionErr, selected = "", "", nil, nil
 					}
 					uses, _, _ := strings.Cut(strings.ToLower(step.Uses), "@")
 					current, isSetup := datadogSetup(step)
@@ -951,13 +962,13 @@ func checkPythonCIRuntimes(ctx context.Context, root, localVersion, site string,
 						// A setup for other languages leaves Python's in place.
 						chosen, err := setupSelectsLanguage(current, row, "python")
 						if err != nil || chosen {
-							action, requested, actionErr, selected, skipped = "", "", err, nil, false
+							action, requested, actionErr, selected, skipped, expired = "", "", err, nil, false, ""
 						}
 						if err == nil && chosen && stepErr != nil {
 							actionErr = stepErr
 						}
 						if err == nil && chosen && stepErr == nil && current.Pinned {
-							action, selected = current.Reference, &pythonProviderSetup{setup: current, inputs: map[string]string{}}
+							action, selected = current.Reference, &pythonProviderSetup{setup: current, inputs: map[string]string{}, step: step}
 							for key, value := range current.Inputs {
 								selected.inputs[key], _ = runtimeValue(value, row)
 								if selected.inputs[key] == "" && strings.Contains(value, "${{") {
@@ -1022,6 +1033,9 @@ func checkPythonCIRuntimes(ctx context.Context, root, localVersion, site string,
 						finding.Reason = "This job runs Python " + python + ", which ddtrace@" + selection.Version + " does not support (" + selection.RequiresPython + "), without the " + provider.setupName() + ". Its tests still run without instrumentation; this runtime is not validated with the tracer."
 					case action == "":
 						finding.Status, finding.Code, finding.Reason = "incompatible", "missing_instrumentation", pythonMissingSetupReason(provider)
+						if expired != "" {
+							finding.Reason = "The " + provider.setupName() + " at " + expired + " runs in another shell than this pytest command, and its exports reach only the later commands of its own shell; run it in the same shell, before the test command."
+						}
 					case !shared && engine != "":
 						finding.Status = "incompatible"
 						finding.Reason = "This job runs " + engine + " (image " + job.Image + "), which the tracer cannot instrument; keep its tests in a job without the " + provider.setupName() + "."

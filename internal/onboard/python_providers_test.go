@@ -556,6 +556,26 @@ func TestPythonJenkinsEnvironmentPythonpath(t *testing.T) {
 	require.Equal(t, map[string]string{"PYTHONPATH": "src"}, scope.Commands[0].Environment)
 }
 
+// A container stage's setup snippet exports into its own sh script: a pytest
+// command in a later sh step runs without its tracer.
+func TestPythonJenkinsSnippetReachesOnlyItsShell(t *testing.T) {
+	stage := jenkinsContainerStage("docker { image 'python:3.12' }", "", jenkinsTestSnippet("python", "4.16.0", false)+"\n      pytest tests")
+	root := jenkinsRepository(t, stage)
+	writeFile(t, root, "pytest.ini", "[pytest]\n")
+	check := pythonRuntimeCheckForSite(t, root, "datadoghq.com")
+	require.Equal(t, "compatible", check.Status, pythonFindings(check))
+
+	later := strings.Replace(stage, "\n      pytest tests\n          '''\n", "\n          '''\n          sh 'pytest tests'\n", 1)
+	require.NotEqual(t, stage, later)
+	writeFile(t, root, "Jenkinsfile", later)
+	check = pythonRuntimeCheckForSite(t, root, "datadoghq.com")
+	require.Equal(t, "incompatible", check.Status, pythonFindings(check))
+	require.Len(t, check.Jobs, 1)
+	require.Equal(t, "missing_instrumentation", check.Jobs[0].Code)
+	require.Contains(t, check.Jobs[0].Reason, "The Datadog setup snippet at Jenkinsfile:")
+	require.Contains(t, check.Jobs[0].Reason, "runs in another shell than this pytest command")
+}
+
 // Every provider's instructions carry Python's setup values and rules, and
 // the standalone local check instead of the coordinated agent handoff.
 func TestPythonProviderInstructions(t *testing.T) {
