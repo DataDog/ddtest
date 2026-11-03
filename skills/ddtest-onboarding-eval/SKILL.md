@@ -71,14 +71,27 @@ container-native private `/tmp/bundle` as Bundler's path to avoid bind-mount
 filesystem overhead; it is removed with the container, while lockfiles and both
 reports stay in the checkout until collection. Ruby's `TMPDIR` also uses the
 container's private executable tmpfs; no host cache is mounted there.
+A Bundler `path` puts gem executables off `PATH`, so a CI command such as bare
+`rspec` fails where the CI image has it. Pass `--bundle-binstubs rspec-core`
+(repeatable, one gem each): after setup, the runner writes Bundler binstubs to
+a private `/trial/bundle-bin` on `PATH` for readiness and the agent, and records
+them under `bundle_binstubs` in `run.json`. `/trial/bin` keeps only ddtest (the wrapper, and for an older build the real binary).
 For `--framework junit4`, `junit5`, `testng`, `spock`, `cucumber-java`, `karate`, `scalatest` or `munit`, build `--target java`: it adds a
 digest-pinned Temurin JDK 21 (select another with
 `--build-arg JDK_IMAGE=eclipse-temurin:<version>-jdk@sha256:<digest>`) and a
 checksum-verified Maven. The runner records the JDK's release version before
 cloning and checks the report against it; local validation certifies only CI
-rows of that JDK major. Maven downloads dependencies into the private trial
-HOME during validation, so no setup command is required; `mvn -B -q
-dependency:go-offline` works as a readiness command. Java's `TMPDIR` uses the
+rows of that JDK major. The container user has no passwd entry, so the JVM's
+`user.home` is `?` whatever `HOME` says, and Maven or Gradle would create
+`?/.m2` or `?/.gradle` in the checkout. Java trials therefore set
+`MAVEN_OPTS=-Duser.home=/trial/home` and `GRADLE_USER_HOME=/trial/home/.gradle`
+for setup, readiness and the agent (recorded under `private_caches` in
+`run.json`; ddtest keeps them in both validation runs). Maven then downloads
+dependencies into the private trial HOME, so no setup command is required;
+`mvn -B -q dependency:go-offline` works as a readiness command. A setup or
+readiness command that sets its own `MAVEN_OPTS` must keep `-Duser.home` or pass
+`-Dmaven.repo.local=/trial/home/.m2/repository`. Readiness, like setup, must
+leave the checkout clean, or the trial stops before the agent. Java's `TMPDIR` uses the
 container's private tmpfs, like Ruby's, since validation copies the repository
 per configuration.
 Ruby multi-bundle and Java multi-configuration validation can
@@ -150,6 +163,63 @@ The tested prompt is exactly:
 > Use ddtest in /trial/bin and onboard this repository to test-optimization.
 
 `--framework <name>` adds only “for <name> only”. Let ddtest guide the agent.
+
+### Scripted user answers
+
+Some ddtest results ask a question only the user can answer (`next_action:
+ask_user`, such as `ci_runtime_required`, `ci_setup_confirmation_required` or
+`ci_provider_required`). A correct agent stops there, so a trial ends at the
+question unless it has scripted answers:
+
+```sh
+  --user-answer 'ci_runtime=ruby=3.4' \
+  --user-answer 'ci_confirm=jenkins-plugin' \
+  --user-answer 'ci_confirm=jenkins-plugin-mode=agentless:datadoghq.com' \
+  --user-answer 'ci_confirm=jenkins-agent-runtime-matches'
+```
+
+Forms: `ci_runtime=<runtime>=<version>` (every asked job) or
+`ci_runtime=<workflow / job>:<runtime>=<version>`; `ci_confirm=<fact>` (yes),
+`ci_confirm=<fact>=no` or `ci_confirm=<fact>=<value>`; `ci_provider=<provider>`.
+`--user-answers FILE` takes the same values, one per line (`#` comments).
+Invalid values stop before cloning: versions are numeric as ddtest takes them
+(Ruby with a minor version, such as 3.4), runtime names follow `--ci-runtime`
+(`js` is `node`), and a `<value>` answers a question
+only in one of the forms it lists, such as `agent` or `agentless:<site>`.
+
+The `ddtest` in the prompt's folder is a wrapper that runs the real binary
+(`/trial/harness/ddtest`) unchanged and copies its standard output to a record
+outside the checkout. Setup, readiness and the agent get
+`DDTEST_SELF_PATH=/trial/bin/ddtest`, so every `next_command` and
+`resume_command` ddtest prints runs the wrapper. Before setup, the runner
+checks this with an unconfirmed `testdrive --agent` in an empty repository. A
+build that ignores the variable instead gets the real binary beside the wrapper
+as `ddtest (deleted)`: it prints its path from `/proc/self/exe`, and Go trims
+that suffix. `run.json` `ddtest_self_path` records the `mode`
+(`DDTEST_SELF_PATH` or `deleted suffix`), the path the check printed and
+`wrapper_printed`; when that is false, ddtest calls made through printed
+commands are not recorded. The
+runner moves each completed record out of the trial when the agent reports a
+tool result, into `ddtest-results.jsonl` in the evidence (`turn` and the
+redacted ddtest result, or null). So a result the agent redirected to a file or
+reformatted still counts; without a record, the agent's tool output is used.
+When the agent's turn ends and the last ddtest result of that turn asks the user,
+the runner reads that result's `required_input` and, only if the script covers
+every item, replies in the same conversation (`claude --resume`, `codex exec
+resume`) as the user's next message. The reply states only the asked facts in
+plain words (`Jenkinsfile / Run Tests runs Ruby 3.4.`, `jenkins-plugin: yes.`):
+no flags, commands or other guidance, and nothing that was not asked. Otherwise
+the trial stops as without a script. `run.json` `user_answers` records the
+scripted values, `status` (`not requested`, `answered` or `unanswered`) and each
+turn: the ddtest question and its `source` (`ddtest log` or `tool output`), the
+agent's message, the answers used, the reply, the
+missing items or the reason it stopped, and timestamps. `activity.jsonl` has
+`user_question`, `user_reply` and `user_question_unanswered` events in order.
+`--max-user-turns` (default 5) bounds the replies; `--timeout` applies to each
+agent turn. A question the agent asks without such a ddtest result is not
+answered. Scripted answers stand in for the user, so grade the trial as
+uncoached only for what follows each reply, and note the answers in the
+assessment.
 Codex uses an empty MCP table in a private `CODEX_HOME`. The mandatory container
 provides its isolation; the CLI runs without a second namespace sandbox, which
 cannot start under the container's dropped capabilities. Never use that CLI mode
@@ -163,9 +233,21 @@ Neither inherits the evaluator's CLI profile. Flag references:
 
 ## Grade independently
 
-Read `run.json`, `activity.jsonl`, `changes.patch`, `status.txt`, the final answer,
+Read `run.json`, `activity.jsonl`, `ddtest-results.jsonl`, `changes.patch`, `status.txt`, the final answer,
 and both retained ddtest reports. Public tool activity includes file, web and MCP
-targets; reasoning is excluded. Text is redacted before bounded excerpts. Treat
+targets; reasoning is excluded. Text is redacted before bounded excerpts: each
+keeps its start and end, up to `--excerpt-limit` characters (default 64000), and
+4000 once `activity.jsonl` reaches 64 MiB (`activity_excerpts` in `run.json`).
+Variable references such as `${DD_API_KEY:-}`, `$DD_API_KEY`,
+`${{ secrets.DD_API_KEY }}` or `credentials('id')` are kept; literal values are
+redacted. Every shell parameter expansion of a secret-named variable is kept
+(`${DD_API_KEY:+set}`, `${DD_API_KEY:?message}`, `${DD_API_KEY#prefix}`,
+`${#DD_API_KEY}` and so on) except a literal default (`-`, `:-`, `=`, `:=`),
+the only operand that supplies the value; recognized token shapes are redacted
+anywhere. Values that are clearly not secrets stay: an object or array opener
+(`"token": {`), a boolean or null, a version or range (`^9.0.2`), or a package
+path or specifier. A lockfile package key such as `"node_modules/jsonwebtoken"`
+is not a secret name. Treat
 redaction as a precaution: inspect evidence before sharing it, and do not archive
 credentials, raw telemetry streams or dependency trees.
 
@@ -186,7 +268,13 @@ concrete evidence:
   `reporting_counts` and `last_execution.current`. Historical counts must remain
   historical. Missing canonical text needs review; direct contradictions fail.
   "Unique"/"distinct" test counts and success claims on a report that isn't
-  `COMPLETE LOCALLY` need review even when the numbers match.
+  `COMPLETE LOCALLY` need review even when the numbers match. Success claims
+  include a bare "Onboarded."/"Done."/"All set.", the repository or Test
+  Optimization said to be onboarded or set up, and "I've onboarded…"; a stated
+  onboarding verdict ("Onboarding is done") that contradicts the report fails.
+  Report text the agent quotes (code, blockquotes, quotation marks or a
+  sentence the report contains), and negated or conditional statements, are not
+  claims.
 - **Cleanup:** assess ddtest session cleanup, agent artifacts at CLI exit and
   evaluator teardown separately. A clean Git diff alone is insufficient.
 

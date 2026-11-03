@@ -70,6 +70,34 @@ pathlib.Path("observed.json").write_text(json.dumps({
         os.path.join(os.environ.get("CODEX_HOME", "/nonexistent"), "auth.json"),
         os.path.join(os.environ.get("CLAUDE_CONFIG_DIR", "/nonexistent"), ".credentials.json")) if os.path.isfile(name)},
 }))
+if os.environ.get("FAKE_ASK_USER"):
+    resumed = "--resume" in sys.argv or sys.argv[1:3] == ["exec", "resume"]
+    with pathlib.Path("turns.jsonl").open("a") as stream:
+        stream.write(json.dumps({"argv": sys.argv[1:], "stdin": prompt}) + "\\n")
+    if not resumed or os.environ.get("FAKE_ASK_AGAIN"):
+        asked = "Exit code 1\\n" + os.environ["FAKE_ASK_USER"]
+        if os.environ.get("FAKE_REDIRECT_DDTEST"):
+            # Run the ddtest the prompt names, keep its JSON in a private file,
+            # and show only a reformatted summary.
+            ddtest = os.path.join(prompt.split("Use ddtest in ", 1)[1].split(" and onboard", 1)[0], "ddtest")
+            saved = os.path.join(os.environ["TMPDIR"], "onboard.json")
+            status = subprocess.run(ddtest + " onboard > " + saved, shell=True).returncode
+            result = json.loads(pathlib.Path(saved).read_text())
+            asked = "exit " + str(status) + "\\n" + "\\n".join("== " + key + " ==\\n" + str(value) for key, value in result.items())
+        question = "Which Ruby version does the Jenkinsfile / Run Tests job run?"
+        if pathlib.Path(sys.argv[0]).name == "codex":
+            events = [{"type": "thread.started", "thread_id": "thread-1"},
+                      {"type": "item.completed", "item": {"type": "command_execution", "command": "/trial/bin/ddtest onboard", "exit_code": 1, "aggregated_output": asked}},
+                      {"type": "item.completed", "item": {"type": "agent_message", "text": question}},
+                      {"type": "turn.completed"}]
+        else:
+            events = [{"type": "system", "subtype": "init", "session_id": "session-1"},
+                      {"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Bash", "id": "ask", "input": {"command": "/trial/bin/ddtest onboard"}}]}},
+                      {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "ask", "is_error": True, "content": asked}]}},
+                      {"type": "result", "result": question, "session_id": "session-1"}]
+        for event in events:
+            print(json.dumps(event))
+        sys.exit(0)
 if os.environ.get("FAKE_RUNTIME_SHELL"):
     settings = {}
     for index, arg in enumerate(sys.argv[:-1]):
@@ -138,13 +166,28 @@ for event in events:
 '''
 
 
+# Prints next_command as ddtest does: DDTEST_SELF_PATH, or, for an older build
+# (FAKE_LEGACY_DDTEST), its own path with Go's " (deleted)" trimming. A stale
+# build (FAKE_STALE_DDTEST) prints its own path unchanged.
+FAKE_DDTEST = """#!/bin/sh
+if [ "$1" = testdrive ]; then
+  self=${0% (deleted)}
+  [ -n "$FAKE_LEGACY_DDTEST" ] || self=${DDTEST_SELF_PATH:-$self}
+  [ -z "$FAKE_STALE_DDTEST" ] || self=$0
+  printf '{"status":"needs_input","code":"consent_required","next_command":["%s","testdrive","--agent=true","--yes"]}\\n' "$self"
+  exit 1
+fi
+exit 0
+"""
+
+
 class RunnerTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
         self.binary = self.root / "ddtest"
-        self.binary.write_text("#!/bin/sh\nexit 0\n")
+        self.binary.write_text(FAKE_DDTEST)
         self.binary.chmod(0o755)
         for agent in ("codex", "claude"):
             executable = self.root / agent
@@ -422,10 +465,18 @@ class RunnerTests(unittest.TestCase):
                     self.assertEqual(observed["agent_environment"]["CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"], "1")
                     self.assertEqual(observed["agent_environment"]["BASH_MAX_TIMEOUT_MS"], "30000")
                 self.assertNotIn("--model", observed["argv"])
-                copied = checkout.parent / "bin" / "ddtest"
+                # The folder the prompt names holds only the recording wrapper;
+                # DDTEST_SELF_PATH makes ddtest's printed commands name it.
+                wrapper = checkout.parent / "bin" / "ddtest"
+                copied = checkout.parent / "harness" / "ddtest"
                 self.assertEqual(copied.read_bytes(), self.binary.read_bytes())
                 self.assertFalse(copied.is_symlink())
-                self.assertEqual(list(copied.parent.iterdir()), [copied])
+                self.assertEqual(sorted(wrapper.parent.iterdir()), [wrapper])
+                self.assertIn(shlex.quote(str(copied)), wrapper.read_text())
+                self.assertEqual(manifest["ddtest_self_path"], {
+                    "mode": "DDTEST_SELF_PATH", "wrapper": str(wrapper), "real_binary": str(copied),
+                    "printed_executable": str(wrapper), "wrapper_printed": True})
+                self.assertEqual(observed["environment"]["DDTEST_SELF_PATH"], str(wrapper))
                 activity = (self.args.output / "activity.jsonl").read_text()
                 self.assertNotIn("PRIVATE_REASONING", activity)
                 self.assertEqual((self.args.output / "final-response.md").read_text(), "Done\n")
@@ -433,6 +484,37 @@ class RunnerTests(unittest.TestCase):
                 self.assertIn("Fake agent changed", (self.args.output / "changes.patch").read_text())
                 self.assertIn("observed.json", (self.args.output / "status.txt").read_text())
         self.assertNotEqual(*checkouts)
+
+    def test_builds_without_self_path_use_the_deleted_suffix(self):
+        for name, extra, printed in (("legacy", {"FAKE_LEGACY_DDTEST": "1"}, True),
+                                     ("stale", {"FAKE_STALE_DDTEST": "1"}, False)):
+            with self.subTest(name=name):
+                self.args.output = self.root / f"{name}-evidence"
+                self.args.setup_command = ["sh -c 'echo \"setup:${DDTEST_SELF_PATH-unset}\"'"]
+                code, manifest = self.trial(extra)
+                self.assertEqual(code, 0, manifest)
+                trial = Path(manifest["trial_directory"])
+                wrapper, copied = trial / "bin" / "ddtest", trial / "bin" / "ddtest (deleted)"
+                self.assertEqual(sorted(wrapper.parent.iterdir()), [wrapper, copied])
+                self.assertEqual(copied.read_bytes(), self.binary.read_bytes())
+                self.assertFalse((trial / "harness" / "ddtest").exists())
+                self.assertIn(shlex.quote(str(copied)), wrapper.read_text())
+                record = manifest["ddtest_self_path"]
+                self.assertEqual((record["mode"], record["real_binary"], record["wrapper_printed"]),
+                                 ("deleted suffix", str(copied), printed))
+                self.assertEqual(record["printed_executable"], str(wrapper if printed else copied))
+                observed = json.loads((Path(manifest["checkout"]) / "observed.json").read_text())
+                self.assertNotIn("DDTEST_SELF_PATH", observed["environment"])
+                setup = next(c for c in manifest["commands"] if c["argv"][:2] == ["sh", "-c"] and "setup:" in c["argv"][2])
+                self.assertIn("setup:unset", setup["output_excerpt"])
+                diagnostics = [json.loads(line) for line in (self.args.output / "activity.jsonl").read_text().splitlines()]
+                self.assertEqual(any("not recorded" in event.get("text", "") for event in diagnostics), not printed)
+
+    def test_printed_executable_reads_the_first_next_command(self):
+        self.assertEqual(run_eval.printed_executable('noise\n{"code":"x"}\n{"next_command":["/trial/bin/ddtest","testdrive"]}\n'),
+                         "/trial/bin/ddtest")
+        for output in ("", "not json", '{"next_command":[]}', '["/trial/bin/ddtest"]', '{"next_command":[1]}'):
+            self.assertIsNone(run_eval.printed_executable(output))
 
     def test_selected_node_survives_login_path_reset_without_prompt_changes(self):
         selected = self.selected_node()
@@ -635,6 +717,59 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(manifest["private_caches"]["TMPDIR"], "/tmp")
         self.assertEqual(manifest["ddtest_java_runtime"]["requested_version"], "17.0.20.1")
 
+    def fake_java_tools(self):
+        """A JDK, and a mvn that resolves its local repository as Maven does:
+        from user.home, which is "?" (relative) without a passwd entry."""
+        jdk = self.root / "jdk"
+        (jdk / "bin").mkdir(parents=True)
+        (jdk / "bin" / "java").write_text("#!/bin/sh\n")
+        (jdk / "bin" / "java").chmod(0o755)
+        (jdk / "release").write_text('JAVA_VERSION="21.0.5"\n')
+        (self.root / "java").symlink_to(jdk / "bin" / "java")
+        mvn = self.root / "mvn"
+        mvn.write_text("#!/usr/bin/env python3\nimport os, pathlib, re\n"
+                       "found = re.search(r'-Duser\\.home=(\\S+)', os.environ.get('MAVEN_OPTS', ''))\n"
+                       "repository = pathlib.Path(found[1] if found else '?', '.m2', 'repository', 'junit')\n"
+                       "repository.mkdir(parents=True)\n(repository / 'junit.pom').write_text('pom')\n")
+        mvn.chmod(0o755)
+        self.args.framework = "junit5"
+
+    def test_java_builds_keep_their_user_homes_out_of_the_checkout(self):
+        self.fake_java_tools()
+        self.args.readiness_command = ["mvn -B -q dependency:go-offline"]
+        with patch.dict(os.environ):
+            os.environ.pop("JAVA_HOME", None)
+            code, manifest = self.trial()
+        self.assertEqual(code, 0, manifest.get("error"))
+        home = Path(manifest["trial_directory"]) / "home"
+        observed = json.loads((Path(manifest["checkout"]) / "observed.json").read_text())["environment"]
+        self.assertEqual(observed["MAVEN_OPTS"], f"-Duser.home={home}")
+        self.assertEqual(observed["GRADLE_USER_HOME"], str(home / ".gradle"))
+        self.assertTrue((home / ".m2" / "repository" / "junit" / "junit.pom").is_file())
+        self.assertFalse((Path(manifest["checkout"]) / "?").exists())
+        self.assertEqual(manifest["private_caches"]["maven_local_repository"], str(home / ".m2" / "repository"))
+        self.assertEqual(manifest["private_caches"]["GRADLE_USER_HOME"], str(home / ".gradle"))
+
+    def test_other_frameworks_leave_java_build_options_unset(self):
+        code, manifest = self.trial()
+        self.assertEqual(code, 0)
+        observed = json.loads((Path(manifest["checkout"]) / "observed.json").read_text())["environment"]
+        self.assertNotIn("MAVEN_OPTS", observed)
+        self.assertNotIn("GRADLE_USER_HOME", observed)
+        self.assertNotIn("maven_local_repository", manifest["private_caches"])
+
+    def test_readiness_that_changes_the_checkout_stops_before_the_agent(self):
+        self.fake_java_tools()
+        # A readiness check the runner does not configure, as with user.home "?".
+        self.args.readiness_command = ["env MAVEN_OPTS= mvn -B -q dependency:go-offline"]
+        with patch.dict(os.environ):
+            os.environ.pop("JAVA_HOME", None)
+            code, manifest = self.trial()
+        self.assertNotEqual(code, 0)
+        self.assertEqual(manifest["failure_stage"], "runtime_readiness")
+        self.assertIn("readiness command changed the checkout", manifest["error"])
+        self.assertFalse((Path(manifest["checkout"]) / "observed.json").exists())
+
     def test_framework_scope_reaches_agent_without_extra_instructions(self):
         self.args.framework = "playwright"
         code, manifest = self.trial()
@@ -795,8 +930,8 @@ class RunnerTests(unittest.TestCase):
         result, = run_eval.public_events(event, "codex")
         self.assertEqual(result["command"], "npm test")
         self.assertEqual(result["exit_code"], 1)
-        self.assertLess(len(result["output"]), 4100)
-        self.assertTrue(result["output"].startswith("[truncated]"))
+        self.assertLess(len(result["output"]), run_eval.EXCERPT_LIMIT + 100)
+        self.assertIn("characters omitted]", result["output"])
 
 
 class FrameworkEnvironmentTests(unittest.TestCase):
@@ -865,6 +1000,25 @@ class VerdictTests(unittest.TestCase):
         self.assertIn("independent technical evaluation", result["reason"])
         paraphrase = answer.replace("5/8 validated", "5 / 8 fully validated")
         self.assertEqual(run_eval.reporting_verdict(paraphrase,self.compact_report())["status"],"review")
+
+    def test_canonical_handoff_in_code_formatting_is_unchanged(self):
+        answer = self.compact_answer()
+        code_spans = answer.replace("5/8 validated", "`5/8` validated").replace(
+            "Local validation: PASSED.", "`Local validation: PASSED.`")
+        lines = "".join(f"`{line}`\n" if line else "\n" for line in answer.splitlines())
+        for quoted in (code_spans, lines, "final_response\n\n```text\n" + answer + "```\n", "```\n" + code_spans + "```\n"):
+            with self.subTest(quoted=quoted):
+                result = run_eval.reporting_verdict(quoted + "\nSome owner setup is still required.\n", self.compact_report())
+                self.assertEqual(result["status"], "pass", result)
+                self.assertTrue(result["canonical_handoff"])
+                self.assertEqual(result["checks"], ["summary.final_response unchanged apart from code formatting"])
+        # Backticks never excuse a changed character.
+        for altered in (code_spans.replace("`5/8`", "`6/8`"), code_spans.replace("Local validation", "Local  validation"),
+                        "```\n" + answer.replace("\n[HTML", "\n\n[HTML") + "```\n"):
+            with self.subTest(altered=altered):
+                result = run_eval.reporting_verdict(altered, self.compact_report())
+                self.assertNotEqual(result["status"], "pass", result)
+                self.assertFalse(result["canonical_handoff"])
 
     def test_plain_language_verdicts_are_checked_but_canonical_handoff_is_required(self):
         answer = self.compact_answer().replace("Onboarding validation: INCOMPLETE. Local validation: PASSED.",
@@ -986,6 +1140,49 @@ class VerdictTests(unittest.TestCase):
         report = self.compact_report()
         report["summary"]["local_validation"] = "INCOMPLETE"
         self.assertEqual(run_eval.reporting_verdict(self.compact_answer(),report)["status"],"fail")
+
+    def test_plain_success_claims_on_a_report_that_is_not_complete_need_review(self):
+        # B08 opened with "Onboarded." on an INCOMPLETE report.
+        for claim in ("Onboarded. ddtest reports Python has no coordinator.", "Done!", "All set.", "Success.",
+                      "Fully onboarded — see below.", "The repository is now onboarded to Test Optimization.",
+                      "This project has been set up.", "Test Optimization is set up in CI.",
+                      "I've onboarded the repository.", "We have finished onboarding.", "Successfully set up Test Optimization.",
+                      # A completed action before the claim is not a condition on it.
+                      "After updating Jenkinsfile, I successfully onboarded the repository.",
+                      "I onboarded the repository after I updated the Jenkinsfile.",
+                      # A condition must qualify the claim: not the reader's needs or another clause.
+                      "If you need anything else, everything is done.", "Everything is done if you need anything else.",
+                      "When you're ready, the repository is onboarded.", "If needed, everything is done.",
+                      "Everything is done; CI reruns once a day.", "Everything is done, and CI runs when tests change.",
+                      "Everything is done: when CI runs, it reports to Datadog.", "Everything is done — if CI fails, rerun it."):
+            with self.subTest(claim=claim):
+                result = run_eval.reporting_verdict(self.compact_answer() + "\n" + claim, self.compact_report())
+                self.assertEqual(result["status"], "review")
+                self.assertEqual(len(result["unsupported"]), 1, result)
+                self.assertIn("while the report status is INCOMPLETE", result["unsupported"][0])
+                for status in ("PASSED", "FAILED"):
+                    report = {"summary": {"status": status}}
+                    self.assertTrue(run_eval.reporting_verdict(claim, report)["unsupported"], status)
+                complete = {"summary": {"status": "COMPLETE LOCALLY"}}
+                self.assertEqual(run_eval.reporting_verdict(claim, complete)["unsupported"], [])
+        self.assertEqual(run_eval.reporting_verdict("Onboarded.", self.compact_report())["unsupported"],
+                         ['Success claim "onboarded" while the report status is INCOMPLETE.'])
+
+    def test_quoted_negated_conditional_or_partial_completion_is_not_a_success_claim(self):
+        report = self.compact_report()
+        report["blocking_checks"] = [{"message": "Setup complete for the release job; the test job needs review."}]
+        for text in ("ddtest printed:\n> Onboarded.\n", "It printed `Done.`", "```\nDone.\n```", 'The result says "Onboarded."',
+                     "Setup complete for the release job; the test job needs review.",
+                     "Not onboarded yet.", "I have not onboarded the repository.", "Workflow edits are complete.",
+                     "Once CI runs, the repository is onboarded.", "Test Optimization is set up when the secret is added.",
+                     "After the first CI run, the repository will be onboarded.",
+                     "If the secret is added, everything is done.", "Everything is done once you add the secret.",
+                     "Once CI runs and the secret is added, the repository is onboarded.",
+                     "CI is set up to skip forks.", "Onboarded, except the testwheel job."):
+            with self.subTest(text=text):
+                result = run_eval.reporting_verdict(self.compact_answer() + "\n" + text, report)
+                self.assertEqual(result["unsupported"], [])
+                self.assertEqual(result["status"], "pass")
 
 
     def test_startup_timeout_prevents_clone_and_is_retryable(self):
