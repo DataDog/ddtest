@@ -33,15 +33,15 @@ func TestAggregateCountsDistinguishRepeatedExecutionsWithoutDroppingContexts(t *
 		run.Facts.TestEventCount = len(run.Tests)
 		model := buildReport(configurationRoot, run.Facts, false, reportRuntime{Framework: "Jest", Command: run.Command})
 		model.ExecutionCounts = nativeExecutionCounts(run)
-		labelConfigurationModel(&model, run.Command)
+		model.Configuration = run.Command
 		models = append(models, model)
 		runs = append(runs, run.summary())
 	}
 	require.NoError(t, writeConfigurationHTML(&bytes.Buffer{}, root, models))
 	page, err := os.ReadFile(htmlReportPath(root))
 	require.NoError(t, err)
-	require.Contains(t, string(page), "96 reported test executions · 32 source-test identities")
-	require.Contains(t, string(page), "Matching source identities across commands do not establish equivalent configurations or environments.")
+	require.Contains(t, string(page), "32 tests · 96 results across test configurations")
+	require.NotContains(t, string(page), `<dl class="facts">`)
 	require.Equal(t, 96, strings.Count(string(page), `id="test-detail-`))
 	for configuration := range 3 {
 		require.Contains(t, string(page), fmt.Sprintf("jest --configuration=%d", configuration))
@@ -65,6 +65,41 @@ func TestAggregateCountsDistinguishRepeatedExecutionsWithoutDroppingContexts(t *
 	_ = finishValidation(&bytes.Buffer{}, root, result)
 	reloaded := readValidationReport(t, root)
 	require.Equal(t, result.ReportingCounts, reloaded.ReportingCounts)
+}
+
+func TestSingleConfigurationReportDoesNotRepeatTheTestCount(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		tests      []jestTest
+		want       string
+		identifies bool
+	}{
+		{name: "four tests", tests: []jestTest{{File: "test.js", Name: "one"}, {File: "test.js", Name: "two"}, {File: "test.js", Name: "three"}, {File: "test.js", Name: "four"}}, want: "4 tests", identifies: true},
+		{name: "one test", tests: []jestTest{{File: "test.js", Name: "one"}}, want: "1 test", identifies: true},
+		{name: "empty suite", tests: []jestTest{}, want: "0 tests", identifies: true},
+		{name: "missing file", tests: []jestTest{{Name: "one"}}, want: "1 test result"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			counts := nativeExecutionCounts(validationRun{Tests: tc.tests})
+			require.NoError(t, writeConfigurationHTML(&bytes.Buffer{}, root, []reportModel{{ExecutionCounts: counts}}))
+			page, err := os.ReadFile(htmlReportPath(root))
+			require.NoError(t, err)
+			report := string(page)
+			require.Contains(t, report, `<p class="run-totals">`+tc.want+` · 0 suites</p>`)
+			require.NotContains(t, report, "reported test executions")
+			require.NotContains(t, report, "source-test identities")
+			require.NotContains(t, report, "<dt>Tests")
+			require.NotContains(t, report, "<dt>Test results")
+			if tc.identifies {
+				require.NotContains(t, report, `<dl class="facts">`)
+			} else {
+				require.Contains(t, report, "<dt>Unique tests")
+				require.Contains(t, report, "<dd>Unavailable</dd>")
+				require.Contains(t, report, "Not enough information to count unique tests.")
+			}
+		})
+	}
 }
 
 func TestAmbiguousNativeIdentityDoesNotInventUniqueCount(t *testing.T) {

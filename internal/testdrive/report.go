@@ -769,7 +769,19 @@ func plural(count int, singular, plural string) string {
 	return plural
 }
 
+func reportTestCountSummary(counts *executionCounts) string {
+	if counts.SourceTestIdentities == nil {
+		return fmt.Sprintf("%d test %s", counts.TestExecutions, plural(counts.TestExecutions, "result", "results"))
+	}
+	tests := *counts.SourceTestIdentities
+	summary := fmt.Sprintf("%d %s", tests, plural(tests, "test", "tests"))
+	if tests != counts.TestExecutions {
+		summary += fmt.Sprintf(" · %d %s across test configurations", counts.TestExecutions, plural(counts.TestExecutions, "result", "results"))
+	}
+	return summary
+}
+
 //go:embed report.html
 var reportHTML string
 
-var testdriveReport = template.Must(template.New("testdrive-report").Funcs(template.FuncMap{"plural": plural, "reportStatus": reportStatus}).Parse(reportHTML))
+var testdriveReport = template.Must(template.New("testdrive-report").Funcs(template.FuncMap{"plural": plural, "reportStatus": reportStatus, "testCountSummary": reportTestCountSummary}).Parse(reportHTML))
