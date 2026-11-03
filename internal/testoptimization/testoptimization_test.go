@@ -6,11 +6,13 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/DataDog/ddtest/internal/constants"
 	"github.com/DataDog/ddtest/internal/environment"
+	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/testoptimization/api"
 )
 
@@ -266,6 +268,51 @@ func TestTestOptimizationClient_GetTestSuiteDurations(t *testing.T) {
 	}
 	if cachedResult != result {
 		t.Fatal("GetTestSuiteDurations() should return cached durations on subsequent calls")
+	}
+}
+
+func TestTestOptimizationClient_GetTestSuiteDurationsFromFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "durations.json")
+	content := `{"test_suites":{"networkx.algorithms.tests":{"test_mst.py":{"source_file":"networkx/algorithms/tests/test_mst.py","duration":{"p50":"42000000","p90":"50000000"}}}}}`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(settings.Init)
+	t.Setenv("DD_TEST_OPTIMIZATION_RUNNER_DURATIONS_FILE", path)
+	settings.Init()
+	mockAPIClient := &MockAPIClient{TestSuiteDurations: map[string]map[string]api.TestSuiteDurationInfo{"backend": {"suite": {}}}}
+	client := newTestOptimizationClientForTest(t, mockAPIClient)
+
+	result := client.GetTestSuiteDurations()
+
+	if mockAPIClient.TestSuiteDurationsCalls != 0 {
+		t.Errorf("fetched durations from Datadog %d times, want none with a durations file", mockAPIClient.TestSuiteDurationsCalls)
+	}
+	suite, ok := result.TestSuites["networkx.algorithms.tests"]["test_mst.py"]
+	if !ok || suite.Duration.P50 != "42000000" || suite.SourceFile != "networkx/algorithms/tests/test_mst.py" || len(result.TestSuites) != 1 {
+		t.Errorf("GetTestSuiteDurations() = %#v, want the file's durations", result.TestSuites)
+	}
+}
+
+func TestReadTestSuiteDurationsFileRejectsUnusableFiles(t *testing.T) {
+	dir := t.TempDir()
+	for name, content := range map[string]string{
+		"invalid JSON":      `{"test_suites":`,
+		"no test_suites":    `{}`,
+		"wrong suite shape": `{"test_suites":{"module":["suite"]}}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(dir, strings.ReplaceAll(name, " ", "-")+".json")
+			if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := ReadTestSuiteDurationsFile(path); err == nil {
+				t.Errorf("ReadTestSuiteDurationsFile(%s) succeeded, want an error", content)
+			}
+		})
+	}
+	if _, err := ReadTestSuiteDurationsFile(filepath.Join(dir, "missing.json")); err == nil {
+		t.Error("ReadTestSuiteDurationsFile succeeded on a missing file, want an error")
 	}
 }
 

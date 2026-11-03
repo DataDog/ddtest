@@ -581,6 +581,7 @@ func TestPrintDDTestSettingsReport_AllSupportedSettings(t *testing.T) {
 	config.RuntimeTags = `{"runtime.version":"3.3.4"}`
 	config.ReportEnabled = false
 	config.RecordPayloads = "/tmp/payloads"
+	config.DurationsFile = "/tmp/durations.json"
 
 	var output strings.Builder
 	printDDTestSettingsReport(&output, &config)
@@ -621,9 +622,23 @@ func TestPrintDDTestSettingsReport_AllSupportedSettings(t *testing.T) {
 		"Runtime tags",
 		"Report enabled",
 		"Record payloads",
+		"Durations file",
 	}
 	if !reflect.DeepEqual(names, expectedNames) {
 		t.Fatalf("unexpected changed setting names:\ngot:  %v\nwant: %v", names, expectedNames)
+	}
+}
+
+func TestPrintPlanReport_DurationsFromFile(t *testing.T) {
+	var output strings.Builder
+
+	printPlanReportData(&output, PlanReportData{
+		DatadogSettings:    datadogSettingsReport{Available: true},
+		TestSuiteDurations: testSuiteDurationsReport{Available: true, Modules: 1, Suites: 248, FromFile: true},
+	})
+
+	if want := "  Test suite durations: 1 modules, 248 suites (from the durations file)\n"; !strings.Contains(output.String(), want) {
+		t.Fatalf("report doesn't say the durations came from the file:\n%s", output.String())
 	}
 }
 
@@ -708,6 +723,18 @@ func TestReportSummaries(t *testing.T) {
 	durationReport := reportTestSuiteDurations(client.GetTestSuiteDurations(), timings.TestSuiteDurations)
 	if durationReport.Modules != 2 || durationReport.Suites != 3 {
 		t.Errorf("unexpected test suite durations summary: %+v", durationReport)
+	}
+}
+
+func TestReportTestSuiteDurationsSaysWhenTheyCameFromTheFile(t *testing.T) {
+	t.Cleanup(settings.Init)
+	t.Setenv("DD_TEST_OPTIMIZATION_RUNNER_DURATIONS_FILE", "/tmp/durations.json")
+	settings.Init()
+
+	report := reportTestSuiteDurations(&api.TestSuiteDurationsResponseData{TestSuites: map[string]map[string]api.TestSuiteDurationInfo{}}, 0)
+
+	if !report.FromFile {
+		t.Fatalf("report = %+v, want it marked as coming from the durations file", report)
 	}
 }
 

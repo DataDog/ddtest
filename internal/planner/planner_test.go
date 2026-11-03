@@ -4764,6 +4764,26 @@ func TestPlanningHandlesFrameworkDiscoveryErrors(t *testing.T) {
 	}
 }
 
+func TestTestPlanner_PreparePlanningData_DurationsFileInvalid(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "durations.json")
+	if err := os.WriteFile(path, []byte(`{}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(settings.Init)
+	t.Setenv("DD_TEST_OPTIMIZATION_RUNNER_DURATIONS_FILE", path)
+	settings.Init()
+	mockPlatform := &MockPlatform{
+		PlatformName: "ruby",
+		Tags:         map[string]string{"platform": "ruby"},
+		Framework:    &MockFramework{FrameworkName: "rspec"},
+	}
+	planner := NewWithDependencies(mockPlatform, mockPlatform.Framework, &MockTestOptimizationClient{}, newDefaultMockCIProviderDetector())
+
+	err := planner.PreparePlanningData(t.Context())
+
+	assertPlannerErrorCode(t, err, errcode.PlanDurationsFileInvalid)
+}
+
 func TestTestPlanner_PreparePlanningData_RuntimeTagsOverrideInvalidJSON(t *testing.T) {
 	ctx := context.Background()
 

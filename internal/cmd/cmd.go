@@ -132,6 +132,7 @@ var rootPersistentFlagBindings = []persistentFlagBinding{
 	{configKey: "tests_location", flagName: "tests-location"},
 	{configKey: "tests_exclude_pattern", flagName: "tests-exclude-pattern"},
 	{configKey: "test_discovery_cache", flagName: "test-discovery-cache"},
+	{configKey: "durations_file", flagName: "durations-file"},
 	{configKey: "test_skipping_mode", flagName: "test-skipping-mode"},
 	{configKey: "force_full_test_discovery", flagName: "force-full-test-discovery"},
 	{configKey: "strict_discovery", flagName: "strict-discovery"},
@@ -160,6 +161,7 @@ func init() {
 	rootCmd.PersistentFlags().String("tests-location", "", "Glob pattern used to discover test files")
 	rootCmd.PersistentFlags().String("tests-exclude-pattern", "", "Glob pattern used to exclude test files from discovery")
 	rootCmd.PersistentFlags().String("test-discovery-cache", "", "Path to a restored test discovery cache file to import before planning")
+	rootCmd.PersistentFlags().String("durations-file", "", "Plan with the suite durations in this JSON file, in the shape Datadog's durations endpoint returns, instead of fetching them")
 	rootCmd.PersistentFlags().String("test-skipping-mode", "test", `TIA skipping granularity for Ruby and Python ("test" or "suite"; invalid values fall back to "test")`)
 	rootCmd.PersistentFlags().Bool("force-full-test-discovery", false, "Force full test discovery when the framework supports it")
 	rootCmd.PersistentFlags().Bool("strict-discovery", false, "Fail planning when full test discovery fails")

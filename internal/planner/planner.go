@@ -277,6 +277,11 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 	if err != nil {
 		return errcode.WithCode(errcode.PlanRuntimeTagsInvalid, fmt.Errorf("failed to parse runtime tags override: %w", err))
 	}
+	if path := settings.GetDurationsFile(); path != "" {
+		if _, err := testoptimization.ReadTestSuiteDurationsFile(path); err != nil {
+			return errcode.WithCode(errcode.PlanDurationsFileInvalid, err)
+		}
+	}
 
 	// A complete supplied configuration can plan for a separate execution
 	// environment without probing the planning job's runtime. Partial overrides

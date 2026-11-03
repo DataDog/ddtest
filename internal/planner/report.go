@@ -686,9 +686,13 @@ func formatTestSuiteDurations(durations testSuiteDurationsReport) string {
 	if !durations.Available {
 		return "not available"
 	}
-	return fmt.Sprintf("%s modules, %s suites",
+	formatted := fmt.Sprintf("%s modules, %s suites",
 		formatCount(durations.Modules),
 		formatCount(durations.Suites))
+	if durations.FromFile {
+		formatted += " (from the durations file)"
+	}
+	return formatted
 }
 
 func formatTagList(tags map[string]string, keys ...string) string {

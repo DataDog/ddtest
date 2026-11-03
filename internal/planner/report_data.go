@@ -154,6 +154,9 @@ type testSuiteDurationsReport struct {
 	FetchDuration time.Duration
 	Modules       int
 	Suites        int
+	// FromFile is set when the durations came from the durations file, not
+	// from Datadog.
+	FromFile bool
 }
 
 func reportTestSuiteDurations(
@@ -168,6 +171,7 @@ func reportTestSuiteDurations(
 		Available:     true,
 		FetchDuration: fetchDuration,
 		Modules:       len(testSuiteDurations.TestSuites),
+		FromFile:      settings.GetDurationsFile() != "",
 	}
 	for _, suites := range testSuiteDurations.TestSuites {
 		report.Suites += len(suites)
