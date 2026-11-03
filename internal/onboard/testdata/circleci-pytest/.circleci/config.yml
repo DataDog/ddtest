@@ -1,0 +1,136 @@
+# einsteinpy/einsteinpy@62fd24e3 (MIT), .circleci/config.yml, unchanged; the
+# repository is a plain pytest project instead of the relativity library.
+version: 2.1
+
+commands:
+  install_and_test:
+    description: Install einsteinpy with dev extras and run the test suite
+    steps:
+      - checkout
+      - run:
+          name: install dependencies
+          command: |
+            python3 -m venv venv
+            . venv/bin/activate
+            pip install --upgrade pip --quiet
+            pip install numpy --quiet
+            pip install . --quiet
+            pip install .[dev] --quiet
+      - run:
+          name: run tests
+          command: |
+            . venv/bin/activate
+            MPLBACKEND=Agg pytest -n 8 -vv  # Test against installed code (Can use --doctest-modules)
+
+jobs:
+  quality:
+    docker:
+      - image: cimg/python:3.15
+    parallelism: 4
+    working_directory: ~/repo
+
+    steps:
+      - checkout
+
+      - run:
+          name: install dependencies
+          command: |
+            python3 -m venv venv
+            . venv/bin/activate
+            pip install --upgrade pip --quiet
+            pip install black isort mypy --quiet
+      - run:
+          name: Check Code Style
+          command: |
+            . venv/bin/activate
+            isort --version
+            isort -c setup.py src/ -p einsteinpy --section-default THIRDPARTY  # This avoids installing einsteinpy
+            black --version
+            black src/ setup.py --check
+      - run:
+          name: check MyPy
+          command: |
+            . venv/bin/activate
+            mypy --ignore-missing-imports --check-untyped-defs --no-strict-optional src/
+
+  test:
+    parameters:
+      python_version:
+        type: string
+    docker:
+      - image: cimg/python:<< parameters.python_version >>
+    working_directory: ~/repo
+    steps:
+      - install_and_test
+
+  coverage:
+    docker:
+      - image: cimg/python:3.15
+
+    working_directory: ~/repo
+
+    steps:
+      - checkout
+
+      - run:
+          name: install dependencies
+          command: |
+            python3 -m venv venv
+            . venv/bin/activate
+            pip install numpy --quiet
+            pip install --editable .[dev] --quiet
+      - run:
+          name: run coverage
+          command: |
+            . venv/bin/activate
+            MPLBACKEND=Agg NUMBA_DISABLE_JIT=1 pytest --cov  # Test against sources
+      - run:
+          name: publish coverage
+          command: |
+            . venv/bin/activate
+            pip install codecov --quiet
+            codecov
+
+  docs:
+    docker:
+      - image: cimg/python:3.15
+
+    working_directory: ~/repo
+
+    steps:
+      - checkout
+
+      - run:
+          name: install dependencies
+          command: |
+            sudo apt update && sudo apt install --no-install-recommends pandoc texlive texlive-latex-extra texlive-fonts-recommended dvipng graphviz
+            python3 -m venv venv
+            . venv/bin/activate
+            pip install .[dev] --quiet
+            pip install alabaster
+      - run:
+          name: build docs
+          command: |
+            . venv/bin/activate
+            sphinx-build -vW -b html docs/source docs-html
+      - store_artifacts:
+          path: docs-html
+          destination: docs-html
+
+workflows:
+  build_and_test:
+    jobs:
+      - quality
+      - test:
+          name: test_py<< matrix.python_version >>
+          matrix:
+            parameters:
+              python_version: ["3.10", "3.11", "3.12", "3.13", "3.14", "3.15"]
+          requires:
+            - quality
+      - coverage:
+          requires:
+            - quality
+      - docs:
+          requires:
+            - test

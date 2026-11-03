@@ -139,7 +139,7 @@ func (t *Testdrive) Apply(ctx context.Context, output io.Writer, options ApplyOp
 	}
 	lock = nil
 	validating = true
-	fresh, err := Prepare(PrepareOptions{TracerVersion: selection.Version, All: true})
+	fresh, err := Prepare(PrepareOptions{TracerVersion: selection.Version, All: true, Site: options.Site})
 	if err != nil {
 		return err
 	}

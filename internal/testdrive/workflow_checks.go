@@ -51,6 +51,16 @@ func gitExclusionReason(reports []string) string {
 }
 
 func (t *Testdrive) verifyReportExclusions(ctx context.Context) []onboard.WorkflowCheck {
+	git := t.gitReportExclusions(ctx)
+	if pack, handled := t.lang().packageExclusions(t, ctx); handled {
+		return []onboard.WorkflowCheck{git, pack}
+	}
+	return t.npmReportExclusions(ctx, git)
+}
+
+// gitReportExclusions checks that Git ignores every retained report, as
+// /.testoptimization/ in the repository .gitignore does, and tracks none.
+func (t *Testdrive) gitReportExclusions(ctx context.Context) onboard.WorkflowCheck {
 	reports := slices.Clone(retainedReports)
 	// A run in a package below the repository root keeps its reports at the
 	// root (see UseReportRoot); Git checks them there.
@@ -74,10 +84,12 @@ func (t *Testdrive) verifyReportExclusions(ctx context.Context) []onboard.Workfl
 		git.Status = "failed"
 		git.Reason = "Report tracking could not be ruled out. Review git ls-files -- .testoptimization; existing tracked reports require an explicit untracking decision."
 	}
-	if pack, handled := t.lang().packageExclusions(t, ctx); handled {
-		return []onboard.WorkflowCheck{git, pack}
-	}
+	return git
+}
+
+func (t *Testdrive) npmReportExclusions(ctx context.Context, git onboard.WorkflowCheck) []onboard.WorkflowCheck {
 	pack := onboard.WorkflowCheck{Name: "package_report_exclusions", Status: "passed"}
+	redirected := reportRoot(t.repositoryRoot) != t.repositoryRoot
 	// Reports live at the root. A private root is not a publish target, and
 	// workspace packages cannot package files from their parent directory.
 	if reason, err := unpackableReportPackage(t.repositoryRoot, redirected); err != nil {
@@ -95,7 +107,7 @@ func (t *Testdrive) verifyReportExclusions(ctx context.Context) []onboard.Workfl
 	}
 	pack.Command = []string{"npm", "pack", "--dry-run", "--ignore-scripts", "--json", "--cache=" + filepath.Join(directory, "npm")}
 	packCtx, cancel := context.WithTimeout(ctx, time.Minute)
-	var stderr []byte
+	var data, stderr []byte
 	if executor, ok := t.executor.(separateOutputExecutor); ok {
 		data, stderr, err = executor.Output(packCtx, "npm", pack.Command[1:], map[string]string{"NODE_OPTIONS": ""})
 	} else {

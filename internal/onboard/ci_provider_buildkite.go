@@ -539,7 +539,7 @@ func (c *buildkiteConfig) steps(name string, scope buildkiteScope, commands *yam
 	state := ciShellState{dialect: buildkiteShellDialect, env: map[string]string{}, references: map[string]string{}, job: env, directory: executor.directory}
 	var steps []runtimeStep
 	add := func(entry buildkiteEntry, run, problem string) *runtimeStep {
-		step := runtimeStep{Number: len(steps) + 1, Source: entry.file + ":" + strconv.Itoa(entry.fileLine()), origin: entry, Shell: executor.shell}
+		step := runtimeStep{Number: len(steps) + 1, Source: entry.file + ":" + strconv.Itoa(entry.fileLine()), origin: entry, Shell: executor.shell, sameShell: len(steps) > 0}
 		if len(state.env) > 0 {
 			step.Env = maps.Clone(state.env)
 		}

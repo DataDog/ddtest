@@ -203,6 +203,10 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 		}
 		return errors.Join(fmt.Errorf("%s: %s", code, result.Reason), onboard.RenderAgentResult(output, result, options.Format))
 	}
+	if supportsValidationFramework(name) && StructuredValidation(t.language) && !t.lang().coordinated() && !options.Apply {
+		// Standalone validation has no automatic CI edits; --apply stays unsupported.
+		return t.standaloneWorkflow(ctx, output, options, &result, recoveryCommand, fail, &turnFinalResponse)
+	}
 	if !supportsValidationFramework(name) || !t.lang().coordinated() {
 		result.NextCommand = nil
 		return fail("unsupported", "framework_unsupported", "Controlled validation is not available for this framework.", "Preserve its unsupported status; do not substitute a different framework.")

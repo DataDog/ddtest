@@ -531,7 +531,10 @@ func TestPytestJobsKeepOnlyTheirTestPath(t *testing.T) {
 `)
 	scope, err := DiscoverValidationScope(root, "pytest")
 	require.NoError(t, err)
-	require.Contains(t, strings.Join(scope.Caveats, "\n"), ".github/workflows/ci.yml / test: step 4 (python -m build), step 5 (twine upload dist/*), step 6 (docker build -t x .) run after the job's last pytest test and can't start pytest; outside this validation.")
+	// python -m build and twine upload dist/* are non-test tools within the
+	// step's own resolution, reported for review rather than as caveats.
+	require.Contains(t, strings.Join(scope.Caveats, "\n"), ".github/workflows/ci.yml / test: step 6 (docker build -t x .) runs after the job's last pytest test and can't start pytest; outside this validation.")
+	require.NotContains(t, strings.Join(scope.Caveats, "\n"), "twine")
 	unresolved := strings.Join(scope.Unresolved, "\n")
 	require.NotContains(t, unresolved, "twine")
 	require.Contains(t, unresolved, "wheel / step 2 (pip install dist/*.whl): Runs before the job's pytest tests and may change what they run")

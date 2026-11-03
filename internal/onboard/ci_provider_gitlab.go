@@ -1454,7 +1454,7 @@ func gitLabShell(entries []gitLabStep, env map[string]string, offset int, image 
 	state := ciShellState{dialect: gitLabShellDialect, env: map[string]string{}, references: map[string]string{}, job: env}
 	var steps []runtimeStep
 	for i, entry := range entries {
-		step := runtimeStep{Number: offset + i + 1, Source: entry.file + ":" + strconv.Itoa(entry.node.Line), origin: entry}
+		step := runtimeStep{Number: offset + i + 1, Source: entry.file + ":" + strconv.Itoa(entry.node.Line), origin: entry, sameShell: i > 0}
 		if len(state.env) > 0 {
 			step.Env = maps.Clone(state.env)
 		}

@@ -308,7 +308,7 @@ func TestPythonLiteralCommandEnvironmentIsScoped(t *testing.T) {
 		{"PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 PYTEST_PLUGINS=ddtrace.testing.internal.pytest.entry_point pytest", "compatible"},
 		{"COVERAGE_FILE=.coverage python -E -m pytest", "inconclusive"},
 		{"UV_PYTHON=3.8 uv run pytest", "inconclusive"},
-		{"PYTHONPATH=/other pytest", "inconclusive"},
+		{"PYTHONPATH=/other pytest", "incompatible"}, // It drops the action's path: an exact edit.
 		{"DD_CIVISIBILITY_ENABLED=false pytest", "inconclusive"},
 		{"COVERAGE_FILE=.coverage python -m pytest --version", "not applicable"},
 		{"COVERAGE_FILE=.coverage tox -e py312", "compatible"},

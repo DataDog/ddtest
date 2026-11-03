@@ -147,6 +147,9 @@ type PrepareOptions struct {
 
 	// AcceptSubstituteRuntime completes validation on a compatible local runtime.
 	AcceptSubstituteRuntime bool
+	// Site is the explicitly selected Datadog site (--site) the CI setup
+	// must report to; a workflow sets its own.
+	Site string
 }
 
 func checkTemporaryStorage() error {
@@ -411,6 +414,7 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 		drive.command = drive.configurationExecutable(drive.command)
 	}
 	drive.allConfigurations = all
+	drive.selectedSite = configuration.Site
 	if runner.Name() == "cypress" {
 		drive.cypressSelected = selectedPlan
 		drive.cypressDiscovered = strings.TrimSpace(settings.GetCommand()) == "" && discoveryError == nil

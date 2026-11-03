@@ -100,7 +100,7 @@ func newTestdriveCommand() *cobra.Command {
 			return fail("invalid_options", fmt.Errorf("--facts requires --all; facts cannot replace or narrow the discovered scope"))
 		}
 		if structured {
-			if detected, err := platform.DetectPlatform(); err == nil && !testdrive.Coordinated(detected.Name()) {
+			if detected, err := platform.DetectPlatform(); err == nil && !testdrive.StructuredValidation(detected.Name()) {
 				return fail("framework_unsupported", fmt.Errorf("controlled validation is not available for %s", detected.Name()))
 			}
 		}
@@ -112,7 +112,7 @@ func newTestdriveCommand() *cobra.Command {
 			}
 		}
 
-		execution, err := testdrive.Prepare(testdrive.PrepareOptions{TracerVersion: version, DefaultTracerVersion: !cmd.Flags().Changed("tracer-version"), CheckOnly: checkOnly, All: all, Timeout: timeout, AllowReviewedBuilds: allowReviewedBuilds, AcceptSubstituteRuntime: acceptSubstituteRuntime})
+		execution, err := testdrive.Prepare(testdrive.PrepareOptions{TracerVersion: version, DefaultTracerVersion: !cmd.Flags().Changed("tracer-version"), CheckOnly: checkOnly, All: all, Timeout: timeout, AllowReviewedBuilds: allowReviewedBuilds, AcceptSubstituteRuntime: acceptSubstituteRuntime, Site: site})
 		if err != nil {
 			return fail("validation_preparation", err)
 		}

@@ -21,10 +21,11 @@ manual CI guidance and [controlled local validation](running.md#pytest-testdrive
 Ruby supports plain and coordinated
 RSpec/Minitest validation as described below, and Java supports plain and
 coordinated Maven validation as described in [Java validation](#java-validation);
-automatic apply is JavaScript only. For Ruby and Java, `onboard --apply` returns
-the same handoff as `onboard --agent`: the CI setup for the agent to apply, then
-coordinated validation. On Jenkins, `onboard --apply` also writes Ruby's
-Jenkinsfile edit (see [Jenkins](#jenkins)).
+automatic apply is JavaScript only. For Ruby, Java and Python, `onboard --apply`
+returns the same handoff as `onboard --agent`: the CI setup for the agent to
+apply, then coordinated validation (standalone validation for Python). On
+Jenkins, `onboard --apply` also writes Ruby's and Python's Jenkinsfile edit (see
+[Jenkins](#jenkins)).
 
 The editor preserves existing project and CI tracer selections, including tracers
 installed in workspace packages. It resolves one exact release for the actual
@@ -93,8 +94,8 @@ one to configure before discovery, edits or validation (agents receive
 `ci_provider_required` with `next_action: ask_user`), and follow-up commands
 keep the selected `--ci-provider`. A language without setup support on the
 selected provider gets `ci_provider_unsupported` instead of instructions:
-JavaScript and Ruby support every provider, Java every provider but Jenkins, and
-Python GitHub Actions only.
+JavaScript, Ruby and Python support every provider, and Java every provider but
+Jenkins.
 Other CI files (Travis CI, Azure Pipelines and others) are never parsed: when
 they mention the framework they are listed as outside this validation, and they
 never fail onboarding. `--ci-provider` is not `--platform`, which selects the
@@ -175,16 +176,19 @@ form, including `{group, labels}` and a runner a matrix row selects, such as
 `runs-on: ${{ matrix.os }}` with `os: [self-hosted, ubuntu-latest]`) without
 an `actions/setup-node` or `ruby/setup-ruby` step that runs before their
 tests and selects a version, and jobs whose image (such as
-`ubuntu:22.04`) names no Node or Ruby version. Finding these jobs reads only
+`ubuntu:22.04`) names no Node, Ruby or Python version. Finding these jobs reads only
 the repository; a Cypress GitHub action job's Node is the action's, not a
-question for the user. For JavaScript and Ruby, `onboard` and `testdrive` then
-return `needs_input` with `code: ci_runtime_required`, `required_input:
-["ci_runtime:<workflow> / <job>", …]` and `next_action: ask_user` before any
-setup or test runs. The agent asks the user and never guesses the version.
+question for the user. For JavaScript, Ruby and Python, `onboard` and
+`testdrive --agent` then return `needs_input` with `code: ci_runtime_required`,
+`required_input: ["ci_runtime:<workflow> / <job>", …]` and `next_action:
+ask_user` before any setup or test runs. The agent asks the user and never
+guesses the version. Plain `testdrive` runs anyway and reports such a job as
+inconclusive, with the same question in its reason (see
+[Python on GitLab CI, CircleCI, Buildkite and Jenkins](#python-on-gitlab-ci-circleci-buildkite-and-jenkins)).
 
 The answer comes back as `--ci-runtime [<job>:]<runtime>=<version>`,
-repeatable: `node` (or `js`) with `22`, `22.11` or `22.11.0`, or `ruby` with
-`3.3` or `3.3.6`. Without `<job>`, it applies to every job whose runtime is
+repeatable: `node` (or `js`) with `22`, `22.11` or `22.11.0`, `ruby` with
+`3.3` or `3.3.6`, or `python` with `3.12` or `3.12.7`. Without `<job>`, it applies to every job whose runtime is
 unknown; `<job>` is the printed key (`.buildkite/pipeline.yml / :jest: Tests`)
 or the job name alone, and wins over a statement without one. Two statements that name the same job (by
 either key) with different versions are `invalid_options`; the same
@@ -1255,6 +1259,108 @@ ddtest models those exports, so a test command whose `NODE_OPTIONS` reads
 Node cannot start with, never certified; the same applies to a hand-written
 `NODE_OPTIONS` that preloads it.
 
+### Python on GitLab CI, CircleCI, Buildkite and Jenkins
+
+pytest onboarding prints the selected provider's setup with Python's values,
+and `testdrive --framework pytest` checks it, as for GitHub Actions. Its
+validation is standalone, without the coordinator's checkpoint, `--resume`,
+`--facts` or automatic CI edits. A person's instructions end with
+`testdrive --framework pytest --all --check-only --yes`, then
+`testdrive --framework pytest --all --yes --tracer-version <release>`.
+
+A coding agent gets the structured handoff, on every provider including
+GitHub Actions: `onboard` (piped, `--agent` or `--apply`) asks the user for
+the CI facts below with `next_action: ask_user`, as for JavaScript and Ruby,
+then returns `ci_setup_required` with the setup instructions and
+`resume_command: testdrive --framework pytest --all --agent --yes`, or `ready`
+with it as `next_command` once every pytest step has a complete setup.
+`testdrive --agent` asks the same questions before anything runs, validates
+the ddtrace release the CI setup pins (when every job pins the same one and
+no `--tracer-version` is given), and returns the verdict with
+`final_response`: `passed` (`standalone_validation`) when the report is
+PASSED, otherwise `validation_failed` (`validation_incomplete`) with the
+blockers and `resume_command`. PASSED is pytest's passing verdict, never
+COMPLETE LOCALLY, which only the coordinator certifies: the result tells
+the agent to begin with `final_response` unchanged and not to call onboarding
+done or complete. Plain `testdrive` output for pytest ends with the same
+instruction and `final_response`, and an incomplete verdict prints
+`Local validation: PASSED (local checks only; they do not complete
+onboarding)` rather than a bare PASSED.
+
+The GitLab setup script, the CircleCI orb and the Buildkite installer run
+`install_test_visibility` (v13 for the orb, v15 for the others; their Python
+installer is the same). It creates a virtual environment, `.dd_civis_env`, in
+the working directory with the `python` on PATH, installs ddtrace
+(`PYTHON_TRACER_VERSION`, `python_tracer_version`,
+`DD_SET_TRACER_VERSION_PYTHON`) and coverage there with pip, and exports
+`PYTHONPATH` (its site-packages before the job's `PYTHONPATH`) and
+`PYTEST_ADDOPTS=--ddtrace` (before the job's options) into the job's shell. The
+tests keep their own environment: `PYTHONPATH` adds the tracer to it. The
+pytest CI check certifies a job when the setup runs before every pytest
+command with `python` selected, an exact ddtrace release (the one local
+validation runs; `latest` or no version is refused), the API key from the
+provider's secrets and the selected site (`DD_SITE`), on a Python the job's
+image names: `python:3.12`, `python:3.12-slim`, `cimg/python:3.12`,
+`circleci/python:3.9` or `ghcr.io/astral-sh/uv:python3.12-bookworm`. A job on
+the runner's or agent's own Python, or in an image whose name selects no
+minor version (`python:latest`, `python:3`, an image by digest), stays
+inconclusive until the user states its Python with `--ci-runtime
+python=<version>`. A later command that replaces `PYTHONPATH` or
+`PYTEST_ADDOPTS` instead of extending it (`export
+PYTHONPATH="$PYTHONPATH:src"`) is incompatible. An inline `PYTHONPATH=src
+pytest` is that command's environment, validated locally with `src`; it drops
+the tracer path every setup puts on `PYTHONPATH`, so the check and the agent
+handoffs prescribe the exact rewrite (`ci_edit_required`: the export above
+before the unchanged command, written with `$$` on Buildkite, appended to
+`$BASH_ENV` on CircleCI, or the step's `env` on GitHub Actions), then the same
+validation command. A job without the setup whose
+Python ddtrace does not support (such as 3.15, or a PyPy image) is excluded,
+not missing; at least one job must be instrumented. Matrix entries keep their
+place, since pytest validation refuses a matrix whose entries changed after its
+first check: on CircleCI a `when`/`unless` on the matrix parameter skips the orb
+for such an entry, and elsewhere an unsupported entry that shares the setup
+stays incompatible, for the user to decide.
+
+ddtrace's compiled modules load only on the Python version that installed
+them. A virtual environment the job creates with its own Python (`python -m
+venv venv`, `python3 -m venv venv` or `virtualenv venv`, then `source
+venv/bin/activate`) runs that version, so its tests are certified while the
+job still selects that version when they run; one ddtest cannot trace to the
+job's Python (`uv venv`, `python3.11 -m venv`, one restored from a cache, one
+created before setup-python selects another version) is inconclusive, as is
+an activation ddtest cannot resolve (an absolute path, an unknown variable,
+one inside a condition) and commands that select their own interpreter, `uv
+run` and `poetry run` among them, as on GitHub Actions. Each pytest command is
+checked in the environment active when it runs, after the step's variables
+resolve; an activation lasts until `deactivate` or the end of its shell: one
+step on GitHub Actions and CircleCI, `before_script` and `script` together on
+GitLab CI, a step's commands on Buildkite, one `sh` on Jenkins. An
+activation, a `python --version`, and linters, uploaders and coverage reports
+(`flake8`, `mypy`, `codecov`, `coverage xml`, …) are not test entry points.
+These rules apply on GitHub Actions too, where a step can activate an
+environment an earlier step created. For tox, the instructions extend
+`pass_env` with `DD_*`, `PYTHONPATH` and `PYTEST_ADDOPTS`.
+
+On Jenkins the Datadog plugin (`languages: ['PYTHON']`) runs `pip install -U
+ddtrace` with the build agent's default pip, from the workspace and with the
+agent's own environment, on every build: the latest release, which nothing
+pins, so the Python setup floats like JavaScript's and `final_response` names
+the release local validation used as a caveat. It sets `PYTHONPATH` to that
+pip's site-packages followed by `:` and a space before the existing
+`PYTHONPATH`, and `PYTEST_ADDOPTS=--ddtrace` before the existing options, once
+per agent: a `PYTHONPATH` or `PYTEST_ADDOPTS` in an `environment` directive or
+`withEnv` is incompatible (extend them in the test's `sh` instead). The
+plugin's facts, the agents' Python (`--ci-runtime`) and, for a stage that
+activates a virtual environment or another Python (`source venv/bin/activate`,
+`pyenv`, `conda activate`), `jenkins-agent-runtime-matches` are the user's
+answers: `onboard` and `testdrive --agent` ask for them with `next_action:
+ask_user` (`ci_runtime_required` first, then
+`ci_setup_confirmation_required` once the Jenkinsfile enables the plugin, for
+the stages that run pytest only), and the answers go on the next command. The agent's pip must belong to the tests'
+Python version and be able to install packages (Debian 12 and Ubuntu 24.04
+system Pythons refuse, PEP 668); otherwise the plugin fails and the tests run
+untraced.
+
 ## Coverage and local developer commands
 
 Mocha CI commands without Istanbul coverage are wrapped with the project's NYC.
@@ -1312,8 +1418,10 @@ For existing setup, use `testdrive --framework vitest --all --agent --yes`.
 Plain testdrive keeps its earlier execution behavior; explicit `--agent` or
 `--format json` selects coordination. Supplying `--facts` also selects the coordinator. Structured execution requires `--yes` and never opens an interactive prompt. RSpec and Minitest use the shared
 coordinator after the agent applies the Ruby CI setup (see [Ruby validation](#ruby-validation)).
-Python instructions and plain execution remain unchanged; structured validation is
-unsupported for Python and returns no next command.
+pytest uses the same handoff, with standalone validation instead of the
+coordinator (see
+[Python on GitLab CI, CircleCI, Buildkite and Jenkins](#python-on-gitlab-ci-circleci-buildkite-and-jenkins));
+a person's `onboard` in a terminal and plain `testdrive` keep their text output.
 
 The coordinator owns one resolved execution plan: actual commands, directories,
 environments, builds, runtime/tracer selection, initialization and feature policy.
@@ -1536,7 +1644,8 @@ the result is `blocked_environment` (`file_descriptors_exhausted`) with
 `next_action: run_command`: free descriptors and rerun the same command.
 
 Results distinguish ready, needs_input, blocked_environment, unsupported,
-validation_failed, selected_passed and complete_locally. Follow the returned argv
+validation_failed, selected_passed and complete_locally, plus passed for
+standalone pytest validation. Follow the returned argv
 without guessing a different framework, tracer or suite. Missing capability and
 setup facts are distinct from failed test assertions. Registry transport may retry
 once; authentication, permissions and feature failures are not silently retried.

@@ -798,7 +798,7 @@ func RequiredCIConfirmations(root, language, framework string) *CIConfirmationRe
 	for _, workflow := range workflows {
 		for _, name := range slices.Sorted(maps.Keys(workflow.Jobs)) {
 			job := workflow.Jobs[name]
-			if disabledCondition(job.If) {
+			if disabledCondition(job.If) || outsideTestJobs(root, workflow, job, language, framework) {
 				continue
 			}
 			var setup *ciSetup

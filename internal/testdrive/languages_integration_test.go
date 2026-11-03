@@ -6,14 +6,17 @@
 package testdrive_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/stretchr/testify/require"
 )
 
@@ -54,16 +57,27 @@ func TestPublicPythonRubyTestdrives(t *testing.T) {
 			}
 
 			integrationFile(t, root, ".github/workflows/test.yml", "jobs:\n  test:\n    steps:\n      - run: "+fixture.command+"\n")
-			for _, flags := range [][]string{nil} {
-				args := append([]string{"onboard", "--framework", fixture.name}, flags...)
-				instructions := integrationCommand(t, ctx, root, env, binary, args...)
-				for _, invalid := range []string{"NODE_OPTIONS", "js-tracer-version", "Jest", "Vitest", "package.json", "telemetry_only", "UNVALIDATED", "INCOMPLETE", "--agent", "--format", "summary.final_response", "scratch files"} {
-					require.NotContains(t, instructions, invalid)
-				}
-				require.Contains(t, instructions, "Required local validation configurations")
-				require.Contains(t, instructions, "python-tracer-version")
-				require.Contains(t, instructions, "--all --check-only")
+			// The human instructions keep the manual steps; they mention
+			// testdrive --agent only as the standalone agent mode.
+			instructions := integrationCommand(t, ctx, root, env, binary, "onboard", "--framework", fixture.name, "--instructions")
+			for _, invalid := range []string{"NODE_OPTIONS", "js-tracer-version", "Jest", "Vitest", "package.json", "telemetry_only", "UNVALIDATED", "INCOMPLETE", "--agent --all", "--format", "summary.final_response", "scratch files"} {
+				require.NotContains(t, instructions, invalid)
 			}
+			require.Contains(t, instructions, "Required local validation configurations")
+			require.Contains(t, instructions, "python-tracer-version")
+			require.Contains(t, instructions, "--all --check-only")
+			// A piped onboard is a coding agent's: before CI runs the setup it
+			// gets the structured handoff, whose resume_command is the
+			// standalone testdrive --agent validation.
+			handoff, err := pythonHandoff(ctx, root, env, binary, "onboard", "--framework", fixture.name)
+			require.Error(t, err, "setup is still required")
+			require.Equal(t, "needs_input", handoff.Status)
+			require.Equal(t, "ci_setup_required", handoff.Code)
+			require.Equal(t, []string{"testdrive", "--framework", fixture.name, "--all", "--agent", "--yes"}, handoff.ResumeCommand[1:7])
+			for _, text := range []string{"python-tracer-version", "final_response unchanged", "never COMPLETE LOCALLY"} {
+				require.Contains(t, handoff.Instruction, text)
+			}
+			require.NotContains(t, handoff.Instruction, "--check-only")
 			for _, mode := range []struct {
 				name string
 				args []string
@@ -71,7 +85,13 @@ func TestPublicPythonRubyTestdrives(t *testing.T) {
 				{"plain", nil},
 			} {
 				t.Run(mode.name, func(t *testing.T) {
-					integrationFile(t, root, ".github/workflows/test.yml", "jobs:\n  test:\n    steps:\n      - uses: actions/setup-python@v6\n        with: {python-version: '3.12'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: python, python-tracer-version: '4.16.0'}\n      - run: "+fixture.command+"\n")
+					integrationFile(t, root, ".github/workflows/test.yml", "jobs:\n  test:\n    steps:\n      - uses: actions/setup-python@v6\n        with: {python-version: '3.12'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: python, api_key: '${{ secrets.DD_API_KEY }}', python-tracer-version: '4.16.0'}\n      - run: "+fixture.command+"\n")
+					// With the complete setup in CI, the agent goes straight to validation.
+					handoff, err := pythonHandoff(ctx, root, env, binary, "onboard", "--framework", fixture.name, "--agent")
+					require.NoError(t, err, handoff.Reason)
+					require.Equal(t, "ready", handoff.Status)
+					require.Equal(t, []string{"testdrive", "--framework", fixture.name, "--all", "--agent", "--yes"}, handoff.NextCommand[1:7])
+					require.Contains(t, handoff.Reason, "never COMPLETE LOCALLY")
 					retainIntegrationReports(t, root, fixture.name+"-"+mode.name)
 					args := []string{"testdrive", "--framework", fixture.name, "--command", fixture.command, "--tracer-version", "4.16.0", "--yes"}
 					args = append(args, mode.args...)
@@ -128,4 +148,20 @@ func TestPublicPythonRubyTestdrives(t *testing.T) {
 	for _, name := range []string{"rspec", "minitest"} {
 		t.Run(name, func(t *testing.T) { runRubyValidationIntegration(t, name) })
 	}
+}
+
+// pythonHandoff runs an agent-facing onboard command and decodes its one JSON
+// result from stdout; a needs_input result exits non-zero.
+func pythonHandoff(ctx context.Context, root string, env []string, binary string, args ...string) (onboard.AgentResult, error) {
+	command := exec.CommandContext(ctx, binary, args...)
+	command.Dir = root
+	command.Env = integrationEnvironment(env)
+	var stdout, stderr bytes.Buffer
+	command.Stdout, command.Stderr = &stdout, &stderr
+	runErr := command.Run()
+	var result onboard.AgentResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		return result, fmt.Errorf("%v %v: %w\nstdout=%s\nstderr=%s", binary, args, err, stdout.String(), stderr.String())
+	}
+	return result, runErr
 }
