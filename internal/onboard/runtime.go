@@ -74,6 +74,11 @@ type RuntimeFinding struct {
 	// UserStated reports a runtime the user stated with --ci-runtime, which
 	// ddtest checks but cannot verify.
 	UserStated bool `json:"user_stated,omitempty"`
+	// AgentReporting reports a hand-written setup (see
+	// HandWrittenSetupAction) that reports through a Datadog Agent the user
+	// confirmed (--ci-confirm datadog-agent), which holds the API key: the
+	// job needs no DD_API_KEY of its own.
+	AgentReporting bool `json:"agent_reporting,omitempty"`
 	// SetupCaveats are what ddtest could not check about the setup that
 	// precedes this entry, such as a tracer release it cannot pin.
 	SetupCaveats []string `json:"setup_caveats,omitempty"`
@@ -86,6 +91,9 @@ type RuntimeFinding struct {
 	setupSupported bool
 	// setupReadProblem is why the provider found the setup cannot run there.
 	setupReadProblem string
+	// handWritten is the setup the job writes by hand before this entry,
+	// when no provider setup precedes it (see handWrittenSetup).
+	handWritten *handWrittenSetup
 }
 
 // A composite call's condition sees the caller's environment and string inputs,
@@ -137,6 +145,16 @@ type runtimeStep struct {
 	// runner is known: rowWindows or rowOther. Empty means the job's runner
 	// as a whole decides.
 	rowRunner string
+	// scopedVariable is the scoped variable (DD_CUCUMBER_NODE_OPTIONS or
+	// DD_WDIO_NODE_OPTIONS) whose prefix the provider's reader removed from
+	// the start of Run (see readScopedPrefix).
+	scopedVariable string
+	// impactedWorkaround reports Cucumber's impacted-tests workaround right
+	// after that prefix (see readScopedPrefix).
+	impactedWorkaround bool
+	// inline names the variables assigned inline before Run's command, which
+	// the provider's reader moved into Env (see foldInlineEnvironment).
+	inline []string
 }
 
 // ciShellRuntime is a version manager's selection in a shell: the version
@@ -182,6 +200,12 @@ type runtimeJob struct {
 	// it is not its provider's own, such as Datadog's installer in a Jenkins
 	// stage that runs in a container (see setupProviderFor); nil otherwise.
 	SetupProvider ciProvider `yaml:"-"`
+	// KeyProblem explains why the DD_API_KEY a provider stores for its jobs
+	// does not reach this job's commands as written, such as a key the
+	// configuration writes or a container that does not receive it; empty
+	// when the configuration shows no such problem. A setup written by hand
+	// reads the key there (see handWrittenSetup).
+	KeyProblem string `yaml:"-"`
 	// Host describes the agent a job without an image runs on, such as a
 	// Jenkins agent label, for the user who knows its runtime; empty uses
 	// the provider's generic description.
@@ -620,7 +644,26 @@ func checkRuntimeJob(ctx context.Context, root string, workflow ciWorkflow, name
 				continue
 			}
 		}
-		findings = append(findings, evaluateRuntimeTest(ctx, root, workflow, job, step, row, resolution, state, finding, resolveNode, resolve, frameworks...))
+		// Without a provider setup, the job may set up the tracer by hand; a
+		// complete one is checked like the setup's preload.
+		var handWritten *handWrittenSetup
+		checked, checkedState := step, state
+		if state.action == "" && !state.skippedAction && resolution.Matched {
+			if provider, err := currentCIProvider(root); err == nil && !provider.sharedSyntax() {
+				handWritten, checked = javascriptHandWrittenSetup(root, provider, workflow, job, i, frameworkName(frameworks), "")
+			}
+		}
+		if handWritten != nil {
+			finding.Action, finding.TracerRequested = handWritten.Reference, handWritten.Tracer
+			finding.AgentReporting = handWritten.reportsThroughAgent()
+			if problem := handWritten.problem(); problem != "" {
+				finding.Status, finding.Code, finding.Reason = StatusInconclusive, handWritten.code(), problem
+				findings = append(findings, finding)
+				continue
+			}
+			checkedState.action, checkedState.tracer = handWritten.Reference, handWritten.Tracer
+		}
+		findings = append(findings, evaluateRuntimeTest(ctx, root, workflow, job, checked, row, resolution, checkedState, finding, resolveNode, resolve, frameworks...))
 	}
 	if len(findings) == 0 && skippedTest {
 		// The row runs the job without its tests, e.g. `if: matrix.node != '20'`.
@@ -685,7 +728,7 @@ func evaluateRuntimeTest(ctx context.Context, root string, workflow ciWorkflow, 
 		if provider := setupProviderFor(activeOrDefaultCIProvider(), job); !provider.sharedSyntax() {
 			finding.Reason = "No " + provider.setupName() + " selecting JavaScript runs before this test command. It is not validated as instrumented."
 			if job.SetupUnsupported != "" {
-				finding.Reason = unsupportedSetupReason(provider, job)
+				finding.Reason = unsupportedSetupReason(provider, job, "javascript")
 			}
 		}
 		return finding
@@ -762,6 +805,11 @@ func evaluateRuntimeTest(ctx context.Context, root string, workflow ciWorkflow, 
 		if reason == "" {
 			reason = javascriptInstrumentationDisabled(workflow, job, step, row, frameworks...)
 		}
+		if reason != "" && readsActionPackage(workflow, job, step) {
+			// Only the Datadog GitHub action exports DD_TRACE_PACKAGE; elsewhere
+			// the setup appends its preload to NODE_OPTIONS itself.
+			reason = "This test step's NODE_OPTIONS reads $DD_TRACE_PACKAGE, which only the Datadog GitHub Actions setup exports: here it is empty, so Node gets -r without a module and fails to start. Remove -r $DD_TRACE_PACKAGE; the " + activeOrDefaultCIProvider().setupName() + " already appends its preload to NODE_OPTIONS."
+		}
 		if reason != "" {
 			finding.Status, finding.Code, finding.Reason = StatusInconclusive, CodeUnverifiedInitialization, reason
 			if reason == unverifiedPreloadReason && stepSetsNoNodeOptions(workflow, job, step) {
@@ -780,17 +828,17 @@ func evaluateRuntimeTest(ctx context.Context, root string, workflow ciWorkflow, 
 	return finding
 }
 
-// unsupportedSetupReason explains a test job the provider's setup
-// mechanism cannot instrument (runtimeJob.SetupUnsupported).
-func unsupportedSetupReason(provider ciProvider, job runtimeJob) string {
-	return "This job cannot use the " + provider.setupName() + ": " + job.SetupUnsupported + ". It is not validated as instrumented: the user's options are to run its tests where the " + provider.setupName() + " works, or to set up Test Optimization for it by hand, outside ddtest, which ddtest cannot validate."
+// unsupportedSetupReason explains a test job of language the provider's
+// setup mechanism cannot instrument (runtimeJob.SetupUnsupported).
+func unsupportedSetupReason(provider ciProvider, job runtimeJob, language string) string {
+	return "This job cannot use the " + provider.setupName() + ": " + job.SetupUnsupported + ". It is not validated as instrumented: the user's options are to run its tests where the " + provider.setupName() + " works, or " + handWrittenSetupOption(language, provider.setupName()) + "."
 }
 
 // floatingTracerNodeProblem explains why a setup that installs the latest
 // dd-trace whatever the CI Node is (the Datadog Jenkins plugin) cannot work
 // on node: the latest release's engines exclude it.
 func floatingTracerNodeProblem(setup string, latest tracerRequirement, node string) string {
-	return "The " + setup + " installs the latest dd-trace release (" + latest.Version + ") on every build, whatever Node the CI runs, and that release requires Node " + latest.Node + " (its package.json engines), which Node " + node + " does not satisfy; the " + setup + " cannot install an older release. Run these tests on a Node version the latest dd-trace supports, or set up Test Optimization for them by hand; ddtest then checks the hand-written setup where it can."
+	return "The " + setup + " installs the latest dd-trace release (" + latest.Version + ") on every build, whatever Node the CI runs, and that release requires Node " + latest.Node + " (its package.json engines), which Node " + node + " does not satisfy; the " + setup + " cannot install an older release. The user's options are to run these tests on a Node version the latest dd-trace supports, or " + handWrittenSetupOption("javascript", setup) + "."
 }
 
 // floatingTracerRequirement is the latest dd-trace release and its Node
@@ -800,6 +848,17 @@ var floatingTracerRequirement = func(ctx context.Context) (tracerRequirement, er
 	return cachedCIRequirement("floating\nlatest", func() (tracerRequirement, error) {
 		return resolveRequirement(ctx, client, "floating", "latest", platform.NewJavaScript().ResolveRegistryTracer)
 	})
+}
+
+// readsActionPackage reports, on a provider without the shared workflow
+// syntax, a test step whose NODE_OPTIONS reads $DD_TRACE_PACKAGE, which no
+// setup outside GitHub Actions exports.
+func readsActionPackage(workflow ciWorkflow, job runtimeJob, step runtimeStep) bool {
+	if activeOrDefaultCIProvider().sharedSyntax() {
+		return false
+	}
+	options := handWrittenEnvironment(workflow, job, step)["NODE_OPTIONS"]
+	return strings.Contains(options, "$DD_TRACE_PACKAGE") || strings.Contains(options, "${DD_TRACE_PACKAGE")
 }
 
 func changesNodeRuntime(command string) bool {

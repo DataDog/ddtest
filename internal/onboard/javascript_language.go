@@ -7,8 +7,11 @@ package onboard
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"os"
 	"path"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -18,6 +21,8 @@ import (
 type javascriptDiscovery struct{}
 
 func (javascriptDiscovery) name() string { return "javascript" }
+
+func (javascriptDiscovery) displayName() string { return "JavaScript" }
 
 func (javascriptDiscovery) actionLanguage() string { return "js" }
 
@@ -42,12 +47,17 @@ func (javascriptDiscovery) supportsCIProvider(provider string) bool {
 	return provider == gitHubActionsProvider || provider == gitLabCIProvider || provider == circleCIProvider || provider == buildkiteProvider || provider == jenkinsProvider
 }
 
-// Outside GitHub Actions the installer appends its require preload to the
-// current NODE_OPTIONS and exports the ESM loader path for an explicit
-// --import.
+// Outside GitHub Actions the installer (install_test_visibility_v15.sh, which
+// the GitLab setup script, the CircleCI orb and the Buildkite setup snippet
+// run) appends its require preload to the current NODE_OPTIONS and exports
+// the ESM loader path for an explicit --import. It exports DD_TRACE_PACKAGE
+// only on GitHub Actions, which cannot set NODE_OPTIONS: a later
+// $DD_TRACE_PACKAGE is empty here, so it stays unknown to the model.
+// ${{ env.DD_TRACE_PACKAGE }} in the exported NODE_OPTIONS stands for the
+// preload's path, which only CI knows.
 func (javascriptDiscovery) setupShellExports(current map[string]string) (map[string]string, map[string]string) {
 	options := strings.TrimSpace(current["NODE_OPTIONS"] + " -r ${{ env.DD_TRACE_PACKAGE }}")
-	return map[string]string{"NODE_OPTIONS": options}, map[string]string{"DD_TRACE_ESM_IMPORT": "${{ env.DD_TRACE_ESM_IMPORT }}", "DD_TRACE_PACKAGE": "${{ env.DD_TRACE_PACKAGE }}"}
+	return map[string]string{"NODE_OPTIONS": options}, map[string]string{"DD_TRACE_ESM_IMPORT": "${{ env.DD_TRACE_ESM_IMPORT }}"}
 }
 
 // On GitHub Actions onboard --apply owns the JavaScript setup check. Other
@@ -106,6 +116,73 @@ const esmImportCommand = `if [ -n "${DD_TRACE_ESM_IMPORT:-}" ]; then export NODE
 // DD_TRACE_PATH; without the plugin's setup it adds nothing.
 const pluginESMImportCommand = `if [ -n "${DD_TRACE_PATH:-}" ]; then export NODE_OPTIONS="${NODE_OPTIONS:-} --import $DD_TRACE_PATH/register.js"; fi`
 
+// pluginOptionsCommand adds options to the NODE_OPTIONS a CI server
+// plugin's setup sets, in the test's shell.
+func pluginOptionsCommand(options string) string {
+	return `export NODE_OPTIONS="${NODE_OPTIONS:-} ` + options + `"`
+}
+
+// providerScopedCommand moves the preload a provider's setup appends to
+// NODE_OPTIONS into the framework's scoped variable (DD_CUCUMBER_NODE_OPTIONS
+// or DD_WDIO_NODE_OPTIONS), with the ESM loader and options, such as an
+// Istanbul ESM loader, as on GitHub Actions: only package-script leaves that
+// start with the scoped prefix load the tracer, not the job's other Node
+// processes. It changes nothing when the setup did not install the tracer.
+//
+// Outside GitHub Actions the installer exports only NODE_OPTIONS, which ends
+// with its -r preload, and DD_TRACE_ESM_IMPORT (no DD_TRACE_PACKAGE), so the
+// command reads the preload's path after NODE_OPTIONS's last "-r " and then
+// removes that preload, in one export that reads NODE_OPTIONS before
+// changing it.
+func providerScopedCommand(framework, options string) string {
+	value := "-r ${NODE_OPTIONS##*-r } --import $DD_TRACE_ESM_IMPORT"
+	if options != "" {
+		value += " " + options
+	}
+	return `if [ -n "${DD_TRACE_ESM_IMPORT:-}" ]; then export ` + scopedEnvironment(framework) + `="` + value + `" NODE_OPTIONS="${NODE_OPTIONS%-r *}"; fi`
+}
+
+// scopedProviderOptions are the Node options framework's scoped variable
+// adds after the tracer's preload and ESM loader, as on GitHub Actions: the
+// Istanbul ESM loader for native ESM Cucumber, a "type": "module" package or
+// selected ESM inputs (see cucumberNativeESM).
+func scopedProviderOptions(root, framework string) string {
+	if framework != "cucumber" {
+		return ""
+	}
+	data, err := os.ReadFile(filepath.Join(root, "package.json"))
+	var pkg struct{ Type string }
+	if err != nil || json.Unmarshal(data, &pkg) != nil {
+		return ""
+	}
+	var commands []TestCommand
+	if pkg.Type != "module" {
+		if scope, err := DiscoverValidationScope(root, framework); err == nil {
+			commands = scope.Commands
+		}
+	}
+	if !cucumberNativeESM(root, pkg.Type, commands) {
+		return ""
+	}
+	return cucumberESMLoaderHook
+}
+
+// scopedProviderNote explains the scoped preload providerScopedCommand
+// exports and the package-script prefix that consumes it.
+func scopedProviderNote(framework string, terms ciSetupTerms) string {
+	variable := scopedEnvironment(framework)
+	prefix := cucumberScopedOptions
+	leaves := "Cucumber package script that runs cucumber-js"
+	edits := " It also wraps cucumber-js with npx --no-install nyc -- (NYC is a dev dependency) and adds " + cucumberImpactedWorkaround + "."
+	direct := " A CI command that runs cucumber-js directly, not through a package script, starts with " + prefix + " " + cucumberImpactedWorkaround + " and wraps cucumber-js the same way; onboard --apply names the exact command."
+	if framework == "webdriverio" {
+		prefix, leaves, edits = webdriverIOScopedOptions, "WebdriverIO package script that runs wdio with the local runner", ""
+		direct = " A CI command that runs wdio with the local runner directly, not through a package script, starts with " + prefix + "; onboard --apply names the exact command."
+	}
+	edits += direct
+	return "The " + terms.Installer + " appends its dd-trace preload to NODE_OPTIONS; the command after it moves that preload, with the ESM loader, into " + variable + ", so only the test processes load the tracer, not the job's other Node commands. Run the tests on Node.js 20.6 or newer, or 18.19 or a later 18 release (the job's image), which the ESM loader needs. Start each " + leaves + " with " + prefix + ", keeping its command after it; onboard --apply makes this package.json edit." + edits + " After " + terms.Entry + ", extend NODE_OPTIONS and " + variable + " instead of replacing them."
+}
+
 func (javascriptDiscovery) ciSetupRequest(root, framework, site string, terms ciSetupTerms) ciSetupRequest {
 	if terms.Plugin {
 		return javascriptPluginSetupRequest(root, framework, site, terms)
@@ -114,11 +191,19 @@ func (javascriptDiscovery) ciSetupRequest(root, framework, site string, terms ci
 	if setupImportsESM(framework) || framework == "mocha" {
 		request.After = []string{esmImportCommand}
 	}
-	request.Notes = append(request.Notes, "The "+terms.Installer+" appends its dd-trace preload to NODE_OPTIONS for "+terms.Later+". Run the tests on Node.js 18 or newer (the job's image). After "+terms.Entry+", extend NODE_OPTIONS ("+terms.Persist(`export NODE_OPTIONS="$NODE_OPTIONS ..."`)+") instead of replacing it, including in an inline NODE_OPTIONS=... prefix of the test command.")
+	if scopedEnvironment(framework) != "NODE_OPTIONS" {
+		request.After = []string{providerScopedCommand(framework, scopedProviderOptions(root, framework))}
+		request.Notes = append(request.Notes, scopedProviderNote(framework, terms))
+	} else {
+		request.Notes = append(request.Notes, "The "+terms.Installer+" appends its dd-trace preload to NODE_OPTIONS for "+terms.Later+". Run the tests on Node.js 18 or newer (the job's image). After "+terms.Entry+", extend NODE_OPTIONS ("+terms.Persist(`export NODE_OPTIONS="$NODE_OPTIONS ..."`)+") instead of replacing it, including in an inline NODE_OPTIONS=... prefix of the test command.")
+	}
 	if framework == "mocha" {
 		request.Notes = append(request.Notes, "Keep the export after "+terms.Entry+" only for Mocha ESM test files; CommonJS suites need only the preload.")
 	}
 	if note := setupImageNote(root, "javascript", framework); note != "" {
+		request.Notes = append(request.Notes, note)
+	}
+	if note := handWrittenSetupNote(root, "javascript", framework, site); note != "" {
 		request.Notes = append(request.Notes, note)
 	}
 	if framework == "cucumber" {
@@ -134,6 +219,12 @@ func javascriptPluginSetupRequest(root, framework, site string, terms ciSetupTer
 	if setupImportsESM(framework) || framework == "mocha" {
 		request.After = []string{pluginESMImportCommand}
 	}
+	if options := scopedProviderOptions(root, framework); options != "" {
+		// Native ESM Cucumber also needs the Istanbul ESM loader, which the
+		// plugin's NODE_OPTIONS reaches the tests with, as the scoped
+		// variable carries it on the other providers.
+		request.After = append(request.After, pluginOptionsCommand(options))
+	}
 	request.Notes = append(request.Notes, "The "+terms.Installer+" installs the latest dd-trace release with the build agent's default npm when each build runs (it cannot pin a release) and prepends its dd-trace preload to NODE_OPTIONS for "+terms.Later+". ddtest validates locally with the latest release and reports that it floats. The agents need npm on their default PATH, and the tests a Node version the latest dd-trace release supports (its package.json engines): ddtest checks the stated CI Node against the latest release, and a Node it excludes cannot use the "+terms.Installer+".",
 		"Set Node options inside the sh script that runs the tests (export NODE_OPTIONS=\"$NODE_OPTIONS ...\" before the test command): the "+terms.Installer+" sets NODE_OPTIONS once per build, so a NODE_OPTIONS in a stage's environment directive or withEnv is overwritten.")
 	if framework == "mocha" {
@@ -142,17 +233,19 @@ func javascriptPluginSetupRequest(root, framework, site string, terms ciSetupTer
 	if note := setupUnsupportedNote(root, "javascript", framework); note != "" {
 		request.Notes = append(request.Notes, note)
 	}
+	if note := handWrittenSetupNote(root, "javascript", framework, site); note != "" {
+		request.Notes = append(request.Notes, note)
+	}
 	if framework == "cucumber" {
 		request.Notes = append(request.Notes, "For Cucumber, also set DD_CIVISIBILITY_IMPACTED_TESTS_DETECTION_ENABLED=false in "+terms.Variables+". This avoids a tracer crash on Cucumber Background/Rule nodes; basic reporting is unaffected.")
 	}
 	return request
 }
 
-// Scoped initialization (Cucumber, WebdriverIO) edits package scripts for
-// a per-step variable; outside GitHub Actions it is set up manually.
-func (javascriptDiscovery) automaticProviderSetup(framework string) bool {
-	return framework != "cucumber" && framework != "webdriverio"
-}
+// Every framework's setup is written on providers that edit their
+// configuration; Cucumber and WebdriverIO also get their scoped package
+// scripts (see providerScopedCommand).
+func (javascriptDiscovery) automaticProviderSetup(string) bool { return true }
 
 // Node versions no tracer supports are skipped through skipsUnsupportedNode.
 func (javascriptDiscovery) unsupportedImage(string) string { return "" }
@@ -161,6 +254,12 @@ func (javascriptDiscovery) unsupportedImage(string) string { return "" }
 func (javascriptDiscovery) stepMayStartTests(string, ciWorkflow, runtimeJob, runtimeStep) (bool, bool) {
 	return false, false
 }
+
+func (javascriptDiscovery) preloadVariable(name string) bool { return name == "NODE_OPTIONS" }
+
+// The JavaScript CI check reads hand-written dd-trace setups (see
+// checkRuntimeJob).
+func (javascriptDiscovery) validatesHandWrittenSetup() bool { return true }
 
 func (javascriptDiscovery) runtimeVariable(name string) bool {
 	return slices.Contains([]string{"NODE_OPTIONS", "NODE_PATH", "NODE_ENV"}, name) || strings.HasPrefix(strings.ToLower(name), "npm_config_")

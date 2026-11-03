@@ -12,6 +12,8 @@ import "slices"
 // specifics in its own files and registers in languages.go.
 type discoveryLanguage interface {
 	name() string
+	// displayName names the language in messages, such as JavaScript.
+	displayName() string
 	// actionLanguage is the language's value in the setup action's languages input.
 	actionLanguage() string
 	// bootstrap explains how the existing test step loads the tracer.
@@ -70,6 +72,22 @@ type discoveryLanguage interface {
 	// syntax: its installer token, exact tracer input, commands that must
 	// follow the setup, and its own setup rules.
 	ciSetupRequest(root, framework, site string, terms ciSetupTerms) ciSetupRequest
+	// handWrittenSetup recognizes the language's hand-written setup (see
+	// handWrittenSetup) of the test command at index of job on row, on
+	// provider, which no provider setup precedes; nil when the command's
+	// environment and the framework's configuration load no tracer.
+	handWrittenSetup(root string, provider ciProvider, workflow ciWorkflow, job runtimeJob, index int, row map[string]any, framework, site string) *handWrittenSetup
+	// validatesHandWrittenSetup reports whether the language's CI check
+	// reads the hand-written setups handWrittenSetup recognizes, so ddtest
+	// certifies a complete one. Without it, a recognized setup is reported
+	// as not validated yet (handWrittenSetup.Unvalidated): kept, never
+	// certified, and never replaced with the provider's setup.
+	validatesHandWrittenSetup() bool
+	// preloadVariable reports the variable through which a setup written by
+	// hand loads the language's tracer into a process, such as a Node
+	// options variable; a command prefix that sets it is the command's
+	// environment (see foldCommandEnvironment).
+	preloadVariable(name string) bool
 	// cacheVariable reports a variable that locates the language's package
 	// cache or install directory, which CI caches between jobs.
 	cacheVariable(name string) bool

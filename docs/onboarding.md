@@ -249,8 +249,10 @@ JavaScript test command of each test job, plus the `--import` loader export for
 Vitest and other ESM tests. It keeps every other line, and refuses entries that
 a template, `!reference` or anchor shares with a job that does not run the same
 tests. An edited included file is listed in the preview, since other projects
-may include it. Ruby, Cucumber and WebdriverIO setup is applied by the coding
-agent from `onboard --agent` instructions: for Ruby the script adds datadog-ci
+may include it. Cucumber and WebdriverIO get the scoped setup described in
+[Scoped setup outside GitHub Actions](#scoped-setup-outside-github-actions).
+Ruby setup is applied by the coding
+agent from `onboard --agent` instructions: the script adds datadog-ci
 to the CI bundle (no Gemfile edit) and replaces `RUBYOPT`, so existing Ruby
 options are re-added after it. Jobs whose image runs an engine datadog-ci does
 not instrument (JRuby, TruffleRuby, Ruby head) stay excluded.
@@ -347,8 +349,10 @@ declaration of an unsupported orb release; a test in a modeled orb job (such
 as `node/test`) takes the Datadog orb step through that job's steps
 parameter (`post_install_steps`), which ddtest asks for instead of editing.
 The inserted step follows the configuration's indentation. Applying again changes nothing.
-Ruby, Cucumber and WebdriverIO setup is applied by the coding agent from
-`onboard --agent` instructions: for Ruby the orb adds datadog-ci to the CI
+Cucumber and WebdriverIO get the scoped setup described in
+[Scoped setup outside GitHub Actions](#scoped-setup-outside-github-actions).
+Ruby setup is applied by the coding agent from
+`onboard --agent` instructions: the orb adds datadog-ci to the CI
 bundle and replaces `RUBYOPT`, so existing Ruby options are re-added after it
 through `$BASH_ENV`, and a `rake RUBYOPT=…` argument that would replace the
 preload is reported with the form that keeps it; Ruby 2.7 and 3.0 images get a `gem update --system` step,
@@ -490,8 +494,10 @@ key reaches the container, and keeps every other line. Commands shared through
 anchors (or a plugin configuration shared that way), folded commands, a test
 statement after another in one string, and commands a step that does not run
 the same tests also runs are refused; matrix combinations share one insertion.
-Applying again changes nothing. Ruby, Cucumber and WebdriverIO setup is applied
-by the coding agent from `onboard --agent` instructions; for Ruby the installer
+Applying again changes nothing. Cucumber and WebdriverIO get the scoped setup
+described in [Scoped setup outside GitHub Actions](#scoped-setup-outside-github-actions).
+Ruby setup is applied
+by the coding agent from `onboard --agent` instructions; the installer
 adds datadog-ci to the CI bundle and replaces `RUBYOPT`, so existing Ruby
 options are re-added after it, and Ruby 2.7 and 3.0 images get a `gem update
 --system` command, guarded on the image where a matrix shares the step.
@@ -745,6 +751,9 @@ plugin sets up, and `final_response`'s human action asks for the plugin's
 configuration, the credential the container stages bind (`datadog-api-key`,
 or the one the plugin already uses), or both. Tests that `docker run` starts
 in an `sh` script stay unresolved.
+A container stage that already sets Test Optimization up by hand keeps that
+setup instead of the snippet (see [Hand-written setups outside GitHub
+Actions](#hand-written-setups-outside-github-actions)).
 
 The plugin's tracer variables still reach container steps: its step
 environment contributor configures every step in the option's scope for the
@@ -947,6 +956,197 @@ nothing; `--yes` writes it and prints the remaining instructions. Options the
 handoff rejects, such as `--command`, are rejected before anything is
 written.
 
+### Scoped setup outside GitHub Actions
+
+On GitLab CI, CircleCI and Buildkite, `onboard --apply` sets up Cucumber and
+WebdriverIO the way it does on GitHub Actions: it edits the selected
+package-script leaves (see [Coverage and local developer
+commands](#coverage-and-local-developer-commands)) to start with
+`NODE_OPTIONS="${NODE_OPTIONS:-} ${DD_CUCUMBER_NODE_OPTIONS:-}"` (WebdriverIO:
+`DD_WDIO_NODE_OPTIONS`), and writes the provider's setup followed by one
+command that moves the preload the setup appended to `NODE_OPTIONS` into that
+variable, with the ESM loader and, for native ESM Cucumber, the Istanbul ESM
+loader:
+
+```sh
+if [ -n "${DD_TRACE_ESM_IMPORT:-}" ]; then export DD_CUCUMBER_NODE_OPTIONS="-r ${NODE_OPTIONS##*-r } --import $DD_TRACE_ESM_IMPORT" NODE_OPTIONS="${NODE_OPTIONS%-r *}"; fi
+```
+
+Outside GitHub Actions the installer exports `NODE_OPTIONS`, ending with its
+`-r` preload, and `DD_TRACE_ESM_IMPORT`, but not `DD_TRACE_PACKAGE`, so the
+command reads the preload's path after the last `-r ` and then removes it;
+ddtest's CI model evaluates these `${NAME%pattern}`/`${NAME##pattern}` forms.
+
+Only the scoped scripts then load the tracer: the job's other Node commands,
+such as builds or standalone WebDriver automation in the same script, keep
+their own `NODE_OPTIONS`. Without the API key or after a failed install the
+command changes nothing. GitLab and Buildkite run it inside the setup's key
+guard (Buildkite with `$$` escapes); CircleCI appends it to `$BASH_ENV` in a
+step after the orb. A job whose setup already leaves the preload in
+`NODE_OPTIONS` keeps it, since the scoped scripts still receive it; only the
+package scripts are edited. For native ESM Cucumber, which needs the Istanbul
+loader in the scoped variable, `onboard --apply` names the command to add after
+that setup instead, unless the selected scripts' scoped prefix or the step's
+`NODE_OPTIONS` already loads it. A setup whose preload a later command moved
+out of `NODE_OPTIONS`, such as Cucumber's scoped command in a job that also
+runs WebdriverIO, no longer reaches the other framework, so `onboard --apply`
+stops and leaves that job for review. A job that sets `DD_CUCUMBER_NODE_OPTIONS` or
+`DD_WDIO_NODE_OPTIONS` itself is left for review. Jenkins jobs keep the
+manual setup until `onboard --apply` edits Jenkinsfiles.
+
+A CI command that runs the framework directly, without a package script
+(`./node_modules/.bin/cucumber-js features --format json`,
+`npx wdio run wdio.conf.js`), has no script to edit, so `onboard --apply`
+returns `ci_edit_required` with the exact command to write instead: the same
+prefix, and for Cucumber `DD_CIVISIBILITY_IMPACTED_TESTS_DETECTION_ENABLED=false`
+and `npx --no-install nyc --` before `cucumber-js`. On Buildkite the command
+writes each `$` as `$$`:
+
+```sh
+NODE_OPTIONS="${NODE_OPTIONS:-} ${DD_CUCUMBER_NODE_OPTIONS:-}" DD_CIVISIBILITY_IMPACTED_TESTS_DETECTION_ENABLED=false npx --no-install nyc -- ./node_modules/.bin/cucumber-js features --format json
+```
+
+Once the command has that form, rerunning `onboard --apply` adds the setup
+before it, and validation reads the command as consuming the scoped
+variable. When the job already has a setup that exports the variable, the
+result names only the command. A direct Cucumber command is accepted only
+with NYC and the impacted-tests workaround (after the prefix or among the
+command's own assignments). A direct command that assigns other variables
+inline (`DD_ENV=ci cucumber-js …`) gets no exact command, since rebuilding it
+would drop them: `onboard --apply` returns a setup gap asking to move them out
+of the command first, into the variables of the commands after the job's
+dependency install. When the job's existing setup leaves the preload in
+`NODE_OPTIONS`, a direct Cucumber command without NYC still gets the
+NYC-wrapped command to write, and the setup stays.
+
+### Hand-written setups outside GitHub Actions
+
+On GitLab CI, CircleCI, Buildkite and Jenkins, a JavaScript or Ruby job that
+already sets up Test Optimization by hand, without the provider's setup
+mechanism, keeps that setup. Where no provider setup precedes a test command,
+ddtest reads the command's environment (the job's variables, a CircleCI
+`environment`, a Buildkite `env` or a Jenkins `environment` directive, and
+what earlier commands export) and recognizes the setups the tracers document:
+
+- JavaScript: `NODE_OPTIONS` preloads `-r dd-trace/ci/init` (also
+  `--require=…` or `-rdd-trace/ci/init`), with `--import dd-trace/register.js`
+  for Vitest and Cucumber, and dd-trace comes from the project: an exact release
+  in the `package.json` that resolves it from the test's directory, the single
+  release its lockfile (`package-lock.json`, `npm-shrinkwrap.json`,
+  `yarn.lock` or `pnpm-lock.yaml`) locks, or an exact `npm install
+  dd-trace@<release>` earlier in the job, in the test's directory (an
+  install elsewhere, or with `--prefix` and the like, stays unresolved). A
+  later `npm ci`, install or prune removes an earlier `npm install --no-save`
+  that `package.json` does not declare, so it no longer counts; an `npm
+  uninstall dd-trace` removes it whichever install added it (a later
+  reinstall stays unresolved). A dd-trace in `optionalDependencies` installs
+  with production-only installs too; a production-only install is read with
+  its own step's `NODE_ENV` and options (`--omit dev`, `--only production`
+  and their `=` forms). Only the documented preload spellings count: a path
+  such as `-r ./node_modules/dd-trace/ci/init` stays unresolved. Cypress,
+  which loads dd-trace through its configuration, is not read this way.
+- Ruby: `RUBYOPT` preloads `-rdatadog/ci/auto_instrument` after
+  `-rbundler/setup` (Ruby reads `RUBYOPT` when it starts `bundle exec` or a
+  binstub such as `bin/rspec` too, before either sets up the bundle) with
+  `DD_CIVISIBILITY_ENABLED=true`; or an RSpec helper that the options file
+  loads (`.rspec`, or the file `--options` selects instead; `--require
+  spec_helper` from `spec/` or `lib/`, `--require ./spec/spec_helper.rb`
+  from the working directory) requires `datadog/ci` at top level and
+  configures it in a `Datadog.configure do |c|` block with `c.ci.enabled =
+  true` (or `DD_CIVISIBILITY_ENABLED=true`) and `c.ci.instrument :rspec`
+  (with no options or trailing condition, which stay unresolved; so does a
+  setting outside `c.ci` other than `service`, `env`, `version` and `tags`,
+  such as `c.site`). The datadog-ci release is the one the selected bundle's
+  `Gemfile.lock` locks.
+
+The preload must not reach the job's dependency install (`npm ci`, `yarn`,
+`bundle install` and the like): the tracer is not installed yet there, so on
+a fresh checkout the install fails to start. A preload in the job's
+variables, or exported before the install, is reported; set it on the test
+commands or for the commands after the install.
+
+Such a setup is certified with the same rules as the provider's own: an exact
+tracer release; `DD_API_KEY` from the provider's secret store (a GitLab CI/CD
+variable, CircleCI project settings or a context, a Buildkite agent hook,
+secrets plugin or UI environment, a Jenkins credential the stage binds with
+`credentials()` or `withCredentials`, without which no key reaches it), never
+a literal in the configuration, and reaching a container that runs the tests; `DD_SITE` (or the
+default `datadoghq.com`) matching the selected site; a preload that reaches the
+test process; and agentless reporting (`DD_CIVISIBILITY_AGENTLESS_ENABLED=true`
+or `c.ci.agentless_mode_enabled = true`) or a Datadog Agent the user confirms;
+and no `DD_TRACE_<FRAMEWORK>_ENABLED=false` (such as `DD_TRACE_RSPEC_ENABLED`)
+turning the framework's integration off. `DD_TRACE_ENABLED`,
+`DD_CIVISIBILITY_ENABLED` and the framework switches read from a value only
+CI knows (`$TRACE_TESTS`) stay unresolved. A setup one test step writes for
+itself, inline or in its own variables, reaches no other step: a job is
+certified only when every test step loads the tracer, with the same release.
+No CI configuration shows an Agent (whether it runs where the tests do, at
+`DD_TRACE_AGENT_URL`, `DD_AGENT_HOST` or `localhost:8126`, with a key and the
+selected site), so a setup that reports through one returns
+`ci_setup_confirmation_required` for `--ci-confirm datadog-agent` on GitLab
+CI, CircleCI, Buildkite and Jenkins; ddtest never asks to switch it to
+agentless, and reports the confirmation in `final_response` as stated by the
+user. A complete setup counts as configured:
+`onboard --apply` writes no second setup, the agent handoff goes straight to
+validation, and validation checks the CI runtime against the release it pins,
+validates locally with that release, and names storing `DD_API_KEY` in the
+provider's secret store as the human action (on Jenkins, next to configuring the
+Datadog plugin when other stages use it). A setup missing a piece is reported
+with that piece (`incomplete_ci_setup`) and kept: `onboard --apply` returns a
+setup gap naming the change, and the instructions list each such job with its
+changes instead of prescribing the provider's setup for it. What ddtest cannot
+read statically stays unresolved (`unverified_initialization`) and is never
+certified: an Agent the user has not confirmed, a value only CI knows, a test helper inside other code or with
+settings ddtest does not evaluate, and a Minitest helper, which no
+configuration shows every test file loads. Assignments of tracer variables
+(`NODE_OPTIONS`, `RUBYOPT`, `DD_*`) that prefix a test command, as in
+dd-trace's documented `NODE_OPTIONS="-r dd-trace/ci/init" DD_ENV=ci yarn
+test`, are that command's environment, also after the provider's setup
+(`NODE_OPTIONS="$NODE_OPTIONS …" npx jest`).
+
+For Cucumber, `onboard --apply` wraps the selected package scripts with NYC
+and keeps the hand-written setup. A Cucumber command that CI runs directly,
+without a package script, and without NYC gets the exact NYC-wrapped command
+to write instead (an edit-then-apply gap); native ESM Cucumber needs
+`--experimental-loader @istanbuljs/esm-loader-hook` in the hand-written
+`NODE_OPTIONS` (or in every selected script), and `onboard --apply` stops with
+a setup gap before any edit until it is there.
+
+Python and Java hand-written setups are recognized but not validated yet:
+their CI checks read only the provider's setup. Where no provider setup
+precedes the test command, ddtest recognizes:
+
+- Python: pytest runs with the ddtrace plugin enabled, through `--ddtrace` in
+  the command, `PYTEST_ADDOPTS` (also as a prefix of the command) or the
+  pytest configuration's `addopts`. ddtrace comes from an exact `pip install
+  ddtrace==<release>` in the job, a requirements file the job installs (`-r`,
+  following its `-r`/`-c` includes), a lockfile (`uv.lock`, `poetry.lock`,
+  `pdm.lock`, `Pipfile.lock`), or the project's `pyproject.toml` or
+  `requirements.txt`.
+- Java: `-javaagent:` with a `dd-java-agent` JAR in `JAVA_TOOL_OPTIONS`,
+  `MAVEN_OPTS` or `GRADLE_OPTS`, `-Dorg.gradle.jvmargs` or
+  `gradle.properties`, with `DD_CIVISIBILITY_ENABLED=true` (or the matching
+  `-Ddd.*` system properties). The release is the one the JAR's file name
+  carries or the job downloads (Maven Central or a GitHub release; the
+  latest-release link is reported as floating). `-DargLine` and
+  `.mvn/jvm.config` stay unresolved.
+
+ddtest checks the same rules as above and lists what each setup lacks, but
+never certifies such a setup and never replaces it with the provider's
+setup: onboarding and testdrive return `status: unsupported` with
+`code: ci_setup_unsupported`, naming each job, its setup and what it lacks,
+and tell the coding agent to keep the setup as it is and report the result.
+This applies on every provider without the shared workflow syntax, even where
+ddtest does not set up the language yet.
+
+The GitLab setup script, the CircleCI orb and the Buildkite snippet run the
+installer outside GitHub Actions, where it appends its preload to
+`NODE_OPTIONS` and exports `DD_TRACE_ESM_IMPORT` but never `DD_TRACE_PACKAGE`.
+ddtest models those exports, so a test command whose `NODE_OPTIONS` reads
+`$DD_TRACE_PACKAGE` (as GitHub Actions setups do) is reported as a preload
+Node cannot start with, never certified; the same applies to a hand-written
+`NODE_OPTIONS` that preloads it.
+
 ## Coverage and local developer commands
 
 Mocha CI commands without Istanbul coverage are wrapped with the project's NYC.
@@ -962,7 +1162,9 @@ Manual setup (`onboard --instructions`) may set the variable on the CI test step
 instead; either place disables impacted-test detection in CI.
 Other feature controls and testdrive's isolated probes remain separate.
 
-Cucumber ESM coverage also needs `@istanbuljs/esm-loader-hook`. Missing coverage
+Cucumber ESM coverage (a `"type": "module"` package, or selected native ESM
+inputs such as `--import features/steps.mjs`) also needs
+`@istanbuljs/esm-loader-hook`. Missing coverage
 dependencies produce an exact install command for npm, pnpm or Yarn. Review and
 run that command separately, then rerun onboarding. For example:
 

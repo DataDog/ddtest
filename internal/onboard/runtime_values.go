@@ -192,7 +192,27 @@ func unresolvedCIError(value string) error {
 	if err != nil {
 		written = match[1]
 	}
+	written = displayCIValue(written)
+	if strings.Contains(written, "$DD_TRACE_PACKAGE") || strings.Contains(written, "${DD_TRACE_PACKAGE") {
+		// Only the Datadog GitHub action exports it; the installer elsewhere
+		// appends its preload to NODE_OPTIONS itself.
+		return fmt.Errorf("its CI value %s reads $DD_TRACE_PACKAGE, which only the Datadog GitHub Actions setup exports: here it is empty, so Node would get -r without a module and fail to start; remove that -r, since the setup already appends its preload to NODE_OPTIONS", written)
+	}
 	return fmt.Errorf("its CI value %s reads values only CI knows (predefined CI variables or command output); ddtest cannot resolve it locally", written)
+}
+
+// displayCIValue writes a CI value the model read for output, in the
+// selected provider's own terms: outside the shared workflow syntax, where
+// the provider's setup appends its preload to NODE_OPTIONS itself, without
+// the -r ${{ env.DD_TRACE_PACKAGE }} that stands for that preload (see
+// javascriptDiscovery.setupShellExports), leaving what the CI configuration
+// writes, and with $DD_TRACE_ESM_IMPORT for the loader path it exports.
+func displayCIValue(value string) string {
+	if activeOrDefaultCIProvider().sharedSyntax() || !strings.Contains(value, "${{ env.DD_TRACE_") {
+		return value
+	}
+	value = strings.NewReplacer("-r ${{ env.DD_TRACE_PACKAGE }}", "", "${{ env.DD_TRACE_ESM_IMPORT }}", "$DD_TRACE_ESM_IMPORT").Replace(value)
+	return strings.Join(strings.Fields(value), " ")
 }
 
 // matrixProperty looks up key the way GitHub resolves context properties,

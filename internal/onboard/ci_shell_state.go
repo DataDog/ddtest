@@ -8,6 +8,7 @@ package onboard
 import (
 	"maps"
 	"path"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -85,6 +86,68 @@ func (s *ciShellState) apply(command string, current map[string]string) bool {
 	return onlyState
 }
 
+// foldCommandEnvironment reads a command that is one simple statement whose
+// variable assignments prefix it and set a tracer variable (a language's
+// preloadVariable or DD_*), as in NODE_OPTIONS='-r dd-trace/ci/init' yarn test: the
+// shell sets them for that command alone, as a step's environment does, so
+// they become the step's environment and the command runs without them.
+// Values read known like exports; one ddtest cannot evaluate stays
+// unresolved. ok is false for any other command, and for one whose
+// arguments read a variable it assigns, which the shell expands with the
+// value from before the assignment.
+func foldCommandEnvironment(command string, known map[string]string, project string) (run string, env map[string]string, ok bool) {
+	file, parsed := parseCIShell(command)
+	if !parsed || len(file.Stmts) != 1 {
+		return "", nil, false
+	}
+	stmt := file.Stmts[0]
+	call, isCall := stmt.Cmd.(*syntax.CallExpr)
+	if stmt.Background || stmt.Negated || stmt.Coprocess || len(stmt.Redirs) > 0 || !isCall || len(call.Assigns) == 0 || len(call.Args) == 0 {
+		return "", nil, false
+	}
+	tracer := false
+	env = map[string]string{}
+	for _, assign := range call.Assigns {
+		if assign.Name == nil || assign.Index != nil || assign.Array != nil || assign.Append || assign.Naked {
+			return "", nil, false
+		}
+		name := assign.Name.Value
+		tracer = tracer || strings.HasPrefix(name, "DD_") || slices.ContainsFunc(discoveryLanguages, func(language discoveryLanguage) bool { return language.preloadVariable(name) })
+		value, literal := "", true
+		if assign.Value != nil {
+			value, literal = ciShellWord(assign.Value, mergeEnvironment(known, env), name, project)
+		}
+		if !literal {
+			value = unresolvedCIValue(value)
+		}
+		env[name] = value
+	}
+	if !tracer {
+		return "", nil, false
+	}
+	// The shell expands the command's arguments before its assignments
+	// take effect: in A=x cmd "$A", $A is the earlier value. Folded into
+	// the step's environment, it would read x instead.
+	reads := false
+	for _, arg := range call.Args {
+		syntax.Walk(arg, func(node syntax.Node) bool {
+			if expansion, ok := node.(*syntax.ParamExp); ok && expansion.Param != nil {
+				_, assigned := env[expansion.Param.Value]
+				reads = reads || assigned
+			}
+			return !reads
+		})
+	}
+	if reads {
+		return "", nil, false
+	}
+	var text strings.Builder
+	if err := syntax.NewPrinter().Print(&text, &syntax.CallExpr{Args: call.Args}); err != nil {
+		return "", nil, false
+	}
+	return strings.TrimSpace(text.String()), env, true
+}
+
 // ciShellWord evaluates a shell word: literal text and $NAME/${NAME} reads of
 // known values. self is the variable being assigned; reading it while unset
 // is empty. Other unknown reads stay as written and make the value dynamic.
@@ -103,6 +166,12 @@ func ciShellWord(word *syntax.Word, known map[string]string, self, project strin
 				parts(part.Parts)
 			case *syntax.ParamExp:
 				name := part.Param.Value
+				if trimmed, ok := ciShellTrim(part, known, self, project); ok {
+					// ${NAME%pattern} and the like on a known value, as when a
+					// scoped preload moves the setup's out of NODE_OPTIONS.
+					text.WriteString(trimmed)
+					continue
+				}
 				if part.Index != nil || part.Slice != nil || part.Repl != nil || !ciEmptyDefault(part.Exp) || part.Excl || part.Length {
 					literal = false
 					text.WriteString("${" + name + "...}")
@@ -363,6 +432,80 @@ func ciStaticTest(condition []*syntax.Stmt, known map[string]string, project str
 		return words[0] != words[2], true
 	}
 	return false, false
+}
+
+// ciShellTrim evaluates ${NAME%pattern}, ${NAME%%pattern}, ${NAME#pattern}
+// and ${NAME##pattern} on a known value, for a pattern of literal text,
+// known values and unquoted * and ? wildcards.
+func ciShellTrim(part *syntax.ParamExp, known map[string]string, self, project string) (string, bool) {
+	if part.Exp == nil || part.Exp.Word == nil || part.Index != nil || part.Slice != nil || part.Repl != nil || part.Excl || part.Length {
+		return "", false
+	}
+	suffix := part.Exp.Op == syntax.RemSmallSuffix || part.Exp.Op == syntax.RemLargeSuffix
+	longest := part.Exp.Op == syntax.RemLargeSuffix || part.Exp.Op == syntax.RemLargePrefix
+	if !suffix && part.Exp.Op != syntax.RemSmallPrefix && part.Exp.Op != syntax.RemLargePrefix {
+		return "", false
+	}
+	value, set := known[part.Param.Value]
+	if !set {
+		return "", false
+	}
+	pattern, ok := ciShellPattern(part.Exp.Word, known, self, project)
+	if !ok {
+		return "", false
+	}
+	// Prefix and suffix lengths, shortest first.
+	lengths := make([]int, 0, len(value)+1)
+	for length := range len(value) + 1 {
+		lengths = append(lengths, length)
+	}
+	if longest {
+		slices.Reverse(lengths)
+	}
+	for _, length := range lengths {
+		if suffix && pattern.MatchString(value[len(value)-length:]) {
+			return value[:len(value)-length], true
+		}
+		if !suffix && pattern.MatchString(value[:length]) {
+			return value[length:], true
+		}
+	}
+	return value, true
+}
+
+// ciShellPattern is a shell pattern word as an anchored regular expression:
+// quoted text and known values match themselves, unquoted * and ? are
+// wildcards. Bracket expressions, escapes and unknown values are not read.
+func ciShellPattern(word *syntax.Word, known map[string]string, self, project string) (*regexp.Regexp, bool) {
+	var expression strings.Builder
+	for _, part := range word.Parts {
+		switch part := part.(type) {
+		case *syntax.Lit:
+			if strings.ContainsAny(part.Value, `[\`) {
+				return nil, false
+			}
+			for _, char := range part.Value {
+				switch char {
+				case '*':
+					expression.WriteString(".*")
+				case '?':
+					expression.WriteString(".")
+				default:
+					expression.WriteString(regexp.QuoteMeta(string(char)))
+				}
+			}
+		default:
+			// Quoted text and expansions match literally (an unquoted
+			// expansion's wildcards are refused).
+			value, literal := ciShellWord(&syntax.Word{Parts: []syntax.WordPart{part}}, known, self, project)
+			if _, unquoted := part.(*syntax.ParamExp); !literal || unquoted && strings.ContainsAny(value, `*?[\`) {
+				return nil, false
+			}
+			expression.WriteString(regexp.QuoteMeta(value))
+		}
+	}
+	pattern, err := regexp.Compile(`^(?s:` + expression.String() + `)$`)
+	return pattern, err == nil
 }
 
 // ciEmptyDefault reports no expansion operator, or ${NAME:-} (empty

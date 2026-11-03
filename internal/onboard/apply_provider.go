@@ -24,9 +24,16 @@ func planProviderJavaScriptSetup(root string, provider ciProvider, workflows []c
 	if !provider.editsSetup() {
 		return nil, &SetupGap{provider.displayName(), "onboard --apply does not edit the " + provider.displayName() + " configuration. Add the " + provider.setupName() + " from onboard --agent instructions, then validate with testdrive --all."}
 	}
-	if !language.automaticProviderSetup(framework) {
-		return nil, &SetupGap{"CI initialization", framework + " initializes the tracer through package scripts, which onboard --apply does not edit on " + provider.displayName() + ". Add the setup from onboard --instructions manually, then validate with testdrive --all."}
+	// Cucumber and WebdriverIO load the tracer only in their package-script
+	// leaves, as on GitHub Actions: the scripts consume the scoped variable
+	// the setup's following command exports (see providerScopedCommand).
+	scoped := scopedEnvironment(framework)
+	edits, _, err := scopedSetupEdits(root, framework, true)
+	if err != nil {
+		return nil, err
 	}
+	impact, coverageAdded := scopedSetupImpact(edits, framework)
+	options := scopedProviderOptions(root, framework)
 	request := language.ciSetupRequest(root, framework, site, provider.setupTerms())
 	request.TracerVersion, request.Framework = version, framework
 	var targets, unsupported []ciSetupTarget
@@ -55,6 +62,9 @@ func planProviderJavaScriptSetup(root string, provider ciProvider, workflows []c
 			// the later commands of their own shell (see ciSetup.shellLocal),
 			// which each shell that runs the tests needs.
 			var testSteps, shellSetups []int
+			// Direct invocations (no package script) of a scoped framework.
+			var direct []directLeaf
+			var matched []matchedTestStep
 			for i, step := range job.Steps {
 				if setup, ok := datadogSetup(step); ok {
 					if languages := setup.Inputs["languages"]; strings.Contains(languages, "$") {
@@ -83,6 +93,12 @@ func planProviderJavaScriptSetup(root string, provider ciProvider, workflows []c
 				// Every selected test command decides the loader and coverage.
 				tests = append(tests, current.Tests...)
 				testSteps = append(testSteps, i)
+				matched = append(matched, matchedTestStep{step, current.Tests})
+				for _, test := range current.Tests {
+					if scoped != "NODE_OPTIONS" && len(test.packageScripts) == 0 {
+						direct = append(direct, directLeaf{step, test})
+					}
+				}
 				if first < 0 {
 					first, resolution = i, current
 				}
@@ -106,11 +122,29 @@ func planProviderJavaScriptSetup(root string, provider ciProvider, workflows []c
 				})
 				shellSetups = live
 			}
-			if resolution.OtherFramework {
+			if resolution.OtherFramework && scoped == "NODE_OPTIONS" {
 				return nil, &SetupGap{location, "The test command also runs another framework; initialize only the selected framework explicitly."}
 			}
-			for _, layer := range []map[string]string{workflow.Env, job.Env, job.Steps[first].Env} {
-				for _, key := range []string{"DD_TRACE_PACKAGE", "DD_TRACE_ESM_IMPORT", "DD_CIVISIBILITY_ENABLED", "DD_TRACE_ENABLED"} {
+			// A job that sets up the tracer by hand keeps that setup.
+			var handWritten *handWrittenSetup
+			if setupIndex < 0 {
+				handWritten = jobHandWrittenSetup(root, workflow, job, first, "javascript", framework, site)
+			}
+			inherited := []string{"DD_TRACE_PACKAGE", "DD_TRACE_ESM_IMPORT", "DD_CIVISIBILITY_ENABLED", "DD_TRACE_ENABLED"}
+			if scoped != "NODE_OPTIONS" && setupIndex < 0 {
+				inherited = append(inherited, scoped)
+			}
+			if handWritten != nil {
+				inherited = nil
+			}
+			// Every test step's own variables count: a later one can override
+			// what the first one inherits.
+			layers := []map[string]string{workflow.Env, job.Env}
+			for _, step := range matched {
+				layers = append(layers, step.step.Env)
+			}
+			for _, layer := range layers {
+				for _, key := range inherited {
 					if _, ok := layer[key]; ok {
 						return nil, &SetupGap{location, "Custom inherited instrumentation requires review: " + key}
 					}
@@ -125,8 +159,9 @@ func planProviderJavaScriptSetup(root string, provider ciProvider, workflows []c
 			if UnsupportedNode(node) {
 				continue // No tracer release runs here; validation reports it as not tried.
 			}
-			if plugin && node != "" && job.SetupUnsupported == "" {
-				// The plugin installs the latest dd-trace whatever the Node.
+			if plugin && node != "" && job.SetupUnsupported == "" && handWritten == nil && version != snippetProbeRelease {
+				// The plugin installs the latest dd-trace whatever the Node. A
+				// probe (see handWrittenSetupGap) reads only the repository.
 				if err := floatingNodeGap(root, provider, workflow, job, location, node); err != nil {
 					return nil, err
 				}
@@ -139,7 +174,11 @@ func planProviderJavaScriptSetup(root string, provider ciProvider, workflows []c
 					if !command.usesNYC && !command.mochaIstanbul && (setupIndex < 0 || uncovered) {
 						// The GitHub Actions editor wraps the command with NYC; this
 						// editor only inserts the setup, so stop before any edit.
-						return nil, &EditThenApplyGap{SetupGap{location, MochaCoverageGap + command.Command + ". Wrap it with npx --no-install nyc -- in CI (adding nyc as a dev dependency if the project does not declare it), then rerun onboard --apply, which adds the Datadog setup."}}
+						next := "then rerun onboard --apply, which adds the Datadog setup."
+						if handWritten != nil {
+							next = "then rerun onboard --apply; the job's hand-written setup stays."
+						}
+						return nil, &EditThenApplyGap{SetupGap{location, MochaCoverageGap + command.Command + ". Wrap it with npx --no-install nyc -- in CI (adding nyc as a dev dependency if the project does not declare it), " + next}}
 					}
 				}
 			}
@@ -158,6 +197,42 @@ func planProviderJavaScriptSetup(root string, provider ciProvider, workflows []c
 					}
 					return nil, &SetupGap{location, err.Error()}
 				}
+			}
+			// A direct invocation reads the scoped variable the setup's
+			// following command exports only through the scoped prefix, which
+			// the CI command itself must carry; a setup that leaves the preload
+			// in NODE_OPTIONS, or a CI server plugin's, reaches it without one.
+			for _, leaf := range direct {
+				if _, exported := leaf.step.Env[scoped]; handWritten != nil || provider.setupTerms().Plugin || setupIndex >= 0 && !exported {
+					continue
+				}
+				if framework == "webdriverio" {
+					if local, err := localWDIOLeaf(root, leaf.test.Directory, leaf.test.Command); err != nil {
+						return nil, &SetupGap{location, err.Error()}
+					} else if !local {
+						continue // Explicit browser runner remains outside instrumentation.
+					}
+				}
+				command, err := directScopedCommand(leaf.step, leaf.test, framework)
+				if err != nil {
+					return nil, &SetupGap{location, err.Error()}
+				}
+				if command != "" {
+					return nil, &EditThenApplyGap{SetupGap{directLeafLocation(location, leaf.step), directLeafReason(provider, framework, leaf.test.Command, command, setupIndex >= 0)}}
+				}
+			}
+			if handWritten != nil {
+				if problem := handWritten.problem(); problem != "" {
+					return nil, &handWrittenGap{SetupGap{location, problem + " Then rerun onboard --apply."}}
+				}
+				if framework == "cucumber" {
+					// A direct invocation needs NYC in the CI command itself.
+					if gap := directCucumberCoverageGap(provider, location, workflow, job, direct, "the job's hand-written setup stays."); gap != nil {
+						return nil, gap
+					}
+				}
+				configured++
+				continue
 			}
 			target := ciSetupTarget{Workflow: workflow.Path, Job: name, Step: first}
 			if framework == "mocha" && !esm {
@@ -181,6 +256,39 @@ func planProviderJavaScriptSetup(root string, provider ciProvider, workflows []c
 				}
 			}
 			if complete && len(shellSetups) == 0 {
+				// Each test step either reads the preload from the scoped variable
+				// the setup's following command exports, which a later command
+				// must not replace, or still finds it in NODE_OPTIONS, which
+				// reaches the scoped scripts; only the options the scoped variable
+				// adds, such as the Istanbul ESM loader, would be missing then.
+				var unexported []matchedTestStep
+				if scoped != "NODE_OPTIONS" && !plugin {
+					for _, step := range matched {
+						if _, exported := step.step.Env[scoped]; !exported {
+							unexported = append(unexported, step)
+						} else if !scopedPreloadReached(workflow, job, step.step, scoped) {
+							return nil, &SetupGap{directLeafLocation(location, step.step), "Custom inherited instrumentation requires review: " + scoped + " no longer carries the tracer's preload the " + provider.setupName() + " exports in this test step, so its tests would run untraced. Remove the command that replaces it, or review it manually without adding a second setup."}
+						}
+					}
+				}
+				if len(unexported) > 0 {
+					if gap := existingScopedSetupGap(provider, workflow, job, unexported, framework, options, request.After[0]); gap != "" {
+						return nil, &SetupGap{location, gap}
+					}
+					// The preload reaches a direct command without the scoped
+					// prefix, but NYC must still wrap Cucumber there.
+					if framework == "cucumber" {
+						var bare []directLeaf
+						for _, leaf := range direct {
+							if _, exported := leaf.step.Env[scoped]; !exported {
+								bare = append(bare, leaf)
+							}
+						}
+						if gap := directCucumberCoverageGap(provider, location, workflow, job, bare, "the job's "+provider.setupName()+" stays."); gap != nil {
+							return nil, gap
+						}
+					}
+				}
 				configured++
 				continue
 			}
@@ -203,25 +311,27 @@ func planProviderJavaScriptSetup(root string, provider ciProvider, workflows []c
 	if len(targets) == 0 && configured == 0 {
 		return nil, &SetupGap{provider.displayName(), "No literal " + framework + " CI step found. Identify its real CI entry point before applying onboarding."}
 	}
-	var edits []setupEdit
-	var impact []string
 	if len(targets) > 0 {
-		var err error
-		if edits, impact, err = provider.planSetupEdits(root, workflows, targets, request); err != nil {
+		ciEdits, ciImpact, err := provider.planSetupEdits(root, workflows, targets, request)
+		if err != nil {
 			return nil, err
 		}
+		edits, impact = append(edits, ciEdits...), append(impact, ciImpact...)
 	}
 	var extra []string
 	if ignorer, ok := provider.(ciSetupIgnorer); ok {
 		extra = ignorer.setupIgnores(edits)
 	}
-	ignored, err := ignoreSetupEdits(root, false, extra...)
+	ignored, err := ignoreSetupEdits(root, coverageAdded, extra...)
 	if err != nil {
 		return nil, err
 	}
 	if len(edits) == 0 {
 		// Configured CI needs no ignore-only edit to be complete.
 		return &SetupPlan{root: root, impact: impact}, nil
+	}
+	if coverageAdded {
+		impact = append(impact, nycOutputImpact)
 	}
 	return &SetupPlan{root: root, edits: append(edits, ignored...), impact: impact}, nil
 }
@@ -287,6 +397,25 @@ func pluginSetupApplies(root, framework, site string) bool {
 	_, err := planProviderSetup(root, framework, site, snippetProbeRelease)
 	var edit *EditThenApplyGap
 	return err == nil || errors.As(err, &edit)
+}
+
+// handWrittenSetupGap is the gap onboard --apply reports in a CI job's
+// hand-written JavaScript setup of framework in root, reporting to site
+// (empty: the default), on a provider whose configuration it edits: it
+// plans the same edit, so onboard --agent asks for the edit that completes
+// that setup instead of handing off an apply that refuses it. nil when the
+// plan finds none.
+func handWrittenSetupGap(root, framework, site string) *handWrittenGap {
+	provider, err := currentCIProvider(root)
+	if err != nil || provider.sharedSyntax() || !provider.editsSetup() {
+		return nil
+	}
+	_, err = PlanJavaScriptSetup(root, framework, snippetProbeRelease, site, "")
+	var gap *handWrittenGap
+	if errors.As(err, &gap) {
+		return gap
+	}
+	return nil
 }
 
 // pluginSetupWritable reports whether onboard --apply would write the
@@ -462,6 +591,133 @@ func providerJobSetupProblem(root string, provider ciProvider, workflow ciWorkfl
 	return ""
 }
 
+// existingScopedSetupGap explains why an existing provider setup that
+// exports no scoped variable for framework does not reach step's scoped
+// scripts, or is "". Its preload must still be in NODE_OPTIONS: another
+// framework's scoped command, such as Cucumber's in a job that also runs
+// WebdriverIO, may have moved it. Native ESM Cucumber also needs the Istanbul
+// ESM loader (options), which the selected scripts' scoped prefix or the
+// step's NODE_OPTIONS may already load, as validation accepts (see
+// checkCucumberBootstrap); command is the one that would add it.
+func existingScopedSetupGap(provider ciProvider, workflow ciWorkflow, job runtimeJob, steps []matchedTestStep, framework, options, command string) string {
+	scoped := scopedEnvironment(framework)
+	if slices.ContainsFunc(steps, func(step matchedTestStep) bool { return checkJestBootstrap(workflow, job, step.step, nil, false) != "" }) {
+		return "The existing " + provider.setupName() + " no longer leaves the tracer's preload in NODE_OPTIONS for this " + framework + " step, and exports no " + scoped + ": a command after it, such as another framework's scoped command, moves the preload. Export " + scoped + " with the tracer's preload by hand after the setup, or review it manually without adding a second setup."
+	}
+	if options == "" {
+		return ""
+	}
+	if cucumberLoaderReached(workflow, job, steps) {
+		return ""
+	}
+	return "The existing " + provider.setupName() + " leaves the tracer's preload in NODE_OPTIONS without the " + options + " native ESM coverage needs. Add " + provider.setupTerms().Persist(command) + " right after it, then rerun onboard --apply; or review it manually without adding a second setup."
+}
+
+// scopedPreloadReached reports whether the scoped variable a test step
+// reads (scoped, which the step's environment sets) still carries the
+// tracer's preload and ESM loader that the provider setup's following
+// command exports: a command after it may replace it, such as an inline
+// DD_CUCUMBER_NODE_OPTIONS= assignment.
+func scopedPreloadReached(workflow ciWorkflow, job runtimeJob, step runtimeStep, scoped string) bool {
+	configured := step
+	configured.Env = maps.Clone(step.Env)
+	configured.Env["NODE_OPTIONS"] = step.Env[scoped]
+	return checkJestBootstrap(workflow, job, configured, nil, true) == ""
+}
+
+// directLeaf is a direct invocation, without a package script, of a scoped
+// framework (Cucumber or WebdriverIO), and the CI step that runs it.
+type directLeaf struct {
+	step runtimeStep
+	test TestCommand
+}
+
+// matchedTestStep is a CI step that runs the selected framework's tests,
+// with the test commands it runs.
+type matchedTestStep struct {
+	step  runtimeStep
+	tests []TestCommand
+}
+
+// cucumberLoaderReached reports whether native ESM Cucumber tests get the
+// Istanbul ESM loader without the scoped variable carrying it, as validation
+// accepts (see checkCucumberBootstrap): in every test step, every selected
+// command loads it in its own scoped prefix, or the step's NODE_OPTIONS
+// does. A step can set its own NODE_OPTIONS, so each one is checked.
+func cucumberLoaderReached(workflow ciWorkflow, job runtimeJob, steps []matchedTestStep) bool {
+	for _, matched := range steps {
+		inline := len(matched.tests) > 0
+		for _, test := range matched.tests {
+			inline = inline && test.cucumberInlineIstanbul
+		}
+		current, err := effectiveBootstrapOptions(workflow, job, matched.step, nil, true)
+		if !inline && (err != nil || !nodeOptionsLoad(current, "@istanbuljs/esm-loader-hook")) {
+			return false
+		}
+	}
+	return len(steps) > 0
+}
+
+// directCucumberCoverageGap prescribes NYC for the first direct Cucumber
+// invocation in direct that lacks it, in a job whose setup leaves the
+// tracer's preload in NODE_OPTIONS (a hand-written setup, or the provider's
+// without the scoped variable): no package script carries the wrapper
+// onboard --apply adds, so the CI command itself must. stays says what
+// happens to the job's setup. nil when every one has NYC.
+func directCucumberCoverageGap(provider ciProvider, location string, workflow ciWorkflow, job runtimeJob, direct []directLeaf, stays string) error {
+	for _, leaf := range direct {
+		workaround := cucumberImpactedWorkaroundSet(workflow, job, leaf.step)
+		if leaf.test.usesNYC && workaround {
+			continue
+		}
+		command, err := directScopedCommand(leaf.step, leaf.test, "cucumber")
+		if err != nil {
+			return &SetupGap{location, err.Error()}
+		}
+		if _, ok := provider.(buildkite); ok {
+			command = buildkiteEscape(command) // pipeline upload would replace each $.
+		}
+		reason := CucumberCoverageGap + " CI runs " + leaf.test.Command + " directly, not through a package script, so onboard --apply cannot wrap it with NYC."
+		if leaf.test.usesNYC {
+			reason = "CI runs " + leaf.test.Command + " directly, not through a package script, without " + cucumberImpactedWorkaround + ", which onboard --apply adds to the package scripts it scopes and dd-trace's Cucumber instrumentation needs, so onboard --apply cannot add it to this command."
+		}
+		return &EditThenApplyGap{SetupGap{directLeafLocation(location, leaf.step), reason + " Change this CI command to exactly: " + command + ". Then rerun onboard --apply; " + stays}}
+	}
+	return nil
+}
+
+// cucumberImpactedWorkaroundSet reports whether a direct Cucumber
+// invocation runs with Cucumber's impacted-tests workaround
+// (cucumberImpactedWorkaround): right after its scoped prefix, or in the
+// environment the step's command starts with.
+func cucumberImpactedWorkaroundSet(workflow ciWorkflow, job runtimeJob, step runtimeStep) bool {
+	value, set := handWrittenEnvironment(workflow, job, step)["DD_CIVISIBILITY_IMPACTED_TESTS_DETECTION_ENABLED"]
+	return step.impactedWorkaround || set && handWrittenFalse(value)
+}
+
+// directLeafLocation names a direct invocation's CI step by its source
+// line, when the provider records one.
+func directLeafLocation(location string, step runtimeStep) string {
+	if step.Source != "" {
+		return location + " (" + step.Source + ")"
+	}
+	return location
+}
+
+// directLeafReason prescribes the CI command a direct Cucumber or
+// WebdriverIO invocation needs (see directScopedCommand), written as the
+// provider's configuration holds it, and what onboard --apply does next.
+func directLeafReason(provider ciProvider, framework, leaf, command string, configured bool) string {
+	if _, ok := provider.(buildkite); ok {
+		command = buildkiteEscape(command) // pipeline upload would replace each $.
+	}
+	edit := "it adds the " + provider.setupName() + " before this command, with the command that exports " + scopedEnvironment(framework) + "."
+	if configured {
+		edit = "the job's " + provider.setupName() + " already exports " + scopedEnvironment(framework) + "."
+	}
+	return "CI runs " + leaf + " directly, not through a package script, so the command itself must read the tracer's preload from " + scopedEnvironment(framework) + ", as a scoped package script does. Change this CI command to exactly: " + command + ". Then rerun onboard --apply: " + edit
+}
+
 // providerSetupConfigured reports whether, on a provider without the shared
 // workflow syntax, a complete setup for language (see
 // ciProvider.setupProblem) precedes the first test command of every job that
@@ -482,7 +738,7 @@ func providerSetupConfigured(root string, provider ciProvider, language, framewo
 			}
 			var setup *ciSetup
 			var setupStep runtimeStep
-			for _, step := range job.Steps {
+			for i, step := range job.Steps {
 				if current, ok := datadogSetup(step); ok {
 					if selected, err := setupSelectsLanguage(current, nil, token); err == nil && selected {
 						setup, setupStep = &current, step
@@ -491,6 +747,13 @@ func providerSetupConfigured(root string, provider ciProvider, language, framewo
 				resolution := resolveTestStep(root, workflow, job, step, language, framework)
 				if resolution.Review || !resolution.Matched && (resolution.Reason == "" || !stepMayStartTests(root, workflow, job, step, framework)) {
 					continue
+				}
+				if setup == nil && resolution.Reason == "" {
+					// A complete setup the job writes by hand counts as its own.
+					if handWritten := jobHandWrittenSetup(root, workflow, job, i, language, framework, site); handWritten != nil && handWritten.complete() {
+						instrumented = true
+						break
+					}
 				}
 				if resolution.Reason != "" || setup == nil || setup.shellLocal && !sameShell(setupStep, step) || provider.setupProblem(*setup, tracerInput, exact, "", site) != "" {
 					return false
@@ -530,7 +793,7 @@ func existingSetupProblems(root, language, framework, site string) []string {
 				continue
 			}
 			var setup *ciSetup
-			for _, step := range job.Steps {
+			for i, step := range job.Steps {
 				if current, ok := datadogSetup(step); ok {
 					if selected, err := setupSelectsLanguage(current, nil, token); err == nil && selected {
 						setup = &current
@@ -540,10 +803,16 @@ func existingSetupProblems(root, language, framework, site string) []string {
 				if resolution.Review || !resolution.Matched && (resolution.Reason == "" || !stepMayStartTests(root, workflow, job, step, framework)) {
 					continue
 				}
+				problem := ""
 				if setup == nil {
-					break
+					// A setup the job writes by hand is reported with what it lacks.
+					if handWritten := jobHandWrittenSetup(root, workflow, job, i, language, framework, site); handWritten != nil {
+						problem = handWritten.problem()
+					}
+				} else {
+					problem = provider.setupProblem(*setup, "", func(string) bool { return true }, "", site)
 				}
-				if problem := provider.setupProblem(*setup, "", func(string) bool { return true }, "", site); problem != "" {
+				if problem != "" {
 					if _, seen := jobs[problem]; !seen {
 						problems = append(problems, problem)
 					}

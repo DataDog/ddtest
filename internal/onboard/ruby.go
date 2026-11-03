@@ -756,7 +756,7 @@ func RubyCIConfigurationFrom(root, source, framework, site string) RuntimeCheck 
 					}
 					finding := RuntimeFinding{Location: (commandLocation{Workflow: workflow.Path, Job: name, Matrix: row, Step: stepNumber(step, i), Command: step.Run}).String(), Workflow: workflow.Path, Job: name, Step: stepNumber(step, i), Command: resolved.Run, Runtime: ruby, Action: action, TracerRequested: tracer, setupInputs: inputs, setupProvider: provider, Status: "inconclusive", Reason: rubyMissingSetupReason(provider)}
 					if job.SetupUnsupported != "" && setup == nil {
-						finding.Reason = unsupportedSetupReason(provider, job)
+						finding.Reason = unsupportedSetupReason(provider, job, "ruby")
 					}
 					if setup == nil && expired != "" {
 						finding.Reason = "The " + provider.setupName() + " at " + expired + " runs in another shell than this test command, and its exports reach only the later commands of its own shell; run it in the same shell, before the test command."
@@ -766,6 +766,25 @@ func RubyCIConfigurationFrom(root, source, framework, site string) RuntimeCheck 
 						finding.SetupCaveats = slices.Clone(setup.Caveats)
 						if setup.Floating && tracer != "" {
 							finding.SetupCaveats = append(finding.SetupCaveats, "datadog-ci version: the "+setup.Reference+" uses the datadog-ci release the repository's Gemfile.lock pins ("+tracer+"), which ddtest validated; it installs the latest release instead if that pin is removed.", rubyPinnedPluginCaveat(setup.Reference))
+						}
+					}
+					// Without a provider setup, the job may set up datadog-ci by
+					// hand; it is checked like the setup's inputs. Each test step
+					// is checked on its own: its setup reaches no other step.
+					action, tracer := action, tracer
+					if action == "" && !skippedAction && resolution.Matched && conditionErr == nil && stepErr == nil && resolveErr == nil && !provider.sharedSyntax() {
+						rowJob := job
+						rowJob.Steps = slices.Clone(job.Steps)
+						rowJob.Steps[i] = resolved
+						if handWritten := (rubyDiscovery{}).handWrittenSetup(root, provider, workflow, rowJob, i, row, framework, site); handWritten != nil {
+							finding.handWritten = handWritten
+							finding.Action, finding.TracerRequested = handWritten.Reference, handWritten.Tracer
+							finding.AgentReporting = handWritten.reportsThroughAgent()
+							if problem := handWritten.problem(); problem != "" {
+								finding.Code, finding.Reason = handWritten.code(), problem
+							} else {
+								action, tracer = handWritten.Reference, handWritten.Tracer
+							}
 						}
 					}
 					if hostRuby {
@@ -796,9 +815,11 @@ func RubyCIConfigurationFrom(root, source, framework, site string) RuntimeCheck 
 							finding.Status, finding.Code, finding.Reason = "inconclusive", CodeIncompleteCISetup, reason
 						} else if reason := rubyWorkspaceRootProblem(root, workflow, job, resolved, setup, provider); reason != "" {
 							finding.Status, finding.Code, finding.Reason = "inconclusive", CodeIncompleteCISetup, reason
-						} else if reason := rubyGemsResolverProblem(ruby, rubygems, row); !imageRuby && reason != "" {
+						} else if reason := rubyGemsResolverProblem(ruby, rubygems, row); !imageRuby && reason != "" && finding.handWritten == nil {
 							finding.Status, finding.Reason = "inconclusive", reason
-						} else if reason := rubyImageGemsProblem(ruby, gemsAtSetup, provider); imageRuby && reason != "" {
+						} else if reason := rubyImageGemsProblem(ruby, gemsAtSetup, provider); imageRuby && reason != "" && finding.handWritten == nil {
+							// The installer's RubyGems requirement; a bundle that
+							// already locks datadog-ci installs it as locked.
 							finding.Status, finding.Reason = "inconclusive", reason
 						}
 					} else if ruby == "" && hostRuby && action != "" {
@@ -810,8 +831,15 @@ func RubyCIConfigurationFrom(root, source, framework, site string) RuntimeCheck 
 						finding.Status, finding.Code = "excluded", "excluded_runtime"
 						finding.Reason = "This job runs " + engine + " (image " + job.Image + "), which the tracer cannot instrument, without the " + provider.setupName() + ". Its tests still run without instrumentation; this runtime is not validated with the tracer."
 					}
-					// An explicitly uninstrumented row has no preload to lose.
-					if reason := rubyBootstrapProblem(workflow, job, step, row, framework); finding.Status != "excluded" && reason != "" {
+					// An explicitly uninstrumented row has no preload to lose. A
+					// hand-written setup's own preload was checked with it.
+					bootstrap := rubyBootstrapProblem
+					if finding.handWritten != nil {
+						bootstrap = func(_ ciWorkflow, _ runtimeJob, step runtimeStep, _ map[string]any, _ ...string) string {
+							return rubyRakeOptionsProblem(step.Run)
+						}
+					}
+					if reason := bootstrap(workflow, job, step, row, framework); finding.Status != "excluded" && reason != "" {
 						finding.Status, finding.Reason = "inconclusive", reason
 					}
 					result.Jobs = append(result.Jobs, finding)

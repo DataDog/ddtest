@@ -34,9 +34,152 @@ func scopedEnvironment(framework string) string {
 	return "NODE_OPTIONS"
 }
 
+// readScopedPrefix removes the prefix that makes a direct Cucumber or
+// WebdriverIO invocation read its scoped variable,
+// NODE_OPTIONS="${NODE_OPTIONS:-} ${DD_CUCUMBER_NODE_OPTIONS:-}" (or
+// DD_WDIO_NODE_OPTIONS), from the start of a provider step's command, and
+// records that variable. This is the CI command directScopedCommand
+// prescribes, with Cucumber's impacted-tests workaround after it. The shell
+// sets them for that command alone, so the rest is the step's command, and
+// its leaf consumes the variable as a scoped package script's does (see
+// markScopedLeaf). Only a command whose first
+// call carries the prefix, alone or piped into others, qualifies.
+func (s *runtimeStep) readScopedPrefix() {
+	command := strings.TrimSpace(s.Run)
+	variable := ""
+	for _, candidate := range []string{"DD_CUCUMBER_NODE_OPTIONS", "DD_WDIO_NODE_OPTIONS"} {
+		if strings.HasPrefix(command, scopedPrefix(candidate)+" ") {
+			variable = candidate
+		}
+	}
+	if variable == "" {
+		return
+	}
+	rest := strings.TrimSpace(strings.TrimPrefix(command, scopedPrefix(variable)))
+	if variable == "DD_CUCUMBER_NODE_OPTIONS" {
+		// As in a scoped package script, the impacted-tests workaround
+		// follows the prefix; discovery reads the command after it.
+		trimmed := strings.TrimSpace(strings.TrimPrefix(rest, cucumberImpactedWorkaround+" "))
+		s.impactedWorkaround, rest = trimmed != rest, trimmed
+	}
+	file, ok := parseCIShell(rest)
+	if !ok || len(file.Stmts) != 1 {
+		return
+	}
+	first := file.Stmts[0]
+	for {
+		binary, ok := first.Cmd.(*syntax.BinaryCmd)
+		if !ok || (binary.Op != syntax.Pipe && binary.Op != syntax.PipeAll) {
+			break
+		}
+		first = binary.X
+	}
+	if call, ok := first.Cmd.(*syntax.CallExpr); !ok || len(call.Args) == 0 {
+		return
+	}
+	s.Run, s.scopedVariable = rest, variable
+}
+
+// foldInlineEnvironment moves the variables a single command assigns inline
+// for itself into the step's environment (see foldCommandEnvironment), and
+// records their names: a CI command rebuilt from Run alone would drop them.
+func (s *runtimeStep) foldInlineEnvironment(known map[string]string, project string) {
+	if run, assigned, ok := foldCommandEnvironment(s.Run, known, project); ok {
+		s.Run, s.Env = run, mergeEnvironment(s.Env, assigned)
+		s.inline = slices.Sorted(maps.Keys(assigned))
+	}
+}
+
+// scopedPrefix is the prefix with which a command reads variable on top of
+// the NODE_OPTIONS it inherits.
+func scopedPrefix(variable string) string {
+	return `NODE_OPTIONS="${NODE_OPTIONS:-} ${` + variable + `:-}"`
+}
+
+// markScopedLeaf marks the direct leaf of a step whose reader removed its
+// scoped prefix as consuming that variable.
+func markScopedLeaf(result *commandResolution, variable, framework string) {
+	if variable != scopedEnvironment(framework) || result.Reason != "" || result.OtherFramework || len(result.Tests) != 1 || len(result.Tests[0].packageScripts) > 0 {
+		return
+	}
+	if framework == "cucumber" {
+		result.Tests[0].cucumberScoped = true
+	} else {
+		result.Tests[0].webdriverIOScoped = true
+	}
+}
+
+// directScopedCommand is the CI command that runs a direct Cucumber or
+// WebdriverIO invocation (no package script) with the scoped setup: the
+// step's command after the scoped prefix and, for Cucumber, the
+// impacted-tests workaround, with cucumber-js wrapped by NYC, as onboard
+// --apply writes a package-script leaf. It is "" when the step already has
+// that form.
+func directScopedCommand(step runtimeStep, test TestCommand, framework string) (string, error) {
+	command := strings.TrimSpace(step.Run)
+	if framework == "webdriverio" {
+		if step.scopedVariable == scopedEnvironment(framework) {
+			return "", nil
+		}
+		if err := inlineAssignmentsError(step); err != nil {
+			return "", err
+		}
+		if err := compoundCommandError(command); err != nil {
+			return "", err
+		}
+		return scopedPrefix(scopedEnvironment(framework)) + " " + command, nil
+	}
+	if step.scopedVariable == scopedEnvironment(framework) && test.usesNYC && (step.impactedWorkaround || handWrittenFalse(step.Env["DD_CIVISIBILITY_IMPACTED_TESTS_DETECTION_ENABLED"])) {
+		return "", nil
+	}
+	if err := inlineAssignmentsError(step); err != nil {
+		return "", err
+	}
+	command = strings.TrimSpace(strings.TrimPrefix(command, cucumberImpactedWorkaround+" "))
+	if err := compoundCommandError(command); err != nil {
+		return "", err
+	}
+	if !test.usesNYC {
+		start, end, insertion, err := cucumberCoverageEdit(command)
+		if err != nil {
+			return "", err
+		}
+		command = command[:start] + insertion + command[end:]
+	}
+	return scopedPrefix(scopedEnvironment(framework)) + " " + cucumberImpactedWorkaround + " " + command, nil
+}
+
+// compoundCommandError explains why ddtest prescribes no scoped command for
+// a CI command that is not one simple command, such as
+// npm run build && npx cucumber-js: the variables the scoped prefix assigns
+// would reach only its first command, not necessarily the tests.
+func compoundCommandError(command string) error {
+	file, ok := parseCIShell(command)
+	if ok && len(file.Stmts) == 1 {
+		stmt := file.Stmts[0]
+		if call, simple := stmt.Cmd.(*syntax.CallExpr); simple && len(call.Args) > 0 && !stmt.Background && !stmt.Negated && !stmt.Coprocess {
+			return nil
+		}
+	}
+	return fmt.Errorf("CI runs %s as part of a compound shell command, which ddtest does not rewrite into the scoped command: the variables its prefix assigns would reach only the first command. Run the test command as a CI command of its own, then rerun onboard --apply", command)
+}
+
+// inlineAssignmentsError explains why ddtest does not rebuild a direct
+// invocation whose command assigns variables inline (step.inline), such as a
+// hand-written NODE_OPTIONS preload: the provider's reader moved them out of
+// Run, and placing them around the scoped prefix needs a person's review.
+func inlineAssignmentsError(step runtimeStep) error {
+	if len(step.inline) == 0 {
+		return nil
+	}
+	return fmt.Errorf("CI runs %s with inline variable assignments (%s), which ddtest does not rewrite into the scoped command: move them out of the command, keeping their values, into the variables of the commands that run after the job's dependency install (a preload such as NODE_OPTIONS must not reach the install), then rerun onboard --apply", step.Run, strings.Join(step.inline, ", "))
+}
+
 // Only literal package-script leaves are changed. Framework configs, profiles,
 // imports, reporters, services and other framework consumers remain untouched.
-func scopedSetupEdits(root, framework string) ([]setupEdit, string, error) {
+// With directLeaves, the caller handles direct invocations itself (see
+// directScopedCommand); otherwise they need explicit initialization.
+func scopedSetupEdits(root, framework string, directLeaves bool) ([]setupEdit, string, error) {
 	if framework != "cucumber" && framework != "webdriverio" {
 		return nil, "", nil
 	}
@@ -47,6 +190,9 @@ func scopedSetupEdits(root, framework string) ([]setupEdit, string, error) {
 	selected := map[string]bool{}
 	for _, entry := range scope.Commands {
 		if len(entry.packageScripts) == 0 {
+			if directLeaves {
+				continue
+			}
 			return nil, "", &SetupGap{entry.Command, "Scoped initialization requires an identified package-script consumer; initialize this direct invocation explicitly."}
 		}
 		for _, script := range entry.packageScripts {
@@ -73,9 +219,12 @@ func scopedSetupEdits(root, framework string) ([]setupEdit, string, error) {
 	}
 	options := strings.TrimPrefix(setupPreload(framework), "${{ env.NODE_OPTIONS }} ")
 	if framework == "cucumber" {
+		// The loader follows the selected inputs, as validation does (see
+		// checkCucumberBootstrap).
+		esm := cucumberNativeESM(root, pkg.Type, scope.Commands)
 		packages := []string{}
 		for _, name := range []string{"nyc", "@istanbuljs/esm-loader-hook"} {
-			if name != "nyc" && pkg.Type != "module" {
+			if name != "nyc" && !esm {
 				continue
 			}
 			if pkg.Dependencies[name] == "" && pkg.DevDependencies[name] == "" {
@@ -86,8 +235,8 @@ func scopedSetupEdits(root, framework string) ([]setupEdit, string, error) {
 			return nil, "", setupDependencyGap(root, packages)
 		}
 
-		if pkg.Type == "module" {
-			options += " --experimental-loader @istanbuljs/esm-loader-hook"
+		if esm {
+			options += " " + cucumberESMLoaderHook
 		}
 	}
 	changed := false
@@ -142,7 +291,7 @@ func scopedSetupEdits(root, framework string) ([]setupEdit, string, error) {
 			return nil, "", &SetupGap{"package.json / scripts / " + name, "Custom framework wrapper requires an explicit scoped initialization; preserve its command."}
 		}
 		if framework == "webdriverio" {
-			local, err := localWDIOLeaf(root, script)
+			local, err := localWDIOLeaf(root, ".", script)
 			if err != nil {
 				return nil, "", &SetupGap{"package.json / scripts / " + name, err.Error()}
 			}
@@ -264,7 +413,10 @@ func wdioConfigSource(root, config string) string {
 	return config
 }
 
-func localWDIOLeaf(root, script string) (bool, error) {
+// localWDIOLeaf reports whether the WebdriverIO command script, run in
+// directory (relative to root), runs its tests with the local runner: its
+// configuration, read relative to directory, or one it extends, says so.
+func localWDIOLeaf(root, directory, script string) (bool, error) {
 	parts, err := staticCommands(script)
 	if err != nil || len(parts) != 1 {
 		return false, fmt.Errorf("wDIO leaf needs a literal CLI command")
@@ -274,7 +426,7 @@ func localWDIOLeaf(root, script string) (bool, error) {
 		if filepath.Base(word) != "wdio" || i+2 >= len(words) || words[i+1] != "run" {
 			continue
 		}
-		config := words[i+2]
+		config := filepath.Join(filepath.FromSlash(directory), words[i+2])
 		for range 4 {
 			if !filepath.IsLocal(config) {
 				return false, fmt.Errorf("wDIO config must be repository-local")

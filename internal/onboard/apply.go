@@ -37,6 +37,14 @@ type EditThenApplyGap struct{ SetupGap }
 
 func (g *EditThenApplyGap) Unwrap() error { return &g.SetupGap }
 
+// handWrittenGap is a SetupGap in a CI job's hand-written setup, which
+// onboarding keeps: it lacks a piece only the user's edit to that setup
+// adds, so onboard --apply writes nothing until then. onboard --agent asks
+// for the same edit first (see handWrittenSetupGap).
+type handWrittenGap struct{ SetupGap }
+
+func (g *handWrittenGap) Unwrap() error { return &g.SetupGap }
+
 func (g *SetupGap) Error() string { return g.Location + ": " + g.Reason }
 
 // DirtyWorkflowGap names target files with uncommitted changes; committing or
@@ -123,21 +131,11 @@ func PlanJavaScriptSetup(root, framework, version, site, nodeRequirement string)
 	if !provider.sharedSyntax() {
 		return planProviderJavaScriptSetup(root, provider, workflows, framework, version, site, nodeRequirement)
 	}
-	edits, scopedOptions, err := scopedSetupEdits(root, framework)
+	edits, scopedOptions, err := scopedSetupEdits(root, framework, false)
 	if err != nil {
 		return nil, err
 	}
-	var impact []string
-	coverageAdded := false
-	for _, edit := range edits {
-		coverageAdded = coverageAdded || bytes.Count(edit.after, []byte("nyc -- ")) > bytes.Count(edit.before, []byte("nyc -- "))
-	}
-	if len(edits) > 0 {
-		if framework == "cucumber" {
-			impact = append(impact, "Selected package scripts now use NYC coverage and set DD_CIVISIBILITY_IMPACTED_TESTS_DETECTION_ENABLED=false, including local npm test. Existing commands and unselected scripts are preserved.")
-		}
-		impact = append(impact, "The scripts' new NODE_OPTIONS=\"${NODE_OPTIONS:-} …\" prefix needs a POSIX shell, so these scripts no longer run locally from Windows cmd.")
-	}
+	impact, coverageAdded := scopedSetupImpact(edits, framework)
 	targets := 0
 	for _, workflow := range workflows {
 		edit, err := readSetupEdit(root, workflow.Path)
@@ -437,9 +435,27 @@ func PlanJavaScriptSetup(root, framework, version, site, nodeRequirement string)
 	}
 	edits = append(edits, ignored...)
 	if coverageAdded {
-		impact = append(impact, "NYC coverage writes an untracked .nyc_output/ folder wherever the covered command runs, including local validation; it is added to .gitignore.")
+		impact = append(impact, nycOutputImpact)
 	}
 	return &SetupPlan{root: root, edits: edits, impact: impact}, nil
+}
+
+// nycOutputImpact explains the .gitignore entry added with NYC coverage.
+const nycOutputImpact = "NYC coverage writes an untracked .nyc_output/ folder wherever the covered command runs, including local validation; it is added to .gitignore."
+
+// scopedSetupImpact describes the package-script edits scopedSetupEdits
+// planned, and whether they add NYC coverage.
+func scopedSetupImpact(edits []setupEdit, framework string) (impact []string, coverageAdded bool) {
+	for _, edit := range edits {
+		coverageAdded = coverageAdded || bytes.Count(edit.after, []byte("nyc -- ")) > bytes.Count(edit.before, []byte("nyc -- "))
+	}
+	if len(edits) > 0 {
+		if framework == "cucumber" {
+			impact = append(impact, "Selected package scripts now use NYC coverage and set DD_CIVISIBILITY_IMPACTED_TESTS_DETECTION_ENABLED=false, including local npm test. Existing commands and unselected scripts are preserved.")
+		}
+		impact = append(impact, "The scripts' new NODE_OPTIONS=\"${NODE_OPTIONS:-} …\" prefix needs a POSIX shell, so these scripts no longer run locally from Windows cmd.")
+	}
+	return impact, coverageAdded
 }
 
 // ignoreSetupEdits excludes ddtest's report directory, NYC's output when

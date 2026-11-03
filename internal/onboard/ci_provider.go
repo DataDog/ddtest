@@ -201,6 +201,15 @@ type ciSetupTerms struct {
 	// runtimeJob.SetupProvider), such as the Datadog Jenkins plugin beside
 	// container stages' setup snippet; empty when there is none.
 	Beside string
+	// SecretStore names where the provider keeps the DD_API_KEY a job reads
+	// without writing it, such as "a masked GitLab CI/CD variable", for
+	// setups written by hand.
+	SecretStore string
+	// KeyBinding reports a provider that gives a job the stored key only
+	// where its configuration binds it (a Jenkins credential), not merely
+	// because the secret store holds it: a hand-written setup without
+	// DD_API_KEY in its environment then reports nothing.
+	KeyBinding bool
 	// Plugin reports a setup that is a CI server plugin, enabled in the
 	// configuration, that installs the tracers on the build agent and sets
 	// their variables for every step (the Datadog Jenkins plugin), instead of
@@ -390,11 +399,18 @@ type CIProviderUnsupportedError struct {
 	// Reason names the jobs the provider's setup cannot instrument, and
 	// why; Setup names that setup.
 	Reason, Setup string
+	// HandWritten names the jobs that set up Test Optimization by hand in
+	// a way ddtest recognizes but does not validate for Language yet (see
+	// handWrittenSetup.Unvalidated), each with its setup.
+	HandWritten []string
 }
 
 func (e *CIProviderUnsupportedError) Error() string {
+	if len(e.HandWritten) > 0 {
+		return fmt.Sprintf("ddtest cannot validate %s CI for %s on %s in this repository: ddtest does not validate hand-written %s setups yet, and these CI jobs set up Test Optimization by hand: %s ddtest neither certifies those setups nor replaces them with the %s. Keep them as they are, and do not add the %s to those jobs, remove their setup or change how they report; what a setup lacks is for the user to decide. ddtest will not prescribe CI edits or validate this CI configuration.", e.Framework, e.Language, e.Provider, handWrittenLanguageName(e.Language), strings.TrimSuffix(strings.Join(e.HandWritten, "; "), ".")+".", e.Setup, e.Setup)
+	}
 	if e.Reason != "" {
-		return fmt.Sprintf("ddtest cannot set up %s CI for %s on %s in this repository: every CI job that runs the tests is outside what the %s instruments. %s The user's options are to run those tests where the %s instruments them, or to set up Test Optimization for them by hand, outside ddtest, which ddtest cannot validate. ddtest will not prescribe CI edits or validate this CI configuration.", e.Framework, e.Language, e.Provider, e.Setup, e.Reason, e.Setup)
+		return fmt.Sprintf("ddtest cannot set up %s CI for %s on %s in this repository: every CI job that runs the tests is outside what the %s instruments. %s The user's options are to run those tests where the %s instruments them, or %s. ddtest will not prescribe CI edits or validate this CI configuration as it is.", e.Framework, e.Language, e.Provider, e.Setup, e.Reason, e.Setup, handWrittenSetupOption(e.Language, e.Setup))
 	}
 	return fmt.Sprintf("ddtest does not support %s CI setup for %s on %s; it will not prescribe CI edits or validate this CI configuration. Rerun with --ci-provider <provider> to choose another provider.", e.Framework, e.Language, e.Provider)
 }
@@ -609,6 +625,17 @@ func CheckCIProviderSupport(root, language, framework string) error {
 	if files, err := provider.configurationFiles(root); err == nil && len(files) == 0 {
 		return nil
 	}
+	return providerSupportError(root, provider, language, framework)
+}
+
+// providerSupportError is CheckCIProviderSupport's result once the
+// provider's configuration exists. A hand-written setup ddtest recognizes
+// but does not validate for language comes first, whatever the provider
+// supports, so it is never replaced or certified.
+func providerSupportError(root string, provider ciProvider, language, framework string) error {
+	if jobs := unvalidatedHandWrittenJobs(root, provider, language, framework); len(jobs) > 0 {
+		return &CIProviderUnsupportedError{Language: language, Framework: framework, Provider: provider.displayName(), Setup: provider.setupName(), HandWritten: jobs}
+	}
 	if !languageSupportsCIProvider(language, provider) {
 		return &CIProviderUnsupportedError{Language: language, Framework: framework, Provider: provider.displayName()}
 	}
@@ -640,7 +667,8 @@ func unsupportedTestJobs(root string, provider ciProvider, language, framework s
 			if !tests {
 				continue
 			}
-			if job.SetupUnsupported == "" {
+			// A job that sets up the tracer by hand needs no provider setup.
+			if job.SetupUnsupported == "" || firstHandWrittenSetup(root, workflow, job, language, framework, "") != nil {
 				return ""
 			}
 			reasons = append(reasons, workflow.Path+" / "+name+": "+job.SetupUnsupported+".")
@@ -698,9 +726,18 @@ func ProviderChoiceResult(choice *CIProviderChoice) AgentResult {
 // does not set up.
 func ProviderUnsupportedResult(err *CIProviderUnsupportedError) AgentResult {
 	result := AgentResult{Status: "unsupported", Phase: "onboarding", Code: "ci_provider_unsupported", Reason: err.Error(), NextAction: "report_result"}
-	if err.Reason != "" {
+	switch {
+	case len(err.HandWritten) > 0:
 		result.Code = "ci_setup_unsupported"
-		result.Instruction = "Report this result to the user with its reason and stop. Do not move tests between agents, edit CI, add a tracer or set up Test Optimization by hand: those are the user's decisions, and ddtest cannot validate a manual setup."
+		result.Instruction = "Report this result to the user with its reason and stop. Keep the hand-written setups as they are: do not add the " + err.Setup + ", edit CI, add or change a tracer, or remove a setup; those are the user's decisions, and ddtest cannot validate hand-written " + handWrittenLanguageName(err.Language) + " setups yet."
+	case err.Reason != "":
+		result.Code = "ci_setup_unsupported"
+		result.Instruction = "Report this result to the user with its reason and stop. Do not move tests between agents, edit CI, add a tracer or set up Test Optimization by hand: those are the user's decisions."
+		if validatesHandWrittenSetups(err.Language) {
+			result.Instruction += " Once the user sets it up by hand, rerun onboarding, which checks that setup."
+		} else {
+			result.Instruction += " ddtest does not validate hand-written " + handWrittenLanguageName(err.Language) + " setups yet."
+		}
 	}
 	return result
 }
@@ -730,7 +767,7 @@ func testWorkflowsWithSetup(root string, workflows []ciWorkflow, language, frame
 				continue
 			}
 			setup := false
-			for _, step := range job.Steps {
+			for i, step := range job.Steps {
 				if current, ok := datadogSetup(step); ok {
 					selected, err := setupSelectsLanguage(current, nil, token)
 					setup = setup || err == nil && selected
@@ -740,7 +777,12 @@ func testWorkflowsWithSetup(root string, workflows []ciWorkflow, language, frame
 					continue
 				}
 				tests = true
-				complete = complete && setup && resolution.Reason == ""
+				// A complete setup the job writes by hand counts as its own.
+				handWritten := !setup && resolution.Matched && resolution.Reason == "" && func() bool {
+					current := handWrittenCISetup(root, workflow, job, i, nil, language, framework, "")
+					return current != nil && current.complete()
+				}()
+				complete = complete && (setup || handWritten) && resolution.Reason == ""
 			}
 		}
 		if tests {

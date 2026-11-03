@@ -453,6 +453,7 @@ func (c *buildkiteConfig) command(workflow *ciWorkflow, item *yaml.Node, fields 
 			}
 		}
 		job := runtimeJob{Env: env, Image: executor.image, ImageTemplate: executor.template, ImageProblem: executor.imageProblem}
+		job.KeyProblem = executor.keyReachProblem()
 		if disabled {
 			job.If = "false"
 		}
@@ -639,6 +640,9 @@ func (c *buildkiteConfig) steps(name string, scope buildkiteScope, commands *yam
 			}
 			if consumed := strings.TrimSpace(command) == "" || state.apply(command, mergeEnvironment(env, state.env)); consumed {
 				step.Run = ""
+			} else {
+				step.readScopedPrefix()
+				step.foldInlineEnvironment(mergeEnvironment(mergeEnvironment(env, state.env), state.references), state.dialect.projectVariable)
 			}
 		}
 	}

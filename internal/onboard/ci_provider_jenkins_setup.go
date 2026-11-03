@@ -70,7 +70,7 @@ var jenkinsFacts = []ciFactDefinition{
 	{
 		Key:      jenkinsRuntimeMatches,
 		Question: "The plugin installs the tracer with the build agent's default toolchain (the one on the agent's PATH without the Jenkinsfile's tools, nodejs(…), PATH changes or version managers such as nvm use or rbenv). Is that the same runtime and package manager the tests run with in the listed jobs?",
-		Remedy:   "If not, the tracer would be installed for another runtime: put the tests' runtime first on the agent's default PATH, or set up Test Optimization for those jobs manually (ddtest cannot validate that).",
+		Remedy:   "If not, the tracer would be installed for another runtime: put the tests' runtime first on the agent's default PATH, or set up Test Optimization for those jobs by hand instead of with the plugin (ddtest checks such setups for " + handWrittenValidatedLanguages() + ", and does not validate them for other languages yet).",
 		Statement: func(string) string {
 			return "The Jenkins agents' default toolchain, which the Datadog Jenkins plugin installs the tracer with, is the one the tests run with"
 		},
@@ -470,11 +470,12 @@ func (jenkins) apiKeyAction(bool) string {
 // the sh script that runs the tests.
 func (jenkins) setupTerms() ciSetupTerms {
 	return ciSetupTerms{
-		Installer:  "Datadog Jenkins plugin",
-		Entry:      "the datadog(testOptimization: …) option",
-		SetupEntry: "the datadog(testOptimization: …) option",
-		Later:      "every step of the pipeline",
-		Variables:  "the stage's environment directive",
+		Installer:   "Datadog Jenkins plugin",
+		SecretStore: "a Jenkins credential the stage binds (DD_API_KEY = credentials('<id>') in its environment directive, or withCredentials)",
+		Entry:       "the datadog(testOptimization: …) option",
+		SetupEntry:  "the datadog(testOptimization: …) option",
+		Later:       "every step of the pipeline",
+		Variables:   "the stage's environment directive",
 		Persist: func(command string) string {
 			return command + " inside the sh script that runs the tests, before the test command"
 		},
@@ -482,6 +483,7 @@ func (jenkins) setupTerms() ciSetupTerms {
 		MatrixExclusion: "with the matrix's excludes",
 		SharedMatrix:    "a matrix shares the stage's steps",
 		ImageGuard:      func(string, string, string) string { return "" },
+		KeyBinding:      true,
 		Plugin:          true,
 	}
 }

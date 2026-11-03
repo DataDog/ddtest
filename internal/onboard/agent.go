@@ -271,6 +271,8 @@ func StartWithOptions(output io.Writer, options StartOptions) error {
 		}
 	}
 	automatic := discoveryLanguageAutomaticSetup(detected.Name())
+	// A hand-written setup onboard --apply would refuse as incomplete.
+	var handWritten *handWrittenGap
 	if root, err := os.Getwd(); err == nil && automatic {
 		if provider, err := currentCIProvider(root); err == nil && !provider.sharedSyntax() {
 			// onboard --apply checks the edit against the site it reports to,
@@ -281,6 +283,9 @@ func StartWithOptions(output io.Writer, options StartOptions) error {
 				site = os.Getenv("DD_SITE")
 			}
 			automatic = providerAutomaticSetup(root, provider, discoveryLanguageNamed(detected.Name()), frameworkName, site)
+			if automatic && !options.Human {
+				handWritten = handWrittenSetupGap(root, frameworkName, site)
+			}
 		}
 	}
 	if !automatic && options.Site == "" {
@@ -325,8 +330,10 @@ func StartWithOptions(output io.Writer, options StartOptions) error {
 		apply = append(apply, "--accept-substitute-runtime")
 	}
 	notice := ExecutableFallbackNotice()
-	if !automatic {
-		return manualSetupHandoff(output, options, detected.Name(), frameworkName, command, apply, notice)
+	if !automatic || handWritten != nil {
+		// The job keeps its hand-written setup: the agent completes it, then
+		// resumes with command, which onboard --apply then accepts.
+		return manualSetupHandoff(output, options, detected.Name(), frameworkName, command, apply, notice, handWritten)
 	}
 	if options.Human {
 		text := humanOnboardingHandoff(frameworkName, command)
@@ -347,7 +354,11 @@ func StartWithOptions(output io.Writer, options StartOptions) error {
 // agent writes by hand. Once every discovered test step runs the Datadog
 // action, it hands off validation; until then it returns the setup
 // instructions with validation as resume_command. People get the guidance.
-func manualSetupHandoff(output io.Writer, options StartOptions, language, framework string, command, apply []string, notice string) error {
+// handWrittenGap, when set, is what onboard --apply refuses in a CI job's
+// hand-written setup, where it writes the provider's setup itself: the
+// handoff asks for the edit that completes it, keeping it, with command
+// (onboard --apply) as resume_command.
+func manualSetupHandoff(output io.Writer, options StartOptions, language, framework string, command, apply []string, notice string, handWrittenGap *handWrittenGap) error {
 	if options.Human {
 		return Run(output)
 	}
@@ -359,11 +370,17 @@ func manualSetupHandoff(output io.Writer, options StartOptions, language, framew
 	if provider, err := currentCIProvider(root); err == nil && !provider.sharedSyntax() {
 		setup = setupProviderNames(testJobSetups(root, provider, language, framework))
 	}
-	if registered := discoveryLanguageNamed(language); registered != nil && registered.ciSetupConfigured(root, framework, options.Site) {
+	// Jobs that set up the tracer by hand keep that setup.
+	handWritten := handWrittenSetupNote(root, language, framework, options.Site) != ""
+	configured := "CI already runs the " + setup + " for every discovered " + framework + " test step. "
+	if handWritten {
+		configured = "CI already sets up Test Optimization for every discovered " + framework + " test step, with the " + setup + " or a complete hand-written setup. "
+	}
+	if registered := discoveryLanguageNamed(language); handWrittenGap == nil && registered != nil && registered.ciSetupConfigured(root, framework, options.Site) {
 		return WriteAgentResult(output, AgentResult{
 			Status: "ready", Phase: "onboarding", NextAction: "run_command", NextCommand: command,
 			Capabilities: validationCapabilities,
-			Reason:       strings.TrimSpace("CI already runs the " + setup + " for every discovered " + framework + " test step. " + foregroundRunInstruction + " " + AgentScope + " " + validationWaitInstruction + " ddtest owns testdrive, report-exclusion checks and cleanup, and returns exact blockers for unsupported setup. No Datadog key is required locally. Do not launch a parallel preflight first. " + notice),
+			Reason:       strings.TrimSpace(configured + foregroundRunInstruction + " " + AgentScope + " " + validationWaitInstruction + " ddtest owns testdrive, report-exclusion checks and cleanup, and returns exact blockers for unsupported setup. No Datadog key is required locally. Do not launch a parallel preflight first. " + notice),
 		})
 	}
 	scope, err := DiscoverValidationScope(root, framework)
@@ -394,14 +411,27 @@ func manualSetupHandoff(output io.Writer, options StartOptions, language, framew
 		}))
 	}
 	var guidance strings.Builder
-	if err := run(&guidance, &agentHandoff{site: options.Site}); err != nil {
+	if err := run(&guidance, &agentHandoff{site: options.Site, handWritten: handWrittenGap != nil}); err != nil {
 		return errors.Join(err, WriteAgentResult(output, AgentResult{Status: "needs_input", Phase: "discovery", Code: "scope_unresolved", Reason: err.Error(), NextAction: "supply_input"}))
 	}
-	reason := "CI does not yet run the " + setup + " before every discovered " + framework + " test step. Apply only the CI setup in agent_instruction, then run resume_command once in the foreground with the listed capabilities and wait for its exit: it validates every discovered configuration and returns the next action. Do not run testdrive, a configuration check or the tests yourself first. Do not use nohup, shell background jobs, sleeps or process-name polling. If the host returns a task/session ID, wait with that host tool. "
+	missing := "CI does not yet run the " + setup + " before every discovered " + framework + " test step. "
+	if handWritten {
+		missing = "CI does not yet set up Test Optimization completely before every discovered " + framework + " test step. Jobs that set it up by hand keep their setup and need only the changes agent_instruction lists for them; do not add the " + setup + " to them. "
+	}
+	reason := missing + "Apply only the CI setup in agent_instruction, then run resume_command once in the foreground with the listed capabilities and wait for its exit: it validates every discovered configuration and returns the next action. Do not run testdrive, a configuration check or the tests yourself first. Do not use nohup, shell background jobs, sleeps or process-name polling. If the host returns a task/session ID, wait with that host tool. "
 	if options.SetupApplied {
 		reason = "onboard --apply wrote the " + setup + " (changes, setup_diff); do not edit it again. Apply only the rest of the CI setup in agent_instruction, then run resume_command once in the foreground with the listed capabilities and wait for its exit: it validates every discovered configuration and returns the next action. Do not run testdrive, a configuration check or the tests yourself first. Do not use nohup, shell background jobs, sleeps or process-name polling. If the host returns a task/session ID, wait with that host tool. "
 	}
-	if problems := existingSetupProblems(root, language, framework, options.Site); len(problems) > 0 {
+	problems := existingSetupProblems(root, language, framework, options.Site)
+	if handWrittenGap != nil && !slices.ContainsFunc(problems, func(problem string) bool {
+		_, text, _ := strings.Cut(problem, ": ")
+		return strings.HasPrefix(handWrittenGap.Reason, text)
+	}) {
+		// What onboard --apply refuses, word for word, when no other check
+		// names it.
+		problems = append(problems, handWrittenGap.Error())
+	}
+	if len(problems) > 0 {
 		reason += "The existing setup needs changes; fix it as the instructions show: " + strings.Join(problems, " ") + " "
 	}
 	if refusal := pluginSetupRefusal(root, framework); refusal != "" {

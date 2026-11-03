@@ -19,6 +19,8 @@ type pythonDiscovery struct{}
 
 func (pythonDiscovery) name() string { return "python" }
 
+func (pythonDiscovery) displayName() string { return "Python" }
+
 func (pythonDiscovery) actionLanguage() string { return "python" }
 
 func (pythonDiscovery) bootstrap(string) string { return pythonBootstrap }
@@ -104,6 +106,19 @@ func (pythonDiscovery) outsideFrameworkJob(string, ciWorkflow, runtimeJob, map[s
 func (pythonDiscovery) stepMayStartTests(string, ciWorkflow, runtimeJob, runtimeStep) (bool, bool) {
 	return false, false
 }
+
+// A hand-written setup's PYTEST_ADDOPTS prefix stays in the pytest command,
+// which pythonHandWrittenSetup reads with its environment.
+func (pythonDiscovery) preloadVariable(string) bool { return false }
+
+func (pythonDiscovery) handWrittenSetup(root string, provider ciProvider, workflow ciWorkflow, job runtimeJob, index int, _ map[string]any, framework, site string) *handWrittenSetup {
+	return pythonHandWrittenSetup(root, provider, workflow, job, index, site)
+}
+
+// The pytest CI check reads only the Datadog setup outside GitHub Actions
+// (see checkPythonCIRuntimes): a hand-written ddtrace setup is recognized,
+// kept and reported, never certified, until it reads that setup too.
+func (pythonDiscovery) validatesHandWrittenSetup() bool { return false }
 
 func (pythonDiscovery) runtimeVariable(name string) bool {
 	return name == "PYTHONPATH" || name == "PYTHONHOME"

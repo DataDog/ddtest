@@ -41,19 +41,50 @@ type validationSummary struct {
 	ReviewedPreparation []string `json:"reviewed_preparation,omitempty"`
 }
 
-// apiKeyHumanAction is the one step CI needs that no local run can perform,
-// in the selected CI provider's settings. What happens until it exists
-// depends on how the configuration guards the Datadog step: skipped by an
-// env.DD_API_KEY guard (the Cypress setup) or kept with continue-on-error.
-func apiKeyHumanAction(check *onboard.RuntimeCheck) string {
+// apiKeyHumanActions are the steps CI needs that no local run can perform,
+// in the selected CI provider's settings. What happens until the provider's
+// key exists depends on how the configuration guards the Datadog step:
+// skipped by an env.DD_API_KEY guard (the Cypress setup) or kept with
+// continue-on-error. Jobs that set up the tracer by hand read the key where
+// the provider stores secrets, without its setup. A configuration with both
+// kinds of jobs needs both steps when the provider's setup keeps its key
+// elsewhere, as a Jenkins plugin-instrumented stage beside a hand-written
+// container stage does; otherwise the provider's step stores that key. A
+// hand-written setup that reports through a Datadog Agent the user
+// confirmed needs no key in CI: the Agent holds it.
+func apiKeyHumanActions(check *onboard.RuntimeCheck) []string {
+	guarded, provider, handWritten, agent := false, false, false, false
 	if check != nil {
 		for _, job := range check.Jobs {
-			if job.Reason == onboard.GuardedActionBranch {
-				return onboard.CIProviderAPIKeyActionFor(check, true)
+			switch {
+			case job.Reason == onboard.GuardedActionBranch:
+				guarded = true
+			case job.Status == "excluded":
+			case onboard.HandWrittenSetupAction(job.Action) && job.AgentReporting:
+				agent = true
+			case onboard.HandWrittenSetupAction(job.Action):
+				handWritten = true
+			default:
+				provider = true
 			}
 		}
 	}
-	return onboard.CIProviderAPIKeyActionFor(check, false)
+	var actions []string
+	if guarded || provider || !handWritten && !agent {
+		// The provider's own setups decide its key actions; hand-written
+		// jobs get theirs below.
+		var setups *onboard.RuntimeCheck
+		if check != nil {
+			filtered := *check
+			filtered.Jobs = slices.DeleteFunc(slices.Clone(check.Jobs), func(job onboard.RuntimeFinding) bool { return onboard.HandWrittenSetupAction(job.Action) })
+			setups = &filtered
+		}
+		actions = append(actions, onboard.CIProviderAPIKeyActionFor(setups, guarded))
+	}
+	if handWritten && (len(actions) == 0 || !onboard.CIProviderKeyServesHandWritten()) {
+		actions = append(actions, onboard.CIProviderHandWrittenKeyAction())
+	}
+	return actions
 }
 
 // featureCoverageBlocker is the summary line for incomplete feature results.
@@ -231,7 +262,7 @@ func summarizeValidation(result validationResult) validationSummary {
 	}
 	summary.CIScope = summarizeCIScope(result.CIRuntime)
 	if summary.CIScope != nil && len(summary.CIScope.Instrumented) > 0 {
-		summary.HumanActions = append(summary.HumanActions, apiKeyHumanAction(result.CIRuntime))
+		summary.HumanActions = append(summary.HumanActions, apiKeyHumanActions(result.CIRuntime)...)
 	}
 	summary.OnboardingResponse = fmt.Sprintf("Onboarding validation: %s. Local validation: %s. CI configuration: %s (static analysis). CI execution and Datadog backend processing: not exercised.", summary.Status, summary.LocalValidation, summary.CIConfiguration)
 	if result.focusedLocalCommand() {

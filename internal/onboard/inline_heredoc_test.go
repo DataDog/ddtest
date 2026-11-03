@@ -30,7 +30,7 @@ func TestWebdriverIOLeafFollowsAnyBaseConfigImport(t *testing.T) {
 	// TypeScript ESM imports name the emitted .js file; the source is .ts.
 	require.NoError(t, os.WriteFile(filepath.Join(root, "wdio.shared.conf.ts"), []byte("export const config = {\n    runner: 'local',\n}\n"), 0600))
 	require.NoError(t, os.WriteFile(filepath.Join(root, "wdio.local.conf.ts"), []byte("import { config as sharedConfig } from './wdio.shared.conf.js'\n\nexport const config = { ...sharedConfig }\n"), 0600))
-	local, err := localWDIOLeaf(root, "wdio run wdio.local.conf.ts")
+	local, err := localWDIOLeaf(root, ".", "wdio run wdio.local.conf.ts")
 	require.NoError(t, err)
 	require.True(t, local)
 }

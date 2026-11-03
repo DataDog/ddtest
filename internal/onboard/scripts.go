@@ -49,6 +49,13 @@ func unresolvedCommand(reason string) commandResolution {
 }
 
 func resolveTestStep(root string, workflow ciWorkflow, job runtimeJob, step runtimeStep, language, framework string) commandResolution {
+	if step.scopedVariable != "" {
+		plain := step
+		plain.scopedVariable = ""
+		result := resolveTestStep(root, workflow, job, plain, language, framework)
+		markScopedLeaf(&result, step.scopedVariable, framework)
+		return result
+	}
 	uses, _, _ := strings.Cut(strings.ToLower(step.Uses), "@")
 	// These actions only upload or expose results in every language, however
 	// their condition reads.

@@ -41,6 +41,8 @@ type rubyDiscovery struct{}
 
 func (rubyDiscovery) name() string { return "ruby" }
 
+func (rubyDiscovery) displayName() string { return "Ruby" }
+
 func (rubyDiscovery) actionLanguage() string { return "ruby" }
 
 func (rubyDiscovery) bootstrap(string) string { return rubyBootstrap }
@@ -87,6 +89,22 @@ func (rubyDiscovery) ciSetupConfigured(root, framework, site string) bool {
 	return instrumented
 }
 
+// RubyCIHandWritten reports whether every instrumented CI entry of
+// framework sets up datadog-ci by hand, with at least one such entry.
+func RubyCIHandWritten(root, framework string) bool {
+	handWritten := false
+	for _, job := range RubyCIConfiguration(root, framework).Jobs {
+		if job.Status == "excluded" {
+			continue
+		}
+		if job.handWritten == nil {
+			return false
+		}
+		handWritten = true
+	}
+	return handWritten
+}
+
 // exactRubyRelease is a single RubyGems release, never a requirement or "latest".
 var exactRubyRelease = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(?:\.[0-9A-Za-z]+)*$`)
 
@@ -95,6 +113,9 @@ var exactRubyRelease = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(?:\.[0-9A-Za-
 // release, an API key, an exact tracer release and the selected site (empty:
 // not selected). Empty when it is.
 func rubyActionProblem(job RuntimeFinding, site string) string {
+	if job.handWritten != nil {
+		return job.handWritten.problem()
+	}
 	provider := job.setupProvider
 	if provider == nil {
 		provider = activeOrDefaultCIProvider()
@@ -211,6 +232,7 @@ func (rubyDiscovery) ciSetupRequest(root, framework, site string, terms ciSetupT
 		rubyGemsNote(root, framework, terms),
 		rubyRakeOptionsNote(root),
 		setupImageNote(root, "ruby", framework),
+		handWrittenSetupNote(root, "ruby", framework, site),
 		"If a job or matrix entry runs a Ruby the tracer cannot instrument (head, JRuby, TruffleRuby), keep its tests running uninstrumented in a job without " + terms.Entry + "; ddtest reports such jobs as excluded. To split a shared matrix, exclude those entries from the instrumented job " + terms.MatrixExclusion + " and run them in that separate job. Report each exclusion and its reason; do not drop entries, guard the tests or change Ruby versions to obtain a pass. At least one compatible instrumented job is required.",
 		"Exclude .testoptimization/ from Git (add /.testoptimization/ to the repository .gitignore)" + rubyGemPackaging(root),
 	}
@@ -245,6 +267,7 @@ func rubyPluginSetupRequest(root, framework, site string, terms ciSetupTerms) ci
 		"The " + terms.Installer + " refuses Ruby older than 2.7 and RubyGems older than 3.3.22: on agents with Ruby 2.7 or 3.0, run gem update --system 3.4.22 on the agent (or in an earlier step) before the tests.",
 		rubyRakeOptionsNote(root),
 		setupUnsupportedNote(root, "ruby", framework),
+		handWrittenSetupNote(root, "ruby", framework, site),
 		"If a stage runs a Ruby the tracer cannot instrument (head, JRuby, TruffleRuby), tell the user: the " + terms.Installer + " instruments every stage in its option's scope, so that stage stays out of it only when the option is in the stages' own options instead of the pipeline's. Report it; do not drop stages or change Ruby versions to obtain a pass.",
 		"Exclude .testoptimization/ from Git (add /.testoptimization/ to the repository .gitignore)" + rubyGemPackaging(root),
 	}
@@ -465,6 +488,12 @@ func rubyGemspecAllowlist(gemspec string) bool {
 func (rubyDiscovery) stepMayStartTests(string, ciWorkflow, runtimeJob, runtimeStep) (bool, bool) {
 	return false, false
 }
+
+func (rubyDiscovery) preloadVariable(name string) bool { return name == "RUBYOPT" }
+
+// The Ruby CI check reads hand-written datadog-ci setups (see
+// RubyCIConfiguration).
+func (rubyDiscovery) validatesHandWrittenSetup() bool { return true }
 
 func (rubyDiscovery) runtimeVariable(name string) bool {
 	return slices.Contains([]string{"RUBYOPT", "RUBYLIB", "GEM_HOME", "GEM_PATH"}, name) || strings.HasPrefix(name, "BUNDLE_")
