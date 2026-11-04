@@ -1423,7 +1423,8 @@ def run(args):
         if "commit" in manifest and manifest["isolation"].get("processes_stopped", True):
             for name, argv in (
                 ("changes.patch", ["git", "diff", "--no-ext-diff", "--no-textconv", manifest["commit"], "--"]),
-                ("status.txt", ["git", "status", "--short", "--untracked-files=all"]),
+                # Default quoting keeps status.txt ASCII; run_catalog.py decodes it.
+                ("status.txt", ["git", "-c", "core.quotePath=true", "status", "--short", "--untracked-files=all"]),
             ):
                 try:
                     with (output / name).open("w") as destination:

@@ -8,12 +8,18 @@ import os
 from pathlib import Path
 import re
 import shlex
+import signal
+import subprocess
 import tempfile
+import threading
+import time
 import unittest
 from unittest.mock import patch
 
 import run_catalog
 import run_eval
+
+FAKE_HARNESS = Path(__file__).resolve().parent / "fixtures" / "fake_harness.py"
 
 try:
     import yaml
@@ -143,7 +149,7 @@ class MainTests(unittest.TestCase):
         return code, output.getvalue()
 
     def test_dry_run_prints_arguments_without_running(self):
-        with patch.object(run_catalog.subprocess, "call", side_effect=AssertionError("ran")):
+        with patch.object(run_catalog.subprocess, "Popen", side_effect=AssertionError("ran")):
             code, output = self.main("--dry-run", "E02", "--speed-trims", "--image-map", "agents=img")
         self.assertEqual(code, 0)
         lines = [line for line in output.splitlines() if line and not line.startswith("#")]
@@ -159,7 +165,7 @@ class MainTests(unittest.TestCase):
         self.assertIn("<image:java17>", output)
 
     def test_trials_need_images_ddtest_and_output(self):
-        with patch.object(run_catalog.subprocess, "call", side_effect=AssertionError("ran")):
+        with patch.object(run_catalog.subprocess, "Popen", side_effect=AssertionError("ran")):
             for argv in (["E01"], ["E01", "--image-map", "agents=img"], ["--all", "--ddtest", "d", "--output", "o"]):
                 with self.assertRaises(SystemExit):
                     self.main(*argv)
@@ -175,34 +181,120 @@ class MainTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             run_catalog.resolve_images(["agents"])
 
+    def trials(self, root, mode, *ids, interrupts=0, **environment):
+        """Run cases against the fake harness, sending SIGINT once it is ready."""
+        checkout = root / "trial" / "repo"
+        (checkout / ".testoptimization").mkdir(parents=True)
+        (checkout / ".testoptimization" / "testdrive.json").write_text(json.dumps({"summary": {"status": "COMPLETE LOCALLY"}}))
+        log = root / "harness.log"
+        log.touch()
+
+        def interrupt():
+            deadline = time.monotonic() + 30
+            while "ready" not in log.read_text() and time.monotonic() < deadline:
+                time.sleep(0.02)
+            for _ in range(interrupts):
+                os.kill(os.getpid(), signal.SIGINT)
+                time.sleep(0.3)
+
+        sender = threading.Thread(target=interrupt)
+        variables = {"FAKE_HARNESS_LOG": str(log), "FAKE_HARNESS_MODE": mode, "FAKE_HARNESS_CHECKOUT": str(checkout),
+                     **environment}
+        output = io.StringIO()
+        with patch.object(run_catalog, "RUN_EVAL", FAKE_HARNESS), patch.dict(os.environ, variables), \
+                contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
+            if interrupts:
+                sender.start()
+            try:
+                code = run_catalog.main([*ids, "--image-map", "agents=img", "--ddtest", str(root / "ddtest"),
+                                         "--output", str(root / "out"), "--existing-login"])
+            finally:
+                if interrupts:
+                    sender.join()
+        return code, output.getvalue(), log.read_text().splitlines()
+
     def test_cases_run_one_at_a_time_then_retain_and_clean_up(self):
-        calls = []
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            checkout = root / "trial" / "repo"
-            (checkout / ".testoptimization").mkdir(parents=True)
-            (checkout / ".testoptimization" / "testdrive.json").write_text(json.dumps({"summary": {"status": "COMPLETE LOCALLY"}}))
-
-            def call(argv, **_):
-                calls.append(argv)
-                if "--cleanup" not in argv:
-                    evidence = Path(argv[argv.index("--output") + 1])
-                    evidence.mkdir()
-                    (evidence / "run.json").write_text(json.dumps({"status": "completed", "checkout": str(checkout)}))
-                return 0
-
-            with patch.object(run_catalog.subprocess, "call", side_effect=call):
-                code, output = self.main("E01", "E02", "--image-map", "agents=img", "--ddtest", str(root / "ddtest"),
-                                         "--output", str(root / "out"), "--existing-login")
+            code, output, events = self.trials(root, "complete", "E01", "E02")
             self.assertEqual(code, 0)
-            self.assertEqual([("--cleanup" in argv) for argv in calls], [False, True, False, True])
-            self.assertTrue(all("--existing-login" in argv for argv in calls[::2]))
+            self.assertEqual([event.split()[0] for event in events],
+                             ["start", "finished", "cleanup", "start", "finished", "cleanup"])
+            self.assertIn("start E01-nion-codex session=True", events)
+            self.assertEqual(events[2], "cleanup " + str(root / "out" / "E01-nion-codex"))
             self.assertTrue((root / "out" / "E01-nion-codex" / "retained" / ".testoptimization" / "testdrive.json").is_file())
-            self.assertTrue((root / "out" / "E01-nion-codex.log").is_file())
+            self.assertIn("--existing-login", (root / "out" / "E01-nion-codex.log").read_text().splitlines()[0])
             self.assertIn("E01-nion: exit 0, run completed, report COMPLETE LOCALLY (expected COMPLETE LOCALLY)", output)
+
+    def test_interrupt_waits_for_teardown_then_retains_cleans_up_and_stops(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            code, output, events = self.trials(root, "teardown", "E01", "E02", interrupts=1, FAKE_HARNESS_TEARDOWN="1.5")
+            self.assertEqual(code, 128 + signal.SIGINT)
+            evidence = root / "out" / "E01-nion-codex"
+            # Forwarded once, waited for past teardown, then cleaned up; E02 never starts.
+            self.assertEqual(events, [f"start {evidence.name} session=True", "ready", f"signal {int(signal.SIGINT)}",
+                                      f"finished {evidence.name}", f"cleanup {evidence}"])
+            self.assertEqual(json.loads((evidence / "run.json").read_text())["signals"], [signal.SIGINT])
+            self.assertTrue((evidence / "retained" / ".testoptimization" / "testdrive.json").is_file())
+            self.assertFalse((root / "out" / "E02-pipeline-schema-codex").exists())
+            self.assertIn("run interrupted", output)
+            self.assertIn("not run: E02-pipeline-schema", output)
+
+    def test_second_interrupt_kills_the_trial_and_still_cleans_up(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            code, output, events = self.trials(root, "stuck", "E01", "E02", interrupts=2)
+            self.assertEqual(code, 128 + signal.SIGINT)
+            evidence = root / "out" / "E01-nion-codex"
+            self.assertEqual(events.count(f"signal {int(signal.SIGINT)}"), 1)
+            self.assertNotIn(f"finished {evidence.name}", events)
+            self.assertEqual(events[-1], f"cleanup {evidence}")
+            self.assertIn("nothing retained", (root / "out" / "E01-nion-codex.log").read_text())
+            self.assertIn("Killing the trial", output)
+            self.assertFalse((root / "out" / "E02-pipeline-schema-codex").exists())
 
 
 class RetainTests(unittest.TestCase):
+    def test_unquotes_git_paths(self):
+        for printed, path in (("plain.txt", "plain.txt"), ('"a b.txt"', "a b.txt"), ('"say \\"hi\\".txt"', 'say "hi".txt'),
+                              ('"line\\nbreak\\ttab\\\\.txt"', "line\nbreak\ttab\\.txt"),
+                              ('"caf\\303\\251.txt"', "caf\u00e9.txt"), ('"\\346\\227\\245.txt"', "\u65e5.txt")):
+            with self.subTest(printed):
+                self.assertEqual(run_catalog.unquote_path(printed), path)
+        with self.assertRaises(ValueError):
+            run_catalog.unquote_path('"bad\\q"')
+
+    def test_retains_untracked_files_with_quoted_names(self):
+        names = ["a b.txt", 'say "hi".txt', "line\nbreak.txt", "caf\u00e9/r\u00e9sum\u00e9.yml", "tab\there.txt"]
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            checkout, output = root / "repo", root / "out"
+            checkout.mkdir()
+            output.mkdir()
+            for name in names:
+                (checkout / name).parent.mkdir(parents=True, exist_ok=True)
+                (checkout / name).write_text(name)
+            (output / "run.json").write_text(json.dumps({"checkout": str(checkout)}))
+            git = subprocess.run(["git", "init", "-q", str(checkout)], capture_output=True)
+            if git.returncode:
+                self.skipTest("git is unavailable")
+            status = subprocess.run(["git", "-c", "core.quotePath=true", "status", "--short", "--untracked-files=all"],
+                                    cwd=checkout, capture_output=True, text=True, check=True).stdout
+            self.assertTrue(status.isascii())
+            self.assertIn('?? "a b.txt"', status)
+            (output / "status.txt").write_text(status + '?? "../outside.txt"\n?? "/etc/hosts"\n?? "bad\\q"\n')
+            run_catalog.retain(output)
+            retained = output / "retained"
+            for name in names:
+                with self.subTest(name):
+                    self.assertEqual((retained / "untracked" / name).read_text(), name)
+            self.assertEqual(sorted(path.name for path in (retained / "untracked").rglob("*") if path.is_file()),
+                             sorted(Path(name).name for name in names))
+            listed = (retained / "untracked.txt").read_text().splitlines()
+            self.assertEqual(len(listed), len(names) + 3)
+            self.assertIn('"a b.txt"', listed)
+
     def test_retains_reports_and_small_untracked_files_without_following_links(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

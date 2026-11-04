@@ -245,8 +245,14 @@ counts, prepared-image notes and risks. Its header documents each field.
 `scripts/run_catalog.py` turns cases into `run_eval.py` arguments, runs them one
 after another, copies each trial's `.testoptimization` reports and small
 untracked files to `<evidence>/retained/` (untracked paths come from
-`status.txt`; Git never runs on the host in the trial checkout), then runs
+`status.txt`, with Git's path quoting decoded; Git never runs on the host in the
+trial checkout, and symlinks and paths outside it are skipped), then runs
 `run_eval.py --cleanup`. Each trial's output goes to `<id>-<agent>.log`.
+Each trial runs in its own session: the first Ctrl-C (or SIGTERM/SIGHUP) is
+forwarded once, and the runner waits for the trial to finalize `run.json` and
+remove its container, retains, cleans up and stops the batch with a non-zero
+exit. A second Ctrl-C kills the trial; cleanup still runs, and the runner
+prints the `--cleanup` command to retry it.
 
 Build the images that the selected cases name (`images` in the catalog lists
 each key's target and build arguments), then map them:

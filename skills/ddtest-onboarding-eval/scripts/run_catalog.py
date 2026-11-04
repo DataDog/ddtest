@@ -15,6 +15,7 @@ from pathlib import Path
 import re
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 
@@ -185,6 +186,44 @@ def copy_regular(source, target, root, limit):
     return True
 
 
+# Git's C-style path quoting (quote_c_style): these escapes plus \ooo octal bytes.
+GIT_ESCAPES = {"a": 7, "b": 8, "t": 9, "n": 10, "v": 11, "f": 12, "r": 13, '"': 34, "\\": 92}
+
+
+def unquote_path(text):
+    """Decode a path as git status prints it: verbatim, or quoted with escapes."""
+    if not (len(text) >= 2 and text[0] == text[-1] == '"'):
+        return text
+    body, decoded, index = text[1:-1], bytearray(), 0
+    while index < len(body):
+        character = body[index]
+        if character != "\\":
+            decoded += character.encode()
+            index += 1
+        elif body[index + 1:index + 2] in GIT_ESCAPES:
+            decoded.append(GIT_ESCAPES[body[index + 1]])
+            index += 2
+        elif re.fullmatch(r"[0-3][0-7]{2}", body[index + 1:index + 4]):
+            decoded.append(int(body[index + 1:index + 4], 8))
+            index += 4
+        else:
+            raise ValueError(f"unknown escape in {text}")
+    return os.fsdecode(bytes(decoded))
+
+
+def untracked_paths(status):
+    """(as printed, decoded) for each untracked entry of git status --short."""
+    entries = []
+    for line in status.splitlines():
+        if line.startswith("?? "):
+            try:
+                path = unquote_path(line[3:])
+            except ValueError:
+                path = None
+            entries.append((line[3:], path))
+    return entries
+
+
 def retain(output):
     """Copy the report pair and small untracked files out of the trial checkout.
 
@@ -202,14 +241,15 @@ def retain(output):
     if reports.is_dir() and not reports.is_symlink():
         for path in sorted(reports.rglob("*")):
             kept += copy_regular(path, destination / ".testoptimization" / path.relative_to(reports), checkout, REPORT_LIMIT)
-    untracked = []
     status = output / "status.txt"
-    if status.is_file():
-        untracked = [line[3:] for line in status.read_text().splitlines() if line.startswith("?? ") and not line[3:].startswith('"')]
-    (destination / "untracked.txt").write_text("".join(path + "\n" for path in untracked))
-    for relative in untracked:
-        if not relative.startswith((".testoptimization/", "node_modules/", "vendor/", ".m2/", ".gradle/")):
-            copy_regular(checkout / relative, destination / "untracked" / relative, checkout, UNTRACKED_LIMIT)
+    untracked = untracked_paths(status.read_text(errors="replace")) if status.is_file() else []
+    # Paths as git printed them: quoted names stay on one line.
+    (destination / "untracked.txt").write_text("".join(printed + "\n" for printed, _ in untracked))
+    for _, relative in untracked:
+        if (not relative or "\0" in relative or os.path.isabs(relative) or ".." in Path(relative).parts
+                or relative.startswith((".testoptimization/", "node_modules/", "vendor/", ".m2/", ".gradle/"))):
+            continue
+        copy_regular(checkout / relative, destination / "untracked" / relative, checkout, UNTRACKED_LIMIT)
     return f"retained {kept} report file(s) in {destination}"
 
 
@@ -226,17 +266,79 @@ def summary(output):
     return f"run {run.get('status')}, report {status}"
 
 
-def run_case(case, argv, output, log):
+class Supervisor:
+    """Owns the batch's SIGINT/SIGTERM/SIGHUP while trials run.
+
+    The harness runs in its own session, so a terminal Ctrl-C reaches only this
+    runner, which forwards the first signal once; the harness then finalizes
+    run.json and removes its container. A second signal kills the harness;
+    retention and --cleanup still run, and the cleanup command is printed.
+    """
+
+    def __init__(self):
+        self.signal = None
+        self.process = None
+        self.forwarded = 0
+        self.cleanup_command = None
+        self.previous = {}
+
+    def __enter__(self):
+        for number in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+            self.previous[number] = signal.signal(number, self.handle)
+        return self
+
+    def __exit__(self, *_):
+        for number, handler in self.previous.items():
+            signal.signal(number, handler)
+
+    def handle(self, number, _frame):
+        self.signal = self.signal or number
+        process = self.process
+        if process is not None and process.returncode is None:
+            try:
+                if self.forwarded == 0:
+                    os.kill(process.pid, number)
+                    print("Interrupted: waiting for the trial to finalize its evidence and remove its container "
+                          "(interrupt again to kill it now)", file=sys.stderr, flush=True)
+                else:
+                    os.killpg(process.pid, signal.SIGKILL)
+                    print("Killing the trial; its cleanup still runs", file=sys.stderr, flush=True)
+            except ProcessLookupError:
+                pass
+            self.forwarded += 1
+        elif self.cleanup_command:
+            print("Interrupted: finishing retention and cleanup; if it does not finish, run: " + self.cleanup_command,
+                  file=sys.stderr, flush=True)
+
+    def run(self, argv, stream, forward=True):
+        """Run a child in its own session and wait for it, however long teardown takes."""
+        process = subprocess.Popen(argv, stdout=stream, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                                   start_new_session=True)
+        self.process = process if forward else None
+        if forward and self.signal and not self.forwarded:
+            self.handle(self.signal, None)  # The signal arrived while the child was starting.
+        try:
+            return process.wait()
+        finally:
+            self.process = None
+
+
+def run_case(case, argv, output, log, supervisor):
+    cleanup_argv = [sys.executable, str(RUN_EVAL), "--cleanup", str(output)]
+    supervisor.cleanup_command = shlex.join(cleanup_argv)
     with open(log, "w") as stream:
         stream.write("argv: " + shlex.join(argv) + "\n")
         stream.flush()
-        code = subprocess.call(argv, stdout=stream, stderr=subprocess.STDOUT)
+        code = supervisor.run(argv, stream)
         result = retain(output)
         stream.write(f"\nexit={code}\n{result}\n")
         stream.flush()
-        cleanup = subprocess.call([sys.executable, str(RUN_EVAL), "--cleanup", str(output)], stdout=stream, stderr=subprocess.STDOUT)
+        cleanup = supervisor.run(cleanup_argv, stream, forward=False)
+    supervisor.cleanup_command = None
     expected = (case.get("expected") or {}).get("verdict", "none")
     print(f"{case['id']}: exit {code}, {summary(output)} (expected {expected}); cleanup exit {cleanup}; log {log}", flush=True)
+    if cleanup:
+        print(f"{case['id']}: cleanup failed; retry with: {shlex.join(cleanup_argv)}", flush=True)
     return code or cleanup
 
 
@@ -299,12 +401,19 @@ def main(argv=None):
         return 0
     output.mkdir(parents=True, exist_ok=True)
     failed = 0
-    for case, evidence, arguments in plans:
-        if evidence.exists():
-            print(f"{case['id']}: skipped, {evidence} exists", flush=True)
-            failed += 1
-            continue
-        failed += bool(run_case(case, arguments, evidence, output / f"{evidence.name}.log"))
+    with Supervisor() as supervisor:
+        for case, evidence, arguments in plans:
+            if supervisor.signal:
+                break
+            if evidence.exists():
+                print(f"{case['id']}: skipped, {evidence} exists", flush=True)
+                failed += 1
+                continue
+            failed += bool(run_case(case, arguments, evidence, output / f"{evidence.name}.log", supervisor))
+    if supervisor.signal:
+        remaining = [case["id"] for case, evidence, _ in plans if not evidence.exists()]
+        print(f"Interrupted by signal {supervisor.signal}; not run: {', '.join(remaining) or 'none'}", flush=True)
+        return 128 + supervisor.signal
     return 1 if failed else 0
 
 
