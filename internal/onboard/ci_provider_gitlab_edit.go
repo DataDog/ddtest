@@ -24,6 +24,9 @@ func (gitLabCI) planSetupEdits(root string, workflows []ciWorkflow, targets []ci
 		entry gitLabStep
 		after []string
 		jobs  []string
+		// fallback inserts the setup without Bash or curl, for a job whose
+		// image cannot run the setup script (see imageFallback).
+		fallback bool
 	}
 	planned := map[*yaml.Node]*insertion{}
 	// Entries some job runs through a YAML alias (- *name).
@@ -49,7 +52,13 @@ func (gitLabCI) planSetupEdits(root string, workflows []ciWorkflow, targets []ci
 		if aliased[entry.node] {
 			return nil, nil, &EditThenApplyGap{SetupGap{entry.file + ":" + strconv.Itoa(entry.node.Line), "This script entry is shared through a YAML anchor and alias (&name/*name), so one insertion cannot reach every job that runs it. Write the test command in each job's script, then rerun onboard --apply."}}
 		}
-		if reason := gitLabImageProblem(job.Image, gitLabCurlBefore(job, target.Step)); reason != "" {
+		mechanism, fallback := fallbackJob(job)
+		if fallback {
+			if err := mechanism.unavailableGap(target.Workflow+" / "+target.Job, request.Language); err != nil {
+				return nil, nil, err
+			}
+		}
+		if reason := gitLabImageProblem(job.Image, gitLabCurlBefore(job, target.Step)); reason != "" && !fallback {
 			return nil, nil, &EditThenApplyGap{SetupGap{target.Workflow + " / " + target.Job, reason}}
 		}
 		after := request.After
@@ -57,13 +66,13 @@ func (gitLabCI) planSetupEdits(root string, workflows []ciWorkflow, targets []ci
 			after = target.After
 		}
 		if existing := planned[entry.node]; existing != nil {
-			if !slices.Equal(existing.after, after) {
+			if !slices.Equal(existing.after, after) || existing.fallback != fallback {
 				return nil, nil, &SetupGap{entry.file + ":" + strconv.Itoa(entry.node.Line), "Jobs " + strings.Join(append(existing.jobs, target.Job), ", ") + " share this script entry but need different setup; give each its own script before applying."}
 			}
 			existing.jobs = append(existing.jobs, target.Job)
 			continue
 		}
-		planned[entry.node] = &insertion{entry: entry, after: after, jobs: []string{target.Job}}
+		planned[entry.node] = &insertion{entry: entry, after: after, jobs: []string{target.Job}, fallback: fallback}
 	}
 	// Every job that can run and uses an edited entry must be a target.
 	for _, workflow := range workflows {
@@ -110,6 +119,10 @@ func (gitLabCI) planSetupEdits(root string, workflows []ciWorkflow, targets []ci
 			prefix := line[:column]
 			request := request
 			request.After = item.after
+			setupText := gitLabSetupText
+			if item.fallback {
+				setupText = gitLabFallbackText
+			}
 			if !item.entry.listed {
 				// script: <command> becomes a list holding the setup and the command.
 				key := strings.TrimRight(prefix, " ")
@@ -118,7 +131,7 @@ func (gitLabCI) planSetupEdits(root string, workflows []ciWorkflow, targets []ci
 					return nil, nil, &EditThenApplyGap{SetupGap{location, "The script is a single string ddtest cannot rewrite safely; make it a list of commands, then rerun onboard --apply."}}
 				}
 				pad := strings.Repeat(" ", indent+2)
-				replacement := key + "\n" + strings.TrimSuffix(gitLabSetupText(request, pad), "\n") + "\n" + pad + "- " + line[column:]
+				replacement := key + "\n" + strings.TrimSuffix(setupText(request, pad), "\n") + "\n" + pad + "- " + line[column:]
 				lines = slices.Replace(lines, node.Line-1, node.Line, replacement)
 				continue
 			}
@@ -127,7 +140,7 @@ func (gitLabCI) planSetupEdits(root string, workflows []ciWorkflow, targets []ci
 				return nil, nil, &EditThenApplyGap{SetupGap{location, "The script list is not a block list ddtest can extend; write it with one \"- command\" per line, then rerun onboard --apply."}}
 			}
 			pad := dash[:len(dash)-1]
-			lines = slices.Insert(lines, node.Line-1, strings.TrimSuffix(gitLabSetupText(request, pad), "\n"))
+			lines = slices.Insert(lines, node.Line-1, strings.TrimSuffix(setupText(request, pad), "\n"))
 		}
 		edit.after = []byte(strings.ReplaceAll(strings.Join(lines, "\n"), "\n", newline))
 		var document yaml.Node

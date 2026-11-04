@@ -299,7 +299,7 @@ var nonTestTools = []string{
 	"echo", "printf", "cd", "pushd", "popd", "export", "set", "unset", "shopt", "exit", "return", "true", "false", ":", "[", "[[", "test", "fi", "then", "else", "elif", "done", "esac", "for", "case", "select", "function", "}", ")", "read", "sleep", "wait", "trap", "local", "declare",
 	"mkdir", "cp", "mv", "rm", "rmdir", "cat", "ls", "touch", "chmod", "chown", "ln", "tee", "sed", "awk", "grep", "find", "jq", "yq", "tar", "zip", "unzip", "gzip", "curl", "wget", "git", "gh", "head", "tail", "sort", "uniq", "wc", "cut", "tr", "base64", "sha256sum", "shasum", "md5sum", "date", "uname", "whoami", "hostname", "nproc", "df", "du", "basename", "dirname", "realpath", "which", "type",
 	"apt", "apt-get", "dpkg", "brew", "choco", "winget", "yum", "dnf", "apk", "pip", "pip3", "pipx", "corepack", "nvm", "volta", "fnm", "asdf", "rustup", "cargo", "go",
-	"lcov", "genhtml", "codecov", "coveralls", "cspell", "markdownlint", "markdownlint-cli2", "prettier", "eslint", "tsc", "stylelint", "commitlint", "biome", "oxlint",
+	"lcov", "genhtml", "codecov", "coveralls", "allure", "print-env", "cspell", "markdownlint", "markdownlint-cli2", "prettier", "eslint", "tsc", "stylelint", "commitlint", "biome", "oxlint",
 	"tsd", "vue-tsc", "attw", "publint", "depcheck",
 	"yard", "rdoc", "jsdoc", "mkdocs",
 	"tsup", "unbuild", "esbuild", "rollup", "webpack", "vite", "babel", "swc", "parcel", "typedoc", "rimraf",

@@ -6,7 +6,10 @@
 package onboard
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -189,18 +192,26 @@ func TestJavaJenkinsContainerStageApply(t *testing.T) {
 }
 
 // In an image without Bash, which cannot parse Datadog's installer, a Java
-// container stage runs ddtest's sh setup: onboard --apply writes it, ddtest
-// recognizes and certifies it, and says a Bash-capable image would be simpler.
+// container stage runs the setup without Bash or curl: onboard --apply writes
+// it with the release ddtest recommends and keeps its folders untracked,
+// ddtest recognizes and certifies it, and the final report says a
+// Bash-capable image would be simpler.
 func TestJavaJenkinsShellSetupWithoutBash(t *testing.T) {
 	root := javaJenkinsRepository(t, "pipeline {\n  agent none\n  stages {\n    stage('Test') {\n      agent { docker { image 'maven:3-alpine' } }\n      steps {\n        sh 'mvn -B verify'\n      }\n    }\n  }\n}\n")
-	require.Contains(t, setupImageNote(root, "java", "junit5", "datadoghq.com"), "In the sh script that runs their tests, put this setup, which a POSIX shell runs")
+	require.Empty(t, setupImageNote(root, "java", "junit5"), "no image advice")
+	instructions := providerSetupInstructions(root, jenkins{}, "java", "junit5", "", true)
+	require.Contains(t, instructions, "Set up Datadog Test Optimization without Bash or curl")
+	require.Contains(t, instructions, "run in maven:3-alpine, which has no Bash")
+	require.Contains(t, instructions, "which is simpler and more reliable")
 	plan, err := PlanProviderSetup(root, "junit5", "")
 	require.NoError(t, err)
 	_, err = plan.Apply(true)
-	require.NoError(t, err, "the image's missing Bash no longer blocks the setup")
+	require.NoError(t, err, "the image's missing Bash does not block the setup")
 	data, err := os.ReadFile(filepath.Join(root, "Jenkinsfile"))
 	require.NoError(t, err)
-	require.Contains(t, string(data), "dd-java-agent/"+javaRecommendedTracer+"/dd-java-agent-"+javaRecommendedTracer+".jar")
+	require.Contains(t, string(data), `DD_TRACER_VERSION_JAVA="`+javaRecommendedTracer+`"`)
+	require.Contains(t, string(data), javaFallbackURL)
+	require.Contains(t, string(data), fallbackComment[0])
 	require.NotContains(t, string(data), "install_test_visibility")
 	ignore, err := os.ReadFile(filepath.Join(root, ".gitignore"))
 	require.NoError(t, err)
@@ -211,8 +222,11 @@ func TestJavaJenkinsShellSetupWithoutBash(t *testing.T) {
 	require.Len(t, ci.Jobs, 1, ci.Reason)
 	job := ci.Jobs[0]
 	require.Empty(t, job.Code, job.Reason)
+	require.Equal(t, fallbackSetupName, job.Action)
 	require.Equal(t, javaRecommendedTracer, job.TracerRequested)
-	require.Contains(t, job.SetupCaveats, javaShellSetupCaveat)
+	caveats := strings.Join(CISetupCaveats(&ci), "\n")
+	require.Contains(t, caveats, "Jenkinsfile / Test")
+	require.Contains(t, caveats, "With a Bash-capable image, the installer would set Test Optimization up instead, which is simpler and more reliable")
 	scope, err := DiscoverValidationScope(root, "junit5")
 	require.NoError(t, err)
 	require.Empty(t, scope.Unresolved)
@@ -220,32 +234,143 @@ func TestJavaJenkinsShellSetupWithoutBash(t *testing.T) {
 	require.Empty(t, scope.Commands[0].Environment["MAVEN_OPTS"], "the CI agent is local validation's")
 }
 
+// The Java form of the setup without Bash or curl installs an exact release
+// and checks its SHA256; ddtest recognizes it as written, with its release
+// and site, and never an edited copy.
 func TestJavaShellSetupIsRecognizedAsWritten(t *testing.T) {
-	java := javaDiscovery{}
-	for _, tc := range []struct{ site, release string }{{"datadoghq.com", "1.67.1"}, {"datadoghq.eu", "1.68.0"}} {
-		file, parsed := parseCIShell(java.shellSetup(tc.site, tc.release, jenkinsSnippetForm))
+	for _, tc := range []struct{ site, release string }{{"datadoghq.com", javaRecommendedTracer}, {"datadoghq.eu", "1.68.0"}} {
+		text := fallbackSnippet{form: jenkinsSnippetForm, language: "java", version: `"` + tc.release + `"`, site: `"` + tc.site + `"`}.shell()
+		file, parsed := parseCIShell(text)
 		require.True(t, parsed)
-		setup, consumed, ok := java.shellSetupAt(file.Stmts, 0, jenkinsSnippetForm)
+		setup, consumed, ok := fallbackSetupAt(text, file.Stmts, 0, nil, jenkinsSnippetForm, jenkinsPluginResets())
 		require.True(t, ok)
 		require.Equal(t, 1, consumed)
 		require.Empty(t, setup.Problem)
-		require.True(t, setup.withoutBash && setup.Supported)
+		require.True(t, setup.fallback && setup.Supported)
 		require.Equal(t, map[string]string{"languages": "java", "api_key": "$DD_API_KEY", "site": tc.site, "java-tracer-version": tc.release}, setup.Inputs)
+		require.Empty(t, fallbackSetupProblem(setup, "java-tracer-version", exactJavaRelease.MatchString, javaRecommendedTracer, tc.site))
 	}
-	// It runs under set -u, where either option list may be unset, and the
-	// agent's path has no whitespace, which the option lists split on.
-	written := java.shellSetup("datadoghq.com", "1.67.1", jenkinsSnippetForm)
+	// It checks the agent's SHA256 whichever way it downloads it, runs under
+	// set -u, where either option list may be unset, and the agent's path has
+	// no whitespace, which the option lists split on.
+	written := fallbackSnippet{form: jenkinsSnippetForm, language: "java", version: `"` + javaRecommendedTracer + `"`, site: `"datadoghq.com"`}.shell()
+	require.Contains(t, written, `sha256sum -c -`)
+	require.Contains(t, written, `"$DD_TRACER_FOLDER/dd-java-agent.jar.sha256" `+javaFallbackURL+`.sha256`)
+	require.Contains(t, written, `does not match its SHA256`)
 	require.Contains(t, written, `${MAVEN_OPTS:-}`)
 	require.Contains(t, written, `${GRADLE_OPTS:-}`)
 	require.Contains(t, written, `case "$DD_TRACER_BASE" in *[[:space:]]*) DD_TRACER_BASE="${TMPDIR:-/tmp}" ;; esac`)
 	require.Contains(t, written, `mktemp -d "$DD_TRACER_BASE/.datadog-ci-container.XXXXXX"`)
 	require.NotContains(t, written, `"$PWD/`, "the folder's base is chosen first")
-	edited := strings.Replace(java.shellSetup("datadoghq.com", "1.67.1", jenkinsSnippetForm), "GRADLE_OPTS=", "JAVA_OPTS=", 1)
+	edited := strings.Replace(written, "GRADLE_OPTS=", "JAVA_OPTS=", 1)
 	file, parsed := parseCIShell(edited)
 	require.True(t, parsed)
-	setup, _, ok := java.shellSetupAt(file.Stmts, 0, jenkinsSnippetForm)
+	setup, _, ok := fallbackSetupAt(edited, file.Stmts, 0, nil, jenkinsSnippetForm, jenkinsPluginResets())
 	require.True(t, ok)
 	require.Contains(t, setup.Problem, "a form ddtest does not recognize", "an edited setup is never certified")
+}
+
+// Where a datadog(…) call ddtest cannot read may reach a container stage
+// without Bash, the Java setup without Bash or curl first removes the
+// plugin's -javaagent from MAVEN_OPTS and GRADLE_OPTS: the instructions and
+// onboard --apply write that reset first, and ddtest accepts its own reset.
+func TestJavaJenkinsShellSetupResetsThePlugin(t *testing.T) {
+	scripted := func(script string) string {
+		return "def options = [testOptimization: [enabled: true]]\ndatadog(options) {\n  node('docker') {\n    stage('Test') {\n      docker.image('maven:3-alpine').inside {\n        withCredentials([string(credentialsId: 'datadog-api-key', variable: 'DD_API_KEY')]) {\n          sh '''\n" + script + "\n          '''\n        }\n      }\n    }\n  }\n}\n"
+	}
+	reset := javaDiscovery{}.ciPluginReset()
+	require.True(t, strings.HasPrefix(reset, "{ ") && strings.HasSuffix(reset, "; }"), "one compound statement")
+	request := ciSetupRequest{Language: "java", Site: "datadoghq.com", TracerVersion: javaRecommendedTracer}
+	fallback := newImageFallback(jenkinsContainer{reset: true}, "maven:3-alpine", "no Bash")
+	written := fallback.snippet(request).shell()
+	require.Contains(t, written, fallbackComment[1]+"\n"+reset+"\nif [ \"${DD_API_KEY:+set}\" = set ]; then")
+	require.Contains(t, fallback.setupInstructions(request), reset)
+	require.NotContains(t, newImageFallback(jenkinsContainer{}, "maven:3-alpine", "no Bash").snippet(request).shell(), reset)
+
+	for name, tc := range map[string]struct {
+		script  string
+		problem string
+	}{
+		"with the reset":    {written, ""},
+		"without the reset": {fallbackSnippet{form: jenkinsSnippetForm, language: "java", version: `"` + javaRecommendedTracer + `"`, site: `"datadoghq.com"`}.shell(), reset},
+	} {
+		t.Run(name, func(t *testing.T) {
+			jobs := jenkinsJobs(t, scripted(tc.script+"\nmvn -B verify"))
+			inside := jobs["Test (docker.image('maven:3-alpine').inside)"]
+			require.NotNil(t, inside.Steps[0].Setup)
+			setup := *inside.Steps[0].Setup
+			require.True(t, setup.fallback)
+			if tc.problem == "" {
+				require.Empty(t, setup.Problem)
+				require.False(t, jenkinsResetMissing(setup))
+				require.Equal(t, []string{"SETUP", "mvn -B verify"}, jenkinsRuns(inside))
+				return
+			}
+			require.True(t, jenkinsResetMissing(setup))
+			require.Contains(t, setup.Problem, tc.problem)
+		})
+	}
+
+	// The reset keeps the job's own options after the plugin's agent.
+	for _, key := range []string{"MAVEN_OPTS", "GRADLE_OPTS"} {
+		shell := exec.Command("sh", "-u", "-c", reset+`; printf '%s' "$`+key+`"`)
+		shell.Env = []string{key + "=-javaagent:/w/.datadog/dd-java-agent.jar -Xmx1g"}
+		output, err := shell.CombinedOutput()
+		require.NoError(t, err, string(output))
+		require.Equal(t, "-Xmx1g", string(output), key)
+	}
+}
+
+// The Java setup without Bash or curl downloads dd-java-agent and its
+// SHA256 with curl, or else wget, checks it, and attaches it only when it
+// matches; the agent's path has no whitespace even where the workspace's
+// has, since MAVEN_OPTS and GRADLE_OPTS split on it.
+func TestJavaShellSetupDownloadsAndChecksTheAgent(t *testing.T) {
+	agent := "dd-java-agent " + javaRecommendedTracer
+	sum := sha256.Sum256([]byte(agent))
+	download := "#!/bin/sh\nout= url=\nwhile [ $# -gt 0 ]; do case \"$1\" in -o|-qO) out=\"$2\"; shift 2 ;; -*) shift ;; *) url=\"$1\"; shift ;; esac; done\n" +
+		"case \"$url\" in https://repo1.maven.org/maven2/com/datadoghq/dd-java-agent/" + javaRecommendedTracer + "/dd-java-agent-" + javaRecommendedTracer + ".jar) printf '%s' '" + agent + "' >\"$out\" ;; *.jar.sha256) printf '%s' \"$SUM\" >\"$out\" ;; *) exit 22 ;; esac\n"
+	missing := "#!/bin/sh\nexit 127\n"
+	for name, tc := range map[string]struct {
+		curl, wget, sum string
+		attached        bool
+	}{
+		"curl":             {download, missing, hex.EncodeToString(sum[:]), true},
+		"wget":             {missing, download, hex.EncodeToString(sum[:]), true},
+		"checksum differs": {download, missing, strings.Repeat("0", 64), false},
+	} {
+		for _, form := range []snippetForm{jenkinsSnippetForm, gitLabSnippetForm} {
+			t.Run(name+" "+form.provider, func(t *testing.T) {
+				tools, temporary := t.TempDir(), t.TempDir()
+				require.NoError(t, os.WriteFile(filepath.Join(tools, "curl"), []byte(tc.curl), 0o755))
+				require.NoError(t, os.WriteFile(filepath.Join(tools, "wget"), []byte(tc.wget), 0o755))
+				require.NoError(t, os.WriteFile(filepath.Join(tools, "java"), []byte(missing), 0o755))
+				workspace := filepath.Join(t.TempDir(), "my workspace")
+				require.NoError(t, os.Mkdir(workspace, 0o755))
+				text := fallbackSnippet{form: form, language: "java", version: `"` + javaRecommendedTracer + `"`, site: `"datadoghq.com"`}.shell()
+				shell := exec.Command("sh", "-u", "-c", text+"\nprintf '%s' \"${MAVEN_OPTS:-}|${GRADLE_OPTS:-}\"")
+				shell.Dir = workspace
+				shell.Env = []string{"PATH=" + tools + ":/usr/bin:/bin", "DD_API_KEY=key", "SUM=" + tc.sum, "TMPDIR=" + temporary, "MAVEN_OPTS=-Xmx1g"}
+				output, err := shell.Output()
+				require.NoError(t, err, string(output))
+				if !tc.attached {
+					require.Equal(t, "-Xmx1g|", string(output), "an agent that does not match is never attached")
+					return
+				}
+				maven, gradle, _ := strings.Cut(string(output), "|")
+				path, ok := strings.CutPrefix(maven, "-javaagent:")
+				require.True(t, ok, maven)
+				path, ok = strings.CutSuffix(path, " -Xmx1g")
+				require.True(t, ok, maven)
+				require.NotContains(t, path, " ", "the agent's path has no whitespace")
+				require.True(t, strings.HasPrefix(path, temporary+"/"), path)
+				require.Equal(t, "-javaagent:"+path+" ", gradle)
+				data, err := os.ReadFile(path)
+				require.NoError(t, err)
+				require.Equal(t, agent, string(data))
+			})
+		}
+	}
 }
 
 // Each Jenkins sh step is a shell of its own: a setup snippet in one step

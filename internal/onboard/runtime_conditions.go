@@ -30,19 +30,33 @@ func runtimeCondition(value string, row map[string]any, environments ...map[stri
 	if len(value) > 4096 || strings.ContainsRune(value, 0) {
 		return false, fmt.Errorf("CI condition exceeds 4096 characters or contains a NUL byte")
 	}
-	p := conditionParser{rest: value, row: row, ifCondition: true}
-	if len(environments) > 0 {
-		p.env = environments[0]
-	}
-	result, err := p.expression(0)
-	if err != nil || strings.TrimSpace(p.rest) != "" {
-		reason := "ddtest can't evaluate this syntax; report it instead of rewriting the condition"
-		if err != nil {
-			reason += ": " + err.Error()
+	evaluate := func(failed bool) (bool, bool, error) {
+		p := conditionParser{rest: value, row: row, ifCondition: true, failed: failed}
+		if len(environments) > 0 {
+			p.env = environments[0]
 		}
-		return false, fmt.Errorf("cannot statically resolve CI condition %q; %s", value, reason)
+		result, err := p.expression(0)
+		if err != nil || strings.TrimSpace(p.rest) != "" {
+			reason := "ddtest can't evaluate this syntax; report it instead of rewriting the condition"
+			if err != nil {
+				reason += ": " + err.Error()
+			}
+			return false, false, fmt.Errorf("cannot statically resolve CI condition %q; %s", value, reason)
+		}
+		return conditionTruthy(result), p.status, nil
 	}
-	return conditionTruthy(result), nil
+	// Validation follows the passing path of a run, on which every earlier
+	// step or needed job succeeded. A condition that reads a status function
+	// is read on that path; one that holds only after an earlier failure,
+	// such as a failure() rerun, runs CI ddtest can't validate.
+	passing, status, err := evaluate(false)
+	if err != nil || passing || !status {
+		return passing, err
+	}
+	if failing, _, err := evaluate(true); err == nil && failing {
+		return false, fmt.Errorf("CI condition %q holds only after an earlier step or job fails, a path local validation doesn't run; report it instead of rewriting the condition", value)
+	}
+	return false, nil
 }
 
 type conditionParser struct {
@@ -52,6 +66,10 @@ type conditionParser struct {
 	depth int
 	// Secrets are allowed in environment expressions, but never in GitHub if.
 	ifCondition bool
+	// failed reads status functions on the path where an earlier step or
+	// needed job failed, instead of the passing one; status records that the
+	// condition read one.
+	failed, status bool
 }
 
 // Skip only leading whitespace: the remainder may be the rest of a shell
@@ -203,6 +221,24 @@ func (p *conditionParser) atom() (any, error) {
 	}
 	token := p.rest[:i]
 	p.rest = p.rest[i:]
+	// GitHub's status functions, only in if conditions. A cancelled run
+	// reports nothing local validation could compare, so cancelled() is false
+	// on both paths.
+	if status := strings.ToLower(token); p.ifCondition && slices.Contains([]string{"success", "failure", "cancelled", "always"}, status) {
+		if !p.take("(") || !p.take(")") {
+			return nil, fmt.Errorf("%s() takes no arguments", status)
+		}
+		p.status = true
+		switch status {
+		case "success":
+			return !p.failed, nil
+		case "failure":
+			return p.failed, nil
+		case "cancelled":
+			return false, nil
+		}
+		return true, nil
+	}
 	switch token {
 	case "true":
 		return true, nil

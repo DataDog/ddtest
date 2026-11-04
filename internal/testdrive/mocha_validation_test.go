@@ -455,3 +455,41 @@ func TestMochaPreflightDefersGitTracersToInstallation(t *testing.T) {
 		}
 	}
 }
+
+// pipeline-schema's Mocha suite only validates ../schema.json: its package
+// has no file nyc instruments, so no setup can report source coverage. The
+// coverage check is not applicable there and does not block, as Jest and
+// Vitest have none.
+func TestMochaCoverageWithoutSourceIsNotApplicable(t *testing.T) {
+	run := validationRun{framework: "mocha", Name: "reporting-only", Role: roleReporting, Instrumented: true, noCoverableSource: true, coverageCause: mochaCoverageCause("nyc", false, false), Facts: intake.Facts{TestCount: 131}}
+	summary := run.summary()
+	require.Equal(t, "not applicable", summary.Coverage.Status)
+	require.Contains(t, summary.Coverage.Reason, "no file nyc instruments")
+	require.NotContains(t, summary.Coverage.Reason, "Check nyc's include/exclude rules")
+	result := completeValidationFixture("mocha")
+	result.Runs = append(result.Runs, summary)
+	require.False(t, missingRealCoverage(result))
+	validation := summarizeValidation(result)
+	require.NotContains(t, strings.Join(validation.BlockingChecks, "\n"), "real-suite coverage")
+	result.Summary = validation
+	require.Contains(t, validationHandoff(result), "Real-suite coverage: not applicable in 1 reporting run(s)")
+	// Observed coverage stays observed.
+	run.Facts.CoveredTestCount = 1
+	require.Equal(t, "observed", run.summary().Coverage.Status)
+}
+
+func TestMochaCoverageNotApplicableReadsThePackage(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "test/lib"), 0700))
+	requireWriteFile(t, filepath.Join(root, "schema.json"), "{}")
+	requireWriteFile(t, filepath.Join(root, "test/package.json"), `{"scripts":{"test":"mocha *.test.js"},"dependencies":{"mocha":"^11.7.5"}}`)
+	requireWriteFile(t, filepath.Join(root, "test/schema.test.js"), "require('../schema.json')\n")
+	require.True(t, onboard.MochaCoverageNotApplicable(root, filepath.Join(root, "test"), "npm test"))
+	// An nyc configuration at the root, which nyc finds from test/, may
+	// include the test file.
+	requireWriteFile(t, filepath.Join(root, ".nycrc"), `{"include":["**/*.js"]}`)
+	require.False(t, onboard.MochaCoverageNotApplicable(root, filepath.Join(root, "test"), "npm test"))
+	require.NoError(t, os.Remove(filepath.Join(root, ".nycrc")))
+	requireWriteFile(t, filepath.Join(root, "test/lib/validate.js"), "module.exports = () => true\n")
+	require.False(t, onboard.MochaCoverageNotApplicable(root, filepath.Join(root, "test"), "npm test"))
+}

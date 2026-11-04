@@ -131,6 +131,10 @@ type runtimeStep struct {
 	// CI values have no local equivalent (see ciOnlyValue), and neither the
 	// step's command line nor the runtime reads them.
 	LeftOut []string `yaml:"-"`
+	// OmittedOptions are the command-line options, as CI writes them, that
+	// the language left out of the step's command because their values only
+	// CI provides and never select tests (see omitCIOnlyOptions).
+	OmittedOptions []string `yaml:"-"`
 	// Runtime holds the runtime versions this step selects for later steps,
 	// keyed by the language's installer token (js, ruby), as a known CI
 	// component such as a runtime installer reads them; an empty version
@@ -212,10 +216,6 @@ type runtimeJob struct {
 	// provider's setup, such as an image without curl, before any setup is
 	// written; empty when it can or the provider does not check.
 	SetupImageProblem string `yaml:"-"`
-	// SetupImageShellOnly reports a SetupImageProblem that is only the
-	// image's missing Bash: a language with a setup a POSIX shell runs
-	// (see ciShellSetup) sets the job up there.
-	SetupImageShellOnly bool `yaml:"-"`
 	// SetupUnsupported explains why the provider's setup mechanism cannot
 	// instrument the job at all, such as a container the Datadog Jenkins
 	// plugin does not reach; such a job is never certified.
@@ -240,6 +240,11 @@ type runtimeJob struct {
 	// as a host's runtime does: a Jenkins container, whose Docker pulls an
 	// image only when the agent has none (unless alwaysPull is set).
 	FloatingTagStated bool `yaml:"-"`
+	// Checkout lists the ways the job's commands name the repository root
+	// besides relative paths: the shared model's checkout expression, the
+	// provider's checkout variable and the absolute paths the provider read
+	// for the job, as CircleCI's working directory (see readProviderWorkflows).
+	Checkout []string `yaml:"-"`
 	// Stated holds the runtime versions the user stated for this job, by
 	// installer token, when its image selects none (see --ci-runtime). They
 	// apply only on matrix rows whose runtimeHost is not empty.
@@ -336,10 +341,15 @@ func checkCIRuntimes(ctx context.Context, root string, resolveNode nodeResolver,
 		cache[key] = cachedRequirement{value, err}
 		return value, err
 	}
+	leaks := sharedSetupLeaks(root, workflows, "javascript", framework)
 	for _, workflow := range workflows {
 		path := workflow.Path
 		for _, name := range slices.Sorted(maps.Keys(workflow.Jobs)) {
 			job := workflow.Jobs[name]
+			if leak, found := sharedSetupLeak(leaks, workflow, name); found {
+				result.Jobs = append(result.Jobs, leak)
+				continue
+			}
 
 			resolutions := make([]commandResolution, len(job.Steps))
 			consumer := false
@@ -405,7 +415,14 @@ func checkCIRuntimes(ctx context.Context, root string, resolveNode nodeResolver,
 					rowJob.Steps[i] = resolved
 					rowResolutions[i] = resolveTestStep(root, workflow, rowJob, resolved, "javascript", framework)
 					rowResolutions[i] = resolveFactBackedRuntime(ctx, root, workflow, rowJob, resolved, framework, rowResolutions[i])
-					if rowResolutions[i].Review {
+					serverStartup := false
+					if framework == "cypress" && resolveErr == nil && !rowResolutions[i].Matched {
+						_, serverStartup = cypressPairedServer(root, workflow, job, row, i, "javascript", resolved.Run)
+					}
+					if rowResolutions[i].Review || serverStartup {
+						// A paired background server is the Cypress test's
+						// managed startup, as scope review treats it: neither
+						// a test nor an unresolved command.
 						rowResolutions[i] = commandResolution{}
 					} else if resolveErr != nil && (rowResolutions[i].Matched || rowResolutions[i].Reason != "") {
 						// Setup steps such as npm ci are not test commands, even

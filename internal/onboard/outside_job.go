@@ -128,6 +128,12 @@ func mentionsCommand(root, directory string, words []string, framework string, d
 		}
 		return mentionsCommand(root, directory, target, framework, depth, true, unread)
 	}
+	// A Vue CLI plugin's command runs a published package ddtest doesn't
+	// read, as a Node script's import does; its tests may not.
+	if command := vueCLICommand(words[1:]); executable && unread != nil && name == "vue-cli-service" && command != "" && !strings.HasPrefix(command, "test:") && !packageNamesTests(command) {
+		unread.add("vue-cli-service " + command)
+		return false
+	}
 	if executable {
 		if mayStart, handled := recognizedTool(root, directory, words, framework, depth); handled {
 			return mayStart

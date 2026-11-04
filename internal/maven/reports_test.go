@@ -197,3 +197,10 @@ func TestIncompleteBuild(t *testing.T) {
 	ambiguous := []Project{{Directory: "a", Artifact: "core"}, {Directory: "b", Artifact: "core"}}
 	require.True(t, IncompleteBuild(1, ambiguous, []Test{{Module: "a", Status: "failed"}}, testFailure), "an artifactId two modules share cannot be attributed")
 }
+
+func TestBuildFailure(t *testing.T) {
+	output := "[INFO] Checking licenses...\n[WARNING] Missing header in: /tmp/checkout/src/test/scala/ddtest/DdtestValidationTest.scala\n[INFO] BUILD FAILURE\n" +
+		"\x1b[1;31m[ERROR]\x1b[m Failed to execute goal com.mycila:license-maven-plugin:3.0:check (check-license) on project feel-engine: Some files do not have the expected license header -> [Help 1]\n[ERROR] \n"
+	require.Equal(t, "Failed to execute goal com.mycila:license-maven-plugin:3.0:check (check-license) on project feel-engine: Some files do not have the expected license header", BuildFailure(output))
+	require.Empty(t, BuildFailure("[INFO] BUILD SUCCESS\n"))
+}

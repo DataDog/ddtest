@@ -56,7 +56,7 @@ func (jenkins) setupIgnores(edits []setupEdit) []string {
 }
 
 // jenkinsSnippetForm is the setup snippet Jenkins container stages run.
-var jenkinsSnippetForm = snippetForm{provider: jenkinsProvider, folder: jenkinsTracerFolder, keySet: true, shellSetups: true}
+var jenkinsSnippetForm = snippetForm{provider: jenkinsProvider, folder: jenkinsTracerFolder, keySet: true}
 
 // jenkinsCredentialID is the Jenkins credential onboard --apply binds
 // DD_API_KEY from, a Secret text the user stores the Datadog API key in.
@@ -79,8 +79,6 @@ type jenkinsContainer struct {
 func (jenkinsContainer) setupName() string { return "Datadog setup snippet" }
 
 func (jenkinsContainer) setupInput(name string) string { return buildkite{}.setupInput(name) }
-
-func (jenkinsContainer) snippetForm() snippetForm { return jenkinsSnippetForm }
 
 func (jenkinsContainer) setupProblem(setup ciSetup, tracerInput string, exact func(string) bool, example, site string) string {
 	return snippetSetupProblem(setup, tracerInput, exact, example, site)
@@ -142,7 +140,7 @@ func jenkinsSnippetSetup(setup ciSetup) bool {
 
 // jenkinsContainerJob reports a job that runs in a container.
 func jenkinsContainerJob(job runtimeJob) bool {
-	_, container := job.SetupProvider.(jenkinsContainer)
+	_, container := setupHost(job.SetupProvider).(jenkinsContainer)
 	return container
 }
 
@@ -193,7 +191,7 @@ func (c jenkinsContainer) setupInstructions(request ciSetupRequest) string {
 	text.WriteString("2. In every sh script that runs the tests in those stages (each sh step is a shell of its own, so a stage whose tests run in several sh steps needs them in each), add these lines immediately before the test command, after dependency installation and any cd into the test directory, inside the same sh string. Write that script as a single-quoted Groovy string (sh '''…''') so Groovy leaves every $ to the shell, and keep its other commands unchanged:\n\n```sh\n")
 	text.WriteString(jenkinsSnippet(request, c.reset).shell())
 	text.WriteString("\n```\n")
-	text.WriteString("\nThe snippet installs the tracers into a new folder of the workspace for each shell (" + jenkinsTracerFolder + "), apart from the .datadog folder of the Datadog Jenkins plugin and from the shells that run at the same time in the same workspace, such as parallel branches under one Docker agent. The folders stay in the workspace after the build, in the working directory of each sh step: add " + jenkinsTracerIgnore + " to the repository .gitignore, without a leading /, so they stay untracked below the checkout root too, and a workspace cleanup (such as cleanWs()) removes them. It tests the key with ${DD_API_KEY:+set}, so Jenkins' shell trace (sh -x) never prints it. The installer needs Bash and curl or wget in the container's image: images without Bash (Alpine variants, BusyBox, distroless) or curl (official -slim images) need another image, or a Dockerfile that installs them.\n")
+	text.WriteString("\nThe snippet installs the tracers into a new folder of the workspace for each shell (" + jenkinsTracerFolder + "), apart from the .datadog folder of the Datadog Jenkins plugin and from the shells that run at the same time in the same workspace, such as parallel branches under one Docker agent. The folders stay in the workspace after the build, in the working directory of each sh step: add " + jenkinsTracerIgnore + " to the repository .gitignore, without a leading /, so they stay untracked below the checkout root too, and a workspace cleanup (such as cleanWs()) removes them. It tests the key with ${DD_API_KEY:+set}, so Jenkins' shell trace (sh -x) never prints it. The installer needs Bash and curl or wget in the container's image: stages whose image lacks them (Alpine variants, BusyBox, distroless; official -slim images have no curl) get the " + fallbackSetupName + " instead, as their own instructions show; never change a stage's image or Dockerfile.\n")
 	text.WriteString("\n3. Keep those stages out of every datadog(…) option's scope: in a declarative pipeline, that option goes in the options of the host-agent stages that run the tests, not the pipeline's; in a scripted pipeline, it wraps only node blocks on host agents. ddtest does not certify a container stage the plugin's variables reach. Enabling Test Optimization in the job's configuration page instead of the Jenkinsfile reaches every stage, so leave it off there.")
 	if c.reset {
 		text.WriteString(" ddtest cannot tell whether a datadog(…) call it cannot read reaches these stages, so the snippet first removes the variables the plugin would set there.")
@@ -328,12 +326,22 @@ func (r *jenkinsReader) jenkinsDockerfileAgent(call *groovyCall, scope jenkinsSc
 // to lack Bash, or curl and wget. curl reports an earlier statement of the
 // script that installed curl. An image ddtest cannot read is a caveat
 // instead (see jenkinsUnreadImageCaveat).
-func jenkinsImageSetupProblem(agent jenkinsAgent, curl, bash bool) string {
+func jenkinsImageSetupProblem(agent jenkinsAgent, curl bool) string {
 	if agent.image == "" {
 		return ""
 	}
 	executor := buildkiteExecutor{image: agent.image, dockerfile: agent.dockerfile, bash: agent.bash, downloader: agent.downloader}
-	return executor.imageProblemFor(curl, bash)
+	return executor.imageSetupProblem(curl)
+}
+
+// jenkinsImageMissingTools describes what a container agent's image lacks
+// for the installer (see imageMissingTools); empty when it has them or
+// ddtest does not read it.
+func jenkinsImageMissingTools(agent jenkinsAgent, curl bool) string {
+	if agent.image == "" {
+		return ""
+	}
+	return imageMissingTools(agent.image, agent.bash, agent.downloader, curl)
 }
 
 // jenkinsUnreadImageCaveat is what ddtest cannot check about a container
@@ -373,7 +381,10 @@ func (r *jenkinsReader) snippetProblem(scope jenkinsScope, setup ciSetup, key st
 	default:
 		return "DD_API_KEY comes from " + key + ", which ddtest cannot tell is a Jenkins credential; bind it with withCredentials(" + jenkinsCredentialBinding + ") { … } or credentials('" + jenkinsCredentialID + "')."
 	}
-	return jenkinsImageSetupProblem(scope.agent, curl, !setup.withoutBash)
+	if setup.fallback {
+		return "" // It needs neither Bash nor curl.
+	}
+	return jenkinsImageSetupProblem(scope.agent, curl)
 }
 
 // jenkinsResetMissing reports a setup snippet that does not first run the

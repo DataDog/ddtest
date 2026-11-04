@@ -375,6 +375,17 @@ func readProviderWorkflows(provider ciProvider, root string) ([]ciWorkflow, erro
 	workflows, err := provider.readWorkflows(root)
 	if err == nil {
 		fillStatedRuntimes(workflows)
+		checkFallbackPrerequisites(provider, workflows)
+		checkout := []string{ciProjectDirectory, "${{github.workspace}}"}
+		if name := provider.checkoutVariable(); name != "" {
+			checkout = append(checkout, "$"+name, "${"+name+"}")
+		}
+		for _, workflow := range workflows {
+			for name, job := range workflow.Jobs {
+				job.Checkout = append(slices.Clone(checkout), job.Checkout...)
+				workflow.Jobs[name] = job
+			}
+		}
 	}
 	return workflows, err
 }
@@ -872,7 +883,7 @@ func CISetupCaveats(check *RuntimeCheck) []string {
 			}
 		}
 	}
-	return caveats
+	return append(caveats, fallbackCaveat(check)...)
 }
 
 // StatedFacts lists, for final_response, what the user stated and ddtest

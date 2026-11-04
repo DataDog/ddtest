@@ -383,3 +383,17 @@ func testFailures(message string, next []string) bool {
 	}
 	return false
 }
+
+// BuildFailure is the first goal failure a Maven build's output reports, as
+// "Failed to execute goal com.mycila:license-maven-plugin:3.0:check
+// (check-license) on project feel-engine: Some files do not have the expected
+// license header"; empty when it names none.
+func BuildFailure(output string) string {
+	for _, line := range strings.Split(ansiEscape.ReplaceAllString(output, ""), "\n") {
+		failure, found := strings.CutPrefix(strings.TrimSpace(line), "[ERROR] ")
+		if found && strings.HasPrefix(failure, "Failed to execute goal") {
+			return strings.TrimSpace(strings.TrimSuffix(failure, " -> [Help 1]"))
+		}
+	}
+	return ""
+}

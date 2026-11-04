@@ -738,9 +738,14 @@ func RubyCIConfigurationFrom(root, source, framework, site string) RuntimeCheck 
 	if err != nil {
 		return RuntimeCheck{Status: "inconclusive", Reason: err.Error()}
 	}
+	leaks := sharedSetupLeaks(root, workflows, "ruby", framework)
 	for _, workflow := range workflows {
 		for _, name := range slices.Sorted(maps.Keys(workflow.Jobs)) {
 			job := workflow.Jobs[name]
+			if leak, found := sharedSetupLeak(leaks, workflow, name); found {
+				result.Jobs = append(result.Jobs, leak)
+				continue
+			}
 			provider := setupProviderFor(provider, job)
 			rows, err := runtimeMatrix(job.Strategy.Matrix)
 			if err != nil {
@@ -1138,7 +1143,7 @@ func rubyBesideProblem(root string, setup *ciSetup, tracer string) string {
 // rubyFloatingTracerReason asks to pin datadog-ci in the bundle, which a
 // setup that cannot pin the tracer itself (the Datadog Jenkins plugin) uses.
 func rubyFloatingTracerReason(provider ciProvider) string {
-	return "The " + provider.setupName() + " runs bundle add datadog-ci, which unfreezes the bundle and installs the latest datadog-ci release when each build runs, unless the bundle already has datadog-ci. Pin it: add gem \"datadog-ci\", \"<exact release>\" (such as 1.42.0) to the Gemfile at the checkout root and run bundle lock, so Gemfile.lock pins the release ddtest validates."
+	return "The " + provider.setupName() + " runs bundle add datadog-ci, which unfreezes the bundle and installs the latest datadog-ci release when each build runs, unless the bundle already has datadog-ci. Pin it: add gem \"datadog-ci\", \"<exact release>\" (such as " + rubyExampleRelease + ") to the Gemfile at the checkout root and run bundle lock, so Gemfile.lock pins the release ddtest validates."
 }
 
 // rubyWorkspaceRootProblem explains why a setup that configures the tracer

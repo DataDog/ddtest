@@ -113,12 +113,29 @@ func TestRubyAgentOnboardingRejectsCommandOverride(t *testing.T) {
 	require.Empty(t, state.ResumeCommand)
 }
 
+// httparty's agent took the datadog gem's 2.48.0 for ruby-tracer-version:
+// the GitHub Actions setup names a datadog-ci release, as other providers do.
+func TestRubyGitHubInstructionsNameAnExactDatadogCIRelease(t *testing.T) {
+	rubyAgentFixture(t, "rspec", "")
+	state, err := rubyAgentStart(t, StartOptions{Format: "json"})
+	require.Error(t, err)
+	require.Equal(t, "ci_setup_required", state.Code)
+	example := "`ruby-tracer-version` to an exact datadog-ci release compatible with every instrumented Ruby, such as `" + rubyExampleRelease + "` (a datadog-ci release, not one of the datadog gem)"
+	require.Contains(t, state.Instruction, example)
+	require.Contains(t, instructions("ruby", "rspec"), example)
+	require.NotContains(t, state.Instruction+instructions("ruby", "rspec"), "__TRACER_EXAMPLE__")
+}
+
 func TestRubyAgentMinitestInstructionsKeepForkSetup(t *testing.T) {
 	rubyAgentFixture(t, "minitest", "")
 	state, err := rubyAgentStart(t, StartOptions{Format: "json"})
 	require.Error(t, err)
 	require.Equal(t, "ci_setup_required", state.Code)
 	require.Equal(t, "minitest", state.ResumeCommand[3])
+	require.NotContains(t, state.Instruction, "ci/datadog_test_optimization.rb", "tests without fork isolation need no initializer")
+	writeFile(t, ".", rubyIsolationTest, rubyIsolationTestSource)
+	state, err = rubyAgentStart(t, StartOptions{Format: "json"})
+	require.Error(t, err)
 	require.Contains(t, state.Instruction, "ci/datadog_test_optimization.rb")
 }
 
@@ -203,6 +220,12 @@ func TestRubyAgentOnboardingNamesSharedStepsAndUnresolvedBlockers(t *testing.T) 
 	require.Equal(t, "ci_setup_required", state.Code)
 	require.Contains(t, state.Reason, "Shared CI step: This CI step also runs Rake task(s) features")
 	require.Contains(t, state.Reason, "cannot be validated and will remain blockers")
+	// The spring-boot-cucumber agent stopped at apply_source_edit to ask
+	// for the scope decisions; the setup and validation come first.
+	require.Equal(t, "apply_source_edit", state.NextAction)
+	require.NotEmpty(t, state.ResumeCommand)
+	require.Contains(t, state.Reason, "They do not hold up this setup: first apply the CI setup and run resume_command, then report each such step and its scope decision to the user with the validation result.")
+	require.NotContains(t, state.Reason, "tell the user now")
 	require.Contains(t, state.Instruction, "[.] bundle exec rake spec — .github/workflows/test.yml")
 	require.Contains(t, state.Instruction, "(+1 more CI locations)", "the agent listing keeps one location per configuration")
 }

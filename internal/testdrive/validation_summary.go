@@ -263,6 +263,7 @@ func summarizeValidation(result validationResult) validationSummary {
 	summary.CIScope = summarizeCIScope(result.CIRuntime)
 	if summary.CIScope != nil && len(summary.CIScope.Instrumented) > 0 {
 		summary.HumanActions = append(summary.HumanActions, apiKeyHumanActions(result.CIRuntime)...)
+		summary.HumanActions = append(summary.HumanActions, onboard.FallbackHumanActions(result.CIRuntime)...)
 	}
 	summary.OnboardingResponse = fmt.Sprintf("Onboarding validation: %s. Local validation: %s. CI configuration: %s (static analysis). CI execution and Datadog backend processing: not exercised.", summary.Status, summary.LocalValidation, summary.CIConfiguration)
 	if result.focusedLocalCommand() {
@@ -411,10 +412,14 @@ func validationHandoff(result validationResult) string {
 	for _, hint := range result.Compatibility.Hints {
 		block.WriteString(hint + "\n")
 	}
-	coverageRuns, coveredRuns, coveredTests, totalTests := 0, 0, 0, 0
+	coverageRuns, coveredRuns, coveredTests, totalTests, notApplicable := 0, 0, 0, 0, 0
 	var levels []string
 	for _, run := range result.Runs {
 		if run.Coverage == nil || !run.Instrumented || run.ProbeMode != "" || !strings.HasPrefix(run.Name, "reporting-only") {
+			continue
+		}
+		if run.Coverage.Status == "not applicable" {
+			notApplicable++
 			continue
 		}
 		coverageRuns++
@@ -437,6 +442,13 @@ func validationHandoff(result validationResult) string {
 			block.WriteString(" (suite-level, not independent per-test coverage)")
 		}
 		block.WriteString(".\n")
+	}
+	if notApplicable > 0 {
+		label := "Real-suite coverage"
+		if !current {
+			label = "Historical real-suite coverage (not revalidated)"
+		}
+		fmt.Fprintf(&block, "%s: not applicable in %d reporting run(s); the package has no source file nyc instruments.\n", label, notApplicable)
 	}
 	fmt.Fprintf(&block, "CI configuration: %s (static analysis). CI execution and Datadog backend processing: not exercised.\n", summary.CIConfiguration)
 	for _, action := range summary.HumanActions {

@@ -31,25 +31,56 @@ func mavenCommand(words []string) bool {
 	return len(words) > 0 && slices.Contains(mavenExecutables, filepath.Base(words[0]))
 }
 
+// mavenDaemonExecutables run Maven Daemon, which runs Maven's lifecycle in a
+// long-lived daemon JVM.
+var mavenDaemonExecutables = []string{"mvnd", "mvnd.cmd", "mvnd.sh"}
+
+// mavenDaemonAsMaven returns words with a Maven Daemon executable read as
+// mvn, to tell by its goals whether the command may run tests, as mvnd test
+// does. Only readers of what a command may start use it: ddtest validates no
+// CI step through the daemon, so a step that runs it stays a test wrapper
+// ddtest doesn't resolve.
+func mavenDaemonAsMaven(words []string) []string {
+	if len(words) == 0 || !slices.Contains(mavenDaemonExecutables, filepath.Base(words[0])) {
+		return words
+	}
+	return append([]string{"mvn"}, words[1:]...)
+}
+
 // resolveJavaStep resolves one CI step into the Maven command that validates
 // framework. One Maven build runs every framework the reactor declares, so the
 // step is tied to the selected framework's modules and the rest is reported.
-func resolveJavaStep(root string, workflow ciWorkflow, job runtimeJob, step runtimeStep, framework string) commandResolution {
+func resolveJavaStep(root string, workflow ciWorkflow, job runtimeJob, step runtimeStep, framework string) (resolution commandResolution) {
 	if step.ResolutionError != "" {
 		return unresolvedCommand(step.ResolutionError)
 	}
+	// A Gradle action's arguments input is a Gradle command line.
 	if strings.TrimSpace(step.Run) == "" {
-		return commandResolution{}
+		command, resolved, ok := javaGradleActionStep(root, step, framework)
+		switch {
+		case !ok:
+			return commandResolution{}
+		case resolved != nil:
+			return *resolved
+		}
+		step = command
 	}
+	// A settings path only CI provides selects no test; the step is
+	// validated without it, as resolveVariantStep may already have done.
+	run, omitted, _ := omitCIOnlyOptions(step.Run, func(string) bool { return true })
+	step.Run, omitted = run, append(slices.Clone(step.OmittedOptions), omitted...)
+	// Mutation testing the step also runs is reported however the step
+	// resolves, unless it stays unresolved.
+	defer func() {
+		if resolution.Reason == "" || resolution.Review {
+			resolution.Caveat = javaMutationCaveat(step.Run, framework)
+		}
+	}()
 	directory := filepath.Clean(stepDirectory(workflow, job, step))
 	if !filepath.IsLocal(directory) || strings.ContainsAny(directory, "$`~") {
 		return unresolvedCommand("Maven working-directory needs explicit review: " + directory)
 	}
-	// Matrix expansion resolves expressions per row; one left here may
-	// select the tests, so it stays in the required scope.
-	if workflowExpression.MatchString(step.Run) {
-		return unresolvedCommand("CI command expression was not resolved; ddtest cannot tell which tests it runs: " + step.Run)
-	}
+	expression := workflowExpression.MatchString(step.Run)
 	parts, parseErr := staticCommands(step.Run)
 	// Release steps read project metadata, as in VERSION=$(mvn help:evaluate …),
 	// unless an inherited MAVEN_ARGS adds goals.
@@ -57,12 +88,23 @@ func resolveJavaStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 		!javaExportsMavenArgs(job) && !javaConfigGoals(root, directory) {
 		return commandResolution{}
 	}
-	if parseErr != nil {
-		// Literal goals that run no tests, as in mvn versions:set
-		// -DnewVersion=${CI_COMMIT_TAG/v}, run none whatever the values.
-		if mavenMention.MatchString(step.Run) && !gradleMention.MatchString(step.Run) && !javaStepMayRunTests(root, workflow, job, step) {
-			return commandResolution{Review: true, Reason: "Maven goals outside the test lifecycle, such as documentation, lint or release goals, are outside " + framework + " test scope."}
+	// Literal goals or tasks that run no tests, as in mvn versions:set
+	// -DnewVersion=${CI_COMMIT_TAG/v} or ./gradlew publish
+	// -Psigning.keyId=${{ secrets.GPG_KEY_ID }}, run none whatever the values.
+	if (expression || parseErr != nil) && !javaStepMayRunTests(root, workflow, job, step) {
+		switch maven, gradle := mavenMention.MatchString(step.Run), gradleMention.MatchString(step.Run); {
+		case maven && !gradle:
+			return commandResolution{Review: true, Reason: "Maven goals outside the test lifecycle, such as compile, documentation, lint or release goals, are outside " + framework + " test scope."}
+		case gradle && !maven:
+			return commandResolution{Review: true, Reason: "Gradle tasks outside testing, such as assembly, documentation, analysis or publishing, are outside " + framework + " test scope."}
 		}
+	}
+	// Matrix expansion resolves expressions per row; one left here may
+	// select the tests, so it stays in the required scope.
+	if expression {
+		return unresolvedCommand("CI command expression was not resolved; ddtest cannot tell which tests it runs: " + step.Run)
+	}
+	if parseErr != nil {
 		if mavenMention.MatchString(step.Run) {
 			return unresolvedCommand("Maven command could not be resolved statically; ddtest cannot tell which tests it runs: " + step.Run)
 		}
@@ -97,7 +139,7 @@ func resolveJavaStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 	case len(builds) == 0:
 		return unresolvedJavaWrapper(root, workflow, job, step, parts, framework)
 	case len(tests) == 0 && onlyMaven:
-		return commandResolution{Review: true, Reason: "Maven goals outside the test lifecycle, such as documentation, lint or release goals, are outside " + framework + " test scope."}
+		return commandResolution{Review: true, Reason: "Maven goals outside the test lifecycle, such as compile, documentation, lint or release goals, are outside " + framework + " test scope."}
 	case len(tests) == 0:
 		// Another command in the sequence may still run tests.
 		return unresolvedJavaWrapper(root, workflow, job, step, parts, framework)
@@ -121,17 +163,44 @@ func resolveJavaStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 	if err != nil {
 		return unresolvedCommand("Maven reactor could not be read statically, so the modules this step tests are unknown: " + err.Error())
 	}
-	validated, omitted := maven.TestInvocation(words[1:])
+	validated, goals := maven.TestInvocation(words[1:])
 	selected := shellquote.Join(append([]string{words[0]}, validated...)...)
 	var notes []string
-	if len(omitted) > 0 {
-		notes = append(notes, "This CI step also runs "+strings.Join(omitted, ", ")+". Local validation runs only "+selected+", the test lifecycle up to verify, and never installs or publishes artifacts. Report this to the user.")
+	if len(goals) > 0 {
+		notes = append(notes, "This CI step also runs "+strings.Join(goals, ", ")+". Local validation runs only "+selected+", the test lifecycle up to verify, and never installs or publishes artifacts. Report this to the user.")
+	}
+	if note := javaOmittedOptionsNote(omitted, selected); note != "" {
+		notes = append(notes, note)
 	}
 	notes = append(notes, outputPipeNotes(step.Run, selected)...)
 	if others := otherFrameworkModules(projects, framework); len(others) > 0 {
 		notes = append(notes, "This Maven reactor also declares module(s) "+strings.Join(others, ", ")+", which declare other test frameworks and no "+framework+" dependency. Whether this step runs their tests depends on its active profiles and reactor selectors. Instrumenting this step reports any selected tests to Datadog too; local validation covers only the "+framework+" modules. Report this to the user.")
 	}
 	return commandResolution{Matched: true, ReviewReason: strings.Join(notes, " "), Tests: []TestCommand{{Directory: directory, Command: selected, StepScopeNotes: notes}}}
+}
+
+// javaMutationCaveat notes the PIT mutation testing a step's Gradle tasks
+// or Maven goals run (see gradle.MutationTask and maven.MutationGoal): it is
+// not one of framework's test configurations, which validation runs, nor a
+// blocker.
+func javaMutationCaveat(run, framework string) string {
+	parts, err := staticCommands(run)
+	if err != nil {
+		return ""
+	}
+	var names []string
+	for _, words := range parts {
+		switch {
+		case gradle.Command(words):
+			names = append(names, slices.DeleteFunc(gradle.Tasks(words[1:]), func(task string) bool { return !gradle.MutationTask(task) })...)
+		case mavenCommand(words):
+			names = append(names, slices.DeleteFunc(maven.Goals(words[1:]), func(goal string) bool { return !maven.MutationGoal(goal) })...)
+		}
+	}
+	if len(names) == 0 {
+		return ""
+	}
+	return "PIT mutation testing (" + strings.Join(slices.Compact(names), ", ") + ") runs the tests in its own processes and writes no test reports: it is not a " + framework + " test configuration, and ddtest neither validates nor instruments its tests."
 }
 
 // javaDefaultGoal reads the default goal of the POM a goal-less command builds.
@@ -182,7 +251,17 @@ func otherFrameworkModules(projects []maven.Project, framework string) []string 
 // A wrapper that may run tests stays in scope as unresolved; one in a job
 // without the Datadog action or any Maven test step is reported as a caveat.
 func unresolvedJavaWrapper(root string, workflow ciWorkflow, job runtimeJob, step runtimeStep, parts [][]string, framework string) commandResolution {
-	if slices.ContainsFunc(parts, javaRepositoryScript) || parts == nil && scriptMention.MatchString(step.Run) {
+	// A repository script is read with the rest of the step: one that runs no
+	// build tool, launcher or script ddtest can't read, such as a docker
+	// build, scan or deploy script, is classified like the step's other
+	// commands below. One the job names by its checkout path, as
+	// $CI_PROJECT_DIR/scripts/check.sh, is a repository script too.
+	mapped, mappedParts := repositoryRelativeCommands(step.Run, job.Checkout, filepath.Clean(stepDirectory(workflow, job, step))), parts
+	if mapped != step.Run {
+		mappedParts, _ = staticCommands(mapped)
+	}
+	scripts := slices.ContainsFunc(mappedParts, javaRepositoryScript) || mappedParts == nil && scriptMention.MatchString(mapped)
+	if scripts && javaStepScriptsMayRunTests(root, workflow, job, step) {
 		return unresolvedCommand("Repository script may run " + framework + " tests; ddtest cannot tell which ones: " + step.Run)
 	}
 	// Maven or Gradle hidden behind an assignment or env wrapper may run tests.
@@ -192,14 +271,26 @@ func unresolvedJavaWrapper(root string, workflow ciWorkflow, job runtimeJob, ste
 	if gradleMention.MatchString(step.Run) && !slices.ContainsFunc(parts, gradle.Command) {
 		return unresolvedCommand("Gradle test entry point requires a single explicit command; ddtest cannot replay its environment or shell setup: " + step.Run)
 	}
+	// Tests a Dockerfile runs, as RUN mvn package, run inside the image
+	// build, which no CI setup instruments.
+	if javaImageBuildOnly(root, workflow, job, step) {
+		return commandResolution{Review: true, Reason: "Builds a Docker image whose Dockerfile may run " + framework + " tests inside the image build, as RUN mvn package does; no CI setup instruments a build inside Docker, so those tests are not reported to Datadog and are outside this validation: " + step.Run}
+	}
 	// In a job without the Datadog action, any command that may start tests
 	// is shown, since nothing there reports them.
-	uninstrumented := parts != nil && javaOutsideUninstrumentedJob(root, workflow, job, framework)
+	uninstrumented := (parts != nil || scripts) && javaOutsideUninstrumentedJob(root, workflow, job, framework)
 	// A URL names a download, as https://dtdg.co/latest-java-tracer, not
 	// tests, unless the download runs in a shell, as curl …/run-tests.sh | bash.
 	text := withoutPassiveURLs(step.Run)
 	if namesTests := strings.Contains(text, "test") || strings.Contains(text, "verify"); !namesTests && (!uninstrumented || !javaStepMayRunTests(root, workflow, job, step)) {
 		return commandResolution{}
+	}
+	// Words such as latest, or a shell test of a variable, start nothing
+	// when every command is a known tool that runs no Java tests, as the
+	// shared rules read moving and pushing Docker images. Downloaded code a
+	// shell runs, whose URL text keeps, may run anything.
+	if !javaStepMayRunTests(root, workflow, job, step) && !urlWord.MatchString(text) {
+		return commandResolution{Review: true, Reason: "Runs no Maven or Gradle build or other command that can start " + framework + " tests; outside " + framework + " test scope: " + step.Run}
 	}
 	if uninstrumented {
 		return commandResolution{Review: true, Code: CodeUninstrumentedJob, Reason: "Uninstrumented CI job with no recognized Maven or Gradle test step: this command is outside validation and its tests, if any, are not reported to Datadog. If it runs " + framework + " tests, add the Datadog action to this job and rerun validation: " + step.Run}
@@ -415,12 +506,12 @@ func javaUnknownRuntimeReason(provider ciProvider, job runtimeJob, row map[strin
 	case job.ImageProblem != "":
 		return "The job's image cannot be read (" + job.ImageProblem + "), so ddtest cannot tell which JDK runs its tests."
 	case job.Image != "":
-		return "The job's image " + job.Image + " selects no JDK version ddtest reads; run the tests in an image whose name selects one, such as maven:3.9-eclipse-temurin-21, gradle:8.10-jdk17 or cimg/openjdk:17.0, to certify this job."
+		return "The job's image " + job.Image + " selects no JDK version ddtest reads, so ddtest cannot certify this job; it reads the JDK from image names such as maven:3.9-eclipse-temurin-21, gradle:8.10-jdk17 or cimg/openjdk:17.0. Tell the user; never change the job's image to certify it."
 	}
 	if host != "" {
-		return "The CI JDK is unknown: the tests run on " + host + ", and the configuration selects no JDK. Ask the user which Java version it runs (java -version there), then rerun testdrive with --ci-runtime java=<version> (or <job>:java=<version> per job); never guess it. Running the tests in an image whose name selects a JDK version, such as maven:3.9-eclipse-temurin-21, also certifies the job."
+		return "The CI JDK is unknown: the tests run on " + host + ", and the configuration selects no JDK. Ask the user which Java version it runs (java -version there), then rerun testdrive with --ci-runtime java=<version> (or <job>:java=<version> per job); never guess it, and never change the job's image to certify it."
 	}
-	return "The job's tests run on the JDK of " + cmp.Or(runtimeHost(job, row, "Java"), "the build agent") + ", which ddtest cannot read; run them in an image whose name selects a JDK version, such as maven:3.9-eclipse-temurin-21, gradle:8.10-jdk17 or cimg/openjdk:17.0, to certify this job."
+	return "The job's tests run on the JDK of " + cmp.Or(runtimeHost(job, row, "Java"), "the build agent") + ", which ddtest cannot read, so ddtest cannot certify this job; it reads the JDK from image names such as maven:3.9-eclipse-temurin-21, gradle:8.10-jdk17 or cimg/openjdk:17.0. Tell the user; never change the job's image to certify it."
 }
 
 // javaRuntimeProblem explains why a CI JDK selection is unsupported or not a
@@ -574,9 +665,14 @@ func JavaCIConfiguration(root, framework, site string) RuntimeCheck {
 		return RuntimeCheck{Status: "inconclusive", Reason: err.Error()}
 	}
 	workflows = javaCalledWorkflows(workflows)
+	leaks := sharedSetupLeaks(root, workflows, "java", framework)
 	for _, workflow := range workflows {
 		for _, name := range slices.Sorted(maps.Keys(workflow.Jobs)) {
 			job := workflow.Jobs[name]
+			if leak, found := sharedSetupLeak(leaks, workflow, name); found {
+				result.Jobs = append(result.Jobs, leak)
+				continue
+			}
 			rows, err := runtimeMatrix(job.Strategy.Matrix)
 			if err != nil {
 				result.Jobs = append(result.Jobs, RuntimeFinding{Workflow: workflow.Path, Job: name, Status: "inconclusive", Reason: err.Error()})
@@ -629,7 +725,7 @@ func JavaCIConfiguration(root, framework, site string) RuntimeCheck {
 						continue
 					}
 					if uses == "actions/setup-java" {
-						java, tracer, action, actionErr, inputs, setup, skippedAction = "", "", "", nil, nil, nil, false
+						java, tracer, action, actionErr, inputs, setup, skippedAction, expired = "", "", "", nil, nil, nil, false, ""
 					}
 					// A setup for other languages leaves Java's MAVEN_OPTS in place.
 					if selected, err := setupSelectsLanguage(current, row, "java"); isSetup && (err != nil || selected) {
@@ -691,7 +787,12 @@ func JavaCIConfiguration(root, framework, site string) RuntimeCheck {
 						rowJob.Steps[i] = resolved
 						handWritten = (javaDiscovery{}).handWrittenSetup(root, provider, workflow, rowJob, i, row, framework, site)
 					}
-					finding := RuntimeFinding{Location: (commandLocation{Workflow: workflow.Path, Job: name, Matrix: row, Step: stepNumber(step, i), Command: step.Run}).String(), Workflow: workflow.Path, Job: name, Step: stepNumber(step, i), Command: resolved.Run, Runtime: java, Action: action, TracerRequested: tracer, setupInputs: inputs, setupProvider: provider, Status: "inconclusive"}
+					// A Gradle action runs the command its arguments input gives.
+					command := resolved.Run
+					if command == "" && len(resolution.Tests) > 0 {
+						command, tool = resolution.Tests[0].Command, javaGradle
+					}
+					finding := RuntimeFinding{Location: (commandLocation{Workflow: workflow.Path, Job: name, Matrix: row, Step: stepNumber(step, i), Command: step.Run}).String(), Workflow: workflow.Path, Job: name, Step: stepNumber(step, i), Command: command, Runtime: java, Action: action, TracerRequested: tracer, setupInputs: inputs, setupProvider: provider, Status: "inconclusive"}
 					if setup != nil {
 						finding.setupSupported, finding.setupReadProblem = setup.Supported, setup.Problem
 						if tracer == "latest" {
@@ -739,7 +840,7 @@ func JavaCIConfiguration(root, framework, site string) RuntimeCheck {
 					case runtimeReason != "":
 						finding.Code, finding.Reason = runtimeCode, runtimeReason
 					case action == "" && handWritten == nil && expired != "":
-						finding.Reason = "The " + provider.setupName() + " at " + expired + " runs in another shell than this test command, and its exports reach only the later commands of its own shell, so the tests run without it; run it in the same shell, before the test command."
+						finding.Reason = "The " + setupProviderFor(provider, job).setupName() + " at " + expired + " runs in another shell than this test command, and its exports reach only the later commands of its own shell, so the tests run without it; run it in the same shell, before the test command."
 					case action == "" && handWritten == nil:
 						finding.Reason = "No " + provider.setupName() + " selects java before this test step, so its tests are not instrumented."
 					case javaReportingOverride(javaRowEnvironment(workflow, job, step, row), tool, site) != "":

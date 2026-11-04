@@ -118,6 +118,27 @@ func TestNonTestTasks(t *testing.T) {
 	for _, task := range []string{"okcurl:nativeBuild", "nativeCompile", "module-tests:imageRun", "jibDockerBuild", "bootBuildImage", "shadowJar"} {
 		require.True(t, NonTestTask(task), task)
 	}
+	// Signing and source archives, as publishing builds them.
+	for _, task := range []string{"signMavenJavaPublication", "signArchives", "sourcesJar", ":lib:javadocJar"} {
+		require.True(t, NonTestTask(task), task)
+	}
+	// Lifecycle tasks that run test, and a test task named like a signature
+	// check, are not.
+	for _, task := range []string{"build", "check", "signatureTest", ":lib:check"} {
+		require.False(t, NonTestTask(task), task)
+	}
+}
+
+// PIT's tasks depend on the compiled classes, not on a Test task.
+func TestMutationTasks(t *testing.T) {
+	for _, task := range []string{"pitest", ":app:pitest", "pitestReport", "pitestDebug"} {
+		require.True(t, MutationTask(task), task)
+		require.False(t, TestTask(task), task)
+		require.True(t, NonTestTask(task), task)
+	}
+	for _, task := range []string{"test", "unitTest", "integrationTest"} {
+		require.False(t, MutationTask(task), task)
+	}
 }
 
 func TestValidationArgs(t *testing.T) {

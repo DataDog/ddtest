@@ -62,7 +62,7 @@ func findWorkflows(root, language, name string) (workflowDiscovery, error) {
 				}
 				resolution := resolveTestStep(root, workflow, job, step, language, name)
 				if resolution.Review {
-					result.Review = append(result.Review, fmt.Sprintf("%s / %s / step %d (%s): %s", workflow.Path, jobName, stepNumber(step, i), step.Run, resolution.Reason))
+					result.Review = append(result.Review, fmt.Sprintf("%s / %s / step %d (%s): %s", workflow.Path, jobName, stepNumber(step, i), StepCommandLabel(step.Run), resolution.Reason))
 					continue
 				}
 				if resolution.Matched || resolution.Reason != "" {
@@ -70,7 +70,7 @@ func findWorkflows(root, language, name string) (workflowDiscovery, error) {
 					configured = configured && hasAction && resolution.Reason == ""
 				}
 				if resolution.Reason != "" {
-					result.Unresolved = append(result.Unresolved, fmt.Sprintf("%s / %s / step %d (%s): %s", workflow.Path, jobName, stepNumber(step, i), step.Run, resolution.Reason))
+					result.Unresolved = append(result.Unresolved, fmt.Sprintf("%s / %s / step %d (%s): %s", workflow.Path, jobName, stepNumber(step, i), StepCommandLabel(step.Run), resolution.Reason))
 				}
 			}
 		}

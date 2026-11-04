@@ -34,6 +34,7 @@ func (jenkins) name() string { return jenkinsProvider }
 
 func (jenkins) displayName() string       { return "Jenkins" }
 func (jenkins) checkoutReference() string { return "${WORKSPACE}" }
+func (jenkins) checkoutVariable() string  { return "WORKSPACE" }
 
 // Jenkins exports these to every step; tools detect a Jenkins build by them.
 func (jenkins) environment() map[string]string {

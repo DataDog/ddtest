@@ -1,0 +1,367 @@
+version: 2.1
+orbs:
+  snyk: snyk/snyk@2.0.2
+executors:
+  base-jdk21:
+    docker:
+      - image: openjdk:21-slim
+    environment:
+      # Configure the JVM and Gradle to avoid OOM errors
+      _JAVA_OPTIONS: "-Xmx3g"
+      GRADLE_OPTS: "-Dorg.gradle.daemon=false -Dorg.gradle.workers.max=2"
+  alpine:
+    docker:
+      - image: alpine:latest
+  trivy:
+    docker:
+      - image: aquasec/trivy:latest
+  helm:
+    docker:
+      - image: abhisheksr01/eks-helm:latest
+  owasp-zap:
+    docker:
+      - image: owasp/zap2docker-stable:latest
+  docker-git:
+    docker:
+      - image: abhisheksr01/dind-utils:latest
+  loadimpact-k6:
+    docker:
+      - image: loadimpact/k6
+  cimg-jdk21:
+    docker:
+      - image: cimg/openjdk:21.0.0
+
+aliases:
+  - &mount_workspace
+    attach_workspace:
+      at: .
+  - &restore_gradlew_cache
+    restore_cache:
+      keys:
+        - v2-gradle-wrapper-{{ checksum "gradle/wrapper/gradle-wrapper.properties" }}
+  - &restore_gradle_cache
+    restore_cache:
+      keys:
+        - v2-gradle-cache-{{ checksum "build.gradle" }}
+  - &save_dependencycheck_vulnerability_cache
+    save_cache:
+      key: v1-dependencycheck-cache-{{ checksum "build.gradle" }}
+      paths:
+        - ~/.gradle/dependency-check-data/7.0/
+  - &restore_dependencycheck_vulnerability_cache
+    restore_cache:
+      keys:
+        - v1-dependencycheck-cache-{{ checksum "build.gradle" }}
+  - &only_allowed_branches
+    filters:
+      branches:
+        only:
+          - main
+#         We are now running all tests on PR in Github Actions
+#          - /dependabot.*/
+  - &only_main
+    filters:
+      branches:
+        only:
+          - main
+  - &persist_to_workspace
+    persist_to_workspace:
+      root: .
+      paths:
+        - .
+  - &credential_context
+    context: credentials
+
+jobs:
+  build:
+    executor: base-jdk21
+    description: Install dependencies & Build
+    steps:
+      - checkout
+      - *restore_gradlew_cache
+      - *restore_gradle_cache
+      - run:
+          name: Install Dependencies
+          command: |
+            ./gradlew build -x test
+      - save_cache:
+          paths:
+            - ~/.gradle/wrapper
+          key: v2-gradle-wrapper-{{ checksum "gradle/wrapper/gradle-wrapper.properties" }}
+      - save_cache:
+          paths:
+            - ~/.gradle/caches
+          key: v2-gradle-cache-{{ checksum "build.gradle" }}
+      - *persist_to_workspace
+  test:
+    executor: base-jdk21
+    description: Unit & E2E Tests
+    steps:
+      - *mount_workspace
+      - *restore_gradlew_cache
+      - *restore_gradle_cache
+      - run:
+          name: Run Unit and E2E tests
+          command: ./gradlew test
+      - store_artifacts:
+          path: build/reports/tests/test
+          when: always
+      - store_artifacts:
+          path: build/reports/cucumber
+          when: always
+      - store_test_results:
+          path: build/test-results/test
+          when: always
+      - *persist_to_workspace
+  #  This is a generic parameterized gradle task execution job.
+  #  At the moment it's being used by Jacoco,Checkstyle, Mutation & E2E Test jobs
+  gradle_execute_task:
+    executor: base-jdk21
+    parameters:
+      step_name:
+        type: string
+        default: executing the task
+      gradle_task:
+        type: string
+      artifact_path:
+        type: string
+    steps:
+      - *mount_workspace
+      - *restore_gradlew_cache
+      - *restore_gradle_cache
+      - run:
+          name: << parameters.step_name >>
+          command: ./gradlew << parameters.gradle_task >>
+      - store_artifacts:
+          path: << parameters.artifact_path >>
+          when: always
+  static_code_analysis:
+    executor: cimg-jdk21
+    steps:
+      - checkout
+      - snyk/scan:
+          token-variable: SNYK_TOKEN
+          command: code test
+  check_dependency_vulnerability:
+    executor: base-jdk21
+    parameters:
+      timeout:
+        description: Execution timeout for running the step command
+        type: string
+        default: 10m
+    description: Dependency Vulnerability Check
+    steps:
+      - *mount_workspace
+      - checkout
+      - *restore_gradlew_cache
+      - *restore_gradle_cache
+      - *restore_dependencycheck_vulnerability_cache
+      - run:
+          name: Perform Dependency Vulnerability Checks
+          no_output_timeout: << parameters.timeout >>
+          command: ./gradlew dependencyCheckAnalyze -PUseNVDKey
+      - *save_dependencycheck_vulnerability_cache
+      - store_test_results:
+          path: build/reports/dependency-vulnerabilities
+          when: always
+      - store_artifacts:
+          path: build/reports/dependency-vulnerabilities
+          when: always
+  checkov-scan:
+    executor: helm
+    steps:
+      - checkout
+      - run:
+          name: Install checkov
+          command: yum install python3-pip -y && python3 -m pip install -U checkov
+      - run:
+          name: Scan K8s manifest and Docker using checkov
+          command: checkov -d ./
+  docker_lint_build_scan_push:
+    executor: docker-git
+    steps:
+      - *mount_workspace
+      - setup_remote_docker
+      - run:
+          name: Lint Docker file
+          command: |
+            ./scripts/docker-build.sh lint_docker_file "ci.Dockerfile"
+      - run:
+          name: Build Image
+          command: |
+            ./scripts/docker-build.sh build_image
+      - run:
+          name: Scan Image Vulnerability
+          command: ./scripts/vulnerability-checks.sh
+      - run:
+          name: Push Image
+          command: ./scripts/docker-build.sh push_image
+      - store_artifacts:
+          path: reports
+          when: always
+      - persist_to_workspace:
+          root: /root/project/version
+          paths:
+            - docker-version.txt
+  check_image_vulnerability:
+    description: Use Trivy to check the final docker image vulnerabilities before deployment
+    executor: trivy
+    steps:
+      - checkout
+      - run:
+          name: Trivy Image Vulnerability Check
+          command: |
+            apk add --no-cache bash
+            /root/project/scripts/vulnerability-checks.sh
+      - store_artifacts:
+          path: reports
+          when: always
+  helm_deploy:
+    executor: helm
+    parameters:
+      release:
+        type: string
+    steps:
+      - *mount_workspace
+      - checkout
+      - run:
+          name: Helm chart lint
+          command: helm lint ./kubernetes/helm-chart/
+      - run:
+          name: aws eks config update
+          command: aws eks --region ${AWS_DEFAULT_REGION} update-kubeconfig --name ${EKS_CLUSTER_NAME}
+      - run:
+          name: helm release
+          command: |
+            RELEASE_NAME="<< parameters.release >>" \
+            EKS_NAMESPACE="${EKS_NAMESPACE}" \
+            ./scripts/helm-deploy.sh
+  health_check:
+    executor: alpine
+    steps:
+      - checkout
+      - run:
+          name: Perform API Health Check
+          command: ./scripts/health-check.sh
+  penetration_test:
+    executor: owasp-zap
+    steps:
+      - run:
+          name: Perform Penetration Test
+          command: |
+            cd ../../../zap/
+            echo "Running from containers home zap directory..."
+            mkdir wrk && zap-baseline.py -t "${HEALTH_ENDPOINT}" -g gen.conf -r penetration-test-report.html || :
+            echo "Moving Pen Test report to the circleci job working dir.."
+            mv wrk/* ../home/zap/project/
+      - store_artifacts:
+          path: .
+  load_performance_test:
+    executor: loadimpact-k6
+    steps:
+      - checkout
+      - run:
+          name: Load Performance Test - K6
+          working_directory: ~/project/performance-testing
+          command: |
+            echo "Starting load performance test"
+            k6 run -e MY_HOSTNAME=${defaultUrl} -u 50 -d 10s script.js > load_performance_test.txt
+            echo "Completed load performance test"
+      - store_artifacts:
+          path: ~/project/performance-testing/load_performance_test.txt
+          when: always
+
+workflows:
+  version: 2.1
+  workflow-all-jobs:
+    jobs:
+      - build:
+          <<: *only_allowed_branches
+          name: Build
+      - test:
+          name: Unit & E2E Tests
+          requires:
+            - Build
+      - gradle_execute_task:
+          name: Jacoco Code Coverage
+          step_name: Check Jacoco code coverage & generate report
+          gradle_task: clean jacocoTestCoverageVerification
+          artifact_path: build/reports/jacocoHtml
+          requires:
+            - Unit & E2E Tests
+      - static_code_analysis:
+          <<: *credential_context
+          name: Snyk Static Code Analysis
+          requires:
+            - Build
+      - gradle_execute_task:
+          name: Mutation Tests
+          step_name: Perform Mutation Testing on Unit Tests
+          gradle_task: pitest
+          artifact_path: build/reports/pitest
+          requires:
+            - Build
+      - check_dependency_vulnerability:
+          <<: *credential_context
+          name: Dependency Vulnerability Checks
+          timeout: 25m
+          requires:
+            - Build
+      - docker_lint_build_scan_push:
+          <<: *credential_context
+          name: Docker Lint Build Scan Push
+          requires:
+            - Jacoco Code Coverage
+            - Snyk Static Code Analysis
+            - Mutation Tests
+            - Dependency Vulnerability Checks
+      - hold:
+          type: approval
+          description: Not desired but added to avoid unintentional deployment
+          name: Approve Deployment
+          requires:
+            - Docker Lint Build Scan Push
+      - helm_deploy:
+          <<: *credential_context
+          name: Deploy app to K8S
+          release: companieshouse-release
+          requires:
+            - Approve Deployment
+      - health_check:
+          <<: *credential_context
+          name: Health Check
+          requires:
+            - Deploy app to K8S
+      - gradle_execute_task:
+          <<: *credential_context
+          name: Acceptance Tests
+          step_name: Run E2E tests against app deployed
+          gradle_task: test -Pe2e
+          artifact_path: build/reports/cucumber
+          requires:
+            - Deploy app to K8S
+      - penetration_test:
+          <<: *credential_context
+          name: Penetration Test
+          requires:
+            - Deploy app to K8S
+      - load_performance_test:
+          <<: *credential_context
+          name: Load Performance Test
+          requires:
+            - Deploy app to K8S
+  scheduled-vulnerability-check:
+    triggers:
+      - schedule:
+          cron: "0 8 * * 5"
+          <<: *only_main
+    jobs:
+      - check_dependency_vulnerability:
+          <<: *credential_context
+          name: Dependency Vulnerability Checks
+          timeout: 20m
+      - check_image_vulnerability:
+          <<: *credential_context
+          name: Image Vulnerability Check
+      - checkov-scan:
+            name: Checkov IAC scan

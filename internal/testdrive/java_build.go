@@ -7,6 +7,7 @@ package testdrive
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -71,6 +72,16 @@ type javaProbeTarget struct{ directory, module string }
 // errNoJavaResults wraps a build that wrote no native result: a skipped or
 // disabled probe never starts, so its run reports none.
 var errNoJavaResults = errors.New("no native results")
+
+// javaBuildFailure explains missing native results: by the failure a build
+// that failed reports, as a check that stopped it before any test ran, or
+// else by err, which tells how to enable the reports.
+func javaBuildFailure(tool string, exitCode int, failure string, err error) error {
+	if exitCode == 0 || failure == "" {
+		return err
+	}
+	return fmt.Errorf("the %s build failed before any test wrote native results: %s", tool, failure)
+}
 
 // javaBuild reads the build the selected command runs, from the working
 // directory, as Maven or Gradle reads it.
@@ -173,13 +184,22 @@ func (b *mavenBuild) clean() error {
 	return root.Close()
 }
 
+// javaProbeSourceCheckSkips skip the well-known source checks a build may
+// bind before the test phase, which would judge the probe file itself rather
+// than the project: license headers (license-maven-plugin by Mycila and by
+// MojoHaus), Apache RAT, Checkstyle and Spotless. Analyses of compiled main
+// classes, such as SpotBugs or PMD, and environment rules, such as the
+// enforcer's, keep running.
+var javaProbeSourceCheckSkips = []string{"-Dlicense.skip=true", "-Dlicense.skipCheckLicense=true", "-Drat.skip=true", "-Dcheckstyle.skip=true", "-Dspotless.check.skip=true"}
+
 // arguments narrow a probe run to Surefire: checks after the test phase, such
-// as license headers or coverage gates, would judge the probe file itself.
-// Every run turns back on the XML reports a property turns off, and skips
-// the maven-gpg-plugin's signing.
+// as license headers or coverage gates, would judge the probe file itself,
+// and so would the source checks javaProbeSourceCheckSkips skips. The
+// customer's own runs keep every check. Every run turns back on the XML
+// reports a property turns off, and skips the maven-gpg-plugin's signing.
 func (b *mavenBuild) arguments(args []string, probe *javaProbe) []string {
 	if probe != nil {
-		args = append(maven.UpToTest(args), probe.args...)
+		args = append(append(maven.UpToTest(args), probe.args...), javaProbeSourceCheckSkips...)
 	}
 	args = slices.Clone(args)
 	for _, property := range b.reportSwitches {
@@ -214,7 +234,7 @@ func (b *mavenBuild) probe(target javaProbeTarget, framework string, args []stri
 func (b *mavenBuild) results(exitCode int, output string) ([]javaResult, string, error) {
 	tests, err := maven.ReadReports(b.root, b.reactor)
 	if errors.Is(err, maven.ErrNoTestCases) || errors.Is(err, maven.ErrNoReports) {
-		err = errors.Join(errNoJavaResults, err)
+		err = errors.Join(errNoJavaResults, javaBuildFailure("Maven", exitCode, maven.BuildFailure(output), err))
 	}
 	if err != nil {
 		return nil, "", err

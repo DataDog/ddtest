@@ -2452,7 +2452,11 @@ func (r *jenkinsReader) shell(call *groovyCall, scope jenkinsScope, slot *jenkin
 			step.Env = maps.Clone(state.env)
 		}
 		stepReason := joinDiagnostic(reason, state.problem)
-		if setup, consumed, ok := snippetSetupAt(file.Stmts, i, known, jenkinsSnippetForm, jenkinsPluginResets()); ok {
+		setup, consumed, ok := fallbackSetupAt(script, file.Stmts, i, known, jenkinsSnippetForm, jenkinsPluginResets())
+		if !ok {
+			setup, consumed, ok = snippetSetupAt(file.Stmts, i, known, jenkinsSnippetForm, jenkinsPluginResets())
+		}
+		if ok {
 			// Datadog's installer, in the shape of the setup snippet or not.
 			if !setup.shaped {
 				// It may run anything, tests included: an unresolved
@@ -2473,7 +2477,7 @@ func (r *jenkinsReader) shell(call *groovyCall, scope jenkinsScope, slot *jenkin
 			if setup.Problem == "" {
 				setup.Problem = r.snippetProblem(scope, setup, key, cleared, state.curl)
 			}
-			if scope.agent.kind == "container" && scope.agent.image == "" {
+			if scope.agent.kind == "container" && scope.agent.image == "" && !setup.fallback {
 				setup.Caveats = append(setup.Caveats, jenkinsUnreadImageCaveat(scope.agent))
 			}
 			if scope.setup == nil && !r.pluginMayReach(scope) {
@@ -2790,9 +2794,13 @@ func (r *jenkinsReader) finish(slot *jenkinsSlot) {
 				reason = "where " + scope.agent.imageProblem
 			}
 			result.Host = "the container of " + scope.agent.describe + ", " + reason
+		} else if missing := jenkinsImageMissingTools(scope.agent, false); missing != "" {
+			// The installer cannot run here: the stage gets the setup
+			// without Bash or curl instead.
+			result.SetupProvider = newImageFallback(result.SetupProvider, scope.agent.image, missing)
+			result.FloatingTagStated = true
 		} else {
-			result.SetupImageProblem = jenkinsImageSetupProblem(scope.agent, false, true)
-			result.SetupImageShellOnly = result.SetupImageProblem != "" && jenkinsImageSetupProblem(scope.agent, false, false) == ""
+			result.SetupImageProblem = jenkinsImageSetupProblem(scope.agent, false)
 			// Docker Pipeline pulls an image only when the agent has none,
 			// so a floating tag runs the release the agent kept.
 			result.FloatingTagStated = true

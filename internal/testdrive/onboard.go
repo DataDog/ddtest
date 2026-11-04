@@ -154,7 +154,7 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 				result.Needs = scopeUnresolvedNeeds(result.Needs)
 			case "setup_dependencies_missing", "project_dependencies_missing":
 				result.NextAction = "run_command"
-			case "ci_edit_required":
+			case "ci_edit_required", "report_exclusions_required":
 				result.NextAction = "apply_source_edit"
 			case "ci_runtime_required", "ci_setup_confirmation_required":
 				// Only the user's answer, added to the same command, continues.
@@ -658,6 +658,16 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 		result.Instruction = onboard.PrescribedEditInstruction
 		return fail("needs_input", "project_dependencies_missing", fmt.Sprintf("dependency setup is missing for %d of the selected configurations", len(setup)), "Run every setup_commands entry (next_command is the first) from the repository root, then run resume_command. This readiness check installed nothing and ran no tests. Preserve the selected framework, CI test commands and scope.")
 	}
+	// A missing Git exclusion of the reports would fail the run only after
+	// every configuration ran, so it is checked first. Every exclusion is
+	// checked again after the run: a package includes reports only once
+	// they exist, and npm falls back to .gitignore.
+	if git := t.gitReportExclusions(ctx); git.Status != "passed" {
+		blocker := "workflow " + git.Name + ": " + git.Status + " — " + reportText(git.Reason)
+		result.RequiredInput = []string{blocker}
+		result.Instruction = "Make only the ignore-file edit this check names, then run resume_command. It changes no test input; list it in your answer."
+		return fail("needs_input", "report_exclusions_required", blocker, "No tests ran. Make only the named ignore-file edit, then run resume_command; validation runs once it passes.")
+	}
 	progress("validation")
 	before := fingerprint
 	if options.Apply {
@@ -839,21 +849,20 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 			return fail("needs_input", "configuration_setup_failed", reason, "Tests were not compared for this configuration. Correct only its declared setup; preserve scope and assertions.")
 		}
 		// Evidence that passed on a compatible substitute runtime is the user's to accept.
-		var subBlockers, subLocal, subRemedies []string
+		var subBlockers []string
+		var unaccepted []runtimeSubstitution
 		for _, sub := range validation.substitutions() {
 			if !sub.Accepted {
 				subBlockers = append(subBlockers, sub.blocker())
-				subLocal = append(subLocal, sub.name()+" "+sub.Local+" in place of CI's "+sub.name()+" "+sub.CI)
-				if !slices.Contains(subRemedies, sub.remedy()) {
-					subRemedies = append(subRemedies, sub.remedy())
-				}
+				unaccepted = append(unaccepted, sub)
 			}
 		}
+		subLocal, subRemedy := substituteChoice(unaccepted)
 		if len(subBlockers) > 0 && slices.Equal(validation.Summary.BlockingChecks, subBlockers) {
 			if !slices.Contains(result.ResumeCommand, AcceptSubstituteRuntimeFlag) {
 				result.ResumeCommand = append(result.ResumeCommand, AcceptSubstituteRuntimeFlag)
 			}
-			result.RequiredInput = []string{"User decision: accept the evidence from " + strings.Join(subLocal, " and ") + " by running resume_command, or " + strings.Join(subRemedies, " and ") + " and rerun resume_command without " + AcceptSubstituteRuntimeFlag + "."}
+			result.RequiredInput = []string{"User decision: accept the evidence from " + subLocal + " by running resume_command, or " + subRemedy + " and rerun resume_command without " + AcceptSubstituteRuntimeFlag + "."}
 			return fail("needs_input", "substitute_runtime_unaccepted", strings.Join(subBlockers, "; "), "Every check passed on a compatible substitute runtime. Ask the user which option to take; do not accept it yourself, download a runtime, or change CI, the tracer or the test scope.")
 		}
 		reportOnly, actionable := splitTracerOnlyBlockers(validation)
@@ -863,7 +872,7 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 			// it must not be lost among them or accepted by the agent.
 			actionable = slices.DeleteFunc(actionable, func(check string) bool { return slices.Contains(subBlockers, check) })
 			acceptFlag = AcceptSubstituteRuntimeFlag
-			decision = " Separately, ask the user whether to accept the evidence from substitute " + strings.Join(subLocal, " and ") + ": once they approve, run accept_resume_command instead of resume_command; otherwise " + strings.Join(subRemedies, " and ") + ". Do not accept it yourself or download a runtime."
+			decision = " Separately, ask the user whether to accept the evidence from substitute " + subLocal + ": once they approve, run accept_resume_command instead of resume_command; otherwise " + subRemedy + ". Do not accept it yourself or download a runtime."
 		}
 		if len(actionable) == 0 && len(reportOnly) > 0 {
 			result.RequiredInput = reportOnly

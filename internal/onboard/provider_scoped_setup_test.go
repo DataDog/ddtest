@@ -323,6 +323,39 @@ func TestCIShellPatternRemoval(t *testing.T) {
 	}
 }
 
+// ${NAME:+word} and ${NAME+word} add word only after a set variable: the
+// PYTHONPATH rewrite stays "src" when the setup skipped its export, where
+// "$PYTHONPATH:src" gave ":src", whose empty entry is the working directory.
+func TestCIShellAlternateValue(t *testing.T) {
+	known := map[string]string{"PYTHONPATH": "${{ env.DD_TRACE_PYTHON_PATH }}", "EMPTY": ""}
+	word := func(text string) *syntax.Word {
+		file, err := syntax.NewParser().Parse(strings.NewReader("x="+text), "")
+		require.NoError(t, err)
+		return file.Stmts[0].Cmd.(*syntax.CallExpr).Assigns[0].Value
+	}
+	for _, tc := range []struct {
+		text, self, value string
+		literal           bool
+	}{
+		{`"${PYTHONPATH:+$PYTHONPATH:}src"`, "PYTHONPATH", "${{ env.DD_TRACE_PYTHON_PATH }}:src", true},
+		{`"${PYTHONPATH:+$PYTHONPATH:}"'my src'`, "PYTHONPATH", "${{ env.DD_TRACE_PYTHON_PATH }}:my src", true},
+		{`"${EMPTY:+$EMPTY:}src"`, "EMPTY", "src", true},
+		{`"${EMPTY+set}"`, "", "set", true},
+		{`"${UNSET:+$UNSET:}src"`, "UNSET", "src", true},
+		{`"${UNSET:+$UNSET:}src"`, "", "${UNSET...}src", false},
+		{`"${PYTHONPATH:+$(pwd):}src"`, "PYTHONPATH", "$(…):src", false},
+	} {
+		value, literal := ciShellWord(word(tc.text), known, tc.self, "")
+		require.Equal(t, tc.value, value, tc.text)
+		require.Equal(t, tc.literal, literal, tc.text)
+	}
+	state := ciShellState{env: map[string]string{}, references: map[string]string{}, job: map[string]string{}}
+	file, err := syntax.NewParser().Parse(strings.NewReader(`export PYTHONPATH="${PYTHONPATH:+$PYTHONPATH:}src"`), "")
+	require.NoError(t, err)
+	state.statement(file.Stmts[0], map[string]string{})
+	require.Equal(t, "src", state.env["PYTHONPATH"])
+}
+
 // Every provider fixture for Cucumber and WebdriverIO resolves its scope
 // and plans the scoped setup.
 func TestProviderScopedFixtures(t *testing.T) {

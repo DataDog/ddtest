@@ -455,7 +455,7 @@ func manualSetupHandoff(output io.Writer, options StartOptions, language, framew
 		reason += "With the setup, make exactly these edits to the test commands: " + strings.Join(ciEditList(required), " ") + " "
 	}
 	if len(unresolved) > 0 {
-		reason += fmt.Sprintf("%d CI step(s) listed as unresolved scope in agent_instruction cannot be validated and will remain blockers; tell the user now that they need a scope decision. %s ", len(unresolved), ScopeBlockerInstruction)
+		reason += fmt.Sprintf("%d CI step(s) listed as unresolved scope in agent_instruction cannot be validated and will remain blockers. They do not hold up this setup: first apply the CI setup and run resume_command, then report each such step and its scope decision to the user with the validation result. %s ", len(unresolved), ScopeBlockerInstruction)
 	}
 	var notes []string
 	for _, entry := range scope.Commands {

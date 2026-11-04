@@ -191,6 +191,11 @@ func ciShellWord(word *syntax.Word, known map[string]string, self, project strin
 					text.WriteString(trimmed)
 					continue
 				}
+				if alternate, alternateLiteral, ok := ciShellAlternate(part, known, self, project); ok {
+					literal = literal && alternateLiteral
+					text.WriteString(alternate)
+					continue
+				}
 				if part.Index != nil || part.Slice != nil || part.Repl != nil || !ciEmptyDefault(part.Exp) || part.Excl || part.Length {
 					literal = false
 					text.WriteString("${" + name + "...}")
@@ -520,6 +525,29 @@ func ciShellTrim(part *syntax.ParamExp, known map[string]string, self, project s
 	return value, true
 }
 
+// ciShellAlternate evaluates ${NAME:+word} and ${NAME+word}: word when NAME
+// is set (with the colon, also not empty), and nothing otherwise, as in
+// export PYTHONPATH="${PYTHONPATH:+$PYTHONPATH:}src", which adds the
+// separator only after a set PYTHONPATH. self, the variable being assigned,
+// is unset when not known; ok is false for any other unknown variable.
+func ciShellAlternate(part *syntax.ParamExp, known map[string]string, self, project string) (value string, literal, ok bool) {
+	if part.Exp == nil || part.Index != nil || part.Slice != nil || part.Repl != nil || part.Excl || part.Length {
+		return "", false, false
+	}
+	if part.Exp.Op != syntax.AlternateUnsetOrNull && part.Exp.Op != syntax.AlternateUnset {
+		return "", false, false
+	}
+	current, set := known[part.Param.Value]
+	switch {
+	case !set && part.Param.Value != self:
+		return "", false, false
+	case !set, part.Exp.Op == syntax.AlternateUnsetOrNull && current == "", part.Exp.Word == nil:
+		return "", true, true
+	}
+	value, literal = ciShellWord(part.Exp.Word, known, self, project)
+	return value, literal, true
+}
+
 // ciShellPattern is a shell pattern word as an anchored regular expression:
 // quoted text and known values match themselves, unquoted * and ? are
 // wildcards. Bracket expressions, escapes and unknown values are not read.
@@ -749,4 +777,64 @@ func dockerHubName(image string) string {
 func installsCurl(command string) bool {
 	words := strings.Fields(command)
 	return (slices.Contains(words, "apt-get") || slices.Contains(words, "apt")) && slices.Contains(words, "install") && slices.Contains(words, "curl")
+}
+
+// curlBeforeTests reports whether commands, those of a job in order (empty
+// for a statement ddtest followed, such as cd or export, or a setup),
+// install curl before any command that may run the job's tests. The
+// official installer goes right before the first test command, and which
+// command that is depends on the framework, so only commands that never
+// start tests may come before the install: system package commands, and
+// builtins that change the shell's state or print.
+func curlBeforeTests(commands []string) bool {
+	for _, command := range commands {
+		if installsCurl(command) {
+			return true
+		}
+		if !curlInertCommand(command) {
+			return false
+		}
+	}
+	return false
+}
+
+// setupFreeCommands are the commands of steps for curlBeforeTests, a
+// setup's as empty.
+func setupFreeCommands(steps []runtimeStep) []string {
+	var commands []string
+	for _, step := range steps {
+		if step.Setup != nil {
+			commands = append(commands, "")
+		} else {
+			commands = append(commands, step.Run)
+		}
+	}
+	return commands
+}
+
+// Executables curlBeforeTests lets run before the install: system package
+// managers, and shell builtins that change the shell's state or print.
+var curlInertExecutables = append(slices.Clone(buildkiteDockerfilePackageManagers), "dpkg", "cd", "export", "unset", "set", "echo", "printf", "true", ":")
+
+// curlInertCommand reports shell text that only runs curlInertExecutables,
+// possibly through sudo. Text it cannot parse may run anything.
+func curlInertCommand(command string) bool {
+	file, err := syntax.NewParser().Parse(strings.NewReader(command), "")
+	if err != nil {
+		return false
+	}
+	inert := true
+	syntax.Walk(file, func(node syntax.Node) bool {
+		call, ok := node.(*syntax.CallExpr)
+		if !ok || len(call.Args) == 0 {
+			return inert
+		}
+		executable := call.Args[0].Lit()
+		if executable == "sudo" && len(call.Args) > 1 {
+			executable = call.Args[1].Lit()
+		}
+		inert = inert && slices.Contains(curlInertExecutables, executable)
+		return inert
+	})
+	return inert
 }

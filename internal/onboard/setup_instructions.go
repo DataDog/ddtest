@@ -7,6 +7,7 @@ package onboard
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -57,6 +58,9 @@ func providerSetupInstructions(root string, provider ciProvider, language, frame
 				// The provider sets its jobs up with several mechanisms.
 				current.Framework, current.Jobs = framework, group.jobs
 			}
+			if current.Shared = sharedJobsFor(root, provider, language, framework, group.jobs); len(current.Shared) > 0 {
+				current.Framework = framework
+			}
 			if i > 0 {
 				text.WriteString("\n\n")
 			} else {
@@ -96,7 +100,18 @@ func providerSetupInstructions(root string, provider ciProvider, language, frame
 func groupsAPIKeyAction(provider ciProvider, groups []jobSetups) string {
 	several, ok := provider.(ciAPIKeyActions)
 	if !ok {
-		return provider.apiKeyAction(false)
+		// Each mechanism says what happens without the key, such as the
+		// setup without Bash or curl that skips beside an orb that fails.
+		var actions []string
+		for _, group := range groups {
+			if action := group.provider.apiKeyAction(false); !slices.Contains(actions, action) {
+				actions = append(actions, action)
+			}
+		}
+		if len(actions) == 0 {
+			return provider.apiKeyAction(false)
+		}
+		return strings.Join(actions, " ")
 	}
 	var references []string
 	for _, group := range groups {

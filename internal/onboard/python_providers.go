@@ -275,6 +275,10 @@ func pythonInlinePathValues(commands [][]string) []string {
 	return values
 }
 
+// pythonSavedPath is the shell variable a PYTHONPATH rewrite that is undone
+// after its command saves the path in (see pythonInlinePathEdit).
+const pythonSavedPath = "datadog_saved_pythonpath"
+
 // pythonInlinePathEdit is the exact rewrite of a pytest or tox command whose
 // inline assignment replaces PYTHONPATH (PYTHONPATH=src pytest): every setup
 // puts the tracer on PYTHONPATH before the tests run (the installer exports
@@ -285,14 +289,16 @@ func pythonInlinePathValues(commands [][]string) []string {
 // in the same script, or on GitHub Actions the step's env. A step's env
 // holds one PYTHONPATH, so a GitHub Actions step whose commands set
 // different ones is split first: each command keeps its own path. restore
-// reports other commands of the export's shell (on CircleCI, of its job,
-// which $BASH_ENV reaches) that set another path: each export is then
-// undone after its command, which keeps every path to its own command, and
-// a CircleCI step whose commands set different ones is split first. Empty
-// when no command needs it.
+// reports other commands of the export's shell (behind the CircleCI orb, of
+// its job, which $BASH_ENV reaches) that set another path: each export is
+// then undone after its command, which keeps every path to its own command,
+// and a CircleCI step behind the orb whose commands set different ones is
+// split first. The setup without Bash or curl runs in the test's shell, so
+// its run step's rewrite goes there, as in a script. Empty when no command
+// needs it.
 func pythonInlinePathEdit(provider ciProvider, commands [][]string, restore bool) string {
 	needed := pythonPathCommands(commands)
-	if len(pythonInlinePathValues(commands)) > 1 && (provider.sharedSyntax() || provider.name() == circleCIProvider) {
+	if len(pythonInlinePathValues(commands)) > 1 && (provider.sharedSyntax() || pythonBashEnvSetup(provider)) {
 		var listed []string
 		for _, c := range needed {
 			listed = append(listed, "`"+shellCommand(c.words)+"`")
@@ -323,19 +329,27 @@ func pythonInlinePathEdit(provider ciProvider, commands [][]string, restore bool
 			edits = append(edits, replaces+" Run `"+kept+"` instead, and add PYTHONPATH: ${{ env.PYTHONPATH }}:"+value+" to the step's env, which extends the action's path.")
 			continue
 		}
-		suffix := ":" + value
+		// The separator only follows a set PYTHONPATH: with the setup
+		// skipped (no API key, failed install) a leading empty entry would
+		// put the working directory on sys.path.
+		export := `export PYTHONPATH="${PYTHONPATH:+$PYTHONPATH:}` + value + `"`
 		if !pythonLiteralPath.MatchString(value) {
-			suffix = ":" + shellquote.Join(value)
+			export = `export PYTHONPATH="${PYTHONPATH:+$PYTHONPATH:}"` + shellquote.Join(value)
 		}
-		export := `export PYTHONPATH="$PYTHONPATH` + suffix + `"`
-		if !pythonLiteralPath.MatchString(value) {
-			export = `export PYTHONPATH="$PYTHONPATH"` + suffix
+		// The undo restores the value saved before the export, which may be
+		// empty or unset, when the export added no separator: an empty
+		// PYTHONPATH adds nothing to sys.path.
+		undo := `export PYTHONPATH="$` + pythonSavedPath + `"`
+		if restore {
+			export = pythonSavedPath + `="${PYTHONPATH:-}"; ` + export
 		}
-		// The suffix the export added, matched literally.
-		undo := `export PYTHONPATH="${PYTHONPATH%` + suffix + `}"`
 		where := "in the same place of the same script"
-		switch provider.name() {
-		case circleCIProvider:
+		switch {
+		case provider.name() == circleCIProvider && !pythonBashEnvSetup(provider):
+			// The setup without Bash or curl exports into its run step's
+			// shell only, before the test command.
+			where = "in the same place of the same run step's command, after the " + provider.setupName()
+		case provider.name() == circleCIProvider:
 			// A run step follows no exports; $BASH_ENV carries them.
 			if restore {
 				edits = append(edits, replaces+" Run `"+kept+"` in its place, add the step `"+provider.setupTerms().PersistEntry(export)+"` before that step, after the orb step, and the step `"+provider.setupTerms().PersistEntry(undo)+"` right after it: $BASH_ENV gives the step the extended path, and the later steps, which set other paths, the one they had.")
@@ -343,10 +357,10 @@ func pythonInlinePathEdit(provider ciProvider, commands [][]string, restore bool
 			}
 			edits = append(edits, replaces+" Run `"+kept+"` in its place, and add the step `"+provider.setupTerms().PersistEntry(export)+"` before that step, after the orb step: $BASH_ENV gives the step the extended path.")
 			continue
-		case buildkiteProvider:
+		case provider.name() == buildkiteProvider:
 			export, kept, undo = buildkiteEscape(export), buildkiteEscape(kept), buildkiteEscape(undo)
 			where = "in the same place of the step's commands (every $ written as $$)"
-		case jenkinsProvider:
+		case provider.name() == jenkinsProvider:
 			where = "in the same place of the same sh script (inside a double-quoted Groovy string, write each $ as \\$)"
 		}
 		if restore {
@@ -356,6 +370,15 @@ func pythonInlinePathEdit(provider ciProvider, commands [][]string, restore bool
 		edits = append(edits, replaces+" Replace it, "+where+", with the two commands `"+export+"` and `"+kept+"`.")
 	}
 	return strings.Join(edits, " ")
+}
+
+// pythonBashEnvSetup reports a setup whose exports reach a job's later steps
+// through $BASH_ENV, the CircleCI orb's: a path edit there goes in a step of
+// its own. The setup without Bash or curl a CircleCI job runs instead
+// exports into its run step's shell only, as a script's setup does.
+func pythonBashEnvSetup(provider ciProvider) bool {
+	_, fallback := provider.(imageFallback)
+	return provider.name() == circleCIProvider && !fallback
 }
 
 // CIEditRequired lists the CI test commands that need an exact edit before
@@ -459,9 +482,9 @@ func pythonUnknownRuntimeReason(provider ciProvider, job runtimeJob, host string
 	case host != "":
 		return "The CI Python is unknown: the tests run on " + host + ", and the configuration selects no Python version. Ask the user which Python version it runs (python --version there), then rerun testdrive with --ci-runtime python=<version> (or <job>:python=<version> per job); never guess it."
 	case job.Image != "":
-		return "The job's image " + job.Image + " selects no Python minor version; run the tests in an image whose tag names one, such as python:3.12, cimg/python:3.12 or ghcr.io/astral-sh/uv:python3.12-bookworm, to certify this job."
+		return "The job's image " + job.Image + " selects no Python minor version, so ddtest cannot certify this job; it reads the Python from image tags that name one, such as python:3.12, cimg/python:3.12 or ghcr.io/astral-sh/uv:python3.12-bookworm. Tell the user; never change the job's image to certify it."
 	}
-	return "The " + provider.displayName() + " job's Python is unknown; run its tests in an image whose tag names a Python version, such as python:3.12."
+	return "The " + provider.displayName() + " job's Python is unknown, so ddtest cannot certify it; it reads the Python from image tags that name a Python version, such as python:3.12. Tell the user; never change the job's image to certify it."
 }
 
 // pythonMissingSetupReason asks for the provider's setup before a pytest
@@ -482,15 +505,25 @@ func pythonFloatingCaveat(setup ciSetup, version string) []string {
 
 // pythonSetupRequest is the Python part of an installer setup (the GitLab
 // script, the CircleCI orb, the Buildkite installer).
+// pythonInstallNote says where the setup installs ddtrace: the installer's
+// virtual environment, or the fallback setup's folder (see
+// pythonDiscovery.ciFallbackInstall).
+func pythonInstallNote(terms ciSetupTerms) string {
+	if terms.Fallback {
+		return "The " + terms.Installer + " installs ddtrace and coverage with python -m pip, using the python on PATH, into a folder of its own ($DD_TRACER_FOLDER/python, in the working directory's .datadog),"
+	}
+	return "The " + terms.Installer + " creates its own virtual environment (.dd_civis_env, in the working directory) with the python on PATH, installs ddtrace and coverage there with pip,"
+}
+
 func pythonSetupRequest(root, framework, site string, terms ciSetupTerms) ciSetupRequest {
 	request := ciSetupRequest{Language: "python", Site: site, TracerInput: "python-tracer-version", TracerVersion: "<exact ddtrace release>"}
 	request.Notes = []string{
 		"Replace <exact ddtrace release> with an exact ddtrace release that supports every instrumented Python, such as " + pythonExampleRelease + " (which requires Python >=3.9,<3.15); when the tests' environment already installs ddtrace, use that release. Local validation runs that release (ddtest testdrive --tracer-version), and a floating one cannot be validated. Keep the existing requirements, lockfiles, Python images, virtualenv, uv, poetry and tox commands, pytest options and test arguments.",
-		"The " + terms.Installer + " creates its own virtual environment (.dd_civis_env, in the working directory) with the python on PATH, installs ddtrace and coverage there with pip, and exports PYTHONPATH (the tracer before the job's PYTHONPATH) and PYTEST_ADDOPTS=--ddtrace (before the job's options) for " + terms.Later + ". The tests keep their own environment (virtualenv, uv run, poetry run): PYTHONPATH adds the tracer to it. Its compiled modules load only on the Python version that installed them, so put " + terms.SetupEntry + " where python and pip on PATH are the tests' Python version: after any step that selects another Python, such as pyenv, conda activate or a uv-managed Python.",
-		"A later command that sets PYTHONPATH or PYTEST_ADDOPTS must extend them with " + terms.Persist(`export PYTHONPATH="$PYTHONPATH:<paths>"`) + " (likewise PYTEST_ADDOPTS), never replace them. Do not add --ddtrace or set DD_CIVISIBILITY_ENABLED yourself. If CI disables pytest plugin autoload (PYTEST_DISABLE_PLUGIN_AUTOLOAD or --disable-plugin-autoload), load the plugin explicitly with -p ddtrace in the existing pytest command.",
+		pythonInstallNote(terms) + " and exports PYTHONPATH (the tracer before the job's PYTHONPATH) and PYTEST_ADDOPTS=--ddtrace (before the job's options) for " + terms.Later + ". The tests keep their own environment (virtualenv, uv run, poetry run): PYTHONPATH adds the tracer to it. Its compiled modules load only on the Python version that installed them, so put " + terms.SetupEntry + " where python and pip on PATH are the tests' Python version: after any step that selects another Python, such as pyenv, conda activate or a uv-managed Python.",
+		"A later command that sets PYTHONPATH or PYTEST_ADDOPTS must extend them with " + terms.Persist(`export PYTHONPATH="${PYTHONPATH:+$PYTHONPATH:}<paths>"`) + " (likewise PYTEST_ADDOPTS), never replace them. Do not add --ddtrace or set DD_CIVISIBILITY_ENABLED yourself. If CI disables pytest plugin autoload (PYTEST_DISABLE_PLUGIN_AUTOLOAD or --disable-plugin-autoload), load the plugin explicitly with -p ddtrace in the existing pytest command.",
 		"If CI runs pytest through tox, the " + terms.Installer + "'s variables must reach the tox environment: extend its pass_env (passenv in INI) with DD_*, PYTHONPATH and PYTEST_ADDOPTS, preserving its entries, and run tox on the same Python version as " + terms.Entry + ". For nox or another wrapper, the same variables must reach its pytest process.",
 		"ddtest reads the Python of each instrumented job from its image, such as python:3.12, python:3.12-slim, cimg/python:3.12 or ghcr.io/astral-sh/uv:python3.12-bookworm. A job on the runner's or agent's own Python, or in an image whose name selects no Python minor version (python:latest, python:3, an image by digest), stays unverified: ask the user which Python it runs and validate with --ci-runtime python=<version> (or <job>:python=<version>); never guess it. Those jobs also need python and pip on PATH for the installer.",
-		setupImageNote(root, "python", framework, site),
+		setupImageNote(root, "python", framework),
 		setupUnsupportedNote(root, "python", framework),
 		pythonUnsupportedEntriesNote(terms),
 		GitReportExclusion,

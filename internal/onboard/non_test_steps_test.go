@@ -845,3 +845,35 @@ func TestSetupOnlyActionsKeepAJobOutsideTheTests(t *testing.T) {
 		require.Equal(t, want, setupOnlyAction(uses), uses)
 	}
 }
+
+// lux-design-system's styleguide job (CircleCI) builds the documentation with
+// vue-cli-plugin-styleguidist: a Vue CLI plugin command is a published
+// package ddtest doesn't read, so that job is a caveat naming it, while the
+// same command still blocks in a job that runs the tests. Vue CLI's own build,
+// serve and lint commands run none; test:unit and test:e2e may.
+func TestVueCLIPluginCommandsAreUnreadPackages(t *testing.T) {
+	useCIProvider(t, "circleci")
+	root := t.TempDir()
+	writeFile(t, root, "package.json", `{"scripts":{"test":"playwright test","styleguide:build":"npm run design_tokens:docs:build && vue-cli-service styleguidist:build","design_tokens:docs:build":"node src/utils/generateDesignTokenDocs.mjs","e2e":"vue-cli-service test:e2e","bundle":"vue-cli-service build --target lib"},"devDependencies":{"@playwright/test":"1.62.1","@vue/cli-service":"5.0.8","vue-cli-plugin-styleguidist":"~4.72.4"}}`)
+	writeFile(t, root, "src/utils/generateDesignTokenDocs.mjs", "import { open } from \"node:fs/promises\"\nconst docs = await open(\"docs/design_tokens.md\", \"w\")\nawait docs.close()\n")
+	job := func(name, command string) string {
+		return "  " + name + ":\n    docker:\n      - image: cimg/node:24.19.0\n    steps:\n      - checkout\n      - run:\n          command: " + command + "\n"
+	}
+	writeFile(t, root, circleCIFile, "version: 2.1\njobs:\n"+
+		job("playwright", "npx playwright test")+
+		job("styleguide", "npm run styleguide:build")+
+		job("bundle", "npm run bundle")+
+		job("e2e", "npm run e2e")+
+		"  docs_then_tests:\n    docker:\n      - image: cimg/node:24.19.0\n    steps:\n      - run: npm run styleguide:build\n      - run: npx playwright test\n"+
+		circleWorkflow("      - playwright\n      - styleguide\n      - bundle\n      - e2e\n      - docs_then_tests\n"))
+	scope, err := DiscoverValidationScope(root, "playwright")
+	require.NoError(t, err)
+	unresolved := strings.Join(scope.Unresolved, "\n")
+	caveats := strings.Join(scope.Caveats, "\n")
+	require.NotContains(t, unresolved, "/styleguide")
+	require.Contains(t, caveats, "styleguide: CI job without the Datadog setup that runs no playwright test ddtest can find (it uses packages ddtest doesn't read: vue-cli-service styleguidist:build)")
+	require.NotContains(t, unresolved, "/bundle")
+	require.Contains(t, caveats, "bundle: CI job without the Datadog setup that never runs playwright")
+	require.Contains(t, unresolved, "/e2e")
+	require.Contains(t, unresolved, "docs_then_tests / step 1 (npm run styleguide:build)")
+}

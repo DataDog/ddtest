@@ -1,0 +1,107 @@
+# GitLab CI/CD Pipeline for Kalamar-Plugin-Export
+# This pipeline runs tests on pushes and builds Docker containers on tag pushes and manual triggers
+
+stages:
+  - test-and-build
+  - build
+  - deploy
+
+variables:
+  MAVEN_OPTS: "-Dmaven.repo.local=.m2/repository"
+  MAVEN_CLI_OPTS: "--batch-mode --errors --fail-at-end --show-version"
+  DOCKER_IMAGE_NAME: "korap/kalamar-plugin-export"
+
+# Cache Maven dependencies
+cache:
+  paths:
+    - .m2/repository/
+
+# Test and build stage - runs on all pushes
+test-and-build:
+  stage: test-and-build
+  image: maven:3-eclipse-temurin-21
+  before_script:
+    - export MAVEN_OPTS="$MAVEN_OPTS"
+  script:
+    - mvn $MAVEN_CLI_OPTS clean test package
+  artifacts:
+    reports:
+      junit:
+        - target/surefire-reports/TEST-*.xml
+    paths:
+      - target/surefire-reports/
+      - target/*.jar
+    expire_in: 1 week
+  only:
+    - pushes
+    - merge_requests
+
+# Build Docker image stage - runs automatically for tags and is manually triggerable otherwise
+build-docker:
+  stage: build
+  image: docker:latest
+  services:
+    - docker:dind
+  before_script:
+    - apk add --no-cache xz
+  script:
+    - |
+      if [ -n "$CI_COMMIT_TAG" ]; then
+        export BUILD_SUFFIX="$CI_COMMIT_TAG"
+        export VERSIONED_IMAGE_NAME="$DOCKER_IMAGE_NAME-$BUILD_SUFFIX"
+        export ARTIFACT_NAME="kalamar-plugin-export-$BUILD_SUFFIX.tar.xz"
+        docker build -t "$DOCKER_IMAGE_NAME:$BUILD_SUFFIX" -t "$VERSIONED_IMAGE_NAME:$BUILD_SUFFIX" -t "$DOCKER_IMAGE_NAME:latest" .
+        docker save "$DOCKER_IMAGE_NAME:$BUILD_SUFFIX" "$VERSIONED_IMAGE_NAME:$BUILD_SUFFIX" "$DOCKER_IMAGE_NAME:latest" | xz -c > "$ARTIFACT_NAME"
+      else
+        export BUILD_SUFFIX="$CI_COMMIT_SHORT_SHA"
+        export VERSIONED_IMAGE_NAME="$DOCKER_IMAGE_NAME-$BUILD_SUFFIX"
+        export ARTIFACT_NAME="kalamar-plugin-export-$BUILD_SUFFIX.tar.xz"
+        docker build -t "$DOCKER_IMAGE_NAME:$BUILD_SUFFIX" -t "$VERSIONED_IMAGE_NAME:$BUILD_SUFFIX" .
+        docker save "$DOCKER_IMAGE_NAME:$BUILD_SUFFIX" "$VERSIONED_IMAGE_NAME:$BUILD_SUFFIX" | xz -c > "$ARTIFACT_NAME"
+      fi
+    - ls -lh "$ARTIFACT_NAME"
+  artifacts:
+    name: "kalamar-plugin-export-$BUILD_SUFFIX.tar.xz"
+    paths:
+      - "*.tar.xz"
+    expire_in: 30 days
+  rules:
+    - if: "$CI_COMMIT_TAG"
+      when: on_success
+    - when: manual
+  allow_failure: false
+
+# Security scan stage (optional)
+security-scan:
+  stage: build
+  image: maven:3-eclipse-temurin-21
+  before_script:
+    - export MAVEN_OPTS="$MAVEN_OPTS"
+  script:
+    - mvn $MAVEN_CLI_OPTS clean compile
+  allow_failure: true
+  when: manual
+
+# Deploy stage - push Docker image to Docker Hub
+deploy:
+  stage: deploy
+  image: docker:latest
+  services:
+    - docker:dind
+  before_script:
+    - echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin
+  script:
+    - |
+      # Load the built image from artifact
+      docker load -i "kalamar-plugin-export-$CI_COMMIT_TAG.tar.xz"
+      # Push the version-tagged image
+      docker push "$DOCKER_IMAGE_NAME:$CI_COMMIT_TAG"
+      # Tag and push the latest tag
+      docker tag "$DOCKER_IMAGE_NAME:$CI_COMMIT_TAG" "$DOCKER_IMAGE_NAME:latest"
+      docker push "$DOCKER_IMAGE_NAME:latest"
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^(v|[0-9])/'
+      when: manual
+  allow_failure: false
+  dependencies:
+    - build-docker

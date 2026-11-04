@@ -606,8 +606,9 @@ func TestBuildkiteApplyRegistersTheESMLoader(t *testing.T) {
 }
 
 // Matrix combinations share one command and get one insertion; commands
-// shared through an anchor, a folded command, an image without Bash and a
-// container ddtest cannot pass the key into are refused.
+// shared through an anchor, a folded command and a container ddtest cannot
+// pass the key into are refused. An image without Bash gets the setup
+// without Bash or curl.
 func TestBuildkiteApplySharedCommands(t *testing.T) {
 	t.Run("matrix", func(t *testing.T) {
 		plan, _, err := planBuildkite(t, "jest", "steps:\n  - label: \"node {{matrix}}\"\n    matrix: [\"20\", \"22\"]\n    commands:\n      - npm test\n    plugins:\n      - docker#v5.12.0:\n          image: \"node:{{matrix}}\"\n", nil)
@@ -616,12 +617,20 @@ func TestBuildkiteApplySharedCommands(t *testing.T) {
 		require.Equal(t, 1, strings.Count(config, buildkiteInstallerChecksum))
 		require.Equal(t, 1, strings.Count(config, "- DD_API_KEY"))
 	})
+	t.Run("alpine", func(t *testing.T) {
+		plan, _, err := planBuildkite(t, "jest", "steps:\n"+buildkiteDockerStep("unit", "node:22-alpine", "      - npm test\n"), nil)
+		require.NoError(t, err)
+		config := plannedFile(t, plan, buildkiteFile)
+		require.Contains(t, config, buildkiteEscape(fallbackComment[0]))
+		require.Contains(t, config, `npm install -g "dd-trace@$$DD_TRACER_VERSION_JS"`)
+		require.NotContains(t, config, buildkiteInstallerChecksum)
+	})
 	for _, tc := range []struct{ name, pipeline, reason string }{
 		{"anchor", "steps:\n  - label: unit\n    commands: &tests\n      - npm test\n  - label: more\n    commands: *tests\n", "YAML anchor and alias"},
 		{"anchored plugin", "plugins: &docker\n  - docker#v5.12.0:\n      image: node:22\nsteps:\n  - label: unit\n    commands:\n      - npm test\n    plugins: *docker\n", "DD_API_KEY never reaches"},
 		{"folded", "steps:\n  - label: unit\n    command: >\n      npm ci &&\n      npm test\n", "write the test command as its own commands entry"},
 		{"later statement", "steps:\n  - label: unit\n    commands:\n      - \"npm ci; npm test\"\n", "is not the first command of its entry"},
-		{"alpine", "steps:\n" + buildkiteDockerStep("unit", "node:22-alpine", "      - npm test\n"), "has no Bash"},
+
 		{"flow plugin", "steps:\n  - label: unit\n    commands:\n      - npm test\n    plugins:\n      - docker#v5.12.0: {image: node:22}\n", "add DD_API_KEY to the plugin's environment list"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

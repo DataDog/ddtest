@@ -44,28 +44,9 @@ type snippetForm struct {
 	// shell trace (sh -x) prints without the key's value; otherwise with
 	// [ -n "${DD_API_KEY:-}" ].
 	keySet bool
-	// shellSetups reports a provider whose container steps run a
-	// language's setup for a POSIX shell (see ciShellSetup) where the
-	// image has no Bash.
-	shellSetups bool
-}
-
-// ciSnippetFormer is a provider's setup mechanism that runs the setup
-// snippet in form.
-type ciSnippetFormer interface {
-	snippetForm() snippetForm
-}
-
-// ciShellSetup is a language whose setup a POSIX shell runs alone, for a
-// container whose image has no Bash, which Datadog's installer needs.
-type ciShellSetup interface {
-	// shellSetup is that setup, reporting to site with the exact tracer
-	// release, in form; it starts with form's key guard, as the setup
-	// snippet does.
-	shellSetup(site, release string, form snippetForm) string
-	// shellSetupAt recognizes it starting at stmts[i], as snippetSetupAt
-	// recognizes the setup snippet; the setup is withoutBash.
-	shellSetupAt(stmts []*syntax.Stmt, i int, form snippetForm) (setup ciSetup, consumed int, ok bool)
+	// job reports a provider whose setup logs a missing key for the job,
+	// not the step.
+	job bool
 }
 
 // buildkiteSnippetForm is the snippet Buildkite steps run.
@@ -252,17 +233,6 @@ func snippetSetupAt(stmts []*syntax.Stmt, i int, known map[string]string, form s
 	_, export := stmts[i].Cmd.(*syntax.DeclClause)
 	unguarded := export && strings.Contains(shellText(stmts[i]), "DD_CIVISIBILITY_AUTO_INSTRUMENTATION_PROVIDER") && i+1 < len(stmts) && mentions(stmts[i+1])
 	if !mentions(stmts[i]) && !unguarded {
-		if !form.shellSetups {
-			return ciSetup{}, 0, false
-		}
-		for _, language := range discoveryLanguages {
-			if shell, ok := language.(ciShellSetup); ok {
-				if setup, spanned, ok := shell.shellSetupAt(stmts, i, form); ok {
-					setup.before = prefix
-					return setup, consumed + spanned, true
-				}
-			}
-		}
 		return ciSetup{}, 0, false
 	}
 	setup = ciSetup{Reference: "Datadog installer", Pinned: true, DefaultLatest: true, Inputs: map[string]string{"api_key": "$DD_API_KEY"}, before: prefix}
@@ -367,6 +337,9 @@ func (b buildkite) setupProblem(setup ciSetup, tracerInput string, exact func(st
 // snippetSetupProblem is setupProblem for the setup snippet, whichever
 // provider's steps run it.
 func snippetSetupProblem(setup ciSetup, tracerInput string, exact func(string) bool, example, site string) string {
+	if setup.fallback {
+		return fallbackSetupProblem(setup, tracerInput, exact, example, site)
+	}
 	if setup.Problem != "" {
 		return setup.Problem
 	}
@@ -402,8 +375,14 @@ func buildkiteEscape(text string) string {
 // buildkiteSetupText is the setup snippet for request as a commands entry
 // (a block scalar list item), every line prefixed with indent.
 func buildkiteSetupText(request ciSetupRequest, indent string) string {
+	return buildkiteEntryText(buildkiteRequestSnippet(request).shell(), indent)
+}
+
+// buildkiteEntryText is shell text with a literal $ as a commands entry
+// (see buildkiteSetupText).
+func buildkiteEntryText(shell, indent string) string {
 	lines := []string{"- |"}
-	for _, line := range strings.Split(buildkiteEscape(buildkiteRequestSnippet(request).shell()), "\n") {
+	for _, line := range strings.Split(buildkiteEscape(shell), "\n") {
 		lines = append(lines, "  "+line)
 	}
 	return indent + strings.Join(lines, "\n"+indent) + "\n"
@@ -439,7 +418,7 @@ func (b buildkite) setupInstructions(request ciSetupRequest) string {
 	text.WriteString("2. In every Buildkite command step that runs the tests listed above, add this entry to its commands immediately before the first test command, after dependency installation and any cd into the test directory; in a command written as one block (command: |), add its lines inside the block, before the test command. Keep every existing command, env, plugin and condition unchanged; where a YAML anchor shares the commands, add it there only when every step using them runs these tests. Don't add it as a separate step.\n\n```yaml\n")
 	text.WriteString(buildkiteSetupText(request, ""))
 	text.WriteString("```\n")
-	text.WriteString("\nWrite every $ in the pipeline as $$, as above: buildkite-agent pipeline upload replaces $NAME when the pipeline is uploaded, not when the step runs. The installer needs Bash and curl or wget where the step runs: on the agent host, or in the image of the step's docker or docker-compose plugin. Images without Bash (Alpine variants, BusyBox, distroless) or curl (official -slim images) need another image. With the docker or docker-compose plugin, add DD_API_KEY to the plugin's environment list, so the key reaches the container.\n")
+	text.WriteString("\nWrite every $ in the pipeline as $$, as above: buildkite-agent pipeline upload replaces $NAME when the pipeline is uploaded, not when the step runs. The installer needs Bash and curl or wget where the step runs: on the agent host, or in the image of the step's docker or docker-compose plugin. Steps whose image lacks them (Alpine variants, BusyBox, distroless; official -slim images have no curl) get the " + fallbackSetupName + " instead, as their own instructions show; never change a step's image. With the docker or docker-compose plugin, add DD_API_KEY to the plugin's environment list, so the key reaches the container.\n")
 	text.WriteString("\n3. Set the environment and working directory the tests depend on before the entry. After it, extend the variables it exports instead of replacing them.\n")
 	for _, note := range request.Notes {
 		text.WriteString("\n- " + strings.ReplaceAll(note, "\n", "\n  "))
