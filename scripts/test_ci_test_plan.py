@@ -230,6 +230,25 @@ class WorkflowTests(unittest.TestCase):
             self.assertTrue(entry["required"])
             self.assertTrue(entry["tests"].startswith("^Test"))
 
+    def test_smokes_preserve_integration_budgets_and_allow_job_setup_time(self):
+        # These are the existing full lanes' Go test allowances, including Go's
+        # default ten minutes for the JavaScript platform compatibility tests.
+        budgets = {"python": 20, "ruby": 20, "java-maven": 20, "java-gradle": 20,
+                   "javascript": 10, "jest": 12, "vitest": 15, "mocha": 10,
+                   "cypress": 12, "playwright": 12, "cucumber": 12,
+                   "webdriverio": 12, "onboarding": 8}
+        workflow = (ROOT / ".github/workflows/ci.yml").read_text()
+        integration = workflow.split("  integration:\n", 1)[1].split("\n  playwright:\n", 1)[0]
+        playwright = workflow.split("  playwright:\n", 1)[1].split("\n  evaluator-isolation:\n", 1)[0]
+        for suite in CONFIG["suites"].values():
+            for entry in suite["smoke"]:
+                with self.subTest(smoke=entry["id"]):
+                    minutes = entry["timeout_minutes"]
+                    self.assertGreaterEqual(minutes, budgets[entry["id"]])
+                    job = playwright if entry["runtime"] == "playwright" else integration
+                    job_minutes = int(re.search(r"timeout-minutes: (\d+)", job).group(1))
+                    self.assertGreaterEqual(job_minutes, minutes + 5)
+
     def test_fast_units_provision_and_require_project_runtimes(self):
         fast = (ROOT / ".github/workflows/ci.yml").read_text()
         unit = fast.split("  unit:\n", 1)[1].split("\n  scripts:\n", 1)[0]

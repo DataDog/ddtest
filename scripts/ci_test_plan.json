@@ -37,6 +37,7 @@
         {
           "id": "python",
           "runtime": "python",
+          "timeout_minutes": 20,
           "tests": "^TestPublicPythonRubyTestdrives$/^pytest$",
           "required": [
             "TestPublicPythonRubyTestdrives/pytest"
@@ -71,6 +72,7 @@
         {
           "id": "ruby",
           "runtime": "ruby",
+          "timeout_minutes": 20,
           "tests": "^TestRubyValidationIntegration$/^(rspec|minitest)$",
           "required": [
             "TestRubyValidationIntegration/rspec",
@@ -133,6 +135,7 @@
         {
           "id": "java-maven",
           "runtime": "java",
+          "timeout_minutes": 20,
           "tests": "^TestJavaValidationIntegration$/^junit4$",
           "required": [
             "TestJavaValidationIntegration/junit4"
@@ -146,6 +149,7 @@
         {
           "id": "java-gradle",
           "runtime": "gradle",
+          "timeout_minutes": 20,
           "tests": "^TestJavaValidationIntegration$/^gradle_junit4$",
           "required": [
             "TestJavaValidationIntegration/gradle_junit4"
@@ -175,6 +179,7 @@
         {
           "id": "javascript",
           "runtime": "node",
+          "timeout_minutes": 10,
           "packages": [
             "./internal/compatibility"
           ],
@@ -210,6 +215,7 @@
         {
           "id": "jest",
           "runtime": "node",
+          "timeout_minutes": 12,
           "tests": "^TestPublicJestTestdrive$/^(passing|existing_failure)$",
           "required": [
             "TestPublicJestTestdrive/passing",
@@ -247,6 +253,7 @@
         {
           "id": "vitest",
           "runtime": "node",
+          "timeout_minutes": 15,
           "tests": "^TestPublicVitestRunnerTestdrive$/^mixed_CI_paths$",
           "required": [
             "TestPublicVitestRunnerTestdrive/mixed_CI_paths"
@@ -286,6 +293,7 @@
         {
           "id": "mocha",
           "runtime": "node",
+          "timeout_minutes": 10,
           "tests": "^TestPublicMochaTestdrive$/^(passing|existing_failure)$",
           "required": [
             "TestPublicMochaTestdrive/passing",
@@ -324,6 +332,7 @@
         {
           "id": "cypress",
           "runtime": "node",
+          "timeout_minutes": 12,
           "tests": "^TestPublicCypressTestdrive$/^(passing|existing_failure)$",
           "required": [
             "TestPublicCypressTestdrive/passing",
@@ -364,6 +373,7 @@
         {
           "id": "playwright",
           "runtime": "playwright",
+          "timeout_minutes": 12,
           "tests": "^TestPublicPlaywrightTestdrive$/^(passing|existing_failure)$",
           "required": [
             "TestPublicPlaywrightTestdrive/passing",
@@ -400,6 +410,7 @@
         {
           "id": "cucumber",
           "runtime": "node",
+          "timeout_minutes": 12,
           "tests": "^TestPublicCucumberTestdrive$/^(passing|existing_failure)$",
           "required": [
             "TestPublicCucumberTestdrive/passing",
@@ -439,6 +450,7 @@
         {
           "id": "webdriverio",
           "runtime": "node",
+          "timeout_minutes": 12,
           "tests": "^TestPublicWebdriverIOTestdrive$/^(passing|existing_failure)$",
           "required": [
             "TestPublicWebdriverIOTestdrive/passing",
@@ -483,6 +495,7 @@
         {
           "id": "onboarding",
           "runtime": "node",
+          "timeout_minutes": 8,
           "tests": "^TestPublicOnboardApply$",
           "required": [
             "TestPublicOnboardApply"

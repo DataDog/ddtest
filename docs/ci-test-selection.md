@@ -71,6 +71,8 @@ failure. Python, Ruby, Java and Vitest use their existing validation journeys;
 Java covers both Maven and Gradle. PRs use one pinned framework/tracer/runtime
 combination per journey. Older versions, `latest`, remaining scenarios, SDK parity
 and platform differences are checked by Full compatibility.
+Each smoke retains its full compatibility lane's Go test timeout, with at least
+five additional minutes in the job limit for setup and compilation.
 
 The `pr-test-plan` artifact and job summary show the selection. Every smoke
 requires explicit named Go test cases to report `pass`: a filtered, missing or

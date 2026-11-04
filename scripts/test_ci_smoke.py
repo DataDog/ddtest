@@ -9,6 +9,13 @@ import ci_smoke
 
 
 class SmokeTests(unittest.TestCase):
+    def test_smoke_passes_its_runtime_budget_to_go(self):
+        for minutes in (8, 12, 20):
+            with self.subTest(minutes=minutes), patch.object(ci_smoke, "run_tests") as run:
+                ci_smoke.run_smoke({"tests": "^TestSmoke$", "required": ["TestSmoke"],
+                                    "timeout_minutes": minutes})
+                self.assertIn(f"-timeout={minutes}m", run.call_args.args[0])
+
     def test_missing_skipped_or_filtered_cases_cannot_pass(self):
         for passed in (set(), {"TestSmoke"}, {"TestSmoke/other"}):
             with self.assertRaises(ValueError):

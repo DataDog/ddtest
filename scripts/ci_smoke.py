@@ -45,7 +45,7 @@ def run_smoke(entry):
         for command in entry.get("setup", []):
             subprocess.run(command, check=True, env=env)
         command = (["xvfb-run", "-a"] if entry.get("xvfb") else []) + [
-            "go", "test", "-json", "-count=1", "-timeout=8m", "-run", entry["tests"],
+            "go", "test", "-json", "-count=1", f"-timeout={entry['timeout_minutes']}m", "-run", entry["tests"],
         ] + entry.get("packages", ["./internal/testdrive"])
         run_tests(command, env, entry["required"])
 

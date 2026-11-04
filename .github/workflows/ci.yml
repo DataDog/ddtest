@@ -143,7 +143,7 @@ jobs:
     needs: plan
     if: needs.plan.outputs.integrations != '[]'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
@@ -190,7 +190,7 @@ jobs:
     needs: plan
     if: needs.plan.outputs.playwright == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 17
     container:
       image: mcr.microsoft.com/playwright:v1.55.1-noble
     steps:
