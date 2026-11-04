@@ -76,6 +76,10 @@ func TestHandWrittenJavaSetups(t *testing.T) {
 		{name: "versioned file, latest download", env: with(agentless, "MAVEN_OPTS", "-javaagent:dd-java-agent-1.67.1.jar"), before: []string{"curl -Lo dd-java-agent-1.67.1.jar https://dtdg.co/latest-java-tracer"}, command: "mvn test", problem: "The job downloads the latest dd-java-agent"},
 		{name: "custom mirror", before: []string{"curl -Lo dd-java-agent.jar https://mirror.example/com/datadoghq/dd-java-agent/1.67.1/dd-java-agent-1.67.1.jar"}, command: "mvn test", problem: "which is not an exact release's artifact on Maven Central or the DataDog/dd-trace-java GitHub releases"},
 		{name: "GitHub release", before: []string{"wget -O dd-java-agent.jar https://github.com/DataDog/dd-trace-java/releases/download/v1.68.0/dd-java-agent-1.68.0.jar"}, command: "mvn test", reference: "hand-written dd-java-agent 1.68.0 setup (MAVEN_OPTS)"},
+		{name: "GitHub release's unversioned asset", before: []string{"wget -O dd-java-agent.jar https://github.com/DataDog/dd-trace-java/releases/download/v1.68.0/dd-java-agent.jar"}, command: "mvn test", reference: "hand-written dd-java-agent 1.68.0 setup (MAVEN_OPTS)"},
+		// A download that may not run does not tell which jar the tests attach.
+		{name: "download in an if", before: []string{"if [ -n \"$PIN\" ]; then " + handWrittenAgentDownload + "; fi"}, command: "mvn test", unresolved: "inside conditional shell control flow"},
+		{name: "download after &&", before: []string{"echo pinning && " + handWrittenAgentDownload}, command: "mvn test", unresolved: "inside conditional shell control flow"},
 		{name: "latest", before: []string{"curl -Lo dd-java-agent.jar https://dtdg.co/latest-java-tracer"}, command: "mvn test", reference: "hand-written dd-java-agent setup (MAVEN_OPTS)", problem: "The job downloads the latest dd-java-agent"},
 		{name: "no download", before: []string{}, command: "mvn test", problem: "No command of the job downloads dd-java-agent.jar with an exact release"},
 		{name: "another tool's release", before: []string{"curl -Lo java-helper.zip https://github.com/example/tools/releases/download/v1.67.1/java-helper.zip"}, command: "mvn test", problem: "No command of the job downloads dd-java-agent.jar with an exact release"},
@@ -120,9 +124,17 @@ func TestHandWrittenJavaSetups(t *testing.T) {
 			}
 		})
 	}
+	// The command's own MAVEN_OPTS replaces the job's, so the job's agent
+	// never reaches the build.
+	root := t.TempDir()
+	writeFile(t, root, "pom.xml", handWrittenPOM)
+	job := runtimeJob{Env: agentless, Steps: []runtimeStep{{Run: handWrittenAgentDownload}, {Run: "MAVEN_OPTS=-Xmx1g mvn test"}}}
+	require.Nil(t, javaHandWrittenSetup(root, gitLabCI{}, ciWorkflow{}, job, 1, "junit5", ""), "an inline MAVEN_OPTS replaces the inherited carrier")
+	job.Steps[1].Run = "mvn test"
+	require.NotNil(t, javaHandWrittenSetup(root, gitLabCI{}, ciWorkflow{}, job, 1, "junit5", ""))
 	// Without the agent there is no hand-written setup, and the job is
 	// reported as uninstrumented.
-	root := javaHandWrittenRepository(t, provider, map[string]string{"MAVEN_OPTS": "-Xmx1g"}, nil, "mvn test", map[string]string{"pom.xml": handWrittenPOM})
+	root = javaHandWrittenRepository(t, provider, map[string]string{"MAVEN_OPTS": "-Xmx1g"}, nil, "mvn test", map[string]string{"pom.xml": handWrittenPOM})
 	require.Nil(t, firstJobHandWrittenSetup(t, root, "java", "junit5", ""))
 	ci := JavaCIConfiguration(root, "junit5", "")
 	require.Len(t, ci.Jobs, 1)

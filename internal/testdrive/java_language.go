@@ -195,7 +195,7 @@ func (javaLanguage) runEnvironment(t *Testdrive, path string) map[string]string 
 		if !configured {
 			options = os.Getenv(carrier)
 		}
-		kept := withoutDatadogAgent(options)
+		kept := withoutDatadogAgent(carrier, options)
 		if carrier == key && path != "" {
 			kept = strings.TrimSpace(kept + " -javaagent:" + path)
 		}
@@ -207,9 +207,11 @@ func (javaLanguage) runEnvironment(t *Testdrive, path string) map[string]string 
 }
 
 // withoutDatadogAgent removes every -javaagent option of dd-java-agent from
-// JVM options, by JAR name or manifest, and keeps the others as written.
-func withoutDatadogAgent(options string) string {
-	words := platform.JavaOptionWords(options)
+// carrier's JVM options, split as its reader splits them (see
+// platform.JavaCarrierWords), by JAR name or manifest, and keeps the others
+// as written.
+func withoutDatadogAgent(carrier, options string) string {
+	words := platform.JavaCarrierWords(carrier, options)
 	kept := slices.DeleteFunc(slices.Clone(words), func(word string) bool {
 		jar, ok := strings.CutPrefix(platform.JavaUnquoted(word), "-javaagent:")
 		if !ok {

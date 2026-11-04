@@ -85,7 +85,7 @@ func (t *Testdrive) javaImplicitArgs(args []string) ([]string, error) {
 		if err != nil && !errors.Is(err, os.ErrNotExist) {
 			return nil, err
 		}
-		if options := string(data); withoutDatadogAgent(options) != options {
+		if options := string(data); withoutDatadogAgent(".mvn/jvm.config", options) != options {
 			return nil, errors.New(".mvn/jvm.config attaches dd-java-agent to every Maven build, so validation cannot run the build without it; remove the -javaagent option from .mvn/jvm.config, as CI attaches the agent with the Datadog setup")
 		}
 	}

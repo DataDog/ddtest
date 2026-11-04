@@ -101,8 +101,10 @@ func TestJavaAgentEnvironmentAttachesTheAgentOnce(t *testing.T) {
 }
 
 func TestJavaRunsRemoveAQuotedDatadogAgent(t *testing.T) {
-	require.Equal(t, `-Dname="a b" -Xmx256m`, withoutDatadogAgent(`-javaagent:"/opt/ci tools/dd-java-agent-1.67.1.jar" -Dname="a b" -Xmx256m`), "the quoted path is one option")
-	require.Equal(t, "-Xmx1g", withoutDatadogAgent("-javaagent:'/opt/ci tools/dd-java-agent.jar' -Xmx1g"))
+	require.Equal(t, `-Dname="a b" -Xmx256m`, withoutDatadogAgent("JAVA_TOOL_OPTIONS", `-javaagent:"/opt/ci tools/dd-java-agent-1.67.1.jar" -Dname="a b" -Xmx256m`), "the quoted path is one option")
+	require.Equal(t, "-Xmx1g", withoutDatadogAgent("GRADLE_OPTS", "-javaagent:'/opt/ci tools/dd-java-agent.jar' -Xmx1g"))
+	// Maven's launcher expands MAVEN_OPTS unquoted: an apostrophe is a character.
+	require.Equal(t, "-Dservice=team's-tests -Xmx256m", withoutDatadogAgent("MAVEN_OPTS", "-javaagent:/opt/dd-java-agent.jar -Dservice=team's-tests -Xmx256m"))
 }
 
 func TestJavaRunsRemoveAnInheritedDatadogAgent(t *testing.T) {

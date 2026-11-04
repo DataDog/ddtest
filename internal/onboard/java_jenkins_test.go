@@ -202,6 +202,9 @@ func TestJavaJenkinsShellSetupWithoutBash(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(data), "dd-java-agent/"+javaRecommendedTracer+"/dd-java-agent-"+javaRecommendedTracer+".jar")
 	require.NotContains(t, string(data), "install_test_visibility")
+	ignore, err := os.ReadFile(filepath.Join(root, ".gitignore"))
+	require.NoError(t, err)
+	require.Contains(t, string(ignore), jenkinsTracerIgnore, "the setup's folders stay untracked")
 
 	confirmJavaJenkins(t, "8")
 	ci := JavaCIConfiguration(root, "junit5", "datadoghq.com")

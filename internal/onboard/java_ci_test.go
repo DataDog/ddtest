@@ -245,6 +245,20 @@ func TestJavaReplayKeepsTheJobsJVMOptions(t *testing.T) {
 	require.Equal(t, "-Xmx1g", replay)
 	_, _, err = java.variantValue(ciWorkflow{}, runtimeJob{}, runtimeStep{}, nil, "MAVEN_OPTS", "-Xmx1g -Ddd.civisibility.enabled=false")
 	require.ErrorContains(t, err, "explicitly disabled by -Ddd.civisibility.enabled=false in MAVEN_OPTS", "a disabled CI job is never certified")
+	// Maven's launcher expands MAVEN_OPTS unquoted: an apostrophe is a character.
+	require.Equal(t, "-Dtest.mode=strict -Xmx256m", javaWithoutAgentProperties("MAVEN_OPTS", "-Ddd.service=team's-tests -Dtest.mode=strict -Xmx256m"))
+	require.Equal(t, `-Dname="a b"`, javaWithoutAgentProperties("JAVA_TOOL_OPTIONS", `-Ddd.service="my service" -Dname="a b"`), "the JVM honors quotes")
+	// A value only CI knows may disable it.
+	_, _, err = java.variantValue(ciWorkflow{}, runtimeJob{}, runtimeStep{}, nil, "MAVEN_OPTS", "-Ddd.civisibility.enabled=${{ env.CI_TRACING }}")
+	require.ErrorContains(t, err, "in MAVEN_OPTS requires review")
+	// Maven reads MAVEN_OPTS after JAVA_TOOL_OPTIONS, so its value decides.
+	job := runtimeJob{Env: map[string]string{"JAVA_TOOL_OPTIONS": "-Ddd.civisibility.enabled=false", "MAVEN_OPTS": "-Ddd.civisibility.enabled=true"}}
+	step := runtimeStep{Run: "mvn -B verify"}
+	_, _, err = java.variantValue(ciWorkflow{}, job, step, nil, "JAVA_TOOL_OPTIONS", job.Env["JAVA_TOOL_OPTIONS"])
+	require.NoError(t, err, "MAVEN_OPTS enables it after JAVA_TOOL_OPTIONS")
+	job.Env["MAVEN_OPTS"] = "-Xmx1g"
+	_, _, err = java.variantValue(ciWorkflow{}, job, step, nil, "JAVA_TOOL_OPTIONS", job.Env["JAVA_TOOL_OPTIONS"])
+	require.ErrorContains(t, err, "explicitly disabled by -Ddd.civisibility.enabled=false in JAVA_TOOL_OPTIONS")
 }
 
 func TestJavaDownloadedScriptsAShellRunsStayInScope(t *testing.T) {
@@ -252,6 +266,7 @@ func TestJavaDownloadedScriptsAShellRunsStayInScope(t *testing.T) {
 	// names one keeps the step unresolved; a passive download names none.
 	for run, unresolved := range map[string]bool{
 		"curl -s https://example.org/run-tests.sh | bash":               true,
+		"curl -s https://example.org/run-tests.sh|bash":                 true,
 		"bash <(curl -s https://example.org/run-tests.sh)":              true,
 		`sh -c "$(wget -qO- https://example.org/run-tests.sh)"`:         true,
 		"curl -Lo dd-java-agent.jar https://dtdg.co/latest-java-tracer": false,

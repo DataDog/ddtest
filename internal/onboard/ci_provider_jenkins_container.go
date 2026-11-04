@@ -34,7 +34,11 @@ import (
 // mount noexec, stopping the tracer's native add-ons. When mktemp fails, the
 // empty folder fails the snippet's mkdir, so it logs that the installation
 // failed.
-const jenkinsTracerFolder = `$(mktemp -d "$PWD/.datadog-ci-container.XXXXXX")`
+const jenkinsTracerFolder = `$(mktemp -d "$PWD/` + jenkinsTracerFolderName + `")`
+
+// jenkinsTracerFolderName is the folder's mktemp template, whatever
+// directory a setup creates it in.
+const jenkinsTracerFolderName = ".datadog-ci-container.XXXXXX"
 
 // jenkinsTracerIgnore is the .gitignore entry for the folders the snippet
 // leaves in the workspace: unanchored, since the snippet creates them in the
@@ -45,7 +49,7 @@ const jenkinsTracerIgnore = ".datadog-ci-container.*/"
 // setupIgnores keeps the snippet's folders untracked when edits write a
 // Jenkinsfile that runs the setup snippet.
 func (jenkins) setupIgnores(edits []setupEdit) []string {
-	if slices.ContainsFunc(edits, func(edit setupEdit) bool { return strings.Contains(string(edit.after), jenkinsTracerFolder) }) {
+	if slices.ContainsFunc(edits, func(edit setupEdit) bool { return strings.Contains(string(edit.after), jenkinsTracerFolderName) }) {
 		return []string{jenkinsTracerIgnore}
 	}
 	return nil

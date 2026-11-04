@@ -230,6 +230,18 @@ func JavaOptionWords(options string) []string {
 	return words
 }
 
+// JavaCarrierWords splits the JVM options of carrier as the program that
+// reads it does: Maven's launcher expands MAVEN_OPTS and .mvn/jvm.config
+// unquoted, so they split on whitespace with quotes kept as written; the JVM
+// (JAVA_TOOL_OPTIONS), the Gradle wrapper (JAVA_OPTS, GRADLE_OPTS) and every
+// other reader honor quotes (see JavaOptionWords).
+func JavaCarrierWords(carrier, options string) []string {
+	if carrier == "MAVEN_OPTS" || carrier == ".mvn/jvm.config" {
+		return strings.Fields(options)
+	}
+	return JavaOptionWords(options)
+}
+
 // JavaUnquoted is a JVM option without the quotes the JVM removes.
 func JavaUnquoted(word string) string {
 	return strings.NewReplacer(`"`, "", `'`, "").Replace(word)

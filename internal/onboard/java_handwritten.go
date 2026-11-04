@@ -15,6 +15,7 @@ import (
 
 	"github.com/DataDog/ddtest/internal/gradle"
 	"github.com/DataDog/ddtest/internal/platform"
+	"mvdan.cc/sh/v3/syntax"
 )
 
 // A hand-written dd-java-agent setup attaches the agent to the build JVM,
@@ -66,6 +67,8 @@ func javaHandWrittenSetup(root string, provider ciProvider, workflow ciWorkflow,
 			commandEnv = mergeEnvironment(env, assignments)
 			for _, key := range []string{"JAVA_TOOL_OPTIONS", "MAVEN_OPTS", "GRADLE_OPTS", "JAVA_OPTS"} {
 				if value, set := assignments[key]; set {
+					// The command's own value replaces the inherited one.
+					carriers = slices.DeleteFunc(carriers, func(carrier javaHandWrittenCarrier) bool { return carrier.name == key })
 					carriers = append([]javaHandWrittenCarrier{{key, value}}, carriers...)
 				}
 			}
@@ -87,7 +90,7 @@ func javaHandWrittenSetup(root string, provider ciProvider, workflow ciWorkflow,
 	var carrier javaHandWrittenCarrier
 	jar := ""
 	for _, current := range carriers {
-		if jar = javaHandWrittenAgent(current.value); jar != "" {
+		if jar = javaHandWrittenAgent(current.name, current.value); jar != "" {
 			carrier = current
 			break
 		}
@@ -122,12 +125,41 @@ func javaHandWrittenSetup(root string, provider ciProvider, workflow ciWorkflow,
 	properties, _ := javaEffectiveProperties(commandEnv, tool)
 	configuration := mergeEnvironment(commandEnv, properties)
 	if _, environment := commandEnv[carrier.name]; !environment {
-		configuration = mergeEnvironment(configuration, javaHandWrittenProperties(carrier.value))
+		configuration = mergeEnvironment(configuration, javaHandWrittenProperties(carrier.name, carrier.value))
 	}
 	// dd-java-agent reports tests with APM tracing off.
 	delete(configuration, "DD_TRACE_ENABLED")
 	handWrittenConfiguration(setup, provider, job, configuration, site, false, reportingFromEnvironment)
 	return setup
+}
+
+// javaConditionalCommands are the source texts of a script's commands that
+// may not run: those inside if, case or a loop, and those after && or ||.
+// A script the shell parser cannot read is conditional as a whole.
+func javaConditionalCommands(script string) []string {
+	file, err := syntax.NewParser(syntax.Variant(syntax.LangBash)).Parse(strings.NewReader(script), "")
+	if err != nil {
+		return []string{script}
+	}
+	var branches []string
+	add := func(node syntax.Node) {
+		if node != nil && node.Pos().IsValid() && node.End().IsValid() {
+			branches = append(branches, script[node.Pos().Offset():node.End().Offset()])
+		}
+	}
+	syntax.Walk(file, func(node syntax.Node) bool {
+		switch node := node.(type) {
+		case *syntax.IfClause, *syntax.CaseClause, *syntax.WhileClause, *syntax.ForClause:
+			add(node)
+			return false
+		case *syntax.BinaryCmd:
+			if node.Op == syntax.AndStmt || node.Op == syntax.OrStmt {
+				add(node.Y)
+			}
+		}
+		return true
+	})
+	return branches
 }
 
 // javaDownloadCommands are the curl and wget commands of a script, each as
@@ -136,7 +168,9 @@ func javaDownloadCommands(script string) [][]string {
 	var commands [][]string
 	for _, command := range javaCommandSeparator.Split(strings.ReplaceAll(script, "\\\n", " "), -1) {
 		words := strings.Fields(command)
-		for len(words) > 0 && strings.Contains(words[0], "=") {
+		// Assignments and the shell keywords that open a branch's commands
+		// come before the command itself.
+		for len(words) > 0 && (strings.Contains(words[0], "=") || slices.Contains([]string{"then", "else", "do", "!", "{", "("}, words[0])) {
 			words = words[1:]
 		}
 		if len(words) > 0 && slices.Contains([]string{"curl", "wget"}, filepath.Base(words[0])) {
@@ -217,8 +251,8 @@ func javaSameAgentPath(workflow ciWorkflow, job runtimeJob, downloadStep runtime
 
 // javaHandWrittenAgent is the dd-java-agent JAR a JVM option list attaches
 // (-javaagent:<path>), empty when it attaches none.
-func javaHandWrittenAgent(options string) string {
-	for _, word := range platform.JavaOptionWords(options) {
+func javaHandWrittenAgent(carrier, options string) string {
+	for _, word := range platform.JavaCarrierWords(carrier, options) {
 		jar, ok := strings.CutPrefix(platform.JavaUnquoted(word), "-javaagent:")
 		if !ok {
 			continue
@@ -234,9 +268,9 @@ func javaHandWrittenAgent(options string) string {
 // javaHandWrittenProperties are the DD_* variables an option list's -Ddd.*
 // system properties set, such as -Ddd.civisibility.enabled=true for
 // DD_CIVISIBILITY_ENABLED.
-func javaHandWrittenProperties(options string) map[string]string {
+func javaHandWrittenProperties(carrier, options string) map[string]string {
 	properties := map[string]string{}
-	for _, word := range platform.JavaOptionWords(options) {
+	for _, word := range platform.JavaCarrierWords(carrier, options) {
 		if key, value, ok := javaAgentProperty(word); ok {
 			properties[key] = value
 		}
@@ -283,11 +317,18 @@ func javaHandWrittenFileOptions(file, property string) string {
 // name alone, as dd-java-agent-1.67.1.jar, never says which bytes the job
 // attaches. It records on setup why none is pinned.
 func javaHandWrittenTracer(setup *handWrittenSetup, jar string, workflow ciWorkflow, job runtimeJob, index int, env map[string]string) string {
-	download, ambiguous := "", ""
+	download, ambiguous, conditional := "", "", ""
 	for _, step := range job.Steps[:index+1] {
+		branches := javaConditionalCommands(step.Run)
 		for _, words := range javaDownloadCommands(step.Run) {
 			address, target := javaDownload(words)
 			if address == "" || filepath.Base(target) != filepath.Base(jar) {
+				continue
+			}
+			// A download that may not run does not tell which jar the
+			// tests attach.
+			if slices.ContainsFunc(branches, func(branch string) bool { return strings.Contains(branch, address) }) {
+				conditional = target
 				continue
 			}
 			same, known := javaSameAgentPath(workflow, job, step, target, job.Steps[index], jar)
@@ -305,6 +346,8 @@ func javaHandWrittenTracer(setup *handWrittenSetup, jar string, workflow ciWorkf
 		}
 	}
 	switch {
+	case download == "" && conditional != "":
+		setup.unresolved("the job downloads " + conditional + " inside conditional shell control flow, so ddtest cannot tell whether that download runs and which dd-java-agent the tests attach.")
 	case download == "" && ambiguous != "":
 		setup.unresolved("the job downloads " + ambiguous + ", but ddtest cannot tell whether it is the " + jar + " the tests attach, so it cannot tell which dd-java-agent they run.")
 	case download == "":

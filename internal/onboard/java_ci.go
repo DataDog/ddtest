@@ -208,7 +208,7 @@ func unresolvedJavaWrapper(root string, workflow ciWorkflow, job runtimeJob, ste
 }
 
 // urlWord is a URL in shell text.
-var urlWord = regexp.MustCompile(`[A-Za-z][A-Za-z0-9+.-]*://\S+`)
+var urlWord = regexp.MustCompile(`[A-Za-z][A-Za-z0-9+.-]*://[^\s|;&<>()]+`)
 
 var (
 	// executedAfter follows a URL whose download a shell runs: piped into
@@ -853,7 +853,7 @@ func javaEffectiveProperties(env map[string]string, tool string) (properties, fr
 	}
 	properties, from = map[string]string{}, map[string]string{}
 	for _, carrier := range carriers {
-		for key, value := range javaHandWrittenProperties(env[carrier]) {
+		for key, value := range javaHandWrittenProperties(carrier, env[carrier]) {
 			properties[key], from[key] = value, carrier
 		}
 	}

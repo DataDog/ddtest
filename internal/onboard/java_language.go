@@ -8,6 +8,7 @@ package onboard
 import (
 	_ "embed"
 	"fmt"
+	"maps"
 	"regexp"
 	"slices"
 	"strings"
@@ -92,7 +93,7 @@ func (javaDiscovery) localCommands(root, command, framework string) ([]TestComma
 
 // Local validation owns the agent option; keep the customer's other JVM
 // options. A reference to workflow or job values needs them explicitly.
-func (javaDiscovery) variantValue(workflow ciWorkflow, job runtimeJob, _ runtimeStep, row map[string]any, key, value string) (string, bool, error) {
+func (javaDiscovery) variantValue(workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any, key, value string) (string, bool, error) {
 	// Deploy credentials matter only to the goals validation never runs.
 	if slices.Contains(javaDeployCredentials(job), key) {
 		return "", true, nil
@@ -113,18 +114,47 @@ func (javaDiscovery) variantValue(workflow ciWorkflow, job runtimeJob, _ runtime
 	// job's own options, is local validation's too, and so are the -Ddd.*
 	// properties a hand-written setup configures CI's agent with, as its
 	// DD_* variables: they would send the local agent's reports elsewhere.
-	// One that turns Test Optimization off in CI is never removed unseen.
-	if value := javaHandWrittenProperties(inherited)["DD_CIVISIBILITY_ENABLED"]; handWrittenFalse(value) {
-		return "", false, fmt.Errorf("CI instrumentation is explicitly disabled by -Ddd.civisibility.enabled=%s in %s", value, key)
+	// One that turns Test Optimization off in CI, or whose value only CI
+	// knows, is never removed unseen.
+	if value, set := javaHandWrittenProperties(key, inherited)["DD_CIVISIBILITY_ENABLED"]; set {
+		if _, known := handWrittenTrue(value); !known {
+			return "", false, fmt.Errorf("CI instrumentation setting -Ddd.civisibility.enabled=%s in %s requires review", value, key)
+		}
+		if effective, from := javaEffectiveEnablement(workflow, job, step, row, key, inherited); handWrittenFalse(effective) {
+			return "", false, fmt.Errorf("CI instrumentation is explicitly disabled by -Ddd.civisibility.enabled=%s in %s", effective, from)
+		}
 	}
-	return javaWithoutAgentProperties(strings.TrimSpace(strings.ReplaceAll(inherited, javaInstallerAgent, ""))), true, nil
+	return javaWithoutAgentProperties(key, strings.TrimSpace(strings.ReplaceAll(inherited, javaInstallerAgent, ""))), true, nil
 }
 
-// javaWithoutAgentProperties removes the -Ddd.* system properties of JVM
-// options, keeping those of tracer plugin settings, which change test
+// javaEffectiveEnablement is the -Ddd.civisibility.enabled value the step's
+// build applies last, and the option list that sets it, with key's resolved
+// value: a later list overrides an earlier one (see javaEffectiveProperties).
+// A step whose build tool ddtest cannot tell reads key's own value.
+func javaEffectiveEnablement(workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any, key, value string) (string, string) {
+	tool := javaStepBuildTool(commandResolution{}, step.Run)
+	if tool == "" {
+		return javaHandWrittenProperties(key, value)["DD_CIVISIBILITY_ENABLED"], key
+	}
+	env := map[string]string{}
+	for _, scope := range []map[string]string{workflow.Env, job.Env, step.Env} {
+		maps.Copy(env, scope)
+	}
+	for carrier, options := range env {
+		if resolved, err := interpolateMatrix(options, row); err == nil {
+			env[carrier] = resolved
+		}
+	}
+	env[key] = value
+	properties, from := javaEffectiveProperties(env, tool)
+	return properties["DD_CIVISIBILITY_ENABLED"], from["DD_CIVISIBILITY_ENABLED"]
+}
+
+// javaWithoutAgentProperties removes the -Ddd.* system properties of
+// carrier's JVM options, split as its reader splits them, keeping those of tracer plugin settings, which change test
 // behavior as their DD_* variables do (see TracerPluginSetting).
-func javaWithoutAgentProperties(options string) string {
-	words := platform.JavaOptionWords(options)
+func javaWithoutAgentProperties(carrier, options string) string {
+	words := platform.JavaCarrierWords(carrier, options)
 	kept := slices.DeleteFunc(slices.Clone(words), func(word string) bool {
 		key, _, ok := javaAgentProperty(word)
 		return ok && !TracerPluginSetting(key)
@@ -308,8 +338,8 @@ func (javaDiscovery) ciPluginTracerRelease(variables map[string]string) (string,
 }
 
 // javaCanonicalRelease is the exact release a canonical dd-java-agent
-// download is (see javaCanonicalAgentURL): its path and file name must name
-// the same one.
+// download is (see javaCanonicalAgentURL): a file name that names a release
+// must name its path's.
 func javaCanonicalRelease(url string) (string, bool) {
 	match := javaCanonicalAgentURL.FindStringSubmatch(url)
 	switch {
@@ -317,7 +347,8 @@ func javaCanonicalRelease(url string) (string, bool) {
 		return "", false
 	case match[1] != "" && match[1] == match[2]:
 		return match[1], true
-	case match[3] != "" && match[3] == match[4]:
+	case match[3] != "" && (match[4] == "" || match[3] == match[4]):
+		// The release's unversioned asset, dd-java-agent.jar, is its tag's.
 		return match[3], true
 	}
 	return "", false
@@ -326,7 +357,7 @@ func javaCanonicalRelease(url string) (string, bool) {
 // javaCanonicalAgentURL is a dd-java-agent JAR's canonical download, with its
 // release twice: in Maven Central's path and file name, or in a GitHub
 // release's tag and file name.
-var javaCanonicalAgentURL = regexp.MustCompile(`^(?:https://(?:repo1\.maven\.org|repo\.maven\.apache\.org)/maven2/com/datadoghq/dd-java-agent/([0-9]+\.[0-9]+\.[0-9]+)/dd-java-agent-([0-9]+\.[0-9]+\.[0-9]+)\.jar|https://github\.com/DataDog/dd-trace-java/releases/download/v([0-9]+\.[0-9]+\.[0-9]+)/dd-java-agent-([0-9]+\.[0-9]+\.[0-9]+)\.jar)$`)
+var javaCanonicalAgentURL = regexp.MustCompile(`^(?:https://(?:repo1\.maven\.org|repo\.maven\.apache\.org)/maven2/com/datadoghq/dd-java-agent/([0-9]+\.[0-9]+\.[0-9]+)/dd-java-agent-([0-9]+\.[0-9]+\.[0-9]+)\.jar|https://github\.com/DataDog/dd-trace-java/releases/download/v([0-9]+\.[0-9]+\.[0-9]+)/dd-java-agent(?:-([0-9]+\.[0-9]+\.[0-9]+))?\.jar)$`)
 
 func (javaDiscovery) ciShellAfter(ciWorkflow, runtimeJob, runtimeStep, string, commandResolution) (bool, string) {
 	return false, ""
