@@ -26,7 +26,10 @@ the container.
 ## Prepare
 
 For pytest trials, use `--framework pytest --python /absolute/image/path/to/python`
-with a trusted image containing Python and venv support. The runner creates a
+with a trusted image containing Python and venv support, such as the
+Dockerfile's `python` target (CPython 3.12, `--python /usr/local/bin/python3`;
+select another with `--build-arg PYTHON_IMAGE=python:<version>-bookworm@sha256:<digest>`
+and `--build-arg PYTHON_VERSION=<major.minor>`). The runner creates a
 private environment before dependency setup, preserves it for the agent, and
 checks the final report's Python version, interpreter location and environment
 prefix. Current execution with missing or different environment evidence fails
@@ -62,7 +65,9 @@ Build the trusted image (add project-specific OS/browser dependencies to a
 reviewed derived image if needed). Never bake personal configuration or secrets
 into an image. The supplied image pins Node, pnpm, Codex and Claude; unexpected
 CLI versions fail before cloning. For `--framework rspec` or `minitest`, use a
-trusted derived image with the project-compatible Ruby and Bundler installed.
+trusted image with the project-compatible Ruby and Bundler installed: the
+Dockerfile's `ruby` target adds Ruby 3.4 (select another with
+`--build-arg RUBY_IMAGE=ruby:<version>-bookworm@sha256:<digest>`).
 The runner records its Ruby version before cloning and checks the report against
 that version. Install dependencies in the private trial HOME (for example,
 `bundle config set --global path /trial/home/bundle`, then `bundle install`) and
@@ -230,6 +235,69 @@ are listed under `agent_artifacts` in `run.json`. Its Bash tasks remain synchron
 Neither inherits the evaluator's CLI profile. Flag references:
 [Codex](https://developers.openai.com/codex/cli/reference),
 [Claude](https://code.claude.com/docs/en/cli-reference).
+
+## Case catalog
+
+`catalog/cases.yaml` is the standard set of cases: one pinned open-source
+repository per supported framework, covering every CI provider, with its image,
+setup, readiness, harness flags and answers, trims, measured timings, test
+counts, prepared-image notes and risks. Its header documents each field.
+`scripts/run_catalog.py` turns cases into `run_eval.py` arguments, runs them one
+after another, copies each trial's `.testoptimization` reports and small
+untracked files to `<evidence>/retained/` (untracked paths come from
+`status.txt`; Git never runs on the host in the trial checkout), then runs
+`run_eval.py --cleanup`. Each trial's output goes to `<id>-<agent>.log`.
+
+Build the images that the selected cases name (`images` in the catalog lists
+each key's target and build arguments), then map them:
+
+```sh
+S=skills/ddtest-onboarding-eval/scripts
+docker build --target agents -t ddtest-eval -f $S/Dockerfile $S
+docker build --target java -t ddtest-eval-java17 -f $S/Dockerfile $S \
+  --build-arg JDK_IMAGE=eclipse-temurin:17-jdk@sha256:<digest from the catalog>
+python3 $S/run_catalog.py --dry-run --all            # print every case's arguments
+python3 $S/run_catalog.py E01 E02 \
+  --image-map agents="$(docker image inspect --format '{{.Id}}' ddtest-eval)" \
+  --ddtest /absolute/path/to/ddtest-linux --existing-login \
+  --output /absolute/path/to/new-evidence-folder
+```
+
+`--image-file` (or `DDTEST_EVAL_IMAGES`) takes a JSON or YAML mapping of image
+key to image instead. `--agent` defaults to `codex`; `--timeout` defaults to
+5400 seconds. Cases run sequentially: `--existing-login` locks the login for a
+whole trial, so trials sharing it can't overlap. A case whose evidence folder
+exists is skipped.
+
+Trims are setup commands that edit or `git rm` files; `run_catalog.py` commits
+each trim inside the trial container with a scratch identity
+(`ddtest-eval-scratch`), so setup still leaves `git status` clean. The trial's
+private HOME has no Git configuration, and nothing changes signing settings.
+`trims.required` (the suite can't pass without it on the image, such as expired
+certificates) always applies; `trims.optional_speed` applies only with
+`--speed-trims`, and changes what the agent sees, so compare like with like.
+
+`expected` records the last verdict observed for a case, the run and the ddtest
+build. It is informational, for spotting regressions, not an assertion:
+grade every trial as described below.
+
+To add or replace a case:
+
+- Keep one case per framework in `run_eval.py`'s `--framework` list, and keep
+  every provider (GitHub, GitLab, CircleCI, Buildkite, Jenkins) covered. The
+  current cases predate Java on Jenkins, so no JVM case runs on Jenkins yet;
+  prefer one when replacing a JVM case.
+- Pin a full commit whose own CI is green and whose suite passes on the image,
+  outside any agent. Prefer small, active, public repositories without services,
+  secrets or live network calls in tests.
+- Add a trim to `required` only when the suite fails without it; put
+  speed-only trims in `optional_speed`. Run every trim through `shlex.split`
+  with no shell on a fresh clone: it may only edit or remove tracked files,
+  which the trim commit (`git commit -a`) records.
+- Measure clone, install, browser, build and test times on the image and record
+  the conditions. Add answers only for questions only the user can answer.
+- Run `python3 -m unittest test_run_catalog` in `scripts/`; it validates the
+  schema and the framework and provider coverage.
 
 ## Grade independently
 

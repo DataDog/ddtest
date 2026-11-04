@@ -1,8 +1,15 @@
 # Build --target offline for fake CLI tests, or --target agents for real trials;
 # --target java adds a JDK and Maven for --framework junit4/junit5 trials.
 # JDK_IMAGE selects another Temurin JDK for a project that needs one.
+# --target python and --target ruby add an official CPython or Ruby build for
+# pytest and rspec/minitest trials; PYTHON_IMAGE with PYTHON_VERSION, or
+# RUBY_IMAGE, select another version.
 ARG JDK_IMAGE=eclipse-temurin:21-jdk@sha256:5d90b26c0784ccf55af55f97cbcf7f3969c66a06299c93bdc72649219942a48f
+ARG PYTHON_IMAGE=python:3.12-bookworm@sha256:a5bab0ff300f91231c2e68bf73a8a8d60762ac39ce1c50eaf6803e4c38a9062b
+ARG RUBY_IMAGE=ruby:3.4-bookworm@sha256:8853c6f24866429483fce3a869e61a6a13916beb2720468c6d95c78f41c0f564
 FROM ${JDK_IMAGE} AS jdk
+FROM ${PYTHON_IMAGE} AS cpython
+FROM ${RUBY_IMAGE} AS cruby
 
 FROM node:24.19.0-bookworm@sha256:4196d66a565c6f195728d9952f161f4adfe2ad753052a08b7ec7f1c5a6bda42b AS runtime
 RUN npm install --global pnpm@12.14.0 && npm cache clean --force
@@ -37,3 +44,27 @@ RUN curl -fsSL -o /tmp/maven.tar.gz "https://archive.apache.org/dist/maven/maven
     && echo "${MAVEN_SHA512}  /tmp/maven.tar.gz" | sha512sum -c - \
     && tar -xzf /tmp/maven.tar.gz -C /opt && rm /tmp/maven.tar.gz \
     && ln -s "/opt/apache-maven-${MAVEN_VERSION}/bin/mvn" /usr/local/bin/mvn
+
+# pytest trials: the official CPython build (same Debian bookworm base) with
+# venv and pip; pass --python /usr/local/bin/python3. PYTHON_VERSION names the
+# PYTHON_IMAGE's major.minor.
+FROM agents AS python
+ARG PYTHON_VERSION=3.12
+COPY --from=cpython /usr/local/bin/python${PYTHON_VERSION} /usr/local/bin/
+COPY --from=cpython /usr/local/lib/python${PYTHON_VERSION} /usr/local/lib/python${PYTHON_VERSION}
+COPY --from=cpython /usr/local/include/python${PYTHON_VERSION} /usr/local/include/python${PYTHON_VERSION}
+COPY --from=cpython /usr/local/lib/libpython${PYTHON_VERSION}.so.1.0 /usr/local/lib/
+RUN ln -s "libpython${PYTHON_VERSION}.so.1.0" "/usr/local/lib/libpython${PYTHON_VERSION}.so" \
+    && ln -s "python${PYTHON_VERSION}" /usr/local/bin/python3 && ln -s python3 /usr/local/bin/python && ldconfig \
+    && python3 -c 'import ssl, sqlite3, ctypes, lzma, bz2, zlib, venv, ensurepip' \
+    && python3 -m venv /tmp/venv && /tmp/venv/bin/python -m pip --version && rm -rf /tmp/venv
+
+# rspec/minitest trials: the official Ruby build with its default gems and Bundler.
+FROM agents AS ruby
+COPY --from=cruby /usr/local/bin/ruby /usr/local/bin/gem /usr/local/bin/bundle /usr/local/bin/bundler \
+    /usr/local/bin/rake /usr/local/bin/erb /usr/local/bin/irb /usr/local/bin/rdoc /usr/local/bin/ri /usr/local/bin/
+COPY --from=cruby /usr/local/lib/ruby /usr/local/lib/ruby
+COPY --from=cruby /usr/local/include /usr/local/include
+COPY --from=cruby /usr/local/lib/ /tmp/rubylib/
+RUN cp -a /tmp/rubylib/libruby.so* /usr/local/lib/ && rm -rf /tmp/rubylib && ldconfig \
+    && ruby -ropenssl -ryaml -rzlib -e 'puts RUBY_VERSION' && bundle --version
