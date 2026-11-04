@@ -12,6 +12,12 @@ func calculateParallelRunnerSplit(testFileWeights map[string]int, minParallelism
 }
 
 func calculateParallelRunnerSplitSelection(testFileWeights map[string]int, minParallelism, maxParallelism int, parallelRunnerOverhead, targetTime time.Duration, basenameAffinity bool) splitSelection {
+	return calculateNodeSplitSelection(testFileWeights, minParallelism, maxParallelism, parallelRunnerOverhead, targetTime, basenameAffinity, defaultNodeModel)
+}
+
+// calculateNodeSplitSelection is calculateParallelRunnerSplitSelection with
+// each candidate's nodes timed by model.
+func calculateNodeSplitSelection(testFileWeights map[string]int, minParallelism, maxParallelism int, parallelRunnerOverhead, targetTime time.Duration, basenameAffinity bool, model nodeModel) splitSelection {
 	selector := splitSelector{
 		parallelRunnerOverhead: parallelRunnerOverhead,
 		targetTime:             targetTime,
@@ -21,7 +27,7 @@ func calculateParallelRunnerSplitSelection(testFileWeights map[string]int, minPa
 	// collision groups are prepared once and shared by every candidate.
 	prepared := prepareSplitFiles(testFileWeights, basenameAffinity)
 	scoreCandidate := func(parallelRunners int) splitScore {
-		return scorePreparedRunnerSplit(prepared, parallelRunners)
+		return scorePreparedNodeSplit(prepared, parallelRunners, model)
 	}
 
 	// maxParallelism could be 0 or negative!
