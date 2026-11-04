@@ -89,7 +89,8 @@ class SelectionTests(unittest.TestCase):
 
     def test_cross_framework_coverage_and_path_helpers_select_their_consumers(self):
         for path, expected in (
-            ("internal/testdrive/cucumber_coverage.go", {"cucumber", "cypress", "onboarding"}),
+            ("internal/testdrive/cucumber_coverage.go", set(CONFIG["suites"])),
+            ("internal/testdrive/cypress_coverage.go", set(CONFIG["suites"])),
             ("internal/framework/cypress.go", {"cypress", "playwright"}),
         ):
             with self.subTest(path=path):

@@ -9,6 +9,8 @@
     "ddto/README.md"
   ],
   "shared": [
+    "internal/testdrive/cucumber_coverage.go",
+    "internal/testdrive/cypress_coverage.go",
     "internal/testdrive/jest*.go",
     "internal/testdrive/mocha.go",
     "internal/onboard/jest_command.go",
@@ -316,8 +318,7 @@
         "internal/onboard/cypress*",
         "internal/onboard/instructions/cypress.md",
         "internal/testdrive/cypress*",
-        "internal/testdrive/scripts/cypress*",
-        "internal/testdrive/cucumber_coverage.go"
+        "internal/testdrive/scripts/cypress*"
       ],
       "smoke": [
         {
