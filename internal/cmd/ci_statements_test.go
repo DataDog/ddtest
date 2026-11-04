@@ -26,7 +26,7 @@ func TestCIStatementFlagsRejectInvalidValues(t *testing.T) {
 		args    []string
 		reason  string
 	}{
-		{"onboard runtime", func() *cobra.Command { return newOnboardCommand(nil) }, []string{"--agent", "--ci-runtime", "go=1.22"}, `--ci-runtime "go=1.22" names runtime "go"; supported runtimes: node, python, ruby`},
+		{"onboard runtime", func() *cobra.Command { return newOnboardCommand(nil) }, []string{"--agent", "--ci-runtime", "go=1.22"}, `--ci-runtime "go=1.22" names runtime "go"; supported runtimes: node, python, ruby, java`},
 		{"testdrive version", newTestdriveCommand, []string{"--agent", "--all", "--yes", "--ci-runtime", "node=lts"}, `--ci-runtime "node=lts": the Node version must be numeric, such as 22, 22.11 or 22.11.0`},
 		{"same job twice", func() *cobra.Command { return newOnboardCommand(nil) }, []string{"--agent", "--ci-runtime", "test:node=20", "--ci-runtime", ".github/workflows/ci.yml / test:node=22"}, "--ci-runtime test:node=20 and .github/workflows/ci.yml / test:node=22 state different versions for the same job, .github/workflows/ci.yml / test"},
 		{"same key twice", newTestdriveCommand, []string{"--agent", "--all", "--yes", "--ci-runtime", "test:node=20", "--ci-runtime", "test:node=22"}, "--ci-runtime test:node=20 and test:node=22 state different versions for the same job"},
@@ -46,6 +46,14 @@ func TestCIStatementFlagsRejectInvalidValues(t *testing.T) {
 
 // A statement for a job whose configuration selects another runtime is an
 // error before anything runs.
+func TestCIRuntimeHelpNamesEveryStatedRuntime(t *testing.T) {
+	usage := newOnboardCommand(nil).Flags().Lookup("ci-runtime").Usage
+	for _, name := range onboard.StatedRuntimeNames() {
+		require.Contains(t, usage, name)
+	}
+	require.Contains(t, usage, "java", "Java takes stated runtimes for Jenkins agents")
+}
+
 func TestCIRuntimeConflictStopsBeforeDiscovery(t *testing.T) {
 	ciProviderFixture(t)
 	t.Cleanup(func() { _ = onboard.UseCIStatements(nil, nil) })

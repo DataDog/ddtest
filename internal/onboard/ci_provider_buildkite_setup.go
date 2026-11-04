@@ -44,6 +44,28 @@ type snippetForm struct {
 	// shell trace (sh -x) prints without the key's value; otherwise with
 	// [ -n "${DD_API_KEY:-}" ].
 	keySet bool
+	// shellSetups reports a provider whose container steps run a
+	// language's setup for a POSIX shell (see ciShellSetup) where the
+	// image has no Bash.
+	shellSetups bool
+}
+
+// ciSnippetFormer is a provider's setup mechanism that runs the setup
+// snippet in form.
+type ciSnippetFormer interface {
+	snippetForm() snippetForm
+}
+
+// ciShellSetup is a language whose setup a POSIX shell runs alone, for a
+// container whose image has no Bash, which Datadog's installer needs.
+type ciShellSetup interface {
+	// shellSetup is that setup, reporting to site with the exact tracer
+	// release, in form; it starts with form's key guard, as the setup
+	// snippet does.
+	shellSetup(site, release string, form snippetForm) string
+	// shellSetupAt recognizes it starting at stmts[i], as snippetSetupAt
+	// recognizes the setup snippet; the setup is withoutBash.
+	shellSetupAt(stmts []*syntax.Stmt, i int, form snippetForm) (setup ciSetup, consumed int, ok bool)
 }
 
 // buildkiteSnippetForm is the snippet Buildkite steps run.
@@ -230,6 +252,17 @@ func snippetSetupAt(stmts []*syntax.Stmt, i int, known map[string]string, form s
 	_, export := stmts[i].Cmd.(*syntax.DeclClause)
 	unguarded := export && strings.Contains(shellText(stmts[i]), "DD_CIVISIBILITY_AUTO_INSTRUMENTATION_PROVIDER") && i+1 < len(stmts) && mentions(stmts[i+1])
 	if !mentions(stmts[i]) && !unguarded {
+		if !form.shellSetups {
+			return ciSetup{}, 0, false
+		}
+		for _, language := range discoveryLanguages {
+			if shell, ok := language.(ciShellSetup); ok {
+				if setup, spanned, ok := shell.shellSetupAt(stmts, i, form); ok {
+					setup.before = prefix
+					return setup, consumed + spanned, true
+				}
+			}
+		}
 		return ciSetup{}, 0, false
 	}
 	setup = ciSetup{Reference: "Datadog installer", Pinned: true, DefaultLatest: true, Inputs: map[string]string{"api_key": "$DD_API_KEY"}, before: prefix}

@@ -209,6 +209,83 @@ func TestJavaResolvesMatrixExpressionsInsideValues(t *testing.T) {
 	require.Equal(t, []string{"suite-it", "suite-unit"}, modes, "each row runs with its own value")
 }
 
+func TestJavaValidatesWithoutCIOnlyOptions(t *testing.T) {
+	root := javaWorkflowFixture(t, "jobs:\n  tests:\n    steps:\n      - run: mvn -B verify -Dsonar.token=${{ secrets.SONAR_TOKEN }} -Dsigning.password=\"${{ secrets.SIGNING }}\"\n", nil)
+	scope, err := DiscoverValidationScope(root, "junit5")
+	require.NoError(t, err)
+	require.Empty(t, scope.Unresolved)
+	require.Len(t, scope.Commands, 1)
+	require.Equal(t, "mvn -B verify -Dsonar.token= -Dsigning.password=", scope.Commands[0].Command)
+	require.Equal(t, []string{"-Dsigning.password", "-Dsonar.token"}, scope.Commands[0].WithoutCIValues)
+
+	// A value that may select tests still requires review, whatever the
+	// secret's name.
+	for _, option := range []string{"-Dgroups=${{ secrets.GROUPS }}", "-Dgroups=${{ secrets.TEST_TOKEN }}", "-Ddb.password=${{ secrets.TEST_DB_PASSWORD }}"} {
+		root = javaWorkflowFixture(t, "jobs:\n  tests:\n    steps:\n      - run: mvn -B verify "+option+"\n", nil)
+		scope, err = DiscoverValidationScope(root, "junit5")
+		require.NoError(t, err)
+		require.NotEmpty(t, scope.Unresolved, option)
+	}
+}
+
+func TestJavaReplayKeepsTheJobsJVMOptions(t *testing.T) {
+	java := javaDiscovery{}
+	for key, tc := range map[string]struct{ value, replay string }{
+		"JAVA_TOOL_OPTIONS": {`-Dname="a b" -Ddd.service="my service" -Xmx256m`, `-Dname="a b" -Xmx256m`},
+		"JAVA_OPTS":         {"-javaagent:dd-java-agent.jar -Ddd.civisibility.agentless.url=https://ci.example -Xmx1g", "-javaagent:dd-java-agent.jar -Xmx1g"},
+	} {
+		replay, replaced, err := java.variantValue(ciWorkflow{}, runtimeJob{}, runtimeStep{}, nil, key, tc.value)
+		require.NoError(t, err, key)
+		require.True(t, replaced, key)
+		require.Equal(t, tc.replay, replay, "the quoted option stays one option and CI's agent settings are dropped: %s", key)
+	}
+	// A matrix value is resolved before the options are split.
+	replay, _, err := java.variantValue(ciWorkflow{}, runtimeJob{}, runtimeStep{}, map[string]any{"service": "checkout"}, "JAVA_TOOL_OPTIONS", "-Ddd.service=${{ matrix.service }} -Xmx1g")
+	require.NoError(t, err)
+	require.Equal(t, "-Xmx1g", replay)
+	_, _, err = java.variantValue(ciWorkflow{}, runtimeJob{}, runtimeStep{}, nil, "MAVEN_OPTS", "-Xmx1g -Ddd.civisibility.enabled=false")
+	require.ErrorContains(t, err, "explicitly disabled by -Ddd.civisibility.enabled=false in MAVEN_OPTS", "a disabled CI job is never certified")
+	// Maven's launcher expands MAVEN_OPTS unquoted: an apostrophe is a character.
+	require.Equal(t, "-Dtest.mode=strict -Xmx256m", javaWithoutAgentProperties("MAVEN_OPTS", "-Ddd.service=team's-tests -Dtest.mode=strict -Xmx256m"))
+	require.Equal(t, `-Dname="a b"`, javaWithoutAgentProperties("JAVA_TOOL_OPTIONS", `-Ddd.service="my service" -Dname="a b"`), "the JVM honors quotes")
+	// A value only CI knows may disable it.
+	_, _, err = java.variantValue(ciWorkflow{}, runtimeJob{}, runtimeStep{}, nil, "MAVEN_OPTS", "-Ddd.civisibility.enabled=${{ env.CI_TRACING }}")
+	require.ErrorContains(t, err, "in MAVEN_OPTS requires review")
+	// Maven passes MAVEN_OPTS quotes to the JVM, which reads "true" as not true.
+	_, _, err = java.variantValue(ciWorkflow{}, runtimeJob{}, runtimeStep{}, nil, "MAVEN_OPTS", `-Ddd.civisibility.enabled="true" -Xmx1g`)
+	require.ErrorContains(t, err, "is not enabled by -Ddd.civisibility.enabled=\"true\" in MAVEN_OPTS")
+	_, _, err = java.variantValue(ciWorkflow{}, runtimeJob{}, runtimeStep{}, nil, "JAVA_TOOL_OPTIONS", `-Ddd.civisibility.enabled="true" -Xmx1g`)
+	require.NoError(t, err, "the JVM removes JAVA_TOOL_OPTIONS quotes")
+	// Maven reads MAVEN_OPTS after JAVA_TOOL_OPTIONS, so its value decides.
+	job := runtimeJob{Env: map[string]string{"JAVA_TOOL_OPTIONS": "-Ddd.civisibility.enabled=false", "MAVEN_OPTS": "-Ddd.civisibility.enabled=true"}}
+	step := runtimeStep{Run: "mvn -B verify"}
+	_, _, err = java.variantValue(ciWorkflow{}, job, step, nil, "JAVA_TOOL_OPTIONS", job.Env["JAVA_TOOL_OPTIONS"])
+	require.NoError(t, err, "MAVEN_OPTS enables it after JAVA_TOOL_OPTIONS")
+	job.Env["MAVEN_OPTS"] = "-Xmx1g"
+	_, _, err = java.variantValue(ciWorkflow{}, job, step, nil, "JAVA_TOOL_OPTIONS", job.Env["JAVA_TOOL_OPTIONS"])
+	require.ErrorContains(t, err, "explicitly disabled by -Ddd.civisibility.enabled=false in JAVA_TOOL_OPTIONS")
+}
+
+func TestJavaDownloadedScriptsAShellRunsStayInScope(t *testing.T) {
+	// A downloaded script a shell runs may be a test runner, so a URL that
+	// names one keeps the step unresolved; a passive download names none.
+	for run, unresolved := range map[string]bool{
+		"curl -s https://example.org/run-tests.sh | bash":               true,
+		"curl -s https://example.org/run-tests.sh|bash":                 true,
+		"curl -s https://example.org/run-tests.sh | /bin/bash":          true,
+		"curl -s https://example.org/run-tests.sh | sudo env X=1 sh":    true,
+		"bash <(curl -s https://example.org/run-tests.sh)":              true,
+		`sh -c "$(wget -qO- https://example.org/run-tests.sh)"`:         true,
+		"curl -Lo dd-java-agent.jar https://dtdg.co/latest-java-tracer": false,
+		"wget -O tools/report.zip https://example.org/test-report.zip":  false,
+	} {
+		root := javaWorkflowFixture(t, "jobs:\n  tests:\n    steps:\n      - run: '"+strings.ReplaceAll(run, "'", "''")+"'\n      - run: mvn -B verify\n", nil)
+		scope, err := DiscoverValidationScope(root, "junit5")
+		require.NoError(t, err)
+		require.Equal(t, unresolved, len(scope.Unresolved) > 0, "%s: %v", run, scope.Unresolved)
+	}
+}
+
 func TestJavaReleaseGoalsWithUnreadValuesRunNoTests(t *testing.T) {
 	// As WriteThemFirst/approvals-java's release job does before its deploy,
 	// with the value quoted so it can't split into goals.

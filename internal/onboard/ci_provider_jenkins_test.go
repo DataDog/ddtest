@@ -533,7 +533,7 @@ func TestJenkinsLanguageSupport(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, root, "Jenkinsfile", "node { sh 'pytest' }\n")
 	useCIProvider(t, "jenkins")
-	for language, supported := range map[string]bool{"javascript": true, "ruby": true, "python": true, "java": false} {
+	for language, supported := range map[string]bool{"javascript": true, "ruby": true, "python": true, "java": true} {
 		err := CheckCIProviderSupport(root, language, "framework")
 		if supported {
 			require.NoError(t, err, language)

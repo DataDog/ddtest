@@ -175,7 +175,8 @@ func (b *mavenBuild) clean() error {
 
 // arguments narrow a probe run to Surefire: checks after the test phase, such
 // as license headers or coverage gates, would judge the probe file itself.
-// Every run turns back on the XML reports a property turns off.
+// Every run turns back on the XML reports a property turns off, and skips
+// the maven-gpg-plugin's signing.
 func (b *mavenBuild) arguments(args []string, probe *javaProbe) []string {
 	if probe != nil {
 		args = append(maven.UpToTest(args), probe.args...)
@@ -184,7 +185,9 @@ func (b *mavenBuild) arguments(args []string, probe *javaProbe) []string {
 	for _, property := range b.reportSwitches {
 		args = append(args, "-D"+property+"=false")
 	}
-	return args
+	// Signing, which the verify phase may run, needs CI's key, and
+	// validation publishes nothing.
+	return append(args, "-Dgpg.skip=true")
 }
 
 // ~/.mavenrc and /etc/mavenrc may attach agents or change options between

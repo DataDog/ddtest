@@ -180,124 +180,17 @@ func TestHandWrittenPythonJenkinsSetup(t *testing.T) {
 	require.Equal(t, []string{"Jenkinsfile / Test (hand-written ddtrace@4.16.1 setup (PYTEST_ADDOPTS))"}, jobs)
 }
 
-const handWrittenPOM = `<project><artifactId>service</artifactId><dependencies><dependency><groupId>org.junit.jupiter</groupId><artifactId>junit-jupiter</artifactId></dependency></dependencies></project>`
-
-const handWrittenAgentDownload = "curl -Lo dd-java-agent.jar https://repo1.maven.org/maven2/com/datadoghq/dd-java-agent/1.67.1/dd-java-agent-1.67.1.jar"
-
-// A Maven or Gradle job that attaches dd-java-agent by hand is recognized on
-// every provider without the shared syntax, with what it lacks, and
-// reported as not validated yet: the Java CI check reads only the
-// provider's setup.
-func TestHandWrittenJavaSetups(t *testing.T) {
-	agentless := map[string]string{"MAVEN_OPTS": "-javaagent:dd-java-agent.jar", "DD_CIVISIBILITY_ENABLED": "true", "DD_CIVISIBILITY_AGENTLESS_ENABLED": "true", "DD_SITE": "datadoghq.com"}
-	for _, provider := range handWrittenProviders {
-		t.Run(provider.name, func(t *testing.T) {
-			root := unvalidatedRepository(t, provider, provider.config(agentless, []string{handWrittenAgentDownload}, "mvn -B test"), map[string]string{"pom.xml": handWrittenPOM})
-			setup := firstJobHandWrittenSetup(t, root, "java", "junit5", "datadoghq.com")
-			require.NotNil(t, setup)
-			require.Equal(t, "hand-written dd-java-agent 1.67.1 setup (MAVEN_OPTS)", setup.Reference)
-			require.Equal(t, "1.67.1", setup.Tracer)
-			require.Empty(t, setup.Problems)
-			require.Empty(t, setup.Unresolved)
-			requireUnvalidatedHandWrittenSetup(t, root, "java", "junit5")
-		})
-	}
-	provider := handWrittenProviders[0]
-	gradleBuild := map[string]string{"settings.gradle": "rootProject.name = 'service'\n", "build.gradle": "plugins { id 'java' }\ndependencies { testImplementation 'org.junit.jupiter:junit-jupiter:5.11.0' }\ntest { useJUnitPlatform() }\n", "gradlew": "#!/bin/sh\n"}
-	for _, tc := range []struct {
-		name    string
-		env     map[string]string
-		before  []string
-		command string
-		files   map[string]string
-		// reference is the setup's; problem and unresolved, one of what it
-		// lacks and of what ddtest cannot read.
-		reference, problem, unresolved string
-	}{
-		{name: "tool options and properties", env: map[string]string{"JAVA_TOOL_OPTIONS": "-javaagent:/opt/dd-java-agent-1.67.1.jar -Ddd.civisibility.enabled=true -Ddd.civisibility.agentless.enabled=true"}, before: []string{}, command: "mvn test", reference: "hand-written dd-java-agent 1.67.1 setup (JAVA_TOOL_OPTIONS)"},
-		{name: "GitHub release", before: []string{"wget -O dd-java-agent.jar https://github.com/DataDog/dd-trace-java/releases/download/v1.68.0/dd-java-agent-1.68.0.jar"}, command: "mvn test", reference: "hand-written dd-java-agent 1.68.0 setup (MAVEN_OPTS)"},
-		{name: "latest", before: []string{"curl -Lo dd-java-agent.jar https://dtdg.co/latest-java-tracer"}, command: "mvn test", reference: "hand-written dd-java-agent setup (MAVEN_OPTS)", problem: "The job downloads the latest dd-java-agent"},
-		{name: "no download", before: []string{}, command: "mvn test", problem: "No command of the job downloads dd-java-agent.jar with an exact release"},
-		{name: "not enabled", env: with(agentless, "DD_CIVISIBILITY_ENABLED", ""), command: "mvn test", problem: "set DD_CIVISIBILITY_ENABLED=true"},
-		{name: "literal key", env: with(agentless, "DD_API_KEY", "0123456789abcdef"), command: "mvn test", problem: "never commit the key"},
-		{name: "Gradle reads no MAVEN_OPTS", command: "./gradlew test", files: gradleBuild, problem: "this job runs Gradle, which does not read it"},
-		{name: "Gradle JVM arguments", env: with(agentless, "MAVEN_OPTS", ""), command: "./gradlew test -Dorg.gradle.jvmargs=-javaagent:dd-java-agent.jar", files: gradleBuild, reference: "hand-written dd-java-agent 1.67.1 setup (org.gradle.jvmargs)"},
-		{name: "test JVMs only", env: with(agentless, "MAVEN_OPTS", ""), command: "mvn test -DargLine=-javaagent:dd-java-agent.jar", unresolved: "-DargLine attaches dd-java-agent to the forked test JVMs only"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			env := tc.env
-			if env == nil {
-				env = agentless
-			}
-			files := map[string]string{"pom.xml": handWrittenPOM}
-			if tc.files != nil {
-				files = tc.files
-			}
-			before := tc.before
-			if before == nil {
-				before = []string{handWrittenAgentDownload}
-			}
-			root := unvalidatedRepository(t, provider, provider.config(env, before, tc.command), files)
-			setup := firstJobHandWrittenSetup(t, root, "java", "junit5", "datadoghq.com")
-			require.NotNil(t, setup)
-			if tc.reference != "" {
-				require.Equal(t, tc.reference, setup.Reference)
-			}
-			if tc.problem != "" {
-				require.Contains(t, strings.Join(setup.Problems, " "), tc.problem)
-			} else {
-				require.Empty(t, setup.Problems)
-			}
-			if tc.unresolved != "" {
-				require.Contains(t, strings.Join(setup.Unresolved, " "), tc.unresolved)
-			}
-			requireUnvalidatedHandWrittenSetup(t, root, "java", "junit5")
-		})
-	}
-	// Without the agent there is no hand-written setup.
-	root := unvalidatedRepository(t, provider, provider.config(map[string]string{"MAVEN_OPTS": "-Xmx1g"}, nil, "mvn test"), map[string]string{"pom.xml": handWrittenPOM})
-	require.Nil(t, firstJobHandWrittenSetup(t, root, "java", "junit5", ""))
-	require.Empty(t, unvalidatedHandWrittenJobs(root, gitLabCI{}, "java", "junit5"))
-}
-
-// Java's provider setups and its hand-written recognition never handle the
-// same job: a job the Datadog setup script sets up is the Java CI check's
-// alone, whatever its JVM options name, while a job that attaches
-// dd-java-agent by hand stops onboarding as not validated yet before any
-// provider rule, so the setup script is never prescribed on top of it.
-func TestHandWrittenJavaBesideTheProviderSetup(t *testing.T) {
-	handWrittenJob := "manual:\n  image: maven:3.9-eclipse-temurin-21\n  variables:\n    MAVEN_OPTS: -javaagent:dd-java-agent.jar\n    DD_CIVISIBILITY_ENABLED: \"true\"\n    DD_CIVISIBILITY_AGENTLESS_ENABLED: \"true\"\n  script:\n    - " + handWrittenAgentDownload + "\n    - mvn -B verify\n"
-	// The script's job, with an extra agent option after the setup, is the
-	// provider's.
-	root := gitLabJavaRepository(t, gitLabJavaJob("maven:3.9-eclipse-temurin-21", gitLabJavaSetup, "", "    - export MAVEN_OPTS=\"$MAVEN_OPTS -javaagent:dd-java-agent.jar\"\n"))
-	require.Nil(t, firstJobHandWrittenSetup(t, root, "java", "junit5", ""))
-	require.Empty(t, unvalidatedHandWrittenJobs(root, gitLabCI{}, "java", "junit5"))
-	require.NoError(t, CheckCIProviderSupport(root, "java", "junit5"))
-	ci := JavaCIConfiguration(root, "junit5", "")
-	require.Len(t, ci.Jobs, 1, ci.Reason)
-	require.False(t, HandWrittenSetupAction(ci.Jobs[0].Action), ci.Jobs[0].Action)
-
-	// Beside it, a job set up by hand is named on its own, and onboarding
-	// stops before the provider's rules.
-	root = gitLabJavaRepository(t, gitLabJavaJob("maven:3.9-eclipse-temurin-21", gitLabJavaSetup, "", "")+handWrittenJob)
-	var unsupported *CIProviderUnsupportedError
-	require.ErrorAs(t, CheckCIProviderSupport(root, "java", "junit5"), &unsupported)
-	require.Len(t, unsupported.HandWritten, 1)
-	require.Contains(t, unsupported.HandWritten[0], gitLabCIFile+" / manual (hand-written dd-java-agent 1.67.1 setup (MAVEN_OPTS))")
-	require.Contains(t, unsupported.Error(), "ddtest does not validate hand-written Java setups yet")
-}
-
 // Messages about setting Test Optimization up by hand say, per language,
 // whether ddtest then checks that setup.
 func TestHandWrittenSetupOptionNamesValidatedLanguages(t *testing.T) {
-	require.Equal(t, "JavaScript and Ruby", handWrittenValidatedLanguages())
+	require.Equal(t, "JavaScript, Ruby and Java", handWrittenValidatedLanguages())
 	for _, tc := range []struct {
 		language, reason, instruction string
 	}{
 		{"javascript", "which ddtest then checks like the Datadog Jenkins plugin", "Once the user sets it up by hand, rerun onboarding, which checks that setup."},
 		{"ruby", "which ddtest then checks like the Datadog Jenkins plugin", "Once the user sets it up by hand, rerun onboarding, which checks that setup."},
 		{"python", "which ddtest does not validate for Python yet", "ddtest does not validate hand-written Python setups yet."},
-		{"java", "which ddtest does not validate for Java yet", "ddtest does not validate hand-written Java setups yet."},
+		{"java", "which ddtest then checks like the Datadog Jenkins plugin", "Once the user sets it up by hand, rerun onboarding, which checks that setup."},
 	} {
 		err := &CIProviderUnsupportedError{Language: tc.language, Framework: "tests", Provider: "Jenkins", Reason: "Jenkinsfile / Test: it runs in a container.", Setup: "Datadog Jenkins plugin"}
 		require.Contains(t, err.Error(), tc.reason, tc.language)

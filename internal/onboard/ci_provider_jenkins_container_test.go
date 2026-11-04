@@ -627,10 +627,13 @@ func TestJenkinsContainerImageNoteNamesTheSnippet(t *testing.T) {
 	} {
 		t.Run(tc.framework, func(t *testing.T) {
 			root := jenkinsApplyRepository(t, tc.framework, jenkinsContainerStage("docker { image '"+tc.image+"' }", "", tc.command))
-			note := setupImageNote(root, tc.language, tc.framework)
+			note := setupImageNote(root, tc.language, tc.framework, "")
 			require.Contains(t, note, "These CI steps cannot run the Datadog setup snippet in their current image, so their tests would stay untraced even with it in place; changing an image or Dockerfile is not part of this setup, so tell the user and ask before making it:\nJenkinsfile / Test: The step's image "+tc.image+" has neither curl nor wget")
 			require.NotContains(t, note, jenkinsPluginReference)
 			require.Equal(t, 1, strings.Count(note, "These CI steps cannot run"))
 		})
 	}
+	// Other languages' setups still need Bash.
+	root := jenkinsApplyRepository(t, "jest", jenkinsContainerStage("docker { image 'node:22-alpine' }", "", "npm test"))
+	require.Contains(t, setupImageNote(root, "javascript", "jest", ""), "has no Bash, which the Datadog installer needs")
 }

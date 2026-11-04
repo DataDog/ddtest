@@ -228,6 +228,65 @@ def printed_executable(output):
 # all trial storage, and the Docker VM's mount cannot hide a folder from it.)
 
 
+def submodule_update_argv(local_mirrors):
+    """The submodule update command. Git refuses file transport for
+    submodules by default; local mirrors need it, for this command only."""
+    allow = ["-c", "protocol.file.allow=always"] if local_mirrors else []
+    return ["git", *allow, "submodule", "update", "--init", "--recursive"]
+
+
+def submodule_entries(repository, config):
+    """The (path, url) of each submodule a .gitmodules lists, from git config
+    arguments that select it in repository, such as -f <file> or
+    --blob <rev>:.gitmodules."""
+    listed = subprocess.run(["git", "-C", str(repository), "config", *config, "--get-regexp", r"^submodule\..*\.(path|url)$"],
+                            capture_output=True, text=True)
+    fields = {}
+    for line in listed.stdout.splitlines():
+        key, _, value = line.partition(" ")
+        name, _, field = key[len("submodule."):].rpartition(".")
+        fields.setdefault(name, {})[field] = value.strip()
+    return [(entry.get("path", ""), entry["url"]) for entry in fields.values() if "url" in entry]
+
+
+def local_submodule_mirrors(checkout, local, source):
+    """Mirrors, beside the mirror source of the local repository local, each
+    relative submodule repository the checkout's .gitmodules names, and the
+    relative submodules those name at the revisions their parents pin,
+    resolved from local as Git resolves them without a remote, so the
+    container can clone them. Returns the mirrors made."""
+    mirrors = []
+
+    def visit(entries, pinned, origin_base, mirror_base):
+        for path, url in entries:
+            if not url.startswith(("./", "../")):
+                continue
+            origin = (origin_base / url).resolve()
+            mirror = Path(os.path.normpath(mirror_base / url))
+            if not origin.is_dir():
+                continue
+            if not mirror.exists():
+                subprocess.run(["git", "clone", "--mirror", "--quiet", "--", str(origin), str(mirror)], check=True)
+                mirrors.append(mirror)
+            # Its own relative submodules, at the revision its parent pins,
+            # resolve beside its mirror, as Git resolves them from its URL.
+            revision = pinned(path)
+            if revision:
+                nested = submodule_entries(origin, ["--blob", revision + ":.gitmodules"])
+                visit(nested, lambda child, origin=origin, revision=revision: tree_entry(origin, revision, child), origin, mirror)
+
+    visit(submodule_entries(checkout, ["-f", str(checkout / ".gitmodules")]), lambda path: tree_entry(checkout, "HEAD", path), local, source)
+    return mirrors
+
+
+def tree_entry(repository, revision, path):
+    """The commit a gitlink at path of revision in repository pins; empty
+    when there is none."""
+    listed = subprocess.run(["git", "-C", str(repository), "ls-tree", revision, "--", path], capture_output=True, text=True)
+    fields = listed.stdout.split()
+    return fields[2] if len(fields) >= 3 and fields[1] == "commit" else ""
+
+
 def binstub_names(directory):
     """The binstub folder's file names. Setup code may replace the folder, so
     it is listed without following a symlink out of the trial."""
@@ -1216,12 +1275,38 @@ def run(args):
             manifest["authentication"] = {"status":"passed", "source":"existing CLI model login" if getattr(args,"existing_login",False) else "selected login", "preflight":"model response before clone/install"}
             login.suspend()
             manifest.pop("failure_stage",None)
-        command(["git", "clone", "--", args.repo, str(checkout)])
+        source = args.repo
+        local = Path(os.path.expanduser(str(args.repo)))
+        if local.is_dir():
+            # The container mounts only the trial, so a repository on the host,
+            # such as a project patched for an eval, is cloned from a mirror
+            # in the harness folder, with every ref a --ref may name, which is
+            # removed once checked out.
+            source = harness / "source.git"
+            subprocess.run(["git", "clone", "--mirror", "--quiet", "--", str(local), str(source)], check=True)
+            manifest["repository_source"] = "local"
+        command(["git", "clone", "--", str(source), str(checkout)])
         command(["git", "fetch", "--update-shallow", "--no-tags", "origin", args.ref], cwd=checkout)
         command(["git", "checkout", "--detach", "FETCH_HEAD"], cwd=checkout)
+        copies = []
+        local_mirrors = False
+        if source != args.repo:
+            copies.append(source)
+            # Relative submodule URLs resolve against the checkout's remote:
+            # the source's own origin, or, without one, the mirror, beside
+            # which each relative submodule's repository is mirrored too.
+            origin = subprocess.run(["git", "-C", str(local), "remote", "get-url", "origin"], capture_output=True, text=True)
+            if origin.returncode == 0 and origin.stdout.strip():
+                command(["git", "remote", "set-url", "origin", origin.stdout.strip()], cwd=checkout)
+            elif getattr(args,"submodules",False):
+                mirrors = local_submodule_mirrors(checkout, local, source)
+                copies.extend(mirrors)
+                local_mirrors = bool(mirrors)
         manifest["submodules"] = "requested" if getattr(args,"submodules",False) else "not requested"
         if getattr(args,"submodules",False):
-            command(["git", "submodule", "update", "--init", "--recursive"], cwd=checkout)
+            command(submodule_update_argv(local_mirrors), cwd=checkout)
+        for copy in copies:
+            shutil.rmtree(copy, ignore_errors=True)
         manifest["commit"] = command(["git", "rev-parse", "HEAD"], cwd=checkout)
         if pnpm is not None:
             manifest["failure_stage"] = "package_manager"
@@ -1468,7 +1553,7 @@ def main():
     parser.add_argument("--login-json", type=Path, help="Selected model login; refresh updates persist, never copies a profile")
     parser.add_argument("--existing-login", action="store_true", help="Reuse authorized existing CLI model authentication, including a managed Claude helper")
     parser.add_argument("--submodules", action="store_true", help="Initialize submodules at the requested commit")
-    parser.add_argument("--repo", help="Public clone URL reachable from the container")
+    parser.add_argument("--repo", help="Public clone URL reachable from the container, or a local repository, which the harness copies into the trial")
     parser.add_argument("--ref", help="Commit SHA or ref; resolved SHA is recorded")
     parser.add_argument("--ddtest", type=Path, help="Already-built Linux executable for the image architecture")
     parser.add_argument("--agent", choices=("codex", "claude"))

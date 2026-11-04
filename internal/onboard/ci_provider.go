@@ -113,6 +113,9 @@ type ciSetup struct {
 	// Jenkinsfile sh step: a step of its job in another shell does not have
 	// them (see ciShellOrigin).
 	shellLocal bool
+	// withoutBash reports a setup a POSIX shell runs alone, in an image
+	// without the Bash Datadog's installer needs (see ciShellSetup).
+	withoutBash bool
 	// Inputs are the installer inputs keyed by the setup action's input
 	// names: languages, api_key, site and <language>-tracer-version. Values
 	// are verbatim; unresolved references stay as written.
@@ -818,4 +821,29 @@ func testWorkflowsWithSetup(root string, workflows []ciWorkflow, language, frame
 		}
 	}
 	return found, configured
+}
+
+// ciConfirmationProblem lists the provider facts the user has not
+// confirmed (--ci-confirm) that this entry's setup depends on, and how to
+// confirm them; empty when every one is confirmed.
+func ciConfirmationProblem(provider ciProvider, setup ciSetup) string {
+	var missing []ciFactDefinition
+	for _, definition := range ciProviderFacts[provider.name()] {
+		if _, stated := statedFact(definition.Key); slices.Contains(setup.Confirmations, definition.Key) && !stated {
+			missing = append(missing, definition)
+		}
+	}
+	if len(missing) == 0 {
+		return ""
+	}
+	var questions, flags []string
+	for _, fact := range missing {
+		flag := fact.Key
+		if fact.Values != "" {
+			flag += "=" + fact.Values
+		}
+		questions = append(questions, strings.TrimSpace(fact.Key+": "+fact.Question+" "+fact.Remedy))
+		flags = append(flags, "--ci-confirm "+flag)
+	}
+	return "The " + provider.setupName() + " setup depends on facts no CI configuration shows, so ddtest cannot certify it until the user confirms them. Ask the user; never assume or check them from this machine. " + strings.Join(questions, " ") + " Then rerun testdrive adding " + strings.Join(flags, " ") + " with the values they confirmed."
 }

@@ -100,6 +100,13 @@ func TestJavaAgentEnvironmentAttachesTheAgentOnce(t *testing.T) {
 	require.NotContains(t, javaLanguage{}.runEnvironment(drive, ""), "JAVA_TOOL_OPTIONS", "the baseline never attaches the agent")
 }
 
+func TestJavaRunsRemoveAQuotedDatadogAgent(t *testing.T) {
+	require.Equal(t, `-Dname="a b" -Xmx256m`, withoutDatadogAgent("JAVA_TOOL_OPTIONS", `-javaagent:"/opt/ci tools/dd-java-agent-1.67.1.jar" -Dname="a b" -Xmx256m`), "the quoted path is one option")
+	require.Equal(t, "-Xmx1g", withoutDatadogAgent("GRADLE_OPTS", "-javaagent:'/opt/ci tools/dd-java-agent.jar' -Xmx1g"))
+	// Maven's launcher expands MAVEN_OPTS unquoted: an apostrophe is a character.
+	require.Equal(t, "-Dservice=team's-tests -Xmx256m", withoutDatadogAgent("MAVEN_OPTS", "-javaagent:/opt/dd-java-agent.jar -Dservice=team's-tests -Xmx256m"))
+}
+
 func TestJavaRunsRemoveAnInheritedDatadogAgent(t *testing.T) {
 	// The GitHub action attaches dd-java-agent to MAVEN_OPTS, or with
 	// java-instrumented-build-system: all to JAVA_TOOL_OPTIONS.
@@ -189,10 +196,10 @@ func TestJavaRunsWriteTheXMLReportsAPropertyTurnsOff(t *testing.T) {
 	build, err := drive.javaBuild([]string{"verify"})
 	require.NoError(t, err)
 	args := []string{"verify"}
-	require.Equal(t, []string{"verify", "-DcloseTestReports=false"}, build.arguments(args, nil), "validation reads the reports")
+	require.Equal(t, []string{"verify", "-DcloseTestReports=false", "-Dgpg.skip=true"}, build.arguments(args, nil), "validation reads the reports and signs nothing")
 	require.Equal(t, []string{"verify"}, args)
 	probe := &javaProbe{args: []string{"-Dtest=" + javaProbeClass}}
-	require.Equal(t, []string{"test", "-Dtest=" + javaProbeClass, "-DcloseTestReports=false"}, build.arguments(args, probe), "probe runs read them too")
+	require.Equal(t, []string{"test", "-Dtest=" + javaProbeClass, "-DcloseTestReports=false", "-Dgpg.skip=true"}, build.arguments(args, probe), "probe runs read them too")
 }
 
 func TestJavaRefusesADatadogAgentInJVMConfig(t *testing.T) {

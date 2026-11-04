@@ -8,10 +8,13 @@ package onboard
 import (
 	_ "embed"
 	"fmt"
+	"maps"
+	"regexp"
 	"slices"
 	"strings"
 
 	"github.com/DataDog/ddtest/internal/maven"
+	"github.com/DataDog/ddtest/internal/platform"
 )
 
 // javaDiscovery discovers the Maven and Gradle CI test steps of JVM test
@@ -39,7 +42,7 @@ func (javaDiscovery) coordinated() bool { return true }
 // installer: each runs the installer that attaches dd-java-agent to the build
 // JVM's options.
 func (javaDiscovery) supportsCIProvider(provider string) bool {
-	return provider == gitHubActionsProvider || provider == gitLabCIProvider || provider == circleCIProvider || provider == buildkiteProvider
+	return provider == gitHubActionsProvider || provider == gitLabCIProvider || provider == circleCIProvider || provider == buildkiteProvider || provider == jenkinsProvider
 }
 
 func (javaDiscovery) automaticCISetup() bool { return false }
@@ -90,21 +93,82 @@ func (javaDiscovery) localCommands(root, command, framework string) ([]TestComma
 
 // Local validation owns the agent option; keep the customer's other JVM
 // options. A reference to workflow or job values needs them explicitly.
-func (javaDiscovery) variantValue(workflow ciWorkflow, job runtimeJob, _ runtimeStep, _ map[string]any, key, value string) (string, bool, error) {
+func (javaDiscovery) variantValue(workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any, key, value string) (string, bool, error) {
 	// Deploy credentials matter only to the goals validation never runs.
 	if slices.Contains(javaDeployCredentials(job), key) {
 		return "", true, nil
 	}
-	if key != "MAVEN_OPTS" && key != "GRADLE_OPTS" && key != "JAVA_TOOL_OPTIONS" {
+	if key != "MAVEN_OPTS" && key != "GRADLE_OPTS" && key != "JAVA_TOOL_OPTIONS" && key != "JAVA_OPTS" {
 		return value, false, nil
 	}
 	inherited := strings.NewReplacer("${{ env."+key+" }}", "", "${{env."+key+"}}", "").Replace(value)
 	if inherited != value && (job.Env[key] != "" || workflow.Env[key] != "") {
 		return "", false, fmt.Errorf("%s extends workflow or job JVM options; validate with those options explicitly", key)
 	}
+	// The row's values, as ${{ matrix.service }}, come before the options
+	// are split, since an expression's spaces are not the options'.
+	if resolved, err := interpolateMatrix(inherited, row); err == nil {
+		inherited = resolved
+	}
 	// The installer's agent, which a shell-sharing setup exported before the
-	// job's own options, is local validation's too.
-	return strings.TrimSpace(strings.ReplaceAll(inherited, javaInstallerAgent, "")), true, nil
+	// job's own options, is local validation's too, and so are the -Ddd.*
+	// properties a hand-written setup configures CI's agent with, as its
+	// DD_* variables: they would send the local agent's reports elsewhere.
+	// One that turns Test Optimization off in CI, or whose value only CI
+	// knows, is never removed unseen.
+	if value, set := javaHandWrittenProperties(key, inherited)["DD_CIVISIBILITY_ENABLED"]; set {
+		if _, known := handWrittenTrue(value); !known {
+			return "", false, fmt.Errorf("CI instrumentation setting -Ddd.civisibility.enabled=%s in %s requires review", value, key)
+		}
+		effective, from := javaEffectiveEnablement(workflow, job, step, row, key, inherited)
+		if handWrittenFalse(effective) {
+			return "", false, fmt.Errorf("CI instrumentation is explicitly disabled by -Ddd.civisibility.enabled=%s in %s", effective, from)
+		}
+		// Maven passes MAVEN_OPTS quotes on, so "true" there enables nothing.
+		// A hand-written agent's own options are checked with its setup.
+		if enabled, _ := handWrittenTrue(effective); effective != "" && !enabled && len(javaHandWrittenAgents(key, inherited)) == 0 {
+			return "", false, fmt.Errorf("CI instrumentation is not enabled by -Ddd.civisibility.enabled=%s in %s, which the JVM does not read as true", effective, from)
+		}
+	}
+	return javaWithoutAgentProperties(key, strings.TrimSpace(strings.ReplaceAll(inherited, javaInstallerAgent, ""))), true, nil
+}
+
+// javaEffectiveEnablement is the -Ddd.civisibility.enabled value the step's
+// build applies last, and the option list that sets it, with key's resolved
+// value: a later list overrides an earlier one (see javaEffectiveProperties).
+// A step whose build tool ddtest cannot tell reads key's own value.
+func javaEffectiveEnablement(workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any, key, value string) (string, string) {
+	tool := javaStepBuildTool(commandResolution{}, step.Run)
+	if tool == "" {
+		return javaHandWrittenProperties(key, value)["DD_CIVISIBILITY_ENABLED"], key
+	}
+	env := map[string]string{}
+	for _, scope := range []map[string]string{workflow.Env, job.Env, step.Env} {
+		maps.Copy(env, scope)
+	}
+	for carrier, options := range env {
+		if resolved, err := interpolateMatrix(options, row); err == nil {
+			env[carrier] = resolved
+		}
+	}
+	env[key] = value
+	properties, from := javaEffectiveProperties(env, tool)
+	return properties["DD_CIVISIBILITY_ENABLED"], from["DD_CIVISIBILITY_ENABLED"]
+}
+
+// javaWithoutAgentProperties removes the -Ddd.* system properties of
+// carrier's JVM options, split as its reader splits them, keeping those of tracer plugin settings, which change test
+// behavior as their DD_* variables do (see TracerPluginSetting).
+func javaWithoutAgentProperties(carrier, options string) string {
+	words := platform.JavaCarrierWords(carrier, options)
+	kept := slices.DeleteFunc(slices.Clone(words), func(word string) bool {
+		key, _, ok := javaAgentProperty(carrier, word)
+		return ok && !TracerPluginSetting(key)
+	})
+	if len(kept) == len(words) {
+		return options
+	}
+	return strings.Join(kept, " ")
 }
 
 // javaDeployCredentials are the environment variables that the job's
@@ -175,12 +239,15 @@ func (javaDiscovery) setupShellExports(current map[string]string) (map[string]st
 // ciSetupRequest is the Java part of a provider's setup: an exact agent
 // release, the build JVM options that carry it, and a JDK ddtest can read.
 func (javaDiscovery) ciSetupRequest(root, framework, site string, terms ciSetupTerms) ciSetupRequest {
+	if terms.Plugin {
+		return javaPluginSetupRequest(root, framework, site, terms)
+	}
 	request := ciSetupRequest{Language: "java", Site: site, TracerInput: "java-tracer-version", TracerVersion: "<exact dd-java-agent release>"}
 	request.Notes = []string{
-		"Replace <exact dd-java-agent release> with an exact dd-java-agent release, such as 1.67.1; local validation runs that release, and a floating one cannot be validated. Keep the existing build files, Maven or Gradle wrapper, JDK images, Maven goals or Gradle tasks, profiles, modules or projects, plugins, JVM options, test arguments and matrices. One Maven or Gradle command runs every framework the build declares: do not split it or filter it by " + framework + ". Local validation runs only the Maven test lifecycle or Gradle test tasks and never installs or publishes.",
+		"Replace <exact dd-java-agent release> with an exact dd-java-agent release, such as " + javaRecommendedTracer + "; local validation runs that release, and a floating one cannot be validated. Keep the existing build files, Maven or Gradle wrapper, JDK images, Maven goals or Gradle tasks, profiles, modules or projects, plugins, JVM options, test arguments and matrices. One Maven or Gradle command runs every framework the build declares: do not split it or filter it by " + framework + ". Local validation runs only the Maven test lifecycle or Gradle test tasks and never installs or publishes.",
 		"The " + terms.Installer + " adds -javaagent for " + terms.Later + " " + javaInstallerCarriers(activeOrDefaultCIProvider().name()) + ", before the options the job set earlier; its build system input, if set, must name the build tool the tests run (maven or gradle). A later command that sets one of these variables must keep the agent: extend it with " + terms.Persist(`export MAVEN_OPTS="$MAVEN_OPTS <options>"`) + ", never replace it. Do not add -javaagent options or set DD_CIVISIBILITY_ENABLED yourself.",
 		"ddtest reads the JDK of each instrumented job from its image, such as maven:3.9-eclipse-temurin-21, gradle:8.10-jdk17, eclipse-temurin:17-jdk or cimg/openjdk:17.0. A job that runs on the build agent's own JDK, or in an image whose name selects no JDK version, stays unverified: tell the user, and give it such an image only with their approval.",
-		setupImageNote(root, "java", framework),
+		setupImageNote(root, "java", framework, site),
 		setupUnsupportedNote(root, "java", framework),
 		"If a job or matrix entry runs a JDK the agent cannot instrument (early-access builds, Java older than 8), keep its tests running uninstrumented in a job without " + terms.Entry + "; ddtest reports such jobs as excluded. Report each exclusion and its reason; do not drop entries, guard the tests or change JDK versions to obtain a pass. At least one instrumented job is required.",
 		"Exclude .testoptimization/ from Git (add /.testoptimization/ to the repository .gitignore).",
@@ -197,14 +264,13 @@ func (javaDiscovery) unsupportedImage(string) string { return "" }
 // which javaHandWrittenSetup reads with its environment.
 func (javaDiscovery) preloadVariable(string) bool { return false }
 
-func (javaDiscovery) handWrittenSetup(root string, provider ciProvider, workflow ciWorkflow, job runtimeJob, index int, _ map[string]any, framework, site string) *handWrittenSetup {
-	return javaHandWrittenSetup(root, provider, workflow, job, index, framework, site)
+func (javaDiscovery) handWrittenSetup(root string, provider ciProvider, workflow ciWorkflow, job runtimeJob, index int, row map[string]any, framework, site string) *handWrittenSetup {
+	return javaHandWrittenSetup(root, provider, workflow, job, index, row, framework, site)
 }
 
-// The Java CI check reads only the Datadog setup (see JavaCIConfiguration):
-// a hand-written dd-java-agent setup is recognized, kept and reported, never
-// certified, until it reads that setup too.
-func (javaDiscovery) validatesHandWrittenSetup() bool { return false }
+// The Java CI check reads a hand-written dd-java-agent setup where no
+// provider setup precedes the tests (see JavaCIConfiguration).
+func (javaDiscovery) validatesHandWrittenSetup() bool { return true }
 
 func (javaDiscovery) runtimeVariable(name string) bool {
 	return name == "JAVA_HOME" || name == "JAVA_TOOL_OPTIONS"
@@ -223,17 +289,81 @@ func (javaDiscovery) cacheVariable(name string) bool {
 // No CI components are modeled for this language.
 func (javaDiscovery) ciComponents(string) []ciComponent { return nil }
 
-// No CI runtime statements yet.
-func (javaDiscovery) statedRuntime() *statedRuntime { return nil }
+func (javaDiscovery) statedRuntime() *statedRuntime { return javaStatedRuntime }
 
 func (javaDiscovery) ciPluginLanguage() string { return "JAVA" }
 
-// Java has no CI plugin setup yet.
-func (javaDiscovery) ciPluginExports(map[string]string) (map[string]string, map[string]string) {
-	return nil, nil
+// The Datadog Jenkins plugin's JavaConfigurator puts -javaagent, with the
+// dd-java-agent it downloads into the workspace, before the existing value
+// of MAVEN_OPTS and GRADLE_OPTS, joined with a space. It also does so for
+// SBT_OPTS, ANT_OPTS and DD_TRACE_OPTS, which no build ddtest validates
+// reads.
+func (javaDiscovery) ciPluginExports(current map[string]string) (map[string]string, map[string]string) {
+	exported := map[string]string{}
+	for _, carrier := range javaPluginCarriers {
+		exported[carrier] = javaInstallerAgent
+		if existing, set := current[carrier]; set {
+			exported[carrier] += " " + existing
+		}
+	}
+	return exported, nil
 }
 
-func (javaDiscovery) ciPluginComposes(string) string { return "" }
+// javaPluginCarriers are the build JVM option variables the Datadog Jenkins
+// plugin adds dd-java-agent to that ddtest validates builds of.
+var javaPluginCarriers = []string{"MAVEN_OPTS", "GRADLE_OPTS"}
+
+// The plugin computes its variables once per agent, from the first step it
+// configures there, and sets them on every later step.
+func (javaDiscovery) ciPluginComposes(key string) string {
+	if !slices.Contains(javaPluginCarriers, key) {
+		return ""
+	}
+	return "on each agent it sets " + key + " for every step to its -javaagent option followed by a space and the " + key + " of the first step it configures there, so this value is lost, or, when its step is that first one, it reaches every later step on the agent. ddtest validates with the pipeline's " + key
+}
+
+// javaPluginTracerURL is the additionalVariables entry that replaces the
+// dd-java-agent download of the Datadog Jenkins plugin, which otherwise
+// downloads the latest release; the plugin verifies a replaced download's
+// signature.
+const javaPluginTracerURL = "DATADOG_JENKINS_PLUGIN_TRACER_DISTRIBUTION_URL"
+
+// The release a replaced download is, when it is a canonical dd-java-agent
+// artifact: Maven Central's or the DataDog/dd-trace-java GitHub release's.
+// Another URL, even one whose path names a release, may serve any agent the
+// plugin accepts, so it is the URL itself, which is not an exact release.
+func (javaDiscovery) ciPluginTracerRelease(variables map[string]string) (string, bool) {
+	url, set := variables[javaPluginTracerURL]
+	if !set {
+		return "", false
+	}
+	if release, ok := javaCanonicalRelease(url); ok {
+		return release, true
+	}
+	return url, true
+}
+
+// javaCanonicalRelease is the exact release a canonical dd-java-agent
+// download is (see javaCanonicalAgentURL): a file name that names a release
+// must name its path's.
+func javaCanonicalRelease(url string) (string, bool) {
+	match := javaCanonicalAgentURL.FindStringSubmatch(url)
+	switch {
+	case match == nil:
+		return "", false
+	case match[1] != "" && match[1] == match[2]:
+		return match[1], true
+	case match[3] != "" && (match[4] == "" || match[3] == match[4]):
+		// The release's unversioned asset, dd-java-agent.jar, is its tag's.
+		return match[3], true
+	}
+	return "", false
+}
+
+// javaCanonicalAgentURL is a dd-java-agent JAR's canonical download, with its
+// release twice: in Maven Central's path and file name, or in a GitHub
+// release's tag and file name.
+var javaCanonicalAgentURL = regexp.MustCompile(`^(?:https://(?:repo1\.maven\.org|repo\.maven\.apache\.org)/maven2/com/datadoghq/dd-java-agent/([0-9]+\.[0-9]+\.[0-9]+)/dd-java-agent-([0-9]+\.[0-9]+\.[0-9]+)\.jar|https://github\.com/DataDog/dd-trace-java/releases/download/v([0-9]+\.[0-9]+\.[0-9]+)/dd-java-agent(?:-([0-9]+\.[0-9]+\.[0-9]+))?\.jar)$`)
 
 func (javaDiscovery) ciShellAfter(ciWorkflow, runtimeJob, runtimeStep, string, commandResolution) (bool, string) {
 	return false, ""
@@ -244,3 +374,30 @@ func (javaDiscovery) selectsShellRuntime([]string) bool { return false }
 
 // Java's build tools may run tests; ddtest classifies them in its own rules.
 func (javaDiscovery) checkTool(string, string, []string) (bool, bool) { return false, false }
+
+// withSonarQubeEnv sets the Maven goal its scanner runs, sonar:sonar or the
+// plugin's qualified sonar goal, neither of which runs tests.
+func (javaDiscovery) ciStepVariables(step string) map[string]string {
+	if step == "withSonarQubeEnv" {
+		return map[string]string{"SONAR_MAVEN_GOAL": "sonar:sonar"}
+	}
+	return nil
+}
+
+// dd-java-agent is no project dependency, so ddtest recommends its release.
+func (javaDiscovery) recommendedTracer() string { return javaRecommendedTracer }
+
+// ciPluginReset removes the agent the Datadog Jenkins plugin puts before the
+// step's MAVEN_OPTS and GRADLE_OPTS, keeping the step's own options.
+func (javaDiscovery) ciPluginReset() string {
+	var resets []string
+	for _, key := range []string{"MAVEN_OPTS", "GRADLE_OPTS"} {
+		resets = append(resets, `case "${`+key+`:-}" in -javaagent:*/.datadog/dd-java-agent.jar*) `+key+`="${`+key+`#-javaagent:*/.datadog/dd-java-agent.jar}"; `+key+`="${`+key+`# }";; esac`)
+	}
+	// One compound statement, as a reset the snippet's check reads.
+	return "{ " + strings.Join(resets, "; ") + "; }"
+}
+
+// A hand-written dd-java-agent setup is the job's own -javaagent, which the
+// Datadog Jenkins plugin never writes.
+func (javaDiscovery) keepsHandWrittenJobs() bool { return true }

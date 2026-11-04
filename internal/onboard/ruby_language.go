@@ -233,7 +233,7 @@ func (rubyDiscovery) ciSetupRequest(root, framework, site string, terms ciSetupT
 		"The " + terms.Installer + " replaces RUBYOPT with -rbundler/setup -rdatadog/ci/auto_instrument. When the job sets RUBYOPT, re-add those options right after " + terms.Entry + " with " + terms.Persist(`export RUBYOPT="$RUBYOPT <existing options>"`) + "; never replace RUBYOPT after it. Set BUNDLE_GEMFILE in " + terms.Variables + " (one per matrix entry where the matrix selects it), so datadog-ci joins the bundle the tests use.",
 		rubyGemsNote(root, framework, terms),
 		rubyRakeOptionsNote(root),
-		setupImageNote(root, "ruby", framework),
+		setupImageNote(root, "ruby", framework, site),
 		handWrittenSetupNote(root, "ruby", framework, site),
 		"If a job or matrix entry runs a Ruby the tracer cannot instrument (head, JRuby, TruffleRuby), keep its tests running uninstrumented in a job without " + terms.Entry + "; ddtest reports such jobs as excluded. To split a shared matrix, exclude those entries from the instrumented job " + terms.MatrixExclusion + " and run them in that separate job. Report each exclusion and its reason; do not drop entries, guard the tests or change Ruby versions to obtain a pass. At least one compatible instrumented job is required.",
 		"Exclude .testoptimization/ from Git (add /.testoptimization/ to the repository .gitignore)" + rubyGemPackaging(root),
@@ -605,6 +605,9 @@ func rubyShellSelection(words []string) (version, versionFile string, ok bool) {
 
 func (rubyDiscovery) statedRuntime() *statedRuntime { return rubyStatedRuntime }
 
+// The plugin has no setting for this language's tracer release.
+func (rubyDiscovery) ciPluginTracerRelease(map[string]string) (string, bool) { return "", false }
+
 func (rubyDiscovery) ciPluginLanguage() string { return "RUBY" }
 
 // The Datadog Jenkins plugin replaces RUBYOPT with the datadog-ci preload,
@@ -704,3 +707,7 @@ func (rubyDiscovery) checkTool(_, _ string, words []string) (bool, bool) {
 	}
 	return false, false
 }
+
+func (rubyDiscovery) ciStepVariables(string) map[string]string { return nil }
+
+func (rubyDiscovery) keepsHandWrittenJobs() bool { return false }

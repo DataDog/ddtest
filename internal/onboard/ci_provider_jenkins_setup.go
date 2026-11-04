@@ -390,6 +390,9 @@ func (s *jenkinsSetup) ciSetup() ciSetup {
 		if slices.Contains(s.languages, language.ciPluginLanguage()) {
 			_, references := language.ciPluginExports(nil)
 			exports = append(exports, slices.Sorted(maps.Keys(references))...)
+			if release, set := language.ciPluginTracerRelease(s.variables); set {
+				inputs[language.actionLanguage()+"-tracer-version"] = release
+			}
 		}
 	}
 	return ciSetup{
@@ -426,7 +429,7 @@ func (jenkins) setupInput(name string) string {
 		return "DD_SITE in additionalVariables"
 	}
 	if strings.HasSuffix(name, "-tracer-version") {
-		return "tracer release (the Datadog Jenkins plugin has no setting for it: it installs the latest release, or one the project's dependencies pin)"
+		return "tracer release (the Datadog Jenkins plugin installs the latest release unless the setup instructions show how to pin one)"
 	}
 	return name
 }
@@ -444,7 +447,7 @@ func (jenkins) setupProblem(setup ciSetup, tracerInput string, exact func(string
 		return setup.Problem
 	}
 	if tracer, pinned := setup.Inputs[tracerInput]; pinned && !exact(tracer) {
-		return "The Datadog Jenkins plugin would install " + fmt.Sprintf("%q", tracer) + ", which is not an exact tracer release; pin an exact release, such as " + example + ", in the project's dependencies as the setup instructions show."
+		return "The Datadog Jenkins plugin would install " + fmt.Sprintf("%q", tracer) + ", which is not an exact tracer release; pin an exact release, such as " + example + ", as the setup instructions show."
 	}
 	configured, source := setup.Inputs["site"], "DD_SITE in its additionalVariables"
 	if configured == "" {

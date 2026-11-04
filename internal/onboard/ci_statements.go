@@ -131,6 +131,15 @@ type statedRuntime struct {
 	fileVersion func(line string) string
 }
 
+// StatedRuntimeNames are the runtimes --ci-runtime takes, as node or java.
+func StatedRuntimeNames() []string {
+	var names []string
+	for _, language := range statedRuntimeLanguages() {
+		names = append(names, language.statedRuntime().Names[0])
+	}
+	return names
+}
+
 // statedRuntimeLanguages lists the languages that take runtime statements.
 func statedRuntimeLanguages() []discoveryLanguage {
 	var languages []discoveryLanguage
@@ -156,9 +165,9 @@ func statedRuntimeFor(token string) *statedRuntime {
 // ParseCIRuntime reads one --ci-runtime value. The job part may contain
 // colons: the runtime name follows the last one.
 func ParseCIRuntime(value string) (CIRuntimeStatement, error) {
-	var names, examples []string
+	var examples []string
+	names := StatedRuntimeNames()
 	for _, language := range statedRuntimeLanguages() {
-		names = append(names, language.statedRuntime().Names[0])
 		examples = append(examples, language.statedRuntime().Names[0]+"="+strings.Fields(language.statedRuntime().Example)[0])
 	}
 	index := strings.LastIndex(value, "=")

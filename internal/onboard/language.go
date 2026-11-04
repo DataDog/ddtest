@@ -87,6 +87,11 @@ type discoveryLanguage interface {
 	// as not validated yet (handWrittenSetup.Unvalidated): kept, never
 	// certified, and never replaced with the provider's setup.
 	validatesHandWrittenSetup() bool
+	// keepsHandWrittenJobs reports whether onboard --apply leaves a job that
+	// sets the tracer up by hand to that setup, adding no provider setup
+	// beside it: a language whose hand-written setup only the job's own
+	// configuration shows, never what a CI server plugin exports.
+	keepsHandWrittenJobs() bool
 	// preloadVariable reports the variable through which a setup written by
 	// hand loads the language's tracer into a process, such as a Node
 	// options variable; a command prefix that sets it is the command's
@@ -153,6 +158,13 @@ type discoveryLanguage interface {
 	// exports with the job's own value, for a value a scope narrower than
 	// the pipeline sets; empty when the plugin replaces it.
 	ciPluginComposes(key string) string
+	// ciStepVariables are the variables a CI wrapper step, such as Jenkins'
+	// withSonarQubeEnv, sets for the language's tools, with their values.
+	ciStepVariables(step string) map[string]string
+	// ciPluginTracerRelease is the tracer release the CI server plugin's
+	// additionalVariables select for the language, as written; set is false
+	// when they select none and the plugin installs its default.
+	ciPluginTracerRelease(variables map[string]string) (release string, set bool)
 	// ciShellAfter reports whether a test step of job, which resolution
 	// resolved for framework, needs the commands that follow the setup in
 	// its own shell (ciSetupRequest.After) when the request has any, and

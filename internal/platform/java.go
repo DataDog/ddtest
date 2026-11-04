@@ -16,6 +16,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"unicode"
 
 	"github.com/DataDog/ddtest/internal/ext"
 	"github.com/DataDog/ddtest/internal/framework"
@@ -196,4 +197,58 @@ func (j *Java) InstallTestdriveTracer(ctx context.Context, options TracerOptions
 		return TracerInstallation{}, fmt.Errorf("downloaded dd-java-agent %s, requested %s", version, options.Version)
 	}
 	return TracerInstallation{Path: path}, nil
+}
+
+// JavaOptionWords splits JVM options as the JVM reads JAVA_TOOL_OPTIONS:
+// on whitespace outside quotes, so -Ddd.service="my service" is one option,
+// each kept as written.
+func JavaOptionWords(options string) []string {
+	var words []string
+	start, quote := -1, rune(0)
+	for i, r := range options {
+		switch {
+		case quote != 0:
+			if r == quote {
+				quote = 0
+			}
+		case unicode.IsSpace(r):
+			if start >= 0 {
+				words, start = append(words, options[start:i]), -1
+			}
+		default:
+			if r == '"' || r == '\'' {
+				quote = r
+			}
+			if start < 0 {
+				start = i
+			}
+		}
+	}
+	if start >= 0 {
+		words = append(words, options[start:])
+	}
+	return words
+}
+
+// JavaCarrierWords splits the JVM options of carrier as the program that
+// reads it does: Maven's launcher expands MAVEN_OPTS and .mvn/jvm.config
+// unquoted, so they split on whitespace with quotes kept as written; the JVM
+// (JAVA_TOOL_OPTIONS), the Gradle wrapper (JAVA_OPTS, GRADLE_OPTS) and every
+// other reader honor quotes (see JavaOptionWords).
+func JavaCarrierWords(carrier, options string) []string {
+	if carrier == "MAVEN_OPTS" || carrier == ".mvn/jvm.config" {
+		return strings.Fields(options)
+	}
+	return JavaOptionWords(options)
+}
+
+// JavaCarrierValue is a JVM option of carrier as the JVM receives it:
+// without the quotes the reader removes, or, for MAVEN_OPTS and
+// .mvn/jvm.config, which Maven's launcher expands unquoted, with them kept,
+// so -Ddd.civisibility.enabled="true" is "true" with its quotes.
+func JavaCarrierValue(carrier, word string) string {
+	if carrier == "MAVEN_OPTS" || carrier == ".mvn/jvm.config" {
+		return word
+	}
+	return strings.NewReplacer(`"`, "", `'`, "").Replace(word)
 }

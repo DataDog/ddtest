@@ -34,7 +34,11 @@ import (
 // mount noexec, stopping the tracer's native add-ons. When mktemp fails, the
 // empty folder fails the snippet's mkdir, so it logs that the installation
 // failed.
-const jenkinsTracerFolder = `$(mktemp -d "$PWD/.datadog-ci-container.XXXXXX")`
+const jenkinsTracerFolder = `$(mktemp -d "$PWD/` + jenkinsTracerFolderName + `")`
+
+// jenkinsTracerFolderName is the folder's mktemp template, whatever
+// directory a setup creates it in.
+const jenkinsTracerFolderName = ".datadog-ci-container.XXXXXX"
 
 // jenkinsTracerIgnore is the .gitignore entry for the folders the snippet
 // leaves in the workspace: unanchored, since the snippet creates them in the
@@ -45,14 +49,14 @@ const jenkinsTracerIgnore = ".datadog-ci-container.*/"
 // setupIgnores keeps the snippet's folders untracked when edits write a
 // Jenkinsfile that runs the setup snippet.
 func (jenkins) setupIgnores(edits []setupEdit) []string {
-	if slices.ContainsFunc(edits, func(edit setupEdit) bool { return strings.Contains(string(edit.after), jenkinsTracerFolder) }) {
+	if slices.ContainsFunc(edits, func(edit setupEdit) bool { return strings.Contains(string(edit.after), jenkinsTracerFolderName) }) {
 		return []string{jenkinsTracerIgnore}
 	}
 	return nil
 }
 
 // jenkinsSnippetForm is the setup snippet Jenkins container stages run.
-var jenkinsSnippetForm = snippetForm{provider: jenkinsProvider, folder: jenkinsTracerFolder, keySet: true}
+var jenkinsSnippetForm = snippetForm{provider: jenkinsProvider, folder: jenkinsTracerFolder, keySet: true, shellSetups: true}
 
 // jenkinsCredentialID is the Jenkins credential onboard --apply binds
 // DD_API_KEY from, a Secret text the user stores the Datadog API key in.
@@ -76,14 +80,16 @@ func (jenkinsContainer) setupName() string { return "Datadog setup snippet" }
 
 func (jenkinsContainer) setupInput(name string) string { return buildkite{}.setupInput(name) }
 
+func (jenkinsContainer) snippetForm() snippetForm { return jenkinsSnippetForm }
+
 func (jenkinsContainer) setupProblem(setup ciSetup, tracerInput string, exact func(string) bool, example, site string) string {
 	return snippetSetupProblem(setup, tracerInput, exact, example, site)
 }
 
 func (jenkinsContainer) apiKeyAction(skipped bool) string {
-	text := "Ask a Jenkins administrator to store the Datadog API key as a Jenkins credential of kind Secret text (ID " + jenkinsCredentialID + ", or the one the Datadog plugin already uses), which the container stages bind to DD_API_KEY with withCredentials or credentials(…). Never write the key into the Jenkinsfile."
+	text := "Ask a Jenkins administrator to store the Datadog API key as a Jenkins credential of kind Secret text (ID " + jenkinsCredentialID + ", or the one the Datadog plugin already uses), which the container stages bind to DD_API_KEY with withCredentials or credentials(…), before the Jenkinsfile change is merged: Jenkins fails a stage whose binding names a credential that does not exist. Never write the key into the Jenkinsfile."
 	if skipped {
-		text += " Until it exists, those stages log that Test Optimization is disabled and their tests run untraced."
+		text += " If it holds an empty key, those stages log that Test Optimization is disabled and their tests run untraced."
 	}
 	return text
 }
@@ -183,7 +189,7 @@ func (c jenkinsContainer) setupInstructions(request ciSetupRequest) string {
 		stages += " (" + strings.Join(request.Jobs, ", ") + ")"
 	}
 	text.WriteString("Set up Datadog Test Optimization in " + stages + " with Datadog's installer (" + buildkiteInstaller + "), run in the sh step that runs the tests: the Datadog Jenkins plugin installs the tracer only on the build agent, so it cannot set up tests inside a container, and every sh step starts a fresh shell, so a separate sh step's exports would never reach the tests.\n\n")
-	text.WriteString("1. Ask the user to have a Jenkins administrator store the Datadog API key as a Jenkins credential of kind Secret text (ID " + jenkinsCredentialID + ", or the one the Datadog plugin already uses), and bind it to DD_API_KEY in those stages: wrap the sh step that runs the tests in withCredentials(" + jenkinsCredentialBinding + ") { … }, or set DD_API_KEY = credentials('" + jenkinsCredentialID + "') in the stage's environment directive. The Datadog Jenkins plugin's own key reaches only the steps in its option's scope. Never write the key into the repository or the Jenkinsfile. Without the key, the snippet skips the setup, logs that Test Optimization is disabled, and the tests run untraced.\n")
+	text.WriteString("1. Bind DD_API_KEY in those stages from a Jenkins credential of kind Secret text (ID " + jenkinsCredentialID + ", or the one the Datadog plugin already uses): wrap the sh step that runs the tests in withCredentials(" + jenkinsCredentialBinding + ") { … }, or set DD_API_KEY = credentials('" + jenkinsCredentialID + "') in the stage's environment directive. The Datadog Jenkins plugin's own key reaches only the steps in its option's scope. Never write the key into the repository or the Jenkinsfile. Local validation needs no key, so make this edit without waiting for the credential, and in the final report ask the user to have a Jenkins administrator store the Datadog API key as that credential before the Jenkinsfile change is merged: Jenkins fails a stage whose binding names a credential that does not exist. A credential that exists but is empty makes the snippet skip the setup and log that Test Optimization is disabled, and the tests run untraced.\n")
 	text.WriteString("2. In every sh script that runs the tests in those stages (each sh step is a shell of its own, so a stage whose tests run in several sh steps needs them in each), add these lines immediately before the test command, after dependency installation and any cd into the test directory, inside the same sh string. Write that script as a single-quoted Groovy string (sh '''…''') so Groovy leaves every $ to the shell, and keep its other commands unchanged:\n\n```sh\n")
 	text.WriteString(jenkinsSnippet(request, c.reset).shell())
 	text.WriteString("\n```\n")
@@ -322,12 +328,12 @@ func (r *jenkinsReader) jenkinsDockerfileAgent(call *groovyCall, scope jenkinsSc
 // to lack Bash, or curl and wget. curl reports an earlier statement of the
 // script that installed curl. An image ddtest cannot read is a caveat
 // instead (see jenkinsUnreadImageCaveat).
-func jenkinsImageSetupProblem(agent jenkinsAgent, curl bool) string {
+func jenkinsImageSetupProblem(agent jenkinsAgent, curl, bash bool) string {
 	if agent.image == "" {
 		return ""
 	}
 	executor := buildkiteExecutor{image: agent.image, dockerfile: agent.dockerfile, bash: agent.bash, downloader: agent.downloader}
-	return executor.imageSetupProblem(curl)
+	return executor.imageProblemFor(curl, bash)
 }
 
 // jenkinsUnreadImageCaveat is what ddtest cannot check about a container
@@ -367,7 +373,7 @@ func (r *jenkinsReader) snippetProblem(scope jenkinsScope, setup ciSetup, key st
 	default:
 		return "DD_API_KEY comes from " + key + ", which ddtest cannot tell is a Jenkins credential; bind it with withCredentials(" + jenkinsCredentialBinding + ") { … } or credentials('" + jenkinsCredentialID + "')."
 	}
-	return jenkinsImageSetupProblem(scope.agent, curl)
+	return jenkinsImageSetupProblem(scope.agent, curl, !setup.withoutBash)
 }
 
 // jenkinsResetMissing reports a setup snippet that does not first run the

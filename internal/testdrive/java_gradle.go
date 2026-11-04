@@ -194,10 +194,10 @@ func gradleLauncherProperties(configuration map[string]string) map[string]string
 // home's gradle.properties. The baseline could not run without it.
 func gradleAgentProperties(directory, build string, args []string, configuration map[string]string) error {
 	const remedy = "so validation cannot run the build without it; remove that -javaagent option, as CI attaches the agent with the Datadog setup"
-	if value, ok := gradle.SystemProperties(args)["org.gradle.jvmargs"]; ok && withoutDatadogAgent(value) != value {
+	if value, ok := gradle.SystemProperties(args)["org.gradle.jvmargs"]; ok && withoutDatadogAgent("org.gradle.jvmargs", value) != value {
 		return errors.New("the command attaches dd-java-agent to the Gradle build through -Dorg.gradle.jvmargs, " + remedy)
 	}
-	if value, ok := gradleLauncherProperties(configuration)["org.gradle.jvmargs"]; ok && withoutDatadogAgent(value) != value {
+	if value, ok := gradleLauncherProperties(configuration)["org.gradle.jvmargs"]; ok && withoutDatadogAgent("org.gradle.jvmargs", value) != value {
 		return errors.New("GRADLE_OPTS or JAVA_OPTS attaches dd-java-agent to the Gradle build through -Dorg.gradle.jvmargs, " + remedy)
 	}
 	files := []string{filepath.Join(build, "gradle.properties")}
@@ -212,7 +212,7 @@ func gradleAgentProperties(directory, build string, args []string, configuration
 		if err != nil {
 			return err
 		}
-		if value, ok := properties["org.gradle.jvmargs"]; ok && withoutDatadogAgent(value) != value {
+		if value, ok := properties["org.gradle.jvmargs"]; ok && withoutDatadogAgent("org.gradle.jvmargs", value) != value {
 			return fmt.Errorf("%s attaches dd-java-agent to every Gradle build through org.gradle.jvmargs, %s", path, remedy)
 		}
 	}

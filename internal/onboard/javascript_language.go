@@ -202,7 +202,7 @@ func (javascriptDiscovery) ciSetupRequest(root, framework, site string, terms ci
 	if framework == "mocha" {
 		request.Notes = append(request.Notes, "Keep the export after "+terms.Entry+" only for Mocha ESM test files; CommonJS suites need only the preload.")
 	}
-	if note := setupImageNote(root, "javascript", framework); note != "" {
+	if note := setupImageNote(root, "javascript", framework, site); note != "" {
 		request.Notes = append(request.Notes, note)
 	}
 	if note := handWrittenSetupNote(root, "javascript", framework, site); note != "" {
@@ -411,6 +411,9 @@ func javascriptShellSelection(words []string) (version, versionFile string, ok b
 
 func (javascriptDiscovery) statedRuntime() *statedRuntime { return javascriptStatedRuntime }
 
+// The plugin has no setting for this language's tracer release.
+func (javascriptDiscovery) ciPluginTracerRelease(map[string]string) (string, bool) { return "", false }
+
 func (javascriptDiscovery) ciPluginLanguage() string { return "JAVASCRIPT" }
 
 // The Datadog Jenkins plugin prepends its dd-trace preload to NODE_OPTIONS
@@ -529,3 +532,7 @@ func javascriptImageRuntime(job runtimeJob) string {
 
 // JavaScript's tools are classified with the shared ones (see recognizedTool).
 func (javascriptDiscovery) checkTool(string, string, []string) (bool, bool) { return false, false }
+
+func (javascriptDiscovery) ciStepVariables(string) map[string]string { return nil }
+
+func (javascriptDiscovery) keepsHandWrittenJobs() bool { return false }

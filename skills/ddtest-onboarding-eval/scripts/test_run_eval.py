@@ -209,6 +209,71 @@ class RunnerTests(unittest.TestCase):
         self.addCleanup(shutil.rmtree, manifest["trial_directory"], ignore_errors=True)
         return code, manifest
 
+    def test_local_repository_is_cloned_from_a_copy_in_the_trial(self):
+        # The container mounts only the trial, so a host repository, as a
+        # project patched for an eval, reaches it as a bare copy there.
+        code, manifest = self.trial()
+        clone = next(record["argv"] for record in manifest["commands"] if record["argv"][:2] == ["git", "clone"])
+        trial = Path(manifest["trial_directory"])
+        self.assertEqual(Path(clone[3]), trial / "harness" / "source.git")
+        self.assertFalse((trial / "harness" / "source.git").exists(), "the copy is removed once checked out")
+        self.assertEqual(manifest["repository"], self.source)
+        self.assertEqual(manifest["repository_source"], "local")
+        self.assertTrue((trial / "repo" / ".git").exists())
+        # Relative submodule URLs resolve against the source's own remote.
+        expected = subprocess.run(["git", "-C", self.source, "remote", "get-url", "origin"], capture_output=True, text=True)
+        if expected.returncode == 0:
+            remote = subprocess.check_output(["git", "-C", str(trial / "repo"), "remote", "get-url", "origin"], text=True).strip()
+            self.assertEqual(remote, expected.stdout.strip())
+
+    def test_relative_submodules_of_a_local_repository_without_origin_are_mirrored(self):
+        # Without an origin, relative submodule URLs resolve against the
+        # mirror, so each relative submodule's repository is mirrored beside
+        # it; a URL with a scheme is left to Git.
+        local = self.root / "work" / "app"
+        local.mkdir(parents=True)
+        subprocess.run(["git", "clone", "--bare", "--quiet", self.source, str(self.root / "work" / "shared.git")], check=True)
+        checkout = self.root / "checkout"
+        checkout.mkdir()
+        (checkout / ".gitmodules").write_text('[submodule "shared"]\n\tpath = shared\n\turl = ../shared.git\n'
+                                              '[submodule "remote"]\n\tpath = remote\n\turl = https://example.com/remote.git\n')
+        source = self.root / "trial" / "harness" / "source.git"
+        source.mkdir(parents=True)
+        mirrors = run_eval.local_submodule_mirrors(checkout, local, source)
+        self.assertEqual(mirrors, [self.root / "trial" / "harness" / "shared.git"])
+        self.assertTrue((mirrors[0] / "HEAD").exists())
+        # Git refuses file transport for submodules unless the command allows it.
+        self.assertEqual(run_eval.submodule_update_argv(True), ["git", "-c", "protocol.file.allow=always", "submodule", "update", "--init", "--recursive"])
+        self.assertEqual(run_eval.submodule_update_argv(False), ["git", "submodule", "update", "--init", "--recursive"])
+
+    def test_nested_relative_submodules_of_a_local_repository_are_mirrored(self):
+        # A mirrored submodule's own relative submodules, at the revision it
+        # pins, resolve beside its mirror, as Git resolves them.
+        git = ["git", "-c", "commit.gpgsign=false", "-c", "user.name=eval", "-c", "user.email=eval@example.com"]
+        work = self.root / "work"
+        work.mkdir()
+        subprocess.run(["git", "clone", "--bare", "--quiet", self.source, str(work / "leaf.git")], check=True)
+        leaf = subprocess.check_output(["git", "-C", str(work / "leaf.git"), "rev-parse", "HEAD"], text=True).strip()
+
+        def repository_with_submodule(path, name, url, pinned):
+            subprocess.run(["git", "init", "--quiet", str(path)], check=True)
+            (path / ".gitmodules").write_text('[submodule "' + name + '"]\n\tpath = ' + name + '\n\turl = ' + url + '\n')
+            subprocess.run(["git", "-C", str(path), "update-index", "--add", "--cacheinfo", "160000," + pinned + "," + name], check=True)
+            subprocess.run(["git", "-C", str(path), "add", ".gitmodules"], check=True)
+            subprocess.run([*git, "-C", str(path), "commit", "--quiet", "-m", "pin " + name], check=True)
+            return subprocess.check_output(["git", "-C", str(path), "rev-parse", "HEAD"], text=True).strip()
+
+        shared = repository_with_submodule(work / "shared", "leaf", "../leaf.git", leaf)
+        subprocess.run(["git", "clone", "--bare", "--quiet", str(work / "shared"), str(work / "shared.git")], check=True)
+        local = work / "app"
+        repository_with_submodule(local, "shared", "../shared.git", shared)
+        source = self.root / "trial" / "harness" / "source.git"
+        source.mkdir(parents=True)
+        mirrors = run_eval.local_submodule_mirrors(local, local, source)
+        harness = self.root / "trial" / "harness"
+        self.assertEqual(mirrors, [harness / "shared.git", harness / "leaf.git"])
+        self.assertTrue(all((mirror / "HEAD").exists() for mirror in mirrors))
+
     def test_preflight_refresh_is_redacted_before_finalization(self):
         source = self.root / "selected-login.json"
         source.write_text(json.dumps({"tokens": {"access_token": "synthetic-original-access", "refresh_token": "synthetic-original-refresh"}}))
