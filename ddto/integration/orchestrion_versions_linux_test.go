@@ -10,9 +10,11 @@ import (
 
 // Each supported Orchestrion version composes with ddtest instrument: Mini
 // stays the only test reporter, and SDK spans under tests keep to Test
-// Optimization, with the pinned SDK. The deeper Orchestrion tests use the
-// pinned reference, ORCHESTRION_BIN. Orchestrion is not edited, so every
-// version runs; it runs on Linux only to bound the suite's time.
+// Optimization, with the SDK that a project using that version gets: the
+// pinned one, or the newer one that the version requires. The deeper
+// Orchestrion tests use the pinned reference, ORCHESTRION_BIN. Orchestrion is
+// not edited, so every version runs; it runs on Linux only to bound the
+// suite's time.
 func TestMiniOrchestrionSupportedVersions(t *testing.T) {
 	window := loadSupportedVersions(t).Orchestrion
 	for _, version := range window.versions() {
@@ -25,7 +27,7 @@ func TestMiniOrchestrionSupportedVersions(t *testing.T) {
 			if out, stderr, code := command(t, dir, testEnv(), "go", "mod", "edit", "-require=go.uber.org/goleak@v1.3.0"); code != 0 {
 				t.Fatal(out, stderr)
 			}
-			configureOrchestrionFixture(t, dir, version, bin)
+			t.Logf("SDK: %s", configureOrchestrionFixture(t, dir, version, bin))
 			test := filepath.Join(t.TempDir(), executableName("context.test"))
 			out, stderr, code := orchestrionBuild(t, dir, testEnv(), driver, "test", "-mod=mod", "-c", "-o", test, "-toolexec="+quoteToolArgument(t, bin)+" toolexec", ".")
 			if code != 0 {

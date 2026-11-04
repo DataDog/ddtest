@@ -48,7 +48,9 @@ class WindowTests(unittest.TestCase):
         recorded = json.loads(supported_versions.RECORDED.read_text())
         for entry in recorded.values():
             self.assertEqual(entry["releases"], supported_versions.window(entry, entry["releases"], entry["main"])["releases"])
-            self.assertTrue(entry["main"].startswith("v") and not supported_versions.release_key(entry["main"]))
+            self.assertTrue(entry["main"].startswith("v"))
+            # A release only while main's tip is the tagged commit.
+            self.assertTrue(not supported_versions.release_key(entry["main"]) or entry["main"] in entry["releases"])
 
 
 if __name__ == "__main__":
