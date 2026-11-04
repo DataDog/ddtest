@@ -270,10 +270,28 @@ python3 $S/run_catalog.py E01 E02 \
 ```
 
 `--image-file` (or `DDTEST_EVAL_IMAGES`) takes a JSON or YAML mapping of image
-key to image instead. `--agent` defaults to `codex`; `--timeout` defaults to
-5400 seconds. Cases run sequentially: `--existing-login` locks the login for a
-whole trial, so trials sharing it can't overlap. A case whose evidence folder
-exists is skipped.
+key to image instead. `--timeout` defaults to 5400 seconds. `--agent` is
+`codex` (default), `claude` or `both`. One agent is one lane: its cases run one
+after another, because `--existing-login` locks that agent's login for a whole
+trial. `both` runs a Codex lane and a Claude lane at the same time, each in
+catalog order, so the same case can run in both lanes at once
+(`<id>-codex` and `<id>-claude`). The two logins don't contend: Codex locks
+`~/.codex/auth.json`, Claude locks `~/.claude/.credentials.json`, or takes no
+lock when it uses a managed model helper. Trial folders, caches and containers
+are per trial. Two lanes double the Docker load: on a small VM (4 CPUs, 8 GB)
+timings get noisier, and heavy cases (browsers, JVM builds) may need more CPUs
+or memory. A case whose evidence folder exists is not run and fails the batch.
+Status lines start with `[codex]` or `[claude]`, and each lane also writes
+`<output>/lane-<agent>.log`. The first Ctrl-C reaches every running trial once;
+both finalize, retain and clean up, and no lane starts another case.
+
+Claude with `--existing-login` needs one of: a managed model helper
+(`apiKeyHelper`, plus `ANTHROPIC_*` routing in `env`, in `~/.claude/settings.json`
+or `/Library/Application Support/ClaudeCode/managed-settings.json`), or an OAuth
+file at `~/.claude/.credentials.json`. On macOS, Claude Code keeps its own OAuth
+login in the Keychain, which the harness never reads: without a helper, run that
+agent's trials with `run_eval.py --login-json <exported file>`, or run Codex only. The model
+preflight fails before cloning when neither is available.
 
 Trims are setup commands that edit or `git rm` files; `run_catalog.py` commits
 each trim inside the trial container with a scratch identity
@@ -283,9 +301,59 @@ private HOME has no Git configuration, and nothing changes signing settings.
 certificates) always applies; `trims.optional_speed` applies only with
 `--speed-trims`, and changes what the agent sees, so compare like with like.
 
-`expected` records the last verdict observed for a case, the run and the ddtest
-build. It is informational, for spotting regressions, not an assertion:
-grade every trial as described below.
+### Expected outcomes
+
+`expected` is checked after every trial (`scripts/catalog_check.py`); the
+catalog header documents its fields. `verdict` is the `summary.status` a correct
+trial reaches. For INCOMPLETE and FAILED, optional `blockers` lists the
+blockers the verdict may have, as identifiers derived from
+`summary.blocking_checks`: `feature <name>: <status>`, `compatibility:
+<status>`, `runtime fidelity: substitute Java`, `unresolved CI scope: <cause>`,
+`configuration: <status>`, or a headline such as `Cypress real-suite coverage
+was not observed`; `fnmatch` patterns such as `feature *: inconclusive` are
+allowed. So INCOMPLETE for the known reason passes, and INCOMPLETE with a new
+blocker fails. `expected.agents.<codex|claude>` overrides verdict, blockers or
+reason for one agent; ddtest decides the verdict, so use it only for a known
+agent difference. The E12, E13, E14, E16 and E17 blockers come from grading
+notes, not retained reports; the first real run either confirms or corrects them.
+
+Each trial gets one outcome:
+
+| outcome | meaning | fails the batch |
+|---|---|---|
+| `pass` | verdict and blockers match | no |
+| `verdict_mismatch (worse)` | a regression; `STOPPED` means no report | yes |
+| `verdict_mismatch (better: update expected)` | an improvement | no, exit 3 |
+| `unexpected_blockers` | the expected verdict with a blocker not allowed, or none of the expected ones | yes |
+| `harness_failure` | container, clone, setup, readiness, login, timeout, interruption, cleanup or missing evidence | yes |
+| `agent_failure` | no ddtest result or report, no final answer, or `run.json` `agent_reporting` is not `pass` | yes |
+
+Expected blockers that are no longer reported only add a note. Whether the agent
+changed files ddtest didn't prescribe is not checked; grade that by hand.
+
+At the end the runner prints a table (case, agent, provider, framework,
+expected, actual, outcome), `NOTE <id>: agents disagree` when both agents ran a
+case to different verdicts (agent behavior, not ddtest), and one block per case
+that did not pass, `ERROR` (or `IMPROVEMENT`), with what failed, expected and
+actual, ddtest's last result and blocking checks, the failing harness step
+and its output, the evidence paths, and the next step. It writes the same data
+to `<output>/results.json` (or `--results PATH`): `exit_code`, `outcomes`,
+`agents_disagree` and, per case and agent, `outcome`, `direction`, `expected`,
+`actual` (verdict, blocker identifiers, blocking-check excerpts, ddtest's final
+reason, run status, ddtest version), `problems`, `notes`, `evidence` paths and
+`next_step`. Exit status: 0 when every trial passed, 1 when any did not, 3 when
+the only differences are improvements, 128+N when interrupted.
+
+`--evaluate-only` checks existing evidence and runs nothing: `run_catalog.py
+--evaluate-only E02 --output <folder holding E02-pipeline-schema-codex>`. With
+`--all` (or `--agent both`), cases without a folder are skipped; a named case
+without one is a `harness_failure`.
+
+After an intentional ddtest change, rerun the affected cases, then copy what
+the block's next step names into the case: `verdict`, `blockers` (the
+identifiers listed under actual, without the `configuration:` lines), `reason`,
+`run` (the output folder or round) and `ddtest` (the version in `run.json`).
+Check it with `--evaluate-only` on the same evidence, which must now pass.
 
 To add or replace a case:
 
@@ -302,8 +370,9 @@ To add or replace a case:
   which the trim commit (`git commit -a`) records.
 - Measure clone, install, browser, build and test times on the image and record
   the conditions. Add answers only for questions only the user can answer.
-- Run `python3 -m unittest test_run_catalog` in `scripts/`; it validates the
-  schema and the framework and provider coverage.
+- Run `python3 -m unittest test_run_catalog test_catalog_check` in `scripts/`;
+  they validate the schema, the expectations and the framework and provider
+  coverage.
 
 ## Grade independently
 

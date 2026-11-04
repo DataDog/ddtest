@@ -181,8 +181,9 @@ class MainTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             run_catalog.resolve_images(["agents"])
 
-    def trials(self, root, mode, *ids, interrupts=0, **environment):
-        """Run cases against the fake harness, sending SIGINT once it is ready."""
+    def trials(self, root, mode, *ids, interrupts=0, agent="codex", **environment):
+        """Run cases against the fake harness, sending SIGINT once every lane is ready."""
+        lanes = 2 if agent == "both" else 1
         checkout = root / "trial" / "repo"
         (checkout / ".testoptimization").mkdir(parents=True)
         (checkout / ".testoptimization" / "testdrive.json").write_text(json.dumps({"summary": {"status": "COMPLETE LOCALLY"}}))
@@ -191,7 +192,7 @@ class MainTests(unittest.TestCase):
 
         def interrupt():
             deadline = time.monotonic() + 30
-            while "ready" not in log.read_text() and time.monotonic() < deadline:
+            while log.read_text().count("ready") < lanes and time.monotonic() < deadline:
                 time.sleep(0.02)
             for _ in range(interrupts):
                 os.kill(os.getpid(), signal.SIGINT)
@@ -207,7 +208,7 @@ class MainTests(unittest.TestCase):
                 sender.start()
             try:
                 code = run_catalog.main([*ids, "--image-map", "agents=img", "--ddtest", str(root / "ddtest"),
-                                         "--output", str(root / "out"), "--existing-login"])
+                                         "--output", str(root / "out"), "--existing-login", "--agent", agent])
             finally:
                 if interrupts:
                     sender.join()
@@ -220,11 +221,17 @@ class MainTests(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertEqual([event.split()[0] for event in events],
                              ["start", "finished", "cleanup", "start", "finished", "cleanup"])
+            results = json.loads((root / "out" / "results.json").read_text())
+            self.assertEqual([(case["id"], case["agent"], case["outcome"]) for case in results["cases"]],
+                             [("E01-nion", "codex", "pass"), ("E02-pipeline-schema", "codex", "pass")])
+            self.assertEqual(results["exit_code"], 0)
+            self.assertIn("[codex] E01-nion: started", (root / "out" / "lane-codex.log").read_text())
             self.assertIn("start E01-nion-codex session=True", events)
             self.assertEqual(events[2], "cleanup " + str(root / "out" / "E01-nion-codex"))
             self.assertTrue((root / "out" / "E01-nion-codex" / "retained" / ".testoptimization" / "testdrive.json").is_file())
             self.assertIn("--existing-login", (root / "out" / "E01-nion-codex.log").read_text().splitlines()[0])
-            self.assertIn("E01-nion: exit 0, run completed, report COMPLETE LOCALLY (expected COMPLETE LOCALLY)", output)
+            self.assertIn("[codex] E01-nion: exit 0, run completed, report COMPLETE LOCALLY (expected COMPLETE LOCALLY)", output)
+            self.assertIn("outcome pass", output)
 
     def test_interrupt_waits_for_teardown_then_retains_cleans_up_and_stops(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -233,13 +240,18 @@ class MainTests(unittest.TestCase):
             self.assertEqual(code, 128 + signal.SIGINT)
             evidence = root / "out" / "E01-nion-codex"
             # Forwarded once, waited for past teardown, then cleaned up; E02 never starts.
-            self.assertEqual(events, [f"start {evidence.name} session=True", "ready", f"signal {int(signal.SIGINT)}",
-                                      f"finished {evidence.name}", f"cleanup {evidence}"])
+            self.assertEqual([event.split(" at=")[0] for event in events],
+                             [f"start {evidence.name} session=True", "ready", f"signal {int(signal.SIGINT)}",
+                              f"finished {evidence.name}", f"cleanup {evidence}"])
             self.assertEqual(json.loads((evidence / "run.json").read_text())["signals"], [signal.SIGINT])
             self.assertTrue((evidence / "retained" / ".testoptimization" / "testdrive.json").is_file())
             self.assertFalse((root / "out" / "E02-pipeline-schema-codex").exists())
             self.assertIn("run interrupted", output)
             self.assertIn("not run: E02-pipeline-schema", output)
+            results = json.loads((root / "out" / "results.json").read_text())
+            self.assertEqual(results["exit_code"], 130)
+            self.assertEqual([(case["id"], case["outcome"], case["harness_category"]) for case in results["cases"]],
+                             [("E01-nion", "harness_failure", "interrupted")])
 
     def test_second_interrupt_kills_the_trial_and_still_cleans_up(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -248,11 +260,87 @@ class MainTests(unittest.TestCase):
             self.assertEqual(code, 128 + signal.SIGINT)
             evidence = root / "out" / "E01-nion-codex"
             self.assertEqual(events.count(f"signal {int(signal.SIGINT)}"), 1)
-            self.assertNotIn(f"finished {evidence.name}", events)
+            self.assertFalse(any(event.startswith(f"finished {evidence.name}") for event in events))
             self.assertEqual(events[-1], f"cleanup {evidence}")
             self.assertIn("nothing retained", (root / "out" / "E01-nion-codex.log").read_text())
-            self.assertIn("Killing the trial", output)
+            self.assertIn("Killing 1 trial(s); their cleanup still runs; if it does not finish, run: ", output)
             self.assertFalse((root / "out" / "E02-pipeline-schema-codex").exists())
+
+
+    def test_both_agents_run_in_two_concurrent_lanes(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            barrier = root / "barrier"
+            barrier.mkdir()
+            code, output, events = self.trials(root, "barrier", "E01", "E02", agent="both",
+                                               FAKE_HARNESS_BARRIER=str(barrier))
+            self.assertEqual(code, 0, output)
+            self.assertNotIn("barrier timeout", "\n".join(events))
+            # Both lanes' first trials were running together: each passed the barrier only once the other started.
+            starts = [event.split()[1] for event in events if event.startswith("start ")]
+            first_finish = next(index for index, event in enumerate(events) if event.startswith("finished "))
+            self.assertEqual({event.split()[1] for event in events[:first_finish] if event.startswith("start ")},
+                             {"E01-nion-codex", "E01-nion-claude"})
+            for agent in ("codex", "claude"):
+                self.assertEqual([name for name in starts if name.endswith(agent)],
+                                 [f"E01-nion-{agent}", f"E02-pipeline-schema-{agent}"])
+                lane = (root / "out" / f"lane-{agent}.log").read_text()
+                self.assertLess(lane.index(f"[{agent}] E01-nion: exit 0"), lane.index(f"[{agent}] E02-pipeline-schema: started"))
+                self.assertNotIn("[codex]" if agent == "claude" else "[claude]", lane)
+            self.assertIn("--agent claude", (root / "out" / "E02-pipeline-schema-claude.log").read_text().splitlines()[0])
+            results = json.loads((root / "out" / "results.json").read_text())
+            self.assertEqual([(case["id"], case["agent"], case["outcome"]) for case in results["cases"]],
+                             [("E01-nion", "codex", "pass"), ("E01-nion", "claude", "pass"),
+                              ("E02-pipeline-schema", "codex", "pass"), ("E02-pipeline-schema", "claude", "pass")])
+            self.assertEqual((results["exit_code"], results["agents_disagree"]), (0, []))
+            table = output[output.index("case "):]
+            self.assertRegex(table, r"E01-nion\s+claude\s+circleci\s+jest\s+COMPLETE LOCALLY\s+COMPLETE LOCALLY\s+pass")
+
+    def test_interrupt_reaches_both_lanes_once_and_cleans_up_both(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            code, output, events = self.trials(root, "teardown", "E01", "E02", interrupts=1, agent="both",
+                                               FAKE_HARNESS_TEARDOWN="1")
+            self.assertEqual(code, 128 + signal.SIGINT)
+            for agent in ("codex", "claude"):
+                evidence = root / "out" / f"E01-nion-{agent}"
+                self.assertEqual(json.loads((evidence / "run.json").read_text())["signals"], [signal.SIGINT])
+                self.assertIn(f"cleanup {evidence}", events)
+                self.assertTrue((evidence / "retained" / ".testoptimization" / "testdrive.json").is_file())
+                self.assertFalse((root / "out" / f"E02-pipeline-schema-{agent}").exists())
+            self.assertEqual(events.count(f"signal {int(signal.SIGINT)}"), 2)
+            self.assertIn("waiting for 2 trial(s)", output)
+            results = json.loads((root / "out" / "results.json").read_text())
+            self.assertEqual(results["exit_code"], 130)
+            self.assertEqual({(case["agent"], case["outcome"]) for case in results["cases"]},
+                             {("codex", "harness_failure"), ("claude", "harness_failure")})
+
+    def test_second_interrupt_kills_both_lanes_and_still_cleans_up(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            code, output, events = self.trials(root, "stuck", "E01", "E02", interrupts=2, agent="both")
+            self.assertEqual(code, 128 + signal.SIGINT)
+            self.assertEqual(events.count(f"signal {int(signal.SIGINT)}"), 2)
+            for agent in ("codex", "claude"):
+                self.assertIn(f"cleanup {root / 'out' / f'E01-nion-{agent}'}", events)
+                self.assertFalse((root / "out" / f"E02-pipeline-schema-{agent}").exists())
+            self.assertIn("Killing 2 trial(s)", output)
+            killed = output[output.index("Killing 2 trial(s)"):].splitlines()[0]
+            self.assertIn("--cleanup " + str(root / "out" / "E01-nion-codex"), killed)
+            self.assertIn("--cleanup " + str(root / "out" / "E01-nion-claude"), killed)
+
+    def test_dry_run_both_prints_each_lane(self):
+        code, output = self.main("--dry-run", "E02", "E07", "--agent", "both")
+        self.assertEqual(code, 0)
+        self.assertLess(output.index("## lane codex"), output.index("## lane claude"))
+        claude = output[output.index("## lane claude"):]
+        trials = [shlex.split(line) for line in claude.splitlines() if "run_eval.py --image" in line]
+        self.assertEqual(len(trials), 2)
+        for argv in trials:
+            self.assertEqual(argv[argv.index("--agent") + 1], "claude")
+            self.assertTrue(argv[argv.index("--output") + 1].endswith("-claude"))
+        self.assertIn("<output>/E07-qwed-ucp-claude", claude)
+        self.assertEqual(output.count(" --cleanup "), 4)
 
 
 class RetainTests(unittest.TestCase):

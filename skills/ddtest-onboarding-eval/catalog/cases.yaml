@@ -45,9 +45,28 @@
 #                      out. Every case keeps out tracers, CI edits, .testoptimization
 #                      and build outputs, so ddtest still has real work to do.
 #   notes, risks
-#   expected           informational, for spotting regressions, not an assertion:
-#                      the last observed verdict, the run (round 1, rerun, rerun4)
-#                      and ddtest build it was observed on, and why.
+#   expected           checked by run_catalog.py after every trial (see "Case catalog"
+#                      in SKILL.md): a mismatch fails the batch.
+#     verdict          COMPLETE LOCALLY | PASSED | INCOMPLETE | FAILED: the
+#                      testdrive.json summary.status a correct trial reaches.
+#     reason           why; required for every verdict but COMPLETE LOCALLY.
+#     blockers         optional, INCOMPLETE/FAILED only: the blockers the verdict may
+#                      have. Each is a blocker identifier (catalog_check.blocker_id of a
+#                      summary.blocking_checks entry, such as "feature skipping:
+#                      inconclusive", "compatibility: suspected regression",
+#                      "runtime fidelity: substitute Java" or a headline like "Cypress
+#                      real-suite coverage was not observed"); fnmatch patterns
+#                      ("feature *: inconclusive") are allowed. Any other blocker fails
+#                      the case; "configuration: <status>" and "not every project has
+#                      every required feature result" only restate others and count
+#                      only alone. Without blockers only the verdict is checked.
+#     run, ddtest      provenance: the run (round 1, rerun, rerun4) and ddtest build
+#                      the expectation was observed on.
+#     agents           optional per-agent overrides, {codex|claude: {verdict,
+#                      blockers, reason, run, ddtest}}, applied over the shared
+#                      fields for that agent only. ddtest decides the verdict, so
+#                      use one only for a known agent difference; a verdict
+#                      override needs its own reason.
 schema_version: 1
 round: '2026-11-03'
 
@@ -338,6 +357,8 @@ cases:
   - Cypress TIA (skipping/coverage) is deferred in ddtest; expect those controls as deferred.
   expected:
     verdict: INCOMPLETE
+    blockers:  # verified: rerun4 testdrive.json (the configuration line is derived)
+    - Cypress real-suite coverage was not observed
     run: rerun4
     ddtest: '55fe85ad (PR #302)'
     reason: 122/122 and features 6/6; the only blocker is application coverage, which needs approval for a test-only
@@ -801,6 +822,9 @@ cases:
   - Dockerfile and docker:dind jobs are distractors.
   expected:
     verdict: INCOMPLETE
+    blockers:  # unverified: rerun grading notes (auto-retries failed, compatibility inconclusive); no testdrive.json survived
+    - 'feature auto-retries: *'
+    - 'compatibility: inconclusive'
     run: rerun
     ddtest: '8c1779df + eval-round fixes (landed in #302)'
     reason: JUnit 4.13.2 with surefire 3.6.0 reports retried attempts as skipped
@@ -927,6 +951,10 @@ cases:
   - 'setup-java@v1 without distribution: JDK version must still be read as 21.'
   expected:
     verdict: INCOMPLETE
+    blockers:  # unverified: rerun grading notes (EFD and attempt-to-fix tracer_control_not_applied, quarantine failed)
+    - 'feature early-flake-detection: *'
+    - 'feature attempt-to-fix: *'
+    - 'feature quarantine: *'
     run: rerun
     ddtest: '8c1779df + eval-round fixes (landed in #302)'
     reason: 'TestNG 7.0.0 with dd-java-agent 1.67.1: early flake detection and attempt-to-fix not applied, quarantine
@@ -987,6 +1015,8 @@ cases:
   - 21 and 24 matrix rows cannot be certified on the JDK 17 image (needs a 21 and 24 image to cover).
   expected:
     verdict: INCOMPLETE
+    blockers:  # unverified: rerun grading notes (substitute_runtime_unaccepted for CI Java 21 and 24)
+    - 'runtime fidelity: substitute Java'
     run: rerun
     ddtest: '8c1779df + eval-round fixes (landed in #302)'
     reason: local validation passes; accepting JDK 17 for CI's 21 and 24 rows needs a user answer the harness can't
@@ -1053,6 +1083,9 @@ cases:
   - '@SpringBootTest DEFINED_PORT needs a free port.'
   expected:
     verdict: FAILED
+    blockers:  # verified: rerun4 testdrive.json (6 features x 2 configurations, all inconclusive)
+    - 'compatibility: suspected regression'
+    - 'feature *: inconclusive'
     run: rerun4
     ddtest: '55fe85ad (PR #302)'
     reason: 'dd-java-agent 1.67.1 Cucumber issue (resourcePaths is null), fixed in dd-trace-java #13153, release
@@ -1114,6 +1147,10 @@ cases:
   - Very small Karate surface (1 scenario).
   expected:
     verdict: INCOMPLETE
+    blockers:  # unverified: rerun grading notes (coverage 0/2; skipping and disabled inconclusive)
+    - Java application coverage was not observed
+    - 'feature skipping: *'
+    - 'feature disabled: *'
     run: rerun
     ddtest: '8c1779df + eval-round fixes (landed in #302)'
     reason: Karate drives the app over HTTP, so application coverage is 0/2 (tracer limitation)
@@ -1182,9 +1219,14 @@ cases:
   - 11 and 21 rows uncertifiable on the 17 image.
   expected:
     verdict: INCOMPLETE
+    blockers:  # unverified: rerun grading notes (substitute Java 11/21; release.yml scope steps, whose cause texts did not survive)
+    - 'runtime fidelity: substitute Java'
+    - 'unresolved CI scope: *'
+    - 'CI runtime: inconclusive'
     run: rerun
     ddtest: '8c1779df + eval-round fixes (landed in #302)'
-    reason: local validation passes; accepting JDK 17 for CI's 11 and 21 rows needs a user answer
+    reason: local validation passes; accepting JDK 17 for CI's 11 and 21 rows needs a user answer, and release.yml's
+      echo, gpg and release:prepare steps stay unresolved CI scope
 - id: E18-mbari-commons
   framework: munit
   language: scala
