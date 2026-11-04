@@ -9,7 +9,9 @@
     "ddto/README.md"
   ],
   "shared": [
-    "internal/testdrive/jest*.go"
+    "internal/testdrive/jest*.go",
+    "internal/onboard/jest_command.go",
+    "internal/onboard/python_handwritten.go"
   ],
   "suites": {
     "python": {
@@ -163,7 +165,8 @@
         "internal/platform/scripts/javascript*",
         "internal/framework/javascript*",
         "internal/onboard/javascript*",
-        "internal/onboard/node_*"
+        "internal/onboard/node_*",
+        "internal/testdrive/javascript*"
       ],
       "smoke": [
         {
@@ -312,7 +315,8 @@
         "internal/onboard/cypress*",
         "internal/onboard/instructions/cypress.md",
         "internal/testdrive/cypress*",
-        "internal/testdrive/scripts/cypress*"
+        "internal/testdrive/scripts/cypress*",
+        "internal/testdrive/cucumber_coverage.go"
       ],
       "smoke": [
         {
@@ -348,6 +352,7 @@
         "internal/compatibility/playwright*",
         "internal/framework/playwright*",
         "internal/framework/scripts/playwright*",
+        "internal/framework/cypress.go",
         "internal/onboard/playwright*",
         "internal/onboard/instructions/playwright.md",
         "internal/testdrive/playwright*",
@@ -425,7 +430,8 @@
         "internal/platform/webdriverio*",
         "internal/onboard/webdriverio*",
         "internal/onboard/instructions/webdriverio.md",
-        "internal/testdrive/webdriverio*"
+        "internal/testdrive/webdriverio*",
+        "internal/testdrive/mocha_validation_test.go"
       ],
       "smoke": [
         {

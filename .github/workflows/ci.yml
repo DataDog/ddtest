@@ -58,9 +58,20 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24'
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+      - uses: ruby/setup-ruby@de492cf36cbab201753d720ce4f4e336cd688c94 # v1
+        with:
+          ruby-version: '3.4'
+      - name: Install runtime-backed unit test prerequisites
+        run: |
+          npm install --global yarn@1.22.22
+          python -m pip install "ddtrace>=4.11.0" pytest pytest-cov pytest-xdist
       - name: Test affected Go packages and their dependents
         env:
           BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          DDTEST_REQUIRE_PROJECT_RUNTIMES: '1'
         run: python3 scripts/ci_test_plan.py run --base "$BASE" --race
 
   scripts:

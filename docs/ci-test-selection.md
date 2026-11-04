@@ -59,6 +59,9 @@ JavaScript frameworks. Shared or unclassified production inputs select every
 PR smoke. Instrumentation module changes select its units and the root/release
 smoke without unrelated framework integrations. Unit-test-only edits omit
 external smokes; integration-test edits still select their framework.
+The native Go job installs Python/pytest/ddtrace, Ruby/Bundler and Node/Yarn,
+and sets `DDTEST_REQUIRE_PROJECT_RUNTIMES=1` so focused runtime regressions in
+selected packages fail on missing prerequisites instead of silently skipping.
 Documentation-only changes omit runtime jobs; evaluator-only changes run the
 evaluator checks. The small Python suite tests CI and installer scripts on every
 PR. Missing base history selects all PR checks, never an empty plan.

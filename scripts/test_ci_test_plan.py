@@ -59,6 +59,37 @@ class SelectionTests(unittest.TestCase):
         self.assertEqual(set(plan["suites"]), {"javascript", "jest", "vitest", "mocha", "cypress",
                                               "playwright", "cucumber", "webdriverio", "onboarding"})
 
+    def test_javascript_testdrive_sources_select_every_javascript_consumer(self):
+        consumers = {"javascript", "jest", "vitest", "mocha", "cypress", "playwright",
+                     "cucumber", "webdriverio", "onboarding"}
+        for path in ("internal/testdrive/javascript.go", "internal/testdrive/javascript_language.go"):
+            with self.subTest(path=path):
+                plan = planner.make_plan([path], CONFIG)
+                self.assertTrue(consumers.issubset(plan["suites"]))
+                self.assertFalse({"python", "ruby"}.intersection(plan["suites"]))
+
+    def test_cross_framework_onboarding_helpers_select_all_smokes(self):
+        for path in ("internal/onboard/jest_command.go", "internal/onboard/python_handwritten.go"):
+            with self.subTest(path=path):
+                plan = planner.make_plan([path], CONFIG)
+                self.assertEqual(set(plan["suites"]), set(CONFIG["suites"]))
+
+    def test_cross_framework_coverage_and_path_helpers_select_their_consumers(self):
+        for path, expected in (
+            ("internal/testdrive/cucumber_coverage.go", {"cucumber", "cypress", "onboarding"}),
+            ("internal/framework/cypress.go", {"cypress", "playwright"}),
+        ):
+            with self.subTest(path=path):
+                self.assertEqual(set(planner.make_plan([path], CONFIG)["suites"]), expected)
+
+    def test_mocha_fixture_helper_tracks_webdriverio_without_expanding_unit_only_checks(self):
+        path = "internal/testdrive/mocha_validation_test.go"
+        self.assertEqual(planner.affected_suites(path, CONFIG), {"mocha", "webdriverio", "onboarding"})
+        plan = planner.make_plan([path], CONFIG)
+        self.assertTrue(plan["go"])
+        self.assertEqual(plan["integrations"], [])
+        self.assertFalse(plan["playwright"])
+
     def test_instrumentation_changes_enable_native_module_checks(self):
         for path in ("ddto/internal/runner/run.go", "main.go", "go.mod", "internal/cmd/instrument.go"):
             self.assertTrue(planner.make_plan([path], CONFIG)["ddto"])
@@ -160,6 +191,17 @@ class WorkflowTests(unittest.TestCase):
         for entry in entries:
             self.assertTrue(entry["required"])
             self.assertTrue(entry["tests"].startswith("^Test"))
+
+    def test_fast_units_provision_and_require_project_runtimes(self):
+        fast = (ROOT / ".github/workflows/ci.yml").read_text()
+        unit = fast.split("  unit:\n", 1)[1].split("\n  scripts:\n", 1)[0]
+        for prerequisite in ("actions/setup-node@", "actions/setup-python@", "ruby/setup-ruby@",
+                             "npm install --global yarn@1.22.22",
+                             'python -m pip install "ddtrace>=4.11.0" pytest pytest-cov pytest-xdist'):
+            self.assertIn(prerequisite, unit)
+            self.assertLess(unit.index(prerequisite), unit.index("ci_test_plan.py run"))
+        check = unit.split("- name: Test affected Go packages and their dependents", 1)[1]
+        self.assertIn("DDTEST_REQUIRE_PROJECT_RUNTIMES: '1'", check)
 
     def test_required_test_gate_rejects_failed_cancelled_and_unexpectedly_skipped_checks(self):
         workflow = (ROOT / ".github/workflows/ci.yml").read_text().split("  test:\n", 1)[1]
