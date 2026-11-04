@@ -100,6 +100,11 @@ func TestJavaAgentEnvironmentAttachesTheAgentOnce(t *testing.T) {
 	require.NotContains(t, javaLanguage{}.runEnvironment(drive, ""), "JAVA_TOOL_OPTIONS", "the baseline never attaches the agent")
 }
 
+func TestJavaRunsRemoveAQuotedDatadogAgent(t *testing.T) {
+	require.Equal(t, `-Dname="a b" -Xmx256m`, withoutDatadogAgent(`-javaagent:"/opt/ci tools/dd-java-agent-1.67.1.jar" -Dname="a b" -Xmx256m`), "the quoted path is one option")
+	require.Equal(t, "-Xmx1g", withoutDatadogAgent("-javaagent:'/opt/ci tools/dd-java-agent.jar' -Xmx1g"))
+}
+
 func TestJavaRunsRemoveAnInheritedDatadogAgent(t *testing.T) {
 	// The GitHub action attaches dd-java-agent to MAVEN_OPTS, or with
 	// java-instrumented-build-system: all to JAVA_TOOL_OPTIONS.

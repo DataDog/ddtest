@@ -577,10 +577,20 @@ func JavaCIConfiguration(root, framework, site string) RuntimeCheck {
 					}
 				}
 				var setup *ciSetup
+				var setupStep runtimeStep
+				// expired is the source of a shell-local setup whose shell
+				// ended before the step (see ciSetup.shellLocal).
+				expired := ""
 				var inputs map[string]string
 				skippedAction := false
 				var actionErr error
 				for i, step := range job.Steps {
+					if setup != nil && setup.shellLocal && !sameShell(setupStep, step) {
+						// Its exports reach only the later commands of its own
+						// shell, as a Jenkins sh step's; this step runs in another.
+						expired = setupStep.Source
+						tracer, action, buildSystem, actionErr, inputs, setup = "", "", "", nil, nil, nil
+					}
 					uses, _, hasVersion := strings.Cut(strings.ToLower(step.Uses), "@")
 					current, isSetup := datadogSetup(step)
 					active, stepErr := stepCondition(step, row, conditionEnvironment(workflow, job, step, row))
@@ -595,7 +605,7 @@ func JavaCIConfiguration(root, framework, site string) RuntimeCheck {
 					}
 					// A setup for other languages leaves Java's MAVEN_OPTS in place.
 					if selected, err := setupSelectsLanguage(current, row, "java"); isSetup && (err != nil || selected) {
-						tracer, action, buildSystem, actionErr, inputs, setup = "", "", "", nil, nil, nil
+						tracer, action, buildSystem, actionErr, inputs, setup, expired = "", "", "", nil, nil, nil, ""
 					}
 					if conditionErr == nil && stepErr == nil {
 						if uses == "actions/setup-java" && hasVersion {
@@ -605,7 +615,7 @@ func JavaCIConfiguration(root, framework, site string) RuntimeCheck {
 							selected, err := setupSelectsLanguage(current, row, "java")
 							actionErr = err
 							if err == nil && selected {
-								action, setup = current.Reference, &current
+								action, setup, setupStep = current.Reference, &current, step
 								tracer, _ = runtimeValue(current.Inputs["java-tracer-version"], row)
 								// A plugin that downloads the latest release pins none.
 								if _, set := current.Inputs["java-tracer-version"]; !set && current.Floating {
@@ -700,8 +710,12 @@ func JavaCIConfiguration(root, framework, site string) RuntimeCheck {
 						}
 					case runtimeReason != "":
 						finding.Code, finding.Reason = runtimeCode, runtimeReason
+					case action == "" && handWritten == nil && expired != "":
+						finding.Reason = "The " + provider.setupName() + " at " + expired + " runs in another shell than this test command, and its exports reach only the later commands of its own shell, so the tests run without it; run it in the same shell, before the test command."
 					case action == "" && handWritten == nil:
 						finding.Reason = "No " + provider.setupName() + " selects java before this test step, so its tests are not instrumented."
+					case javaReportingOverride(handWrittenEnvironment(workflow, job, step), tool, site) != "":
+						finding.Code, finding.Reason = CodeIncompleteCISetup, javaReportingOverride(handWrittenEnvironment(workflow, job, step), tool, site)
 					case handWritten == nil && javaSetupProblem(finding, site) != "":
 						finding.Code, finding.Reason = CodeIncompleteCISetup, javaSetupProblem(finding, site)
 					case provider.sharedSyntax() && !exactJavaRelease.MatchString(tracer):
@@ -757,6 +771,32 @@ func javaMayStartTests(root string, workflow ciWorkflow, job runtimeJob, step ru
 // javaSetupProblem explains why the setup before an instrumented CI entry is
 // not complete, as its provider reads it: a supported release, an API key,
 // an exact agent release and the selected site (empty: not selected).
+// javaReportingOverride explains a -Ddd.* system property in the JVM option
+// lists the build reads that sends its reports elsewhere than the selected
+// site (empty: any): a dd.site of another site, or a custom agentless URL.
+// Later lists override earlier ones, JAVA_TOOL_OPTIONS first, and options
+// override DD_* variables; local replay removes them, so they are checked
+// here.
+func javaReportingOverride(env map[string]string, tool, site string) string {
+	carriers := []string{"JAVA_TOOL_OPTIONS", "MAVEN_OPTS"}
+	if tool == javaGradle {
+		carriers = []string{"JAVA_TOOL_OPTIONS", "JAVA_OPTS", "GRADLE_OPTS"}
+	}
+	properties, from := map[string]string{}, map[string]string{}
+	for _, carrier := range carriers {
+		for key, value := range javaHandWrittenProperties(env[carrier]) {
+			properties[key], from[key] = value, carrier
+		}
+	}
+	if value, set := properties["DD_SITE"]; set && site != "" && value != site {
+		return "-Ddd.site=" + value + " in " + from["DD_SITE"] + " sends this step's reports to " + value + ", not " + site + ", the selected site: remove it or select " + value + "."
+	}
+	if value, set := properties["DD_CIVISIBILITY_AGENTLESS_URL"]; set {
+		return "-Ddd.civisibility.agentless.url=" + value + " in " + from["DD_CIVISIBILITY_AGENTLESS_URL"] + " sends this step's reports to a custom URL instead of the selected site's intake, which local validation cannot check: remove it."
+	}
+	return ""
+}
+
 func javaSetupProblem(job RuntimeFinding, site string) string {
 	provider := job.setupProvider
 	if provider == nil {

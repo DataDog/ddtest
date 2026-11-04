@@ -209,9 +209,9 @@ func (javaLanguage) runEnvironment(t *Testdrive, path string) map[string]string 
 // withoutDatadogAgent removes every -javaagent option of dd-java-agent from
 // JVM options, by JAR name or manifest, and keeps the others as written.
 func withoutDatadogAgent(options string) string {
-	words := strings.Fields(options)
+	words := platform.JavaOptionWords(options)
 	kept := slices.DeleteFunc(slices.Clone(words), func(word string) bool {
-		jar, ok := strings.CutPrefix(word, "-javaagent:")
+		jar, ok := strings.CutPrefix(platform.JavaUnquoted(word), "-javaagent:")
 		if !ok {
 			return false
 		}

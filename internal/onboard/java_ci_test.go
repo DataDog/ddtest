@@ -220,11 +220,11 @@ func TestJavaValidatesWithoutCIOnlyOptions(t *testing.T) {
 
 	// A value that may select tests still requires review, whatever the
 	// secret's name.
-	for _, secret := range []string{"GROUPS", "TEST_TOKEN"} {
-		root = javaWorkflowFixture(t, "jobs:\n  tests:\n    steps:\n      - run: mvn -B verify -Dgroups=${{ secrets."+secret+" }}\n", nil)
+	for _, option := range []string{"-Dgroups=${{ secrets.GROUPS }}", "-Dgroups=${{ secrets.TEST_TOKEN }}", "-Ddb.password=${{ secrets.TEST_DB_PASSWORD }}"} {
+		root = javaWorkflowFixture(t, "jobs:\n  tests:\n    steps:\n      - run: mvn -B verify "+option+"\n", nil)
 		scope, err = DiscoverValidationScope(root, "junit5")
 		require.NoError(t, err)
-		require.NotEmpty(t, scope.Unresolved, secret)
+		require.NotEmpty(t, scope.Unresolved, option)
 	}
 }
 

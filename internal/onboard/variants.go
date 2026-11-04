@@ -528,21 +528,23 @@ func ciControlVariable(key string) bool {
 var jvmOptionPrefix = regexp.MustCompile(`(?:^|[\s"'=])(-[DP]([\w.-]+))=["']?$`)
 
 // ciOnlyOption reports whether a value ddtest cannot resolve that follows
-// text is one a JVM option passes only to signing, publishing or reporting:
-// the option's property names a credential, as
-// -Dgpg.passphrase=$GPG_PASSPHRASE, or a Sonar scanner setting, as
-// -Dsonar.host.url=$SONAR_HOST_URL. Such a value selects no tests, so
+// text is one a JVM option passes only to a plugin that runs no tests: GPG
+// signing (gpg.*, as -Dgpg.passphrase=$GPG_PASSPHRASE), Gradle's signing
+// plugin (signing.*) or the Sonar scanner (sonar.*, as
+// -Dsonar.host.url=$SONAR_HOST_URL). Such a value selects no tests, so
 // validation runs with it empty; option is the flag, as -Dgpg.passphrase.
-// The value's own name never qualifies it: -Dgroups=${{ secrets.TEST_TOKEN }}
-// still selects tests.
+// A credential the tests read, as -Ddb.password=${{ secrets.DB }}, or any
+// other property still requires review, whatever its or its value's name.
 func ciOnlyOption(text string) (option string, ok bool) {
 	match := jvmOptionPrefix.FindStringSubmatch(text)
 	if match == nil {
 		return "", false
 	}
-	property := strings.NewReplacer(".", "_", "-", "_").Replace(match[2])
-	return match[1], strings.HasPrefix(match[2], "sonar.") || credentialName.MatchString(property)
+	return match[1], slices.ContainsFunc(ciOnlyPlugins, func(prefix string) bool { return strings.HasPrefix(match[2], prefix) })
 }
+
+// ciOnlyPlugins prefix the properties of the plugins ciOnlyOption leaves out.
+var ciOnlyPlugins = []string{"gpg.", "signing.", "sonar."}
 
 // withoutCIOnlyOptions empties the CI expressions JVM options pass in run
 // only to signing, publishing or reporting (see ciOnlyOption), adding each

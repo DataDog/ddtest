@@ -145,11 +145,14 @@ func TestJavaJenkinsValidatesWithoutCIOnlyOptions(t *testing.T) {
 	require.Contains(t, strings.Join(scope.Caveats, "\n"), "validated without the CI values of -Dgpg.passphrase")
 	require.Contains(t, strings.Join(scope.Review, "\n"), "(mvn sonar:sonar -Dsonar.host.url= -e): Maven goals outside the test lifecycle", "withSonarQubeEnv sets the scanner's goal")
 
-	// A value that may select tests still requires review.
-	root = javaJenkinsRepository(t, "pipeline {\n  agent { label 'java' }\n  stages {\n    stage('Test') { steps { sh \"mvn verify -Dgroups=$GROUPS\" } }\n  }\n}\n")
-	scope, err = DiscoverValidationScope(root, "junit5")
-	require.NoError(t, err)
-	require.NotEmpty(t, scope.Unresolved)
+	// A value that may configure the tests still requires review, even a
+	// credential.
+	for _, option := range []string{"-Dgroups=$GROUPS", "-Ddb.password=$DB_PASSWORD"} {
+		root = javaJenkinsRepository(t, "pipeline {\n  agent { label 'java' }\n  stages {\n    stage('Test') { steps { sh \"mvn verify "+option+"\" } }\n  }\n}\n")
+		scope, err = DiscoverValidationScope(root, "junit5")
+		require.NoError(t, err)
+		require.NotEmpty(t, scope.Unresolved, option)
+	}
 }
 
 // dd-java-agent is no project dependency, so a container stage's snippet
@@ -217,4 +220,58 @@ func TestJavaShellSetupIsRecognizedAsWritten(t *testing.T) {
 	setup, _, ok := java.shellSetupAt(file.Stmts, 0, jenkinsSnippetForm)
 	require.True(t, ok)
 	require.Contains(t, setup.Problem, "a form ddtest does not recognize", "an edited setup is never certified")
+}
+
+// Each Jenkins sh step is a shell of its own: a setup snippet in one step
+// does not instrument the tests a later step runs.
+func TestJavaJenkinsSetupExpiresWithItsShell(t *testing.T) {
+	root := javaJenkinsRepository(t, "pipeline {\n  agent none\n  stages {\n    stage('Test') {\n      agent { docker { image 'maven:3.9-eclipse-temurin-17' } }\n      steps {\n        sh 'mvn -B verify'\n      }\n    }\n  }\n}\n")
+	plan, err := PlanProviderSetup(root, "junit5", "")
+	require.NoError(t, err)
+	_, err = plan.Apply(true)
+	require.NoError(t, err)
+	path := filepath.Join(root, "Jenkinsfile")
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	ci := JavaCIConfiguration(root, "junit5", "")
+	require.Len(t, ci.Jobs, 1, ci.Reason)
+	require.NotContains(t, ci.Jobs[0].Reason, "runs in another shell", "the snippet and the tests share the sh step")
+
+	split := strings.Replace(string(data), "            mvn -B verify\n          '''\n", "          '''\n          sh 'mvn -B verify'\n", 1)
+	require.NotEqual(t, string(data), split)
+	writeFile(t, root, "Jenkinsfile", split)
+	ci = JavaCIConfiguration(root, "junit5", "")
+	require.Len(t, ci.Jobs, 1, ci.Reason)
+	require.Equal(t, "inconclusive", ci.Jobs[0].Status)
+	require.Contains(t, ci.Jobs[0].Reason, "runs in another shell than this test command", "the later sh step runs without the setup")
+}
+
+// The Datadog Jenkins plugin's MAVEN_OPTS and GRADLE_OPTS agent is removed
+// before a container stage's setup, keeping the step's own options.
+func TestJavaJenkinsPluginReset(t *testing.T) {
+	reset := javaDiscovery{}.ciPluginReset()
+	for _, key := range []string{"MAVEN_OPTS", "GRADLE_OPTS"} {
+		require.Contains(t, reset, `case "${`+key+`:-}" in -javaagent:*/.datadog/dd-java-agent.jar*)`)
+	}
+	require.Contains(t, jenkinsPluginResets("java"), reset)
+}
+
+// A -Ddd.* property in the JVM options the build reads that reports
+// elsewhere than the selected site is reported before replay removes it.
+func TestJavaReportingOverrides(t *testing.T) {
+	for _, tc := range []struct {
+		env    map[string]string
+		tool   string
+		reason string
+	}{
+		{map[string]string{"JAVA_TOOL_OPTIONS": "-Ddd.site=datadoghq.eu"}, javaMaven, "-Ddd.site=datadoghq.eu in JAVA_TOOL_OPTIONS sends this step's reports to datadoghq.eu, not datadoghq.com"},
+		{map[string]string{"JAVA_TOOL_OPTIONS": "-Ddd.site=datadoghq.eu", "MAVEN_OPTS": "-Ddd.site=datadoghq.com"}, javaMaven, ""},
+		{map[string]string{"JAVA_OPTS": "-Ddd.site=datadoghq.eu"}, javaMaven, ""},
+		{map[string]string{"JAVA_OPTS": "-Ddd.site=datadoghq.eu"}, javaGradle, "in JAVA_OPTS"},
+		{map[string]string{"GRADLE_OPTS": "-Ddd.civisibility.agentless.url=https://intake.example"}, javaGradle, "custom URL"},
+	} {
+		require.Equal(t, tc.reason == "", javaReportingOverride(tc.env, tc.tool, "datadoghq.com") == "", "%v", tc.env)
+		require.Contains(t, javaReportingOverride(tc.env, tc.tool, "datadoghq.com"), tc.reason, "%v", tc.env)
+	}
+	require.Empty(t, javaReportingOverride(map[string]string{"MAVEN_OPTS": "-Ddd.site=datadoghq.eu"}, javaMaven, ""), "any site when none is selected")
 }

@@ -10,10 +10,11 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
-	"unicode"
 
 	"github.com/DataDog/ddtest/internal/gradle"
+	"github.com/DataDog/ddtest/internal/platform"
 )
 
 // A hand-written dd-java-agent setup attaches the agent to the build JVM,
@@ -133,11 +134,72 @@ func javaHandWrittenSetup(root string, provider ciProvider, workflow ciWorkflow,
 	return setup
 }
 
+// javaDownloadCommands are the curl and wget commands of a script, each as
+// its words.
+func javaDownloadCommands(script string) [][]string {
+	var commands [][]string
+	for _, command := range javaCommandSeparator.Split(script, -1) {
+		words := strings.Fields(command)
+		for len(words) > 0 && strings.Contains(words[0], "=") {
+			words = words[1:]
+		}
+		if len(words) > 0 && slices.Contains([]string{"curl", "wget"}, filepath.Base(words[0])) {
+			commands = append(commands, words)
+		}
+	}
+	return commands
+}
+
+// javaCommandSeparator separates a script's simple commands.
+var javaCommandSeparator = regexp.MustCompile(`\n|;|&&|\|\||\|`)
+
+// javaDownload is the URL a curl or wget command downloads and the file it
+// writes: its -o/-O output, or the URL's last segment when it keeps the
+// remote name.
+func javaDownload(words []string) (address, target string) {
+	output, remoteName := "", words[0] == "wget"
+	for i := 1; i < len(words); i++ {
+		word := strings.Trim(words[i], `"'`)
+		switch {
+		case strings.Contains(word, "://"):
+			address = word
+		case words[0] == "curl" && (word == "-o" || word == "--output") && i+1 < len(words):
+			i++
+			output = strings.Trim(words[i], `"'`)
+		case words[0] == "curl" && (word == "-O" || word == "--remote-name"):
+			remoteName = true
+		case words[0] == "curl" && strings.HasPrefix(word, "-") && !strings.HasPrefix(word, "--") && strings.HasSuffix(word, "o") && i+1 < len(words):
+			// Combined short options, as -Lo or -sSLo, end with -o's value next.
+			i++
+			output = strings.Trim(words[i], `"'`)
+		case words[0] == "curl" && strings.HasPrefix(word, "-") && !strings.HasPrefix(word, "--") && strings.HasSuffix(word, "O"):
+			remoteName = true
+		case words[0] == "wget" && (word == "-O" || word == "--output-document") && i+1 < len(words):
+			i++
+			output = strings.Trim(words[i], `"'`)
+		case words[0] == "wget" && strings.HasPrefix(word, "--output-document="):
+			output = strings.TrimPrefix(word, "--output-document=")
+		case words[0] == "wget" && strings.HasPrefix(word, "-") && !strings.HasPrefix(word, "--") && strings.HasSuffix(word, "O") && i+1 < len(words):
+			i++
+			output = strings.Trim(words[i], `"'`)
+		}
+	}
+	switch {
+	case address == "":
+		return "", ""
+	case output != "":
+		return address, output
+	case remoteName:
+		return address, address[strings.LastIndex(address, "/")+1:]
+	}
+	return "", ""
+}
+
 // javaHandWrittenAgent is the dd-java-agent JAR a JVM option list attaches
 // (-javaagent:<path>), empty when it attaches none.
 func javaHandWrittenAgent(options string) string {
-	for _, word := range javaOptionWords(options) {
-		jar, ok := strings.CutPrefix(javaUnquoted(word), "-javaagent:")
+	for _, word := range platform.JavaOptionWords(options) {
+		jar, ok := strings.CutPrefix(platform.JavaUnquoted(word), "-javaagent:")
 		if !ok {
 			continue
 		}
@@ -154,7 +216,7 @@ func javaHandWrittenAgent(options string) string {
 // DD_CIVISIBILITY_ENABLED.
 func javaHandWrittenProperties(options string) map[string]string {
 	properties := map[string]string{}
-	for _, word := range javaOptionWords(options) {
+	for _, word := range platform.JavaOptionWords(options) {
 		if key, value, ok := javaAgentProperty(word); ok {
 			properties[key] = value
 		}
@@ -162,47 +224,11 @@ func javaHandWrittenProperties(options string) map[string]string {
 	return properties
 }
 
-// javaOptionWords splits JVM options as the JVM reads JAVA_TOOL_OPTIONS:
-// on whitespace outside quotes, so -Ddd.service="my service" is one option,
-// each kept as written.
-func javaOptionWords(options string) []string {
-	var words []string
-	start, quote := -1, rune(0)
-	for i, r := range options {
-		switch {
-		case quote != 0:
-			if r == quote {
-				quote = 0
-			}
-		case unicode.IsSpace(r):
-			if start >= 0 {
-				words, start = append(words, options[start:i]), -1
-			}
-		default:
-			if r == '"' || r == '\'' {
-				quote = r
-			}
-			if start < 0 {
-				start = i
-			}
-		}
-	}
-	if start >= 0 {
-		words = append(words, options[start:])
-	}
-	return words
-}
-
-// javaUnquoted is a JVM option without the quotes the JVM removes.
-func javaUnquoted(word string) string {
-	return strings.NewReplacer(`"`, "", `'`, "").Replace(word)
-}
-
 // javaAgentProperty reads a JVM option that sets a dd-java-agent system
 // property, -Ddd.<name>=<value>, as the DD_* variable it stands for and its
 // value; ok is false for any other option.
 func javaAgentProperty(word string) (key, value string, ok bool) {
-	property, ok := strings.CutPrefix(javaUnquoted(word), "-Ddd.")
+	property, ok := strings.CutPrefix(platform.JavaUnquoted(word), "-Ddd.")
 	if !ok {
 		return "", "", false
 	}
@@ -238,12 +264,12 @@ func javaHandWrittenTracer(setup *handWrittenSetup, jar string, job runtimeJob, 
 	if match := javaHandWrittenJarRelease.FindStringSubmatch(jar); match != nil {
 		return match[1]
 	}
-	// The last download before the tests is the JAR they attach.
+	// The last download before the tests that writes the attached JAR.
 	download := ""
 	for _, step := range job.Steps[:index+1] {
-		for _, word := range strings.Fields(step.Run) {
-			address := strings.Trim(word, `"'`)
-			if !strings.Contains(address, "://") || !strings.Contains(address, "java") {
+		for _, words := range javaDownloadCommands(step.Run) {
+			address, target := javaDownload(words)
+			if address == "" || filepath.Base(target) != filepath.Base(jar) {
 				continue
 			}
 			for key, value := range env {

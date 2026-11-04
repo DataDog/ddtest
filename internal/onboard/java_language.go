@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/DataDog/ddtest/internal/maven"
+	"github.com/DataDog/ddtest/internal/platform"
 )
 
 // javaDiscovery discovers the Maven and Gradle CI test steps of JVM test
@@ -117,7 +118,7 @@ func (javaDiscovery) variantValue(workflow ciWorkflow, job runtimeJob, _ runtime
 // options, keeping those of tracer plugin settings, which change test
 // behavior as their DD_* variables do (see TracerPluginSetting).
 func javaWithoutAgentProperties(options string) string {
-	words := javaOptionWords(options)
+	words := platform.JavaOptionWords(options)
 	kept := slices.DeleteFunc(slices.Clone(words), func(word string) bool {
 		key, _, ok := javaAgentProperty(word)
 		return ok && !TracerPluginSetting(key)
@@ -320,3 +321,13 @@ func (javaDiscovery) ciStepVariables(step string) map[string]string {
 
 // dd-java-agent is no project dependency, so ddtest recommends its release.
 func (javaDiscovery) recommendedTracer() string { return javaRecommendedTracer }
+
+// ciPluginReset removes the agent the Datadog Jenkins plugin puts before the
+// step's MAVEN_OPTS and GRADLE_OPTS, keeping the step's own options.
+func (javaDiscovery) ciPluginReset() string {
+	var resets []string
+	for _, key := range []string{"MAVEN_OPTS", "GRADLE_OPTS"} {
+		resets = append(resets, `case "${`+key+`:-}" in -javaagent:*/.datadog/dd-java-agent.jar*) `+key+`="${`+key+`#-javaagent:*/.datadog/dd-java-agent.jar}"; `+key+`="${`+key+`# }";; esac`)
+	}
+	return strings.Join(resets, "; ")
+}

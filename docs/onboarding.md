@@ -1600,10 +1600,11 @@ validation keeps, and each language's runtime, cache and tool variables, such
 as `NODE_OPTIONS`, `CYPRESS_*`, `PYTHONPATH`, `PYTEST_ADDOPTS`, `RUBYOPT`,
 `BUNDLE_*`, `SPEC_OPTS`, `JAVA_TOOL_OPTIONS`, `JDK_JAVA_OPTIONS`,
 `MAVEN_ARGS` or `GRADLE_OPTS`. One command-line value is the exception: a JVM
-option that passes a credential or a Sonar scanner setting, as
+option of a plugin that runs no tests, GPG signing (`gpg.*`), Gradle's signing
+plugin (`signing.*`) or the Sonar scanner (`sonar.*`), as
 `-Dgpg.passphrase=$GPG_PASSPHRASE` or `-Dsonar.token=${{ secrets.SONAR_TOKEN }}`,
-only signs, publishes or reports, so validation runs with it empty and names
-it. Caveats never prevent COMPLETE LOCALLY. The handoff also names CI step
+so validation runs with it empty and names it. Any other property, a test's
+credential as `-Ddb.password=…` included, still requires review. Caveats never prevent COMPLETE LOCALLY. The handoff also names CI step
 settings that disable a tracer integration (such as
 `DD_TRACE_DISABLED_INSTRUMENTATIONS=router`) and lists earlier attempts of the
 same workflow that stopped before the final run. Re-running `--apply` on its own

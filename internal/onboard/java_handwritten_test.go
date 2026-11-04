@@ -69,6 +69,7 @@ func TestHandWrittenJavaSetups(t *testing.T) {
 		{name: "GitHub release", before: []string{"wget -O dd-java-agent.jar https://github.com/DataDog/dd-trace-java/releases/download/v1.68.0/dd-java-agent-1.68.0.jar"}, command: "mvn test", reference: "hand-written dd-java-agent 1.68.0 setup (MAVEN_OPTS)"},
 		{name: "latest", before: []string{"curl -Lo dd-java-agent.jar https://dtdg.co/latest-java-tracer"}, command: "mvn test", reference: "hand-written dd-java-agent setup (MAVEN_OPTS)", problem: "The job downloads the latest dd-java-agent"},
 		{name: "no download", before: []string{}, command: "mvn test", problem: "No command of the job downloads dd-java-agent.jar with an exact release"},
+		{name: "another tool's release", before: []string{"curl -Lo java-helper.zip https://github.com/example/tools/releases/download/v1.67.1/java-helper.zip"}, command: "mvn test", problem: "No command of the job downloads dd-java-agent.jar with an exact release"},
 		{name: "not enabled", env: with(agentless, "DD_CIVISIBILITY_ENABLED", ""), command: "mvn test", problem: "set DD_CIVISIBILITY_ENABLED=true"},
 		{name: "literal key", env: with(agentless, "DD_API_KEY", "0123456789abcdef"), command: "mvn test", problem: "never commit the key"},
 		{name: "Gradle reads no MAVEN_OPTS", command: "./gradlew test", files: gradleBuild, problem: "this job runs Gradle, which does not read it"},

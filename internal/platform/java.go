@@ -16,6 +16,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"unicode"
 
 	"github.com/DataDog/ddtest/internal/ext"
 	"github.com/DataDog/ddtest/internal/framework"
@@ -196,4 +197,40 @@ func (j *Java) InstallTestdriveTracer(ctx context.Context, options TracerOptions
 		return TracerInstallation{}, fmt.Errorf("downloaded dd-java-agent %s, requested %s", version, options.Version)
 	}
 	return TracerInstallation{Path: path}, nil
+}
+
+// JavaOptionWords splits JVM options as the JVM reads JAVA_TOOL_OPTIONS:
+// on whitespace outside quotes, so -Ddd.service="my service" is one option,
+// each kept as written.
+func JavaOptionWords(options string) []string {
+	var words []string
+	start, quote := -1, rune(0)
+	for i, r := range options {
+		switch {
+		case quote != 0:
+			if r == quote {
+				quote = 0
+			}
+		case unicode.IsSpace(r):
+			if start >= 0 {
+				words, start = append(words, options[start:i]), -1
+			}
+		default:
+			if r == '"' || r == '\'' {
+				quote = r
+			}
+			if start < 0 {
+				start = i
+			}
+		}
+	}
+	if start >= 0 {
+		words = append(words, options[start:])
+	}
+	return words
+}
+
+// JavaUnquoted is a JVM option without the quotes the JVM removes.
+func JavaUnquoted(word string) string {
+	return strings.NewReplacer(`"`, "", `'`, "").Replace(word)
 }
