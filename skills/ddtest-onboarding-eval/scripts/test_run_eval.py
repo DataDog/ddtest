@@ -209,6 +209,18 @@ class RunnerTests(unittest.TestCase):
         self.addCleanup(shutil.rmtree, manifest["trial_directory"], ignore_errors=True)
         return code, manifest
 
+    def test_local_repository_is_cloned_from_a_copy_in_the_trial(self):
+        # The container mounts only the trial, so a host repository, as a
+        # project patched for an eval, reaches it as a bare copy there.
+        code, manifest = self.trial()
+        clone = next(record["argv"] for record in manifest["commands"] if record["argv"][:2] == ["git", "clone"])
+        trial = Path(manifest["trial_directory"])
+        self.assertEqual(Path(clone[3]), trial / "harness" / "source.git")
+        self.assertFalse((trial / "harness" / "source.git").exists(), "the copy is removed once checked out")
+        self.assertEqual(manifest["repository"], self.source)
+        self.assertEqual(manifest["repository_source"], "local")
+        self.assertTrue((trial / "repo" / ".git").exists())
+
     def test_preflight_refresh_is_redacted_before_finalization(self):
         source = self.root / "selected-login.json"
         source.write_text(json.dumps({"tokens": {"access_token": "synthetic-original-access", "refresh_token": "synthetic-original-refresh"}}))

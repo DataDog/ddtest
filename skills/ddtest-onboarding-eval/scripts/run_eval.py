@@ -1216,9 +1216,21 @@ def run(args):
             manifest["authentication"] = {"status":"passed", "source":"existing CLI model login" if getattr(args,"existing_login",False) else "selected login", "preflight":"model response before clone/install"}
             login.suspend()
             manifest.pop("failure_stage",None)
-        command(["git", "clone", "--", args.repo, str(checkout)])
+        source = args.repo
+        local = Path(os.path.expanduser(str(args.repo)))
+        if local.is_dir():
+            # The container mounts only the trial, so a repository on the host,
+            # such as a project patched for an eval, is cloned from a mirror
+            # in the harness folder, with every ref a --ref may name, which is
+            # removed once checked out.
+            source = harness / "source.git"
+            subprocess.run(["git", "clone", "--mirror", "--quiet", "--", str(local), str(source)], check=True)
+            manifest["repository_source"] = "local"
+        command(["git", "clone", "--", str(source), str(checkout)])
         command(["git", "fetch", "--update-shallow", "--no-tags", "origin", args.ref], cwd=checkout)
         command(["git", "checkout", "--detach", "FETCH_HEAD"], cwd=checkout)
+        if source != args.repo:
+            shutil.rmtree(source)
         manifest["submodules"] = "requested" if getattr(args,"submodules",False) else "not requested"
         if getattr(args,"submodules",False):
             command(["git", "submodule", "update", "--init", "--recursive"], cwd=checkout)
@@ -1468,7 +1480,7 @@ def main():
     parser.add_argument("--login-json", type=Path, help="Selected model login; refresh updates persist, never copies a profile")
     parser.add_argument("--existing-login", action="store_true", help="Reuse authorized existing CLI model authentication, including a managed Claude helper")
     parser.add_argument("--submodules", action="store_true", help="Initialize submodules at the requested commit")
-    parser.add_argument("--repo", help="Public clone URL reachable from the container")
+    parser.add_argument("--repo", help="Public clone URL reachable from the container, or a local repository, which the harness copies into the trial")
     parser.add_argument("--ref", help="Commit SHA or ref; resolved SHA is recorded")
     parser.add_argument("--ddtest", type=Path, help="Already-built Linux executable for the image architecture")
     parser.add_argument("--agent", choices=("codex", "claude"))
