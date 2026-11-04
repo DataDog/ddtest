@@ -125,7 +125,7 @@ def run_unit_tests(root, files, config, race=False):
     if not packages:
         raise ValueError("Go reported no packages for changed code")
     print(f"Testing {len(packages)} affected Go packages", flush=True)
-    subprocess.run(["go", "test", "-timeout=10m"] + (["-race"] if race else []) + packages,
+    subprocess.run(["go", "test", "-timeout=20m"] + (["-race"] if race else []) + packages,
                    cwd=root, check=True)
 
 

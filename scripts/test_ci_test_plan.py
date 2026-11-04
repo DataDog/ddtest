@@ -145,6 +145,24 @@ class GoSelectionTests(unittest.TestCase):
             planner.run_unit_tests(self.root, ["README.md"], CONFIG)
         run.assert_not_called()
 
+    def test_native_run_keeps_package_selection_race_and_full_package_budget(self):
+        inventory = subprocess.CompletedProcess([], 0, "\n".join(json.dumps(p) for p in self.packages))
+        with patch.object(planner.subprocess, "run", return_value=inventory) as run:
+            planner.run_unit_tests(self.root, ["lib/lib_test.go"], CONFIG, race=True)
+        command = run.call_args.args[0]
+        self.assertEqual(command[:2], ["go", "test"])
+        self.assertIn("-race", command)
+        self.assertEqual([arg for arg in command[2:] if not arg.startswith("-")], ["example/lib"])
+        timeout = next(arg for arg in command if arg.startswith("-timeout="))
+        package_minutes = int(timeout.removeprefix("-timeout=").removesuffix("m"))
+        # Runtime-backed tests must fit the same 20-minute package budget as
+        # the full CI lane, with extra wall time for setup and compilation.
+        self.assertGreaterEqual(package_minutes, 20)
+        fast = (ROOT / ".github/workflows/ci.yml").read_text()
+        unit = fast.split("  unit:\n", 1)[1].split("\n  scripts:\n", 1)[0]
+        job_minutes = int(re.search(r"timeout-minutes: (\d+)", unit).group(1))
+        self.assertGreaterEqual(job_minutes, package_minutes + 5)
+
 
 class GitDiffTests(unittest.TestCase):
     def test_diff_includes_worktree_deletions_both_sides_of_renames_and_untracked_files(self):
