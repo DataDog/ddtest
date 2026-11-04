@@ -16,6 +16,20 @@
     "internal/onboard/jest_command.go",
     "internal/onboard/python_handwritten.go"
   ],
+  "runtime_test_inputs": [
+    "**/*integration_test.go",
+    "internal/compatibility/**",
+    "internal/framework/webdriverio_test.go",
+    "internal/platform/javascript_test.go",
+    "internal/testdrive/cucumber_support_test.go",
+    "internal/testdrive/jest_preflight_test.go",
+    "internal/testdrive/mocha_validation_test.go",
+    "internal/testdrive/vitest_review_test.go",
+    "internal/testdrive/vitest_test.go",
+    "internal/testdrive/webdriverio_followup_test.go",
+    "internal/testdrive/webdriverio_review_test.go",
+    "internal/testdrive/webdriverio_test.go"
+  ],
   "suites": {
     "python": {
       "jobs": [

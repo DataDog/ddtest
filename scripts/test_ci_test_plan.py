@@ -96,13 +96,41 @@ class SelectionTests(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertEqual(set(planner.make_plan([path], CONFIG)["suites"]), expected)
 
-    def test_mocha_fixture_helper_tracks_webdriverio_without_expanding_unit_only_checks(self):
+    def test_mocha_runtime_fixture_helper_tracks_mocha_and_webdriverio_smokes(self):
         path = "internal/testdrive/mocha_validation_test.go"
         self.assertEqual(planner.affected_suites(path, CONFIG), {"mocha", "webdriverio", "onboarding"})
         plan = planner.make_plan([path], CONFIG)
         self.assertTrue(plan["go"])
-        self.assertEqual(plan["integrations"], [])
+        self.assertEqual({entry["id"] for entry in plan["integrations"]},
+                         {"mocha", "webdriverio", "onboarding"})
         self.assertFalse(plan["playwright"])
+
+    def test_runtime_backed_test_edits_select_their_framework_smokes(self):
+        for path, expected in (
+            ("internal/testdrive/vitest_review_test.go", {"vitest", "onboarding"}),
+            ("internal/testdrive/vitest_test.go", {"vitest", "onboarding"}),
+            ("internal/testdrive/jest_preflight_test.go", {"jest"}),
+            ("internal/testdrive/cucumber_support_test.go", {"cucumber", "onboarding"}),
+            ("internal/framework/webdriverio_test.go", {"webdriverio", "onboarding"}),
+            ("internal/testdrive/webdriverio_followup_test.go", {"webdriverio", "onboarding"}),
+            ("internal/testdrive/webdriverio_review_test.go", {"webdriverio", "onboarding"}),
+            ("internal/testdrive/webdriverio_test.go", {"webdriverio", "onboarding"}),
+            ("internal/platform/javascript_test.go", {"javascript", "jest", "vitest", "mocha",
+                                                      "cypress", "playwright", "cucumber", "webdriverio", "onboarding"}),
+        ):
+            with self.subTest(path=path):
+                plan = planner.make_plan([path], CONFIG)
+                self.assertEqual(set(plan["suites"]), expected)
+                self.assertTrue(plan["go"])
+
+    def test_runtime_fixture_gates_cannot_be_classified_as_unit_only(self):
+        gate = re.compile(r'os\.Getenv\("DDTEST_(?:[A-Z_]+_NODE_MODULES|RUN_[A-Z_]+_INTEGRATION_TEST)"\)')
+        for path in (ROOT / "internal").rglob("*_test.go"):
+            if gate.search(path.read_text()):
+                relative = path.relative_to(ROOT).as_posix()
+                with self.subTest(path=relative):
+                    plan = planner.make_plan([relative], CONFIG)
+                    self.assertTrue(plan["integrations"] or plan["playwright"])
 
     def test_instrumentation_changes_enable_native_module_checks(self):
         for path in ("ddto/internal/runner/run.go", "main.go", "go.mod", "internal/cmd/instrument.go"):

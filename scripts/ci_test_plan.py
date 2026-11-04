@@ -61,7 +61,8 @@ def make_plan(files, config):
         # binary smoke cover changes there; they do not affect framework runners.
         if path.startswith("ddto/"):
             continue
-        if path.endswith("_test.go") and not path.endswith("integration_test.go") and not path.startswith("internal/compatibility/"):
+        if path.endswith("_test.go") and not any(fnmatchcase(path, pattern)
+                                               for pattern in config["runtime_test_inputs"]):
             continue
         selected.update(affected_suites(path, config))
     checks = [{"id": entry["id"], "runtime": entry["runtime"]}
