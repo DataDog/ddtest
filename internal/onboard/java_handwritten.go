@@ -111,7 +111,7 @@ func javaHandWrittenSetup(root string, provider ciProvider, workflow ciWorkflow,
 	case tool == javaMaven && (carrier.name == "GRADLE_OPTS" || carrier.name == "org.gradle.jvmargs" || carrier.name == "gradle.properties" || carrier.name == "JAVA_OPTS"):
 		setup.missing(carrier.name + " attaches dd-java-agent, but this job runs Maven, which does not read it: attach the agent through MAVEN_OPTS or JAVA_TOOL_OPTIONS instead.")
 	}
-	if version := javaHandWrittenTracer(setup, jar, job, index, commandEnv); version != "" {
+	if version := javaHandWrittenTracer(setup, jar, workflow, job, index, commandEnv); version != "" {
 		setup.Tracer = version
 		setup.Reference = handWrittenReference("dd-java-agent "+version, carrier.name)
 	}
@@ -194,6 +194,27 @@ func javaDownload(words []string) (address, target string) {
 	return "", ""
 }
 
+// javaSameAgentPath reports whether target, which a command of
+// downloadStep writes, is jar, which the test step attaches: both relative
+// to their steps' working directories, or both absolute. known is false
+// when ddtest cannot tell, as for an absolute path and a relative one, or a
+// path that expands variables.
+func javaSameAgentPath(workflow ciWorkflow, job runtimeJob, downloadStep runtimeStep, target string, testStep runtimeStep, jar string) (same, known bool) {
+	if strings.ContainsAny(target+jar, "$~`") {
+		return false, false
+	}
+	if filepath.IsAbs(target) != filepath.IsAbs(jar) {
+		return false, false
+	}
+	resolve := func(path string, step runtimeStep) string {
+		if filepath.IsAbs(path) {
+			return filepath.Clean(path)
+		}
+		return filepath.Join(stepDirectory(workflow, job, step), path)
+	}
+	return resolve(target, downloadStep) == resolve(jar, testStep), true
+}
+
 // javaHandWrittenAgent is the dd-java-agent JAR a JVM option list attaches
 // (-javaagent:<path>), empty when it attaches none.
 func javaHandWrittenAgent(options string) string {
@@ -261,21 +282,31 @@ func javaHandWrittenFileOptions(file, property string) string {
 // selects, when it is a canonical artifact (see javaCanonicalRelease). A file
 // name alone, as dd-java-agent-1.67.1.jar, never says which bytes the job
 // attaches. It records on setup why none is pinned.
-func javaHandWrittenTracer(setup *handWrittenSetup, jar string, job runtimeJob, index int, env map[string]string) string {
-	download := ""
+func javaHandWrittenTracer(setup *handWrittenSetup, jar string, workflow ciWorkflow, job runtimeJob, index int, env map[string]string) string {
+	download, ambiguous := "", ""
 	for _, step := range job.Steps[:index+1] {
 		for _, words := range javaDownloadCommands(step.Run) {
 			address, target := javaDownload(words)
 			if address == "" || filepath.Base(target) != filepath.Base(jar) {
 				continue
 			}
+			same, known := javaSameAgentPath(workflow, job, step, target, job.Steps[index], jar)
+			if !known {
+				ambiguous = target
+				continue
+			}
+			if !same {
+				continue
+			}
 			for key, value := range env {
 				address = strings.ReplaceAll(strings.ReplaceAll(address, "${"+key+"}", value), "$"+key, value)
 			}
-			download = address
+			download, ambiguous = address, ""
 		}
 	}
 	switch {
+	case download == "" && ambiguous != "":
+		setup.unresolved("the job downloads " + ambiguous + ", but ddtest cannot tell whether it is the " + jar + " the tests attach, so it cannot tell which dd-java-agent they run.")
 	case download == "":
 		setup.missing("No command of the job downloads " + jar + " with an exact release, so ddtest cannot tell which dd-java-agent it attaches: download an exact release before the tests, such as curl -Lo dd-java-agent.jar " + javaHandWrittenDownload + ".")
 	case strings.Contains(download, "dtdg.co/latest-java-tracer") || strings.Contains(download, "/latest/"):

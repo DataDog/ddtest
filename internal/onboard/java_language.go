@@ -326,7 +326,7 @@ func javaCanonicalRelease(url string) (string, bool) {
 // javaCanonicalAgentURL is a dd-java-agent JAR's canonical download, with its
 // release twice: in Maven Central's path and file name, or in a GitHub
 // release's tag and file name.
-var javaCanonicalAgentURL = regexp.MustCompile(`^(?:https://repo1\.maven\.org/maven2/com/datadoghq/dd-java-agent/([0-9]+\.[0-9]+\.[0-9]+)/dd-java-agent-([0-9]+\.[0-9]+\.[0-9]+)\.jar|https://github\.com/DataDog/dd-trace-java/releases/download/v([0-9]+\.[0-9]+\.[0-9]+)/dd-java-agent-([0-9]+\.[0-9]+\.[0-9]+)\.jar)$`)
+var javaCanonicalAgentURL = regexp.MustCompile(`^(?:https://(?:repo1\.maven\.org|repo\.maven\.apache\.org)/maven2/com/datadoghq/dd-java-agent/([0-9]+\.[0-9]+\.[0-9]+)/dd-java-agent-([0-9]+\.[0-9]+\.[0-9]+)\.jar|https://github\.com/DataDog/dd-trace-java/releases/download/v([0-9]+\.[0-9]+\.[0-9]+)/dd-java-agent-([0-9]+\.[0-9]+\.[0-9]+)\.jar)$`)
 
 func (javaDiscovery) ciShellAfter(ciWorkflow, runtimeJob, runtimeStep, string, commandResolution) (bool, string) {
 	return false, ""
@@ -357,5 +357,6 @@ func (javaDiscovery) ciPluginReset() string {
 	for _, key := range []string{"MAVEN_OPTS", "GRADLE_OPTS"} {
 		resets = append(resets, `case "${`+key+`:-}" in -javaagent:*/.datadog/dd-java-agent.jar*) `+key+`="${`+key+`#-javaagent:*/.datadog/dd-java-agent.jar}"; `+key+`="${`+key+`# }";; esac`)
 	}
-	return strings.Join(resets, "; ")
+	// One compound statement, as a reset the snippet's check reads.
+	return "{ " + strings.Join(resets, "; ") + "; }"
 }

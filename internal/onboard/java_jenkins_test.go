@@ -182,6 +182,10 @@ func TestJavaJenkinsContainerStageApply(t *testing.T) {
 	instructions := providerSetupInstructions(root, jenkins{}, "java", "junit5", "", true)
 	require.Contains(t, instructions, "1. Bind DD_API_KEY in those stages from a Jenkins credential")
 	require.Contains(t, instructions, "make this edit without waiting for the credential")
+	require.Contains(t, instructions, "before the Jenkinsfile change is merged: Jenkins fails a stage whose binding names a credential that does not exist")
+	action := jenkinsContainer{}.apiKeyAction(true)
+	require.Contains(t, action, "before the Jenkinsfile change is merged")
+	require.NotContains(t, action, "Until it exists", "a binding to a missing credential fails the stage")
 }
 
 // In an image without Bash, which cannot parse Datadog's installer, a Java
@@ -315,4 +319,16 @@ func TestJavaReportingOverrides(t *testing.T) {
 	require.NoError(t, UseCIStatements(nil, []CIFact{{Key: handWrittenAgent}}))
 	t.Cleanup(func() { require.NoError(t, UseCIStatements(nil, nil)) })
 	require.Empty(t, javaReportingOverride(agent, javaMaven, "datadoghq.com"), "a confirmed Agent")
+}
+
+// Java's plugin reset is one statement, which the snippet check reads, so a
+// container stage an unread datadog(…) may reach accepts ddtest's own reset.
+func TestJavaJenkinsPluginResetIsOneStatement(t *testing.T) {
+	reset := (javaDiscovery{}).ciPluginReset()
+	parsed, ok := parseCIShell(reset)
+	require.True(t, ok)
+	require.Len(t, parsed.Stmts, 1)
+	setup := ciSetup{Inputs: map[string]string{"languages": (javaDiscovery{}).actionLanguage()}, before: []string{shellText(parsed.Stmts[0])}}
+	require.False(t, jenkinsResetMissing(setup), "ddtest accepts its own reset")
+	require.True(t, jenkinsResetMissing(ciSetup{Inputs: setup.Inputs}), "a snippet without it still lacks it")
 }

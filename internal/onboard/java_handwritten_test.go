@@ -66,6 +66,11 @@ func TestHandWrittenJavaSetups(t *testing.T) {
 		reference, problem, unresolved string
 	}{
 		{name: "tool options and properties", env: map[string]string{"JAVA_TOOL_OPTIONS": "-javaagent:/opt/dd-java-agent-1.67.1.jar -Ddd.civisibility.enabled=true -Ddd.civisibility.agentless.enabled=true -Ddd.site=datadoghq.com"}, before: []string{"curl -Lo /opt/dd-java-agent-1.67.1.jar https://repo1.maven.org/maven2/com/datadoghq/dd-java-agent/1.67.1/dd-java-agent-1.67.1.jar"}, command: "mvn test", reference: "hand-written dd-java-agent 1.67.1 setup (JAVA_TOOL_OPTIONS)"},
+		// The download and the attached agent are matched by full path.
+		{name: "download elsewhere", env: with(agentless, "MAVEN_OPTS", "-javaagent:/opt/dd-java-agent.jar"), command: "mvn test", unresolved: "cannot tell whether it is the /opt/dd-java-agent.jar the tests attach"},
+		{name: "other absolute path", env: with(agentless, "MAVEN_OPTS", "-javaagent:/opt/dd-java-agent.jar"), before: []string{"curl -Lo /tmp/dd-java-agent.jar https://repo1.maven.org/maven2/com/datadoghq/dd-java-agent/1.67.1/dd-java-agent-1.67.1.jar"}, command: "mvn test", problem: "No command of the job downloads /opt/dd-java-agent.jar"},
+		{name: "same relative path", env: with(agentless, "MAVEN_OPTS", "-javaagent:./dd-java-agent.jar"), command: "mvn test", reference: "hand-written dd-java-agent 1.67.1 setup (MAVEN_OPTS)"},
+		{name: "Maven Central's other host", env: agentless, before: []string{"curl -Lo dd-java-agent.jar https://repo.maven.apache.org/maven2/com/datadoghq/dd-java-agent/1.67.1/dd-java-agent-1.67.1.jar"}, command: "mvn test", reference: "hand-written dd-java-agent 1.67.1 setup (MAVEN_OPTS)"},
 		// A release in the attached file's name says nothing of its bytes.
 		{name: "versioned file, no download", env: with(agentless, "MAVEN_OPTS", "-javaagent:/opt/dd-java-agent-1.67.1.jar"), before: []string{}, command: "mvn test", problem: "No command of the job downloads /opt/dd-java-agent-1.67.1.jar with an exact release"},
 		{name: "versioned file, latest download", env: with(agentless, "MAVEN_OPTS", "-javaagent:dd-java-agent-1.67.1.jar"), before: []string{"curl -Lo dd-java-agent-1.67.1.jar https://dtdg.co/latest-java-tracer"}, command: "mvn test", problem: "The job downloads the latest dd-java-agent"},
