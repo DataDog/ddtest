@@ -246,6 +246,34 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(run_eval.submodule_update_argv(True), ["git", "-c", "protocol.file.allow=always", "submodule", "update", "--init", "--recursive"])
         self.assertEqual(run_eval.submodule_update_argv(False), ["git", "submodule", "update", "--init", "--recursive"])
 
+    def test_nested_relative_submodules_of_a_local_repository_are_mirrored(self):
+        # A mirrored submodule's own relative submodules, at the revision it
+        # pins, resolve beside its mirror, as Git resolves them.
+        git = ["git", "-c", "commit.gpgsign=false", "-c", "user.name=eval", "-c", "user.email=eval@example.com"]
+        work = self.root / "work"
+        work.mkdir()
+        subprocess.run(["git", "clone", "--bare", "--quiet", self.source, str(work / "leaf.git")], check=True)
+        leaf = subprocess.check_output(["git", "-C", str(work / "leaf.git"), "rev-parse", "HEAD"], text=True).strip()
+
+        def repository_with_submodule(path, name, url, pinned):
+            subprocess.run(["git", "init", "--quiet", str(path)], check=True)
+            (path / ".gitmodules").write_text('[submodule "' + name + '"]\n\tpath = ' + name + '\n\turl = ' + url + '\n')
+            subprocess.run(["git", "-C", str(path), "update-index", "--add", "--cacheinfo", "160000," + pinned + "," + name], check=True)
+            subprocess.run(["git", "-C", str(path), "add", ".gitmodules"], check=True)
+            subprocess.run([*git, "-C", str(path), "commit", "--quiet", "-m", "pin " + name], check=True)
+            return subprocess.check_output(["git", "-C", str(path), "rev-parse", "HEAD"], text=True).strip()
+
+        shared = repository_with_submodule(work / "shared", "leaf", "../leaf.git", leaf)
+        subprocess.run(["git", "clone", "--bare", "--quiet", str(work / "shared"), str(work / "shared.git")], check=True)
+        local = work / "app"
+        repository_with_submodule(local, "shared", "../shared.git", shared)
+        source = self.root / "trial" / "harness" / "source.git"
+        source.mkdir(parents=True)
+        mirrors = run_eval.local_submodule_mirrors(local, local, source)
+        harness = self.root / "trial" / "harness"
+        self.assertEqual(mirrors, [harness / "shared.git", harness / "leaf.git"])
+        self.assertTrue(all((mirror / "HEAD").exists() for mirror in mirrors))
+
     def test_preflight_refresh_is_redacted_before_finalization(self):
         source = self.root / "selected-login.json"
         source.write_text(json.dumps({"tokens": {"access_token": "synthetic-original-access", "refresh_token": "synthetic-original-refresh"}}))

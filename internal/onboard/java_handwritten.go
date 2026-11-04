@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/DataDog/ddtest/internal/gradle"
@@ -87,18 +88,28 @@ func javaHandWrittenSetup(root string, provider ciProvider, workflow ciWorkflow,
 			carriers = append(carriers, javaHandWrittenCarrier{file.name, value})
 		}
 	}
-	var carrier javaHandWrittenCarrier
-	jar := ""
+	type attachment struct {
+		carrier javaHandWrittenCarrier
+		jar     string
+	}
+	var attachments []attachment
 	for _, current := range carriers {
-		if jar = javaHandWrittenAgent(current.name, current.value); jar != "" {
-			carrier = current
-			break
+		for _, jar := range javaHandWrittenAgents(current.name, current.value) {
+			attachments = append(attachments, attachment{current, jar})
 		}
 	}
-	if jar == "" {
+	if len(attachments) == 0 {
 		return nil
 	}
+	carrier, jar := attachments[0].carrier, attachments[0].jar
 	setup := &handWrittenSetup{Reference: handWrittenReference("dd-java-agent", carrier.name)}
+	if len(attachments) > 1 {
+		var listed []string
+		for _, attached := range attachments {
+			listed = append(listed, "-javaagent:"+attached.jar+" in "+attached.carrier.name)
+		}
+		javaSimpleFormGap(setup, "attaches dd-java-agent more than once ("+strings.Join(listed, "; ")+")")
+	}
 	if _, dynamic := handWrittenReads(carrier.value); dynamic && !strings.Contains(jar, "$") {
 		setup.unresolved(carrier.name + " (" + carrier.value + ") holds values only CI knows, so ddtest cannot tell which options it passes the JVM.")
 	}
@@ -114,9 +125,12 @@ func javaHandWrittenSetup(root string, provider ciProvider, workflow ciWorkflow,
 	case tool == javaMaven && (carrier.name == "GRADLE_OPTS" || carrier.name == "org.gradle.jvmargs" || carrier.name == "gradle.properties" || carrier.name == "JAVA_OPTS"):
 		setup.missing(carrier.name + " attaches dd-java-agent, but this job runs Maven, which does not read it: attach the agent through MAVEN_OPTS or JAVA_TOOL_OPTIONS instead.")
 	}
-	if version := javaHandWrittenTracer(setup, jar, workflow, job, index, row); version != "" {
-		setup.Tracer = version
-		setup.Reference = handWrittenReference("dd-java-agent "+version, carrier.name)
+	// With more than one agent attached, no one release is what the JVM runs.
+	if len(attachments) == 1 {
+		if version := javaHandWrittenTracer(setup, jar, workflow, job, index, row); version != "" {
+			setup.Tracer = version
+			setup.Reference = handWrittenReference("dd-java-agent "+version, carrier.name)
+		}
 	}
 	// -Ddd.* system properties configure the agent like DD_* variables, and
 	// take precedence over them, from every JVM option list the build reads,
@@ -133,35 +147,41 @@ func javaHandWrittenSetup(root string, provider ciProvider, workflow ciWorkflow,
 	return setup
 }
 
-// javaFileWrite is a command of a job's script that writes, or may write,
-// a file: a curl or wget download, another command that writes files, as
-// cp or tee, or an output redirection.
-type javaFileWrite struct {
-	// command is its source text.
-	command, target string
-	// addresses are the URLs a download fetches in the same command; empty
-	// for any other write.
-	addresses []string
+// javaAgentCommand is a command of a job's script that names a
+// dd-java-agent JAR: its source text, its words, and whether it may not run.
+type javaAgentCommand struct {
+	command string
+	words   []string
 	// conditional reports a command that may not run, or not at that point:
 	// inside if, case, a loop, a function, a subshell, a pipeline, after &&
 	// or ||, in the background, or in a command substitution.
 	conditional bool
 }
 
-// javaFileWrites are the commands of script that may write a file, read
-// from its shell syntax tree with env's known values, so a here-document's
-// body is data, never commands. ok is false for a script the parser cannot
-// read.
-func javaFileWrites(script string, env map[string]string) (writes []javaFileWrite, ok bool) {
+// javaAgentCommands are the commands of script that name jar or any
+// dd-java-agent JAR, in an argument or a redirection, read from the
+// script's shell syntax tree with env's known values, so a here-document's
+// body is data, never commands. The Maven or Gradle build and the
+// assignments of JVM option lists, which attach the agent, are not among
+// them. changesDirectory reports a cd or pushd. ok is false for a script
+// the parser cannot read.
+func javaAgentCommands(script string, env map[string]string, jar string) (commands []javaAgentCommand, changesDirectory, ok bool) {
 	file, err := syntax.NewParser(syntax.Variant(syntax.LangBash)).Parse(strings.NewReader(script), "")
 	if err != nil {
-		return nil, false
+		return nil, false, false
 	}
 	// Words expand with the script's state where they are: an assignment
 	// changes the commands after it, and one that may not run leaves its
 	// variable unknown.
 	env = maps.Clone(env)
-	assign := func(assigns []*syntax.Assign, conditional bool, word func(*syntax.Word) string) {
+	if env == nil {
+		env = map[string]string{}
+	}
+	word := func(w *syntax.Word) string {
+		value, _ := ciShellWord(w, env, "", "")
+		return value
+	}
+	assign := func(assigns []*syntax.Assign, conditional bool) {
 		for _, assignment := range assigns {
 			if assignment.Name == nil {
 				continue
@@ -173,15 +193,20 @@ func javaFileWrites(script string, env map[string]string) (writes []javaFileWrit
 			env[assignment.Name.Value] = word(assignment.Value)
 		}
 	}
+	names := func(value string) bool {
+		for _, candidate := range []string{value, value[strings.LastIndexAny(value, "=:")+1:]} {
+			base := strings.ToLower(filepath.Base(candidate))
+			if candidate == jar || strings.Contains(base, "dd-java-agent") && strings.HasSuffix(base, ".jar") {
+				return true
+			}
+		}
+		return false
+	}
 	source := func(node syntax.Node) string {
 		if node.Pos().IsValid() && node.End().IsValid() && int(node.End().Offset()) <= len(script) {
 			return script[node.Pos().Offset():node.End().Offset()]
 		}
 		return ""
-	}
-	word := func(w *syntax.Word) string {
-		value, _ := ciShellWord(w, env, "", "")
-		return value
 	}
 	var statement func(stmt *syntax.Stmt, conditional bool)
 	// nested visits the statements inside node, as a command substitution's,
@@ -197,37 +222,41 @@ func javaFileWrites(script string, env map[string]string) (writes []javaFileWrit
 	}
 	statement = func(stmt *syntax.Stmt, conditional bool) {
 		conditional = conditional || stmt.Background || stmt.Coprocess
+		named := false
 		for _, redirect := range stmt.Redirs {
-			if slices.Contains([]syntax.RedirOperator{syntax.RdrOut, syntax.AppOut, syntax.RdrAll, syntax.AppAll, syntax.RdrClob, syntax.RdrInOut}, redirect.Op) && redirect.Word != nil {
-				writes = append(writes, javaFileWrite{command: source(stmt), target: word(redirect.Word), conditional: conditional})
+			if redirect.Word != nil && names(word(redirect.Word)) {
+				named = true
 			}
 			nested(redirect)
 		}
+		var words []string
 		switch command := stmt.Cmd.(type) {
 		case *syntax.CallExpr:
 			for _, assign := range command.Assigns {
 				nested(assign)
 			}
-			// An assignment alone sets the shell's variable; one before a
-			// command sets it for that command only.
+			// An assignment alone sets the shell's variable, as a JVM option
+			// list that attaches the agent; one before a command sets it for
+			// that command only.
 			if len(command.Args) == 0 {
-				assign(command.Assigns, conditional, word)
+				assign(command.Assigns, conditional)
 			}
-			var words []string
 			for _, argument := range command.Args {
 				words = append(words, word(argument))
 				nested(argument)
 			}
-			for _, write := range javaCommandWrites(words) {
-				write.command, write.conditional = source(stmt), conditional
-				writes = append(writes, write)
+			if len(words) > 0 && slices.Contains([]string{"cd", "pushd"}, filepath.Base(words[0])) {
+				changesDirectory = true
+			}
+			if len(words) > 0 && !mavenCommand(words) && !gradle.Command(words) && slices.ContainsFunc(words, names) {
+				named = true
 			}
 		case *syntax.Block:
 			for _, inner := range command.Stmts {
 				statement(inner, conditional)
 			}
 		case *syntax.DeclClause:
-			assign(command.Args, conditional, word)
+			assign(command.Args, conditional)
 			for _, argument := range command.Args {
 				nested(argument)
 			}
@@ -235,149 +264,70 @@ func javaFileWrites(script string, env map[string]string) (writes []javaFileWrit
 		default:
 			nested(command)
 		}
+		if named {
+			commands = append(commands, javaAgentCommand{command: strings.TrimSpace(source(stmt)), words: words, conditional: conditional})
+		}
 	}
 	for _, stmt := range file.Stmts {
 		statement(stmt, false)
 	}
-	return writes, true
+	return commands, changesDirectory, true
 }
 
-// javaReadOnlyCommands only read the files they name, as a JVM attaching
-// an agent or a checksum check.
-var javaReadOnlyCommands = []string{"java", "javaw", "ls", "test", "[", "[[", "stat", "file", "cat", "echo", "printf", "head", "tail", "wc", "grep",
-	"chmod", "du", "sha1sum", "sha256sum", "sha512sum", "shasum", "md5sum", "true", "cd"}
-
-// javaCommandWrites are the files a simple command, as words, writes: the
-// outputs of a curl or wget download, each with every URL the command
-// fetches, and the targets of the commands that copy, move, link or write
-// files. Any other command that names a JAR, except one known to only read
-// it or the Maven or Gradle build that attaches it, may write it too, as a
-// script that replaces the agent.
-func javaCommandWrites(words []string) []javaFileWrite {
+// javaSimpleDownload reads a command of the simple form's download: curl
+// with -o, --output or a short option group ending in o, or wget with -O,
+// --output-document or a group ending in O, each followed by the output path
+// as a word of its own, one URL, and no option that adds a directory.
+// problem explains a command of another form.
+func javaSimpleDownload(words []string) (address, output, problem string) {
 	if len(words) == 0 {
-		return nil
+		return "", "", "names the agent JAR in a command ddtest cannot read"
 	}
 	name := filepath.Base(words[0])
-	known := []string{"curl", "wget", "cp", "mv", "ln", "install", "rsync", "scp", "tee", "dd", "gpg"}
-	if !slices.Contains(known, name) && !slices.Contains(javaReadOnlyCommands, name) && !mavenCommand(words) && !gradle.Command(words) {
-		var writes []javaFileWrite
-		for _, word := range words {
-			// A path in an option's value names the file too, as --file=dd-java-agent.jar.
-			for _, candidate := range []string{word, word[strings.LastIndexAny(word, "=:")+1:]} {
-				if strings.HasSuffix(candidate, ".jar") {
-					writes = append(writes, javaFileWrite{target: candidate})
-					break
-				}
-			}
-		}
-		return writes
+	if name != "curl" && name != "wget" {
+		return "", "", "gets it with " + name + ", not curl -o or wget -O"
 	}
-	var operands []string
-	for _, word := range words[1:] {
-		if !strings.HasPrefix(word, "-") {
-			operands = append(operands, word)
-		}
-	}
-	switch name {
-	case "curl", "wget":
-		return javaDownloadWrites(name, words[1:])
-	case "cp", "mv", "ln", "install", "rsync", "scp":
-		if len(operands) > 1 {
-			return []javaFileWrite{{target: operands[len(operands)-1]}}
-		}
-	case "tee":
-		var writes []javaFileWrite
-		for _, operand := range operands {
-			writes = append(writes, javaFileWrite{target: operand})
-		}
-		return writes
-	case "dd":
-		for _, operand := range operands {
-			if target, ok := strings.CutPrefix(operand, "of="); ok {
-				return []javaFileWrite{{target: target}}
-			}
-		}
-	case "gpg":
-		// Verifying a signature reads the JAR; any other gpg use may write it.
-		if !slices.Contains(words, "--verify") {
-			for _, operand := range operands {
-				if strings.HasSuffix(operand, ".jar") {
-					return []javaFileWrite{{target: operand}}
-				}
-			}
-		}
-	}
-	return nil
-}
-
-// javaDownloadWrites are the files a curl or wget command, by its
-// arguments, writes: curl's -o/--output and -O/--remote-name outputs, or
-// wget's -O/--output-document or the URL's last segment. Each carries every
-// URL the command fetches, since one command with several URLs cannot say
-// which output holds which.
-func javaDownloadWrites(name string, arguments []string) []javaFileWrite {
-	var addresses, outputs []string
-	remoteName := name == "wget"
-	for i := 0; i < len(arguments); i++ {
-		word := arguments[i]
+	flag := map[string]string{"curl": "o", "wget": "O"}[name]
+	long := map[string]string{"curl": "--output", "wget": "--output-document"}[name]
+	var addresses []string
+	for i := 1; i < len(words); i++ {
+		word := words[i]
 		short := strings.HasPrefix(word, "-") && !strings.HasPrefix(word, "--")
 		switch {
 		case strings.Contains(word, "://"):
 			addresses = append(addresses, word)
-		case name == "curl" && strings.HasPrefix(word, "--output="):
-			outputs = append(outputs, strings.TrimPrefix(word, "--output="))
-		case name == "curl" && (word == "--output" || short && strings.HasSuffix(word, "o")) && i+1 < len(arguments):
-			// Combined short options, as -Lo or -sSLo, end with -o's value next.
+		case slices.ContainsFunc([]string{"--output-dir", "--create-dirs", "--directory-prefix", "-P"}, func(option string) bool {
+			return word == option || strings.HasPrefix(word, option+"=") || option == "-P" && short && strings.Contains(word, "P")
+		}):
+			return "", "", "downloads with " + word + ", which changes where the file lands"
+		case word == long || short && strings.HasSuffix(word, flag):
+			if i+1 == len(words) {
+				return "", "", "names no output after " + word
+			}
 			i++
-			outputs = append(outputs, arguments[i])
-		case name == "curl" && (word == "--remote-name" || short && strings.HasSuffix(word, "O")):
-			remoteName = true
-		case name == "wget" && strings.HasPrefix(word, "--output-document="):
-			outputs = append(outputs, strings.TrimPrefix(word, "--output-document="))
-		case name == "wget" && (word == "--output-document" || short && strings.HasSuffix(word, "O")) && i+1 < len(arguments):
-			i++
-			outputs = append(outputs, arguments[i])
+			output = words[i]
 		}
 	}
-	if len(addresses) == 0 {
-		return nil
+	switch {
+	case output == "":
+		return "", "", "downloads it without " + long + " <path> as a separate word"
+	case len(addresses) != 1:
+		return "", "", "downloads " + strconv.Itoa(len(addresses)) + " URLs in one command"
 	}
-	if len(outputs) == 0 && remoteName {
-		for _, address := range addresses {
-			outputs = append(outputs, address[strings.LastIndex(address, "/")+1:])
-		}
-	}
-	writes := make([]javaFileWrite, 0, len(outputs))
-	for _, output := range outputs {
-		writes = append(writes, javaFileWrite{target: output, addresses: addresses})
-	}
-	return writes
+	return addresses[0], output, ""
 }
 
-// javaSameAgentPath reports whether target, which a command of
-// downloadStep writes, is jar, which the test step attaches: both relative
-// to their steps' working directories, or both absolute. known is false
-// when ddtest cannot tell, as for an absolute path and a relative one, or a
-// path that expands variables.
-func javaSameAgentPath(workflow ciWorkflow, job runtimeJob, downloadStep runtimeStep, target string, testStep runtimeStep, jar string) (same, known bool) {
-	if strings.ContainsAny(target+jar, "$~`") {
-		return false, false
-	}
-	if filepath.IsAbs(target) != filepath.IsAbs(jar) {
-		return false, false
-	}
-	resolve := func(path string, step runtimeStep) string {
-		if filepath.IsAbs(path) {
-			return filepath.Clean(path)
-		}
-		return filepath.Join(stepDirectory(workflow, job, step), path)
-	}
-	return resolve(target, downloadStep) == resolve(jar, testStep), true
+// javaSimpleFormGap leaves setup uncertified: ddtest validates a
+// hand-written setup only in its simple form, which detail says how this
+// one departs from.
+func javaSimpleFormGap(setup *handWrittenSetup, detail string) {
+	setup.unresolved("ddtest certifies a hand-written dd-java-agent setup only in its simple form: one -javaagent:<path> and, before the tests, one unconditional curl -o <path> or wget -O <path> of an exact release from Maven Central or the DataDog/dd-trace-java GitHub releases to that same path, in the test step's working directory and without cd; this job's setup " + detail + ", so it is reported but not validated.")
 }
 
-// javaHandWrittenAgent is the dd-java-agent JAR a JVM option list attaches
-// (-javaagent:<path>), empty when it attaches none.
-func javaHandWrittenAgent(carrier, options string) string {
+// javaHandWrittenAgents are the dd-java-agent JARs a JVM option list
+// attaches (-javaagent:<path>).
+func javaHandWrittenAgents(carrier, options string) []string {
+	var jars []string
 	for _, word := range platform.JavaCarrierWords(carrier, options) {
 		jar, ok := strings.CutPrefix(platform.JavaCarrierValue(carrier, word), "-javaagent:")
 		if !ok {
@@ -385,10 +335,10 @@ func javaHandWrittenAgent(carrier, options string) string {
 		}
 		jar, _, _ = strings.Cut(jar, "=")
 		if strings.Contains(strings.ToLower(filepath.Base(jar)), "dd-java-agent") {
-			return jar
+			jars = append(jars, jar)
 		}
 	}
-	return ""
+	return jars
 }
 
 // javaHandWrittenProperties are the DD_* variables an option list's -Ddd.*
@@ -437,18 +387,21 @@ func javaHandWrittenFileOptions(file, property string) string {
 	return ""
 }
 
-// javaHandWrittenTracer finds the exact dd-java-agent release jar is. One
-// rule establishes it: exactly one command of the job before the tests
-// writes jar, and that command is an unconditional curl or wget download of
-// one canonical artifact (see javaCanonicalRelease). Any other write of jar,
-// or a write ddtest cannot place, leaves the release unknown, since CI may
-// then attach other bytes; a file name alone, as dd-java-agent-1.67.1.jar,
-// never says which. It records on setup why none is pinned.
+// javaHandWrittenTracer finds the exact dd-java-agent release jar is, for
+// the simple form only (see javaSimpleFormGap): before the tests, exactly
+// one command of the steps that run for row names the agent JAR, and it is
+// an unconditional curl or wget of one canonical artifact (see
+// javaCanonicalRelease) to jar itself, in the test step's working
+// directory, with no cd or pushd. A file name alone, as
+// dd-java-agent-1.67.1.jar, never says which release. It records on setup
+// why none is pinned.
 func javaHandWrittenTracer(setup *handWrittenSetup, jar string, workflow ciWorkflow, job runtimeJob, index int, row map[string]any) string {
-	var writes, unplaced []javaFileWrite
+	test := job.Steps[index]
+	var named []javaAgentCommand
+	var download runtimeStep
 	for i, step := range job.Steps[:index+1] {
-		// A step that does not run for this row writes nothing; one whose
-		// condition ddtest cannot decide may run, so its writes may not.
+		// A step that does not run for this row names nothing; one whose
+		// condition ddtest cannot decide may not run.
 		conditional := false
 		if i < index {
 			active, err := stepCondition(step, row, conditionEnvironment(workflow, job, runtimeStep{}, row))
@@ -458,63 +411,53 @@ func javaHandWrittenTracer(setup *handWrittenSetup, jar string, workflow ciWorkf
 			conditional = err != nil
 		}
 		// Each step reads its own environment.
-		stepWrites, readable := javaFileWrites(step.Run, handWrittenEnvironment(workflow, job, step))
-		if !readable {
-			if strings.Contains(step.Run, filepath.Base(jar)) {
-				setup.unresolved("a step that names " + filepath.Base(jar) + " is not shell ddtest can read, so it cannot tell which dd-java-agent the tests attach.")
-				return ""
-			}
-			continue
+		commands, changesDirectory, readable := javaAgentCommands(step.Run, handWrittenEnvironment(workflow, job, step), jar)
+		switch {
+		case !readable && strings.Contains(strings.ToLower(step.Run), "dd-java-agent"):
+			javaSimpleFormGap(setup, "names the agent in a step that is not shell ddtest can read")
+			return ""
+		case changesDirectory:
+			javaSimpleFormGap(setup, "changes directory with cd or pushd before the tests")
+			return ""
 		}
-		for _, write := range stepWrites {
-			if filepath.Base(write.target) != filepath.Base(jar) {
-				continue
-			}
-			write.conditional = write.conditional || conditional
-			same, known := javaSameAgentPath(workflow, job, step, write.target, job.Steps[index], jar)
-			switch {
-			case !known:
-				unplaced = append(unplaced, write)
-			case same:
-				writes = append(writes, write)
-			}
+		for _, command := range commands {
+			command.conditional = command.conditional || conditional
+			named, download = append(named, command), step
 		}
 	}
-	commands := func(writes []javaFileWrite) string {
-		var texts []string
-		for _, write := range writes {
-			texts = append(texts, strings.TrimSpace(write.command))
-		}
-		return strings.Join(texts, "; ")
-	}
-	switch {
-	case len(writes) == 0 && len(unplaced) > 0:
-		setup.unresolved("the job writes " + unplaced[0].target + ", but ddtest cannot tell whether it is the " + jar + " the tests attach, so it cannot tell which dd-java-agent they run.")
+	switch len(named) {
+	case 0:
+		setup.missing("No command of the job downloads " + jar + " with an exact release, so ddtest cannot tell which dd-java-agent it attaches: download an exact release before the tests, such as curl -Lo " + jar + " " + javaHandWrittenDownload + ".")
 		return ""
-	case len(writes) == 0:
-		setup.missing("No command of the job downloads " + jar + " with an exact release, so ddtest cannot tell which dd-java-agent it attaches: download an exact release before the tests, such as curl -Lo dd-java-agent.jar " + javaHandWrittenDownload + ".")
-		return ""
-	case len(writes)+len(unplaced) > 1:
-		setup.unresolved("more than one command of the job may write " + jar + " (" + commands(append(writes, unplaced...)) + "), so ddtest cannot tell which dd-java-agent the tests attach; download it once, unconditionally.")
-		return ""
-	}
-	write := writes[0]
-	switch download := strings.Join(write.addresses, " "); {
-	case len(write.addresses) == 0:
-		setup.unresolved(jar + " comes from " + strings.TrimSpace(write.command) + ", not a download of an exact release, so ddtest cannot tell which dd-java-agent the tests attach.")
-	case write.conditional:
-		setup.unresolved("the job downloads " + write.target + " inside conditional shell control flow, so ddtest cannot tell whether that download runs and which dd-java-agent the tests attach.")
-	case len(write.addresses) > 1:
-		setup.unresolved("one command downloads several URLs (" + download + "), so ddtest cannot tell which of them " + jar + " holds; download dd-java-agent in a command of its own.")
-	case strings.Contains(download, "dtdg.co/latest-java-tracer") || strings.Contains(download, "/latest/"):
-		setup.missing("The job downloads the latest dd-java-agent (" + download + "), so each build can attach another release: download an exact release instead, such as " + javaHandWrittenDownload + ".")
-	case strings.Contains(download, "$"):
-		setup.unresolved("the job downloads dd-java-agent from " + download + ", whose release only CI knows.")
+	case 1:
 	default:
-		if release, ok := javaCanonicalRelease(download); ok {
+		var texts []string
+		for _, command := range named {
+			texts = append(texts, command.command)
+		}
+		javaSimpleFormGap(setup, "names the agent JAR in more than one command ("+strings.Join(texts, "; ")+")")
+		return ""
+	}
+	command := named[0]
+	address, output, problem := javaSimpleDownload(command.words)
+	switch {
+	case command.conditional:
+		javaSimpleFormGap(setup, "downloads it inside conditional shell control flow, or in a step that may not run ("+command.command+")")
+	case problem != "":
+		javaSimpleFormGap(setup, problem+" ("+command.command+")")
+	case output != jar:
+		javaSimpleFormGap(setup, "writes "+output+", not the "+jar+" the tests attach")
+	case stepDirectory(workflow, job, download) != stepDirectory(workflow, job, test):
+		javaSimpleFormGap(setup, "downloads it in another working directory than the tests'")
+	case strings.Contains(address, "dtdg.co/latest-java-tracer") || strings.Contains(address, "/latest/"):
+		setup.missing("The job downloads the latest dd-java-agent (" + address + "), so each build can attach another release: download an exact release instead, such as " + javaHandWrittenDownload + ".")
+	case strings.Contains(address, "$"):
+		setup.unresolved("the job downloads dd-java-agent from " + address + ", whose release only CI knows.")
+	default:
+		if release, ok := javaCanonicalRelease(address); ok {
 			return release
 		}
-		setup.missing("The job downloads dd-java-agent from " + download + ", which is not an exact release's artifact on Maven Central or the DataDog/dd-trace-java GitHub releases, so ddtest cannot tell which agent it attaches: download an exact release from one of them instead, such as " + javaHandWrittenDownload + ".")
+		setup.missing("The job downloads dd-java-agent from " + address + ", which is not an exact release's artifact on Maven Central or the DataDog/dd-trace-java GitHub releases, so ddtest cannot tell which agent it attaches: download an exact release from one of them instead, such as " + javaHandWrittenDownload + ".")
 	}
 	return ""
 }

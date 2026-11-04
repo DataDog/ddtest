@@ -87,6 +87,11 @@ type discoveryLanguage interface {
 	// as not validated yet (handWrittenSetup.Unvalidated): kept, never
 	// certified, and never replaced with the provider's setup.
 	validatesHandWrittenSetup() bool
+	// keepsHandWrittenJobs reports whether onboard --apply leaves a job that
+	// sets the tracer up by hand to that setup, adding no provider setup
+	// beside it: a language whose hand-written setup only the job's own
+	// configuration shows, never what a CI server plugin exports.
+	keepsHandWrittenJobs() bool
 	// preloadVariable reports the variable through which a setup written by
 	// hand loads the language's tracer into a process, such as a Node
 	// options variable; a command prefix that sets it is the command's

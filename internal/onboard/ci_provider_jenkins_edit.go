@@ -371,6 +371,29 @@ func checkJenkinsfileSetup(root string, provider ciProvider, workflows []ciWorkf
 		return &SetupGap{file, "ddtest does not enable the Datadog Jenkins plugin here: its option would also apply to " + strings.Join(containers, ", ") + ", which run steps in a container. The plugin sets its tracer variables in every step of its scope, container steps included, but installs the tracer only on the build agent, with the agent's toolchain. In those containers, " + jenkinsContainerEffects([]string{jenkinsPluginToken(setupActionLanguage(discoveryLanguageName(request.Framework)))}) + ". The user's options are to run those stages on a host agent, or to keep them out of the option's scope (a container block in a stage of its own, or in a scripted pipeline, a node block of its own outside the wrap), then rerun onboard --apply; or " + handWrittenSetupOption(discoveryLanguageName(request.Framework), jenkinsPluginReference) + ". Do not move stages without the user's approval."}
 	}
 	language := discoveryLanguageName(request.Framework)
+	// Nor may it reach a job that sets the tracer up by hand, which keeps
+	// that setup alone.
+	// Which jobs set it up by hand is read before the edit, which the
+	// plugin's own setup would then precede.
+	original := jenkinsWorkflowAt(workflows, file)
+	var handWritten []string
+	for _, name := range slices.Sorted(maps.Keys(edited.Jobs)) {
+		job, before := edited.Jobs[name], original.Jobs[name]
+		if slices.Contains(jobs, name) || disabledCondition(job.If) || len(job.Steps) == 0 || job.Steps[0].Setup == nil || jenkinsSnippetSetup(*job.Steps[0].Setup) {
+			continue
+		}
+		for i, step := range before.Steps {
+			if resolveTestStep(root, original, before, step, language, request.Framework).Matched {
+				if keptHandWrittenSetup(root, original, before, i, discoveryLanguageNamed(language), request.Framework, request.Site) != nil {
+					handWritten = append(handWritten, file+" / "+name)
+				}
+				break
+			}
+		}
+	}
+	if len(handWritten) > 0 {
+		return &SetupGap{file, "ddtest does not enable the Datadog Jenkins plugin here: its option would also apply to " + strings.Join(handWritten, ", ") + ", which set up the tracer by hand, and the plugin would attach its own beside it. Keep those stages out of the option's scope (an options block on the other test stages, or in a scripted pipeline, a node block of their own outside the wrap), then rerun onboard --apply; or set the other stages up by hand too. Do not move stages without the user's approval."}
+	}
 	for _, name := range jobs {
 		problem := providerJobSetupProblem(root, provider, edited, name, language, request.Framework, request.Site)
 		if problem == "" {

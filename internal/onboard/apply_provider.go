@@ -505,6 +505,7 @@ func planProviderSetup(root, framework, site, release string) (*SetupPlan, error
 	}
 	request.TracerVersion = release
 	var targets []ciSetupTarget
+	handWritten := 0
 	for _, workflow := range workflows {
 		for _, name := range slices.Sorted(maps.Keys(workflow.Jobs)) {
 			job := workflow.Jobs[name]
@@ -512,14 +513,28 @@ func planProviderSetup(root, framework, site, release string) (*SetupPlan, error
 				continue
 			}
 			for i, step := range job.Steps {
-				if resolveTestStep(root, workflow, job, step, language.name(), framework).Matched {
-					targets = append(targets, ciSetupTarget{Workflow: workflow.Path, Job: name, Step: i})
+				if !resolveTestStep(root, workflow, job, step, language.name(), framework).Matched {
+					continue
+				}
+				// A job that sets up the tracer by hand keeps that setup: the
+				// provider's is never added beside it, and what it lacks is
+				// for the user to complete.
+				if setup := keptHandWrittenSetup(root, workflow, job, i, language, framework, site); setup != nil {
+					if problem := setup.problem(); problem != "" {
+						return nil, &handWrittenGap{SetupGap{workflow.Path + " / " + name, problem + " Then rerun onboard --apply."}}
+					}
+					handWritten++
 					break
 				}
+				targets = append(targets, ciSetupTarget{Workflow: workflow.Path, Job: name, Step: i})
+				break
 			}
 		}
 	}
-	if len(targets) == 0 {
+	switch {
+	case len(targets) == 0 && handWritten > 0:
+		return &SetupPlan{root: root}, nil
+	case len(targets) == 0:
 		return nil, &SetupGap{provider.displayName(), "No literal " + framework + " CI step found. Identify its real CI entry point before applying onboarding."}
 	}
 	edits, impact, err := provider.planSetupEdits(root, workflows, targets, request)
@@ -536,6 +551,16 @@ func planProviderSetup(root, framework, site, release string) (*SetupPlan, error
 		}
 	}
 	return &SetupPlan{root: root, edits: edits, impact: impact}, nil
+}
+
+// keptHandWrittenSetup is the hand-written setup of job's tests from step
+// first on, for a language whose jobs keep such a setup (see
+// keepsHandWrittenJobs); nil otherwise.
+func keptHandWrittenSetup(root string, workflow ciWorkflow, job runtimeJob, first int, language discoveryLanguage, framework, site string) *handWrittenSetup {
+	if !language.keepsHandWrittenJobs() {
+		return nil
+	}
+	return jobHandWrittenSetup(root, workflow, job, first, language.name(), framework, site)
 }
 
 // ciShellOrigin is a step origin that names the shell the step runs in,

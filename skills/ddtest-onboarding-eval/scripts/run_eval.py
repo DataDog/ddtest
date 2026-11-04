@@ -235,24 +235,56 @@ def submodule_update_argv(local_mirrors):
     return ["git", *allow, "submodule", "update", "--init", "--recursive"]
 
 
+def submodule_entries(repository, config):
+    """The (path, url) of each submodule a .gitmodules lists, from git config
+    arguments that select it in repository, such as -f <file> or
+    --blob <rev>:.gitmodules."""
+    listed = subprocess.run(["git", "-C", str(repository), "config", *config, "--get-regexp", r"^submodule\..*\.(path|url)$"],
+                            capture_output=True, text=True)
+    fields = {}
+    for line in listed.stdout.splitlines():
+        key, _, value = line.partition(" ")
+        name, _, field = key[len("submodule."):].rpartition(".")
+        fields.setdefault(name, {})[field] = value.strip()
+    return [(entry.get("path", ""), entry["url"]) for entry in fields.values() if "url" in entry]
+
+
 def local_submodule_mirrors(checkout, local, source):
     """Mirrors, beside the mirror source of the local repository local, each
-    relative submodule repository the checkout's .gitmodules names, resolved
-    from local as Git resolves it without a remote, so the container can
-    clone them. Returns the mirrors made."""
-    listed = subprocess.run(["git", "config", "-f", str(checkout / ".gitmodules"), "--get-regexp", r"^submodule\..*\.url$"],
-                            capture_output=True, text=True)
+    relative submodule repository the checkout's .gitmodules names, and the
+    relative submodules those name at the revisions their parents pin,
+    resolved from local as Git resolves them without a remote, so the
+    container can clone them. Returns the mirrors made."""
     mirrors = []
-    for line in listed.stdout.splitlines():
-        url = line.split(None, 1)[1].strip() if len(line.split(None, 1)) == 2 else ""
-        if not url.startswith(("./", "../")):
-            continue
-        origin = (local / url).resolve()
-        mirror = Path(os.path.normpath(source / url))
-        if origin.is_dir() and not mirror.exists():
-            subprocess.run(["git", "clone", "--mirror", "--quiet", "--", str(origin), str(mirror)], check=True)
-            mirrors.append(mirror)
+
+    def visit(entries, pinned, origin_base, mirror_base):
+        for path, url in entries:
+            if not url.startswith(("./", "../")):
+                continue
+            origin = (origin_base / url).resolve()
+            mirror = Path(os.path.normpath(mirror_base / url))
+            if not origin.is_dir():
+                continue
+            if not mirror.exists():
+                subprocess.run(["git", "clone", "--mirror", "--quiet", "--", str(origin), str(mirror)], check=True)
+                mirrors.append(mirror)
+            # Its own relative submodules, at the revision its parent pins,
+            # resolve beside its mirror, as Git resolves them from its URL.
+            revision = pinned(path)
+            if revision:
+                nested = submodule_entries(origin, ["--blob", revision + ":.gitmodules"])
+                visit(nested, lambda child, origin=origin, revision=revision: tree_entry(origin, revision, child), origin, mirror)
+
+    visit(submodule_entries(checkout, ["-f", str(checkout / ".gitmodules")]), lambda path: tree_entry(checkout, "HEAD", path), local, source)
     return mirrors
+
+
+def tree_entry(repository, revision, path):
+    """The commit a gitlink at path of revision in repository pins; empty
+    when there is none."""
+    listed = subprocess.run(["git", "-C", str(repository), "ls-tree", revision, "--", path], capture_output=True, text=True)
+    fields = listed.stdout.split()
+    return fields[2] if len(fields) >= 3 and fields[1] == "commit" else ""
 
 
 def binstub_names(directory):

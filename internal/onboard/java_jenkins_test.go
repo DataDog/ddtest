@@ -363,3 +363,32 @@ func TestJavaJenkinsMixedStagesPinThePluginFirst(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(data), `DD_SET_TRACER_VERSION_JAVA="`+javaRecommendedTracer+`"`, "the snippet installs the plugin's release")
 }
+
+// javaJenkinsHandWrittenStage is a Jenkins stage that downloads an exact
+// dd-java-agent and attaches it by hand, with the key from a credential.
+func javaJenkinsHandWrittenStage(name, agent string) string {
+	return "    stage('" + name + "') {\n" + agent +
+		"      environment {\n        MAVEN_OPTS = '-javaagent:dd-java-agent.jar'\n        DD_CIVISIBILITY_ENABLED = 'true'\n        DD_CIVISIBILITY_AGENTLESS_ENABLED = 'true'\n        DD_SITE = 'datadoghq.com'\n        DD_API_KEY = credentials('datadog-api-key')\n      }\n" +
+		"      steps {\n        sh 'curl -Lo dd-java-agent.jar https://repo1.maven.org/maven2/com/datadoghq/dd-java-agent/1.67.1/dd-java-agent-1.67.1.jar'\n        sh 'mvn -B verify'\n      }\n    }\n"
+}
+
+// onboard --apply leaves a stage that sets dd-java-agent up by hand to that
+// setup: no plugin option over it, no snippet inside it, and the option
+// refused where it could only reach it too.
+func TestJavaJenkinsApplyKeepsHandWrittenStages(t *testing.T) {
+	// A host stage of its own: nothing to add.
+	root := javaJenkinsRepository(t, "pipeline {\n  agent { label 'java' }\n  stages {\n"+javaJenkinsHandWrittenStage("Manual", "")+"  }\n}\n")
+	confirmJavaJenkins(t, "21")
+	plan, err := PlanProviderSetup(root, "junit5", "datadoghq.com")
+	require.NoError(t, err)
+	require.True(t, plan.Configured(), "the hand-written stage keeps its setup")
+	// A container stage of its own: no snippet inside it.
+	root = javaJenkinsRepository(t, "pipeline {\n  agent none\n  stages {\n"+javaJenkinsHandWrittenStage("Manual", "      agent { docker { image 'maven:3.9-eclipse-temurin-21' } }\n")+"  }\n}\n")
+	plan, err = PlanProviderSetup(root, "junit5", "datadoghq.com")
+	require.NoError(t, err)
+	require.True(t, plan.Configured())
+	// Beside another host stage under one pipeline-wide option: refused.
+	root = javaJenkinsRepository(t, "pipeline {\n  agent { label 'java' }\n  stages {\n"+javaJenkinsHandWrittenStage("Manual", "")+"    stage('Test') {\n      steps {\n        sh 'mvn -B verify'\n      }\n    }\n  }\n}\n")
+	_, err = PlanProviderSetup(root, "junit5", "datadoghq.com")
+	require.ErrorContains(t, err, "its option would also apply to Jenkinsfile / Manual, which set up the tracer by hand")
+}

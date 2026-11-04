@@ -709,3 +709,5 @@ func (rubyDiscovery) checkTool(_, _ string, words []string) (bool, bool) {
 }
 
 func (rubyDiscovery) ciStepVariables(string) map[string]string { return nil }
+
+func (rubyDiscovery) keepsHandWrittenJobs() bool { return false }

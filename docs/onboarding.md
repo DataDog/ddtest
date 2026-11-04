@@ -1243,10 +1243,17 @@ Where no provider setup precedes the test command, ddtest recognizes:
 - Java: `-javaagent:` with a `dd-java-agent` JAR in `JAVA_TOOL_OPTIONS`,
   `MAVEN_OPTS` or `GRADLE_OPTS`, `-Dorg.gradle.jvmargs` or
   `gradle.properties`, with `DD_CIVISIBILITY_ENABLED=true` (or the matching
-  `-Ddd.*` system properties). The release is the one the JAR's file name
-  carries or the job downloads (Maven Central or a GitHub release; the
-  latest-release link is reported as floating). `-DargLine` and
-  `.mvn/jvm.config` stay unresolved.
+  `-Ddd.*` system properties). ddtest certifies the release only in the
+  setup's simple form: one `-javaagent:<path>` across the build's JVM option
+  lists and, before the tests, one unconditional `curl -o <path>` or
+  `wget -O <path>` (the path a separate word, identical to the attached one)
+  of an exact release from Maven Central or the DataDog/dd-trace-java GitHub
+  releases, in the test step's working directory, with no `cd` and no other
+  command naming the agent JAR. Any other form is recognized but not validated
+  (`unverified_initialization`), and the latest-release link is reported as
+  floating. `-DargLine` and `.mvn/jvm.config` stay unresolved. On Jenkins,
+  `onboard --apply` leaves a stage with such a setup alone and refuses a plugin
+  option that would reach it.
 
 For Python, ddtest checks the same rules as above and lists what each setup
 lacks, but never certifies such a setup and never replaces it with the

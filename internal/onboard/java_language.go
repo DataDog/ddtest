@@ -126,7 +126,7 @@ func (javaDiscovery) variantValue(workflow ciWorkflow, job runtimeJob, step runt
 		}
 		// Maven passes MAVEN_OPTS quotes on, so "true" there enables nothing.
 		// A hand-written agent's own options are checked with its setup.
-		if enabled, _ := handWrittenTrue(effective); effective != "" && !enabled && javaHandWrittenAgent(key, inherited) == "" {
+		if enabled, _ := handWrittenTrue(effective); effective != "" && !enabled && len(javaHandWrittenAgents(key, inherited)) == 0 {
 			return "", false, fmt.Errorf("CI instrumentation is not enabled by -Ddd.civisibility.enabled=%s in %s, which the JVM does not read as true", effective, from)
 		}
 	}
@@ -397,3 +397,7 @@ func (javaDiscovery) ciPluginReset() string {
 	// One compound statement, as a reset the snippet's check reads.
 	return "{ " + strings.Join(resets, "; ") + "; }"
 }
+
+// A hand-written dd-java-agent setup is the job's own -javaagent, which the
+// Datadog Jenkins plugin never writes.
+func (javaDiscovery) keepsHandWrittenJobs() bool { return true }

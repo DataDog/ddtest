@@ -534,3 +534,5 @@ func javascriptImageRuntime(job runtimeJob) string {
 func (javascriptDiscovery) checkTool(string, string, []string) (bool, bool) { return false, false }
 
 func (javascriptDiscovery) ciStepVariables(string) map[string]string { return nil }
+
+func (javascriptDiscovery) keepsHandWrittenJobs() bool { return false }

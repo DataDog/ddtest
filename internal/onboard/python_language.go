@@ -270,3 +270,5 @@ func pythonModule(args []string) ([]string, bool) {
 }
 
 func (pythonDiscovery) ciStepVariables(string) map[string]string { return nil }
+
+func (pythonDiscovery) keepsHandWrittenJobs() bool { return false }
