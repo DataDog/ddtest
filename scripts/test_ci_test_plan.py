@@ -94,6 +94,12 @@ class SelectionTests(unittest.TestCase):
         for path in ("ddto/internal/runner/run.go", "main.go", "go.mod", "internal/cmd/instrument.go"):
             self.assertTrue(planner.make_plan([path], CONFIG)["ddto"])
 
+    def test_fast_workflow_changes_execute_its_conditional_checks(self):
+        plan = planner.make_plan([".github/workflows/ci.yml"], CONFIG)
+        self.assertTrue(plan["go"])
+        self.assertTrue(plan["ddto"])
+        self.assertTrue(plan["evaluator"])
+
     def test_instrumentation_module_changes_do_not_run_other_language_frameworks(self):
         plan = planner.make_plan(["ddto/internal/runner/run.go"], CONFIG)
         self.assertTrue(plan["ddto"] and plan["go"])

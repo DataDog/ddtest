@@ -72,8 +72,8 @@ def make_plan(files, config):
         "go": files is None or bool(relevant),
         "ddto": files is None or any(path.startswith("ddto/") or path in (
             "main.go", "go.mod", "go.sum", "internal/cmd/instrument.go",
-            ".github/workflows/go-instrumentation.yml") for path in relevant),
-        "evaluator": files is None or any(path.startswith("skills/ddtest-onboarding-eval/")
+            ".github/workflows/ci.yml", ".github/workflows/go-instrumentation.yml") for path in relevant),
+        "evaluator": files is None or any(path == ".github/workflows/ci.yml" or path.startswith("skills/ddtest-onboarding-eval/")
                                          for path in files),
         "suites": sorted(selected),
         "integrations": [entry for entry in checks if entry["runtime"] != "playwright"],
