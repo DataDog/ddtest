@@ -242,6 +242,9 @@ class RunnerTests(unittest.TestCase):
         mirrors = run_eval.local_submodule_mirrors(checkout, local, source)
         self.assertEqual(mirrors, [self.root / "trial" / "harness" / "shared.git"])
         self.assertTrue((mirrors[0] / "HEAD").exists())
+        # Git refuses file transport for submodules unless the command allows it.
+        self.assertEqual(run_eval.submodule_update_argv(True), ["git", "-c", "protocol.file.allow=always", "submodule", "update", "--init", "--recursive"])
+        self.assertEqual(run_eval.submodule_update_argv(False), ["git", "submodule", "update", "--init", "--recursive"])
 
     def test_preflight_refresh_is_redacted_before_finalization(self):
         source = self.root / "selected-login.json"

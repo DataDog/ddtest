@@ -7,6 +7,7 @@ package onboard
 
 import (
 	"bufio"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -42,7 +43,7 @@ type javaHandWrittenCarrier struct {
 // javaHandWrittenSetup recognizes a hand-written dd-java-agent setup of the
 // Maven or Gradle test command at index of job (see handWrittenSetup); nil
 // when no JVM option list of the command attaches the agent.
-func javaHandWrittenSetup(root string, provider ciProvider, workflow ciWorkflow, job runtimeJob, index int, framework, site string) *handWrittenSetup {
+func javaHandWrittenSetup(root string, provider ciProvider, workflow ciWorkflow, job runtimeJob, index int, row map[string]any, framework, site string) *handWrittenSetup {
 	step := job.Steps[index]
 	env := handWrittenEnvironment(workflow, job, step)
 	directory := filepath.Clean(filepath.FromSlash(stepDirectory(workflow, job, step)))
@@ -113,7 +114,7 @@ func javaHandWrittenSetup(root string, provider ciProvider, workflow ciWorkflow,
 	case tool == javaMaven && (carrier.name == "GRADLE_OPTS" || carrier.name == "org.gradle.jvmargs" || carrier.name == "gradle.properties" || carrier.name == "JAVA_OPTS"):
 		setup.missing(carrier.name + " attaches dd-java-agent, but this job runs Maven, which does not read it: attach the agent through MAVEN_OPTS or JAVA_TOOL_OPTIONS instead.")
 	}
-	if version := javaHandWrittenTracer(setup, jar, workflow, job, index, commandEnv); version != "" {
+	if version := javaHandWrittenTracer(setup, jar, workflow, job, index, row); version != "" {
 		setup.Tracer = version
 		setup.Reference = handWrittenReference("dd-java-agent "+version, carrier.name)
 	}
@@ -156,6 +157,22 @@ func javaFileWrites(script string, env map[string]string) (writes []javaFileWrit
 	if err != nil {
 		return nil, false
 	}
+	// Words expand with the script's state where they are: an assignment
+	// changes the commands after it, and one that may not run leaves its
+	// variable unknown.
+	env = maps.Clone(env)
+	assign := func(assigns []*syntax.Assign, conditional bool, word func(*syntax.Word) string) {
+		for _, assignment := range assigns {
+			if assignment.Name == nil {
+				continue
+			}
+			if conditional || assignment.Value == nil {
+				delete(env, assignment.Name.Value)
+				continue
+			}
+			env[assignment.Name.Value] = word(assignment.Value)
+		}
+	}
 	source := func(node syntax.Node) string {
 		if node.Pos().IsValid() && node.End().IsValid() && int(node.End().Offset()) <= len(script) {
 			return script[node.Pos().Offset():node.End().Offset()]
@@ -191,6 +208,11 @@ func javaFileWrites(script string, env map[string]string) (writes []javaFileWrit
 			for _, assign := range command.Assigns {
 				nested(assign)
 			}
+			// An assignment alone sets the shell's variable; one before a
+			// command sets it for that command only.
+			if len(command.Args) == 0 {
+				assign(command.Assigns, conditional, word)
+			}
 			var words []string
 			for _, argument := range command.Args {
 				words = append(words, word(argument))
@@ -204,6 +226,11 @@ func javaFileWrites(script string, env map[string]string) (writes []javaFileWrit
 			for _, inner := range command.Stmts {
 				statement(inner, conditional)
 			}
+		case *syntax.DeclClause:
+			assign(command.Args, conditional, word)
+			for _, argument := range command.Args {
+				nested(argument)
+			}
 		case nil:
 		default:
 			nested(command)
@@ -215,15 +242,36 @@ func javaFileWrites(script string, env map[string]string) (writes []javaFileWrit
 	return writes, true
 }
 
+// javaReadOnlyCommands only read the files they name, as a JVM attaching
+// an agent or a checksum check.
+var javaReadOnlyCommands = []string{"java", "javaw", "ls", "test", "[", "[[", "stat", "file", "cat", "echo", "printf", "head", "tail", "wc", "grep",
+	"chmod", "du", "sha1sum", "sha256sum", "sha512sum", "shasum", "md5sum", "true", "cd"}
+
 // javaCommandWrites are the files a simple command, as words, writes: the
 // outputs of a curl or wget download, each with every URL the command
 // fetches, and the targets of the commands that copy, move, link or write
-// files.
+// files. Any other command that names a JAR, except one known to only read
+// it or the Maven or Gradle build that attaches it, may write it too, as a
+// script that replaces the agent.
 func javaCommandWrites(words []string) []javaFileWrite {
 	if len(words) == 0 {
 		return nil
 	}
 	name := filepath.Base(words[0])
+	known := []string{"curl", "wget", "cp", "mv", "ln", "install", "rsync", "scp", "tee", "dd", "gpg"}
+	if !slices.Contains(known, name) && !slices.Contains(javaReadOnlyCommands, name) && !mavenCommand(words) && !gradle.Command(words) {
+		var writes []javaFileWrite
+		for _, word := range words {
+			// A path in an option's value names the file too, as --file=dd-java-agent.jar.
+			for _, candidate := range []string{word, word[strings.LastIndexAny(word, "=:")+1:]} {
+				if strings.HasSuffix(candidate, ".jar") {
+					writes = append(writes, javaFileWrite{target: candidate})
+					break
+				}
+			}
+		}
+		return writes
+	}
 	var operands []string
 	for _, word := range words[1:] {
 		if !strings.HasPrefix(word, "-") {
@@ -247,6 +295,15 @@ func javaCommandWrites(words []string) []javaFileWrite {
 		for _, operand := range operands {
 			if target, ok := strings.CutPrefix(operand, "of="); ok {
 				return []javaFileWrite{{target: target}}
+			}
+		}
+	case "gpg":
+		// Verifying a signature reads the JAR; any other gpg use may write it.
+		if !slices.Contains(words, "--verify") {
+			for _, operand := range operands {
+				if strings.HasSuffix(operand, ".jar") {
+					return []javaFileWrite{{target: operand}}
+				}
 			}
 		}
 	}
@@ -387,10 +444,21 @@ func javaHandWrittenFileOptions(file, property string) string {
 // or a write ddtest cannot place, leaves the release unknown, since CI may
 // then attach other bytes; a file name alone, as dd-java-agent-1.67.1.jar,
 // never says which. It records on setup why none is pinned.
-func javaHandWrittenTracer(setup *handWrittenSetup, jar string, workflow ciWorkflow, job runtimeJob, index int, env map[string]string) string {
+func javaHandWrittenTracer(setup *handWrittenSetup, jar string, workflow ciWorkflow, job runtimeJob, index int, row map[string]any) string {
 	var writes, unplaced []javaFileWrite
-	for _, step := range job.Steps[:index+1] {
-		stepWrites, readable := javaFileWrites(step.Run, env)
+	for i, step := range job.Steps[:index+1] {
+		// A step that does not run for this row writes nothing; one whose
+		// condition ddtest cannot decide may run, so its writes may not.
+		conditional := false
+		if i < index {
+			active, err := stepCondition(step, row, conditionEnvironment(workflow, job, runtimeStep{}, row))
+			if err == nil && !active {
+				continue
+			}
+			conditional = err != nil
+		}
+		// Each step reads its own environment.
+		stepWrites, readable := javaFileWrites(step.Run, handWrittenEnvironment(workflow, job, step))
 		if !readable {
 			if strings.Contains(step.Run, filepath.Base(jar)) {
 				setup.unresolved("a step that names " + filepath.Base(jar) + " is not shell ddtest can read, so it cannot tell which dd-java-agent the tests attach.")
@@ -402,6 +470,7 @@ func javaHandWrittenTracer(setup *handWrittenSetup, jar string, workflow ciWorkf
 			if filepath.Base(write.target) != filepath.Base(jar) {
 				continue
 			}
+			write.conditional = write.conditional || conditional
 			same, known := javaSameAgentPath(workflow, job, step, write.target, job.Steps[index], jar)
 			switch {
 			case !known:

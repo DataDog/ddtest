@@ -212,8 +212,9 @@ var urlWord = regexp.MustCompile(`[A-Za-z][A-Za-z0-9+.-]*://[^\s|;&<>()]+`)
 
 var (
 	// executedAfter follows a URL whose download a shell runs: piped into
-	// one on the same line, as curl … | bash.
-	executedAfter = regexp.MustCompile(`^[^\n;&]*\|\s*(?:sudo\s+)?(?:ba|z|da)?sh\b`)
+	// one on the same line, as curl … | bash, also by its path or through
+	// sudo or env, as | /bin/bash or | sudo env X=1 sh.
+	executedAfter = regexp.MustCompile(`^[^\n;&]*\|\s*(?:(?:[^\s|;&]+/)?(?:sudo|env)\s+(?:[A-Za-z_][A-Za-z0-9_]*=[^\s|;&]*\s+)*)*(?:[^\s|;&]+/)?(?:ba|z|da)?sh\b`)
 	// executedBefore precedes one a shell runs from a process or command
 	// substitution, as bash <(curl …) or sh -c "$(curl …)".
 	executedBefore = regexp.MustCompile(`(?:<\(|\$\()\s*(?:curl|wget)\b[^\n)]*$`)
@@ -759,7 +760,7 @@ func JavaCIConfiguration(root, framework, site string) RuntimeCheck {
 					}
 					// An explicitly uninstrumented row has no instrumentation to
 					// lose; a hand-written setup was read where it attaches the agent.
-					if reason := javaInstrumentationProblem(provider, workflow, job, step, row, instrumented, buildSystem, tool); finding.Status != "excluded" && reason != "" {
+					if reason := javaInstrumentationProblem(provider, workflow, job, step, row, instrumented, buildSystem, tool); handWritten == nil && finding.Status != "excluded" && reason != "" {
 						finding.Status, finding.Code, finding.Reason = "inconclusive", "", reason
 					}
 					result.Jobs = append(result.Jobs, finding)

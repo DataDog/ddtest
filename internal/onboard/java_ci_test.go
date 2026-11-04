@@ -251,6 +251,11 @@ func TestJavaReplayKeepsTheJobsJVMOptions(t *testing.T) {
 	// A value only CI knows may disable it.
 	_, _, err = java.variantValue(ciWorkflow{}, runtimeJob{}, runtimeStep{}, nil, "MAVEN_OPTS", "-Ddd.civisibility.enabled=${{ env.CI_TRACING }}")
 	require.ErrorContains(t, err, "in MAVEN_OPTS requires review")
+	// Maven passes MAVEN_OPTS quotes to the JVM, which reads "true" as not true.
+	_, _, err = java.variantValue(ciWorkflow{}, runtimeJob{}, runtimeStep{}, nil, "MAVEN_OPTS", `-Ddd.civisibility.enabled="true" -Xmx1g`)
+	require.ErrorContains(t, err, "is not enabled by -Ddd.civisibility.enabled=\"true\" in MAVEN_OPTS")
+	_, _, err = java.variantValue(ciWorkflow{}, runtimeJob{}, runtimeStep{}, nil, "JAVA_TOOL_OPTIONS", `-Ddd.civisibility.enabled="true" -Xmx1g`)
+	require.NoError(t, err, "the JVM removes JAVA_TOOL_OPTIONS quotes")
 	// Maven reads MAVEN_OPTS after JAVA_TOOL_OPTIONS, so its value decides.
 	job := runtimeJob{Env: map[string]string{"JAVA_TOOL_OPTIONS": "-Ddd.civisibility.enabled=false", "MAVEN_OPTS": "-Ddd.civisibility.enabled=true"}}
 	step := runtimeStep{Run: "mvn -B verify"}
@@ -267,6 +272,8 @@ func TestJavaDownloadedScriptsAShellRunsStayInScope(t *testing.T) {
 	for run, unresolved := range map[string]bool{
 		"curl -s https://example.org/run-tests.sh | bash":               true,
 		"curl -s https://example.org/run-tests.sh|bash":                 true,
+		"curl -s https://example.org/run-tests.sh | /bin/bash":          true,
+		"curl -s https://example.org/run-tests.sh | sudo env X=1 sh":    true,
 		"bash <(curl -s https://example.org/run-tests.sh)":              true,
 		`sh -c "$(wget -qO- https://example.org/run-tests.sh)"`:         true,
 		"curl -Lo dd-java-agent.jar https://dtdg.co/latest-java-tracer": false,

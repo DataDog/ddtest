@@ -120,8 +120,14 @@ func (javaDiscovery) variantValue(workflow ciWorkflow, job runtimeJob, step runt
 		if _, known := handWrittenTrue(value); !known {
 			return "", false, fmt.Errorf("CI instrumentation setting -Ddd.civisibility.enabled=%s in %s requires review", value, key)
 		}
-		if effective, from := javaEffectiveEnablement(workflow, job, step, row, key, inherited); handWrittenFalse(effective) {
+		effective, from := javaEffectiveEnablement(workflow, job, step, row, key, inherited)
+		if handWrittenFalse(effective) {
 			return "", false, fmt.Errorf("CI instrumentation is explicitly disabled by -Ddd.civisibility.enabled=%s in %s", effective, from)
+		}
+		// Maven passes MAVEN_OPTS quotes on, so "true" there enables nothing.
+		// A hand-written agent's own options are checked with its setup.
+		if enabled, _ := handWrittenTrue(effective); effective != "" && !enabled && javaHandWrittenAgent(key, inherited) == "" {
+			return "", false, fmt.Errorf("CI instrumentation is not enabled by -Ddd.civisibility.enabled=%s in %s, which the JVM does not read as true", effective, from)
 		}
 	}
 	return javaWithoutAgentProperties(key, strings.TrimSpace(strings.ReplaceAll(inherited, javaInstallerAgent, ""))), true, nil
@@ -258,8 +264,8 @@ func (javaDiscovery) unsupportedImage(string) string { return "" }
 // which javaHandWrittenSetup reads with its environment.
 func (javaDiscovery) preloadVariable(string) bool { return false }
 
-func (javaDiscovery) handWrittenSetup(root string, provider ciProvider, workflow ciWorkflow, job runtimeJob, index int, _ map[string]any, framework, site string) *handWrittenSetup {
-	return javaHandWrittenSetup(root, provider, workflow, job, index, framework, site)
+func (javaDiscovery) handWrittenSetup(root string, provider ciProvider, workflow ciWorkflow, job runtimeJob, index int, row map[string]any, framework, site string) *handWrittenSetup {
+	return javaHandWrittenSetup(root, provider, workflow, job, index, row, framework, site)
 }
 
 // The Java CI check reads a hand-written dd-java-agent setup where no

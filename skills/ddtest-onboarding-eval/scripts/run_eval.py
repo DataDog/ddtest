@@ -228,6 +228,13 @@ def printed_executable(output):
 # all trial storage, and the Docker VM's mount cannot hide a folder from it.)
 
 
+def submodule_update_argv(local_mirrors):
+    """The submodule update command. Git refuses file transport for
+    submodules by default; local mirrors need it, for this command only."""
+    allow = ["-c", "protocol.file.allow=always"] if local_mirrors else []
+    return ["git", *allow, "submodule", "update", "--init", "--recursive"]
+
+
 def local_submodule_mirrors(checkout, local, source):
     """Mirrors, beside the mirror source of the local repository local, each
     relative submodule repository the checkout's .gitmodules names, resolved
@@ -1250,6 +1257,7 @@ def run(args):
         command(["git", "fetch", "--update-shallow", "--no-tags", "origin", args.ref], cwd=checkout)
         command(["git", "checkout", "--detach", "FETCH_HEAD"], cwd=checkout)
         copies = []
+        local_mirrors = False
         if source != args.repo:
             copies.append(source)
             # Relative submodule URLs resolve against the checkout's remote:
@@ -1259,10 +1267,12 @@ def run(args):
             if origin.returncode == 0 and origin.stdout.strip():
                 command(["git", "remote", "set-url", "origin", origin.stdout.strip()], cwd=checkout)
             elif getattr(args,"submodules",False):
-                copies.extend(local_submodule_mirrors(checkout, local, source))
+                mirrors = local_submodule_mirrors(checkout, local, source)
+                copies.extend(mirrors)
+                local_mirrors = bool(mirrors)
         manifest["submodules"] = "requested" if getattr(args,"submodules",False) else "not requested"
         if getattr(args,"submodules",False):
-            command(["git", "submodule", "update", "--init", "--recursive"], cwd=checkout)
+            command(submodule_update_argv(local_mirrors), cwd=checkout)
         for copy in copies:
             shutil.rmtree(copy, ignore_errors=True)
         manifest["commit"] = command(["git", "rev-parse", "HEAD"], cwd=checkout)

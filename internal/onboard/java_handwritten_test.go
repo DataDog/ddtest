@@ -84,6 +84,10 @@ func TestHandWrittenJavaSetups(t *testing.T) {
 		{name: "conditional overwrite", before: []string{handWrittenAgentDownload, "if [ -n \"$MIRROR\" ]; then curl -Lo dd-java-agent.jar https://mirror.example/dd-java-agent.jar; fi"}, command: "mvn test", unresolved: "more than one command of the job may write dd-java-agent.jar"},
 		{name: "copied over", before: []string{handWrittenAgentDownload, "cp /cache/agent.jar dd-java-agent.jar"}, command: "mvn test", unresolved: "more than one command of the job may write dd-java-agent.jar"},
 		{name: "copied in", before: []string{"cp /cache/agent.jar dd-java-agent.jar"}, command: "mvn test", unresolved: "dd-java-agent.jar comes from cp /cache/agent.jar dd-java-agent.jar, not a download"},
+		{name: "property enables over the variable", env: map[string]string{"MAVEN_OPTS": "-javaagent:dd-java-agent.jar -Ddd.civisibility.enabled=true", "DD_CIVISIBILITY_ENABLED": "false", "DD_CIVISIBILITY_AGENTLESS_ENABLED": "true", "DD_SITE": "datadoghq.com"}, command: "mvn test", reference: "hand-written dd-java-agent 1.67.1 setup (MAVEN_OPTS)"},
+		{name: "signed in place", before: []string{handWrittenAgentDownload, "jarsigner dd-java-agent.jar release"}, command: "mvn test", unresolved: "more than one command of the job may write dd-java-agent.jar"},
+		{name: "checksum only reads", before: []string{handWrittenAgentDownload, "sha256sum dd-java-agent.jar"}, command: "mvn test", reference: "hand-written dd-java-agent 1.67.1 setup (MAVEN_OPTS)"},
+		{name: "release from the shell's state there", before: []string{"TRACER_VERSION=1.67.1; curl -Lo dd-java-agent.jar https://repo1.maven.org/maven2/com/datadoghq/dd-java-agent/${TRACER_VERSION}/dd-java-agent-${TRACER_VERSION}.jar; TRACER_VERSION=1.68.0"}, command: "mvn test", reference: "hand-written dd-java-agent 1.67.1 setup (MAVEN_OPTS)"},
 		{name: "several URLs", before: []string{"curl -o dd-java-agent.jar https://mirror.example/custom.jar https://repo1.maven.org/maven2/com/datadoghq/dd-java-agent/1.67.1/dd-java-agent-1.67.1.jar"}, command: "mvn test", unresolved: "one command downloads several URLs"},
 		{name: "latest", before: []string{"curl -Lo dd-java-agent.jar https://dtdg.co/latest-java-tracer"}, command: "mvn test", reference: "hand-written dd-java-agent setup (MAVEN_OPTS)", problem: "The job downloads the latest dd-java-agent"},
 		{name: "no download", before: []string{}, command: "mvn test", problem: "No command of the job downloads dd-java-agent.jar with an exact release"},
@@ -137,9 +141,24 @@ func TestHandWrittenJavaSetups(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, root, "pom.xml", handWrittenPOM)
 	job := runtimeJob{Env: agentless, Steps: []runtimeStep{{Run: handWrittenAgentDownload}, {Run: "MAVEN_OPTS=-Xmx1g mvn test"}}}
-	require.Nil(t, javaHandWrittenSetup(root, gitLabCI{}, ciWorkflow{}, job, 1, "junit5", ""), "an inline MAVEN_OPTS replaces the inherited carrier")
+	require.Nil(t, javaHandWrittenSetup(root, gitLabCI{}, ciWorkflow{}, job, 1, nil, "junit5", ""), "an inline MAVEN_OPTS replaces the inherited carrier")
 	job.Steps[1].Run = "mvn test"
-	require.NotNil(t, javaHandWrittenSetup(root, gitLabCI{}, ciWorkflow{}, job, 1, "junit5", ""))
+	require.NotNil(t, javaHandWrittenSetup(root, gitLabCI{}, ciWorkflow{}, job, 1, nil, "junit5", ""))
+
+	// A download step that does not run for the row lends no release; one
+	// whose condition ddtest cannot decide may not run.
+	job = runtimeJob{Env: agentless, Steps: []runtimeStep{{If: "${{ matrix.pinned == 'yes' }}", Run: handWrittenAgentDownload}, {Run: "mvn test"}}}
+	setup := javaHandWrittenSetup(root, gitLabCI{}, ciWorkflow{}, job, 1, map[string]any{"pinned": "no"}, "junit5", "")
+	require.Empty(t, setup.Tracer, "the download does not run for this row")
+	require.Contains(t, setup.problem(), "No command of the job downloads dd-java-agent.jar")
+	require.Equal(t, "1.67.1", javaHandWrittenSetup(root, gitLabCI{}, ciWorkflow{}, job, 1, map[string]any{"pinned": "yes"}, "junit5", "").Tracer)
+	job.Steps[0].If = "${{ secrets.PINNED == 'yes' }}"
+	setup = javaHandWrittenSetup(root, gitLabCI{}, ciWorkflow{}, job, 1, map[string]any{}, "junit5", "")
+	require.Empty(t, setup.Tracer)
+	require.Contains(t, setup.problem(), "inside conditional shell control flow")
+	// Each step reads its own environment, not the test step's.
+	job = runtimeJob{Env: agentless, Steps: []runtimeStep{{Env: map[string]string{"URL": "https://mirror.example/agent.jar"}, Run: "curl -Lo dd-java-agent.jar \"$URL\""}, {Env: map[string]string{"URL": "https://repo1.maven.org/maven2/com/datadoghq/dd-java-agent/1.67.1/dd-java-agent-1.67.1.jar"}, Run: "mvn test"}}}
+	require.Empty(t, javaHandWrittenSetup(root, gitLabCI{}, ciWorkflow{}, job, 1, nil, "junit5", "").Tracer, "the download's own URL is the mirror's")
 	// Without the agent there is no hand-written setup, and the job is
 	// reported as uninstrumented.
 	root = javaHandWrittenRepository(t, provider, map[string]string{"MAVEN_OPTS": "-Xmx1g"}, nil, "mvn test", map[string]string{"pom.xml": handWrittenPOM})

@@ -112,11 +112,13 @@ func (j jenkins) planSetupEdits(root string, workflows []ciWorkflow, targets []c
 	planned := map[string]map[int]bool{}
 	jobs := map[string][]string{}
 	language := discoveryLanguageName(request.Framework)
-	// The plugin set up on host stages runs beside the snippets.
+	// The plugin set up on host stages runs beside the snippets, with the
+	// release every one of them pins, if they all pin one.
 	plugin := slices.ContainsFunc(targets, func(target ciSetupTarget) bool {
 		job, _, ok := gitLabTarget(workflows, target)
 		return ok && !jenkinsContainerJob(job)
 	})
+	pluginRelease := jenkinsPluginRelease(workflows, targets, request.Framework)
 	for _, target := range targets {
 		job, _, ok := gitLabTarget(workflows, target)
 		workflow := jenkinsWorkflowAt(workflows, target.Workflow)
@@ -141,7 +143,7 @@ func (j jenkins) planSetupEdits(root string, workflows []ciWorkflow, targets []c
 					continue // That shell's setup is checked with the others below.
 				}
 				planned[target.Workflow][origin.call] = true
-				snippet, err := jenkinsContainerTarget(root, workflows, target, job, current, request, plugin)
+				snippet, err := jenkinsContainerTarget(root, workflows, target, job, current, request, plugin, pluginRelease)
 				if err != nil {
 					return nil, nil, err
 				}
@@ -229,8 +231,9 @@ func jenkinsStepAfter(after []string, workflow ciWorkflow, job runtimeJob, step 
 // installing request's tracer release (or the one the project's
 // dependencies pin), with the language's commands that follow the setup.
 // plugin reports host stages the plugin sets up beside it, whose own
-// install of a tracer the dependencies do not pin would change the release.
-func jenkinsContainerTarget(root string, workflows []ciWorkflow, target ciSetupTarget, job runtimeJob, step runtimeStep, request ciSetupRequest, plugin bool) (jenkinsSnippetTarget, error) {
+// install of a tracer the dependencies do not pin would change the release;
+// pluginRelease is the release they all pin, if any.
+func jenkinsContainerTarget(root string, workflows []ciWorkflow, target ciSetupTarget, job runtimeJob, step runtimeStep, request ciSetupRequest, plugin bool, pluginRelease string) (jenkinsSnippetTarget, error) {
 	location := target.Workflow + " / " + target.Job
 	origin, ok := step.origin.(jenkinsShellStep)
 	if !ok {
@@ -258,14 +261,19 @@ func jenkinsContainerTarget(root string, workflows []ciWorkflow, target ciSetupT
 	}
 	// A tracer no dependency carries has the exact release ddtest
 	// recommends, as the setup instructions do. The plugin that host stages
-	// run beside it downloads the latest release, and one validation cannot
-	// certify both, so it is pinned to that release first.
+	// run beside it downloads the latest release unless pinned, and one
+	// validation cannot certify both, so the snippet takes the plugin's pin,
+	// and an unpinned plugin is pinned first.
 	if release == "" || strings.HasPrefix(release, "<") {
 		if recommended, ok := language.(ciRecommendedTracer); ok {
-			if plugin {
+			switch {
+			case plugin && pluginRelease != "":
+				release = pluginRelease
+			case plugin:
 				return jenkinsSnippetTarget{}, &EditThenApplyGap{SetupGap{location, "The Datadog Jenkins plugin that sets up the host stages downloads the latest tracer, but this container stage's snippet installs " + recommended.recommendedTracer() + ", and one validation cannot certify both. Pin the plugin to that release, as the setup instructions show, then rerun onboard --apply."}}
+			default:
+				release = recommended.recommendedTracer()
 			}
-			release = recommended.recommendedTracer()
 		}
 	}
 	if release == "" || strings.HasPrefix(release, "<") {
@@ -1301,4 +1309,33 @@ func blockStatements(node groovyNode) []groovyNode {
 		return node.Body.Statements
 	}
 	return nil
+}
+
+// jenkinsPluginRelease is the tracer release every host stage among targets
+// pins its Datadog Jenkins plugin to, for framework's language; empty when
+// one of them does not pin it, or they pin different ones.
+func jenkinsPluginRelease(workflows []ciWorkflow, targets []ciSetupTarget, framework string) string {
+	language := discoveryLanguageFor(framework)
+	if language == nil {
+		return ""
+	}
+	release, found := "", false
+	for _, target := range targets {
+		job, _, ok := gitLabTarget(workflows, target)
+		if !ok || jenkinsContainerJob(job) {
+			continue
+		}
+		// The plugin's option is a setup step of the job, before its tests.
+		pinned := ""
+		for _, step := range job.Steps {
+			if step.Setup != nil && step.Setup.Reference == jenkinsPluginReference {
+				pinned = step.Setup.Inputs[language.actionLanguage()+"-tracer-version"]
+			}
+		}
+		if pinned == "" || found && pinned != release {
+			return ""
+		}
+		release, found = pinned, true
+	}
+	return release
 }

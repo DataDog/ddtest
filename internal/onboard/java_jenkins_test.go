@@ -340,11 +340,26 @@ func TestJavaJenkinsPluginResetIsOneStatement(t *testing.T) {
 // release, and whose container stages get the snippet, which installs the
 // recommended one, cannot be certified by one validation, so apply asks to
 // pin the plugin first.
+// mixedJenkinsfile runs Maven on a host-agent stage and in a container stage.
+const mixedJenkinsfile = "pipeline {\n  agent none\n  stages {\n    stage('Host') {\n      agent { label 'java' }\n      steps {\n        sh 'mvn -B verify'\n      }\n    }\n    stage('Container') {\n      agent { docker { image 'maven:3.9-eclipse-temurin-17' } }\n      steps {\n        sh 'mvn -B verify'\n      }\n    }\n  }\n}\n"
+
 func TestJavaJenkinsMixedStagesPinThePluginFirst(t *testing.T) {
-	root := javaJenkinsRepository(t, "pipeline {\n  agent none\n  stages {\n    stage('Host') {\n      agent { label 'java' }\n      steps {\n        sh 'mvn -B verify'\n      }\n    }\n    stage('Container') {\n      agent { docker { image 'maven:3.9-eclipse-temurin-17' } }\n      steps {\n        sh 'mvn -B verify'\n      }\n    }\n  }\n}\n")
+	root := javaJenkinsRepository(t, mixedJenkinsfile)
 	_, err := PlanProviderSetup(root, "junit5", "")
 	var gap *EditThenApplyGap
 	require.ErrorAs(t, err, &gap)
 	require.Contains(t, gap.Error(), "downloads the latest tracer, but this container stage's snippet installs "+javaRecommendedTracer)
 	require.Contains(t, gap.Error(), "Pin the plugin to that release")
+
+	// Once the host stage's plugin is pinned, the container snippet installs
+	// the same release, and the rerun applies.
+	pinned := strings.Replace(mixedJenkinsfile, "      agent { label 'java' }\n", "      agent { label 'java' }\n      options {\n        datadog(testOptimization: [enabled: true, serviceName: 'app', languages: ['JAVA'], additionalVariables: ["+javaPluginTracerURL+": '"+javaHandWrittenDownload+"']])\n      }\n", 1)
+	writeFile(t, root, "Jenkinsfile", pinned)
+	plan, err := PlanProviderSetup(root, "junit5", "")
+	require.NoError(t, err)
+	_, err = plan.Apply(true)
+	require.NoError(t, err)
+	data, err := os.ReadFile(filepath.Join(root, "Jenkinsfile"))
+	require.NoError(t, err)
+	require.Contains(t, string(data), `DD_SET_TRACER_VERSION_JAVA="`+javaRecommendedTracer+`"`, "the snippet installs the plugin's release")
 }
