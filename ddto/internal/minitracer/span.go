@@ -503,11 +503,12 @@ func (s *Span) finish(tags map[string]any, options ...FinishOption) {
 	}
 }
 
-// metadataCapacity bounds the entries that a span starts with: _dd.origin and
-// _dd.p.tid, the client's tags, env and version, one per Tag option in lists,
-// and tags more. A test event's 22 tags then reserve 25 entries for its 22.
+// metadataCapacity bounds the entries that a span starts with: _dd.origin,
+// _dd.civisibility.tracer_type and _dd.p.tid, the client's tags, env and
+// version, one per Tag option in lists, and tags more. A test event's 22 tags
+// then reserve 26 entries for its 22.
 func metadataCapacity(client *Client, tags int, lists ...[]StartSpanOption) int {
-	capacity := 2 + tags
+	capacity := 3 + tags
 	for _, options := range lists {
 		for _, option := range options {
 			if option.tag {
@@ -567,6 +568,7 @@ func startSpan(client *Client, ctx context.Context, name string, capacity int) (
 		}
 	}
 	s.event.Content.Meta.set("_dd.origin", "ciapp-test")
+	s.event.Content.Meta.set("_dd.civisibility.tracer_type", "ciapp")
 	s.event.Content.Meta.set("_dd.p.tid", hex.EncodeToString(identity.TraceID[:8]))
 	// A carrier boxes nothing, unlike context.WithValue. It is not part of the
 	// span, so a context kept after the span finishes does not retain its tags.

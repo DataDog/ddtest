@@ -1,4 +1,4 @@
-// The hook advice follows dd-trace-go main@870449702d0a0cea26a6223eefe2f0a198069d79, Apache-2.0.
+// The hook advice follows dd-trace-go v2.12.0@2b09354014897e167caf1fd7616d2380897bc16a, Apache-2.0.
 package instrument
 
 import (

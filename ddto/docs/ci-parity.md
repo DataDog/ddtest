@@ -20,8 +20,8 @@ The automatic goleak fixture checks both delivery modes, external helpers,
 race, covered library inputs and deliberate test/HTTP leaks. See
 [delivery and goleak](delivery.md) for its contract.
 
-The SDK reference is `dd-trace-go/main` at
-[`870449702d0a0cea26a6223eefe2f0a198069d79`](https://github.com/DataDog/dd-trace-go/tree/870449702d0a0cea26a6223eefe2f0a198069d79),
+The SDK reference is `dd-trace-go v2.12.0` at
+[`2b09354014897e167caf1fd7616d2380897bc16a`](https://github.com/DataDog/dd-trace-go/tree/2b09354014897e167caf1fd7616d2380897bc16a),
 also the base of the incorporated CI source. The exact module version is owned
 by [`internal/version`](../internal/version/version.go). Orchestrion is pinned
 to `v1.13.2-0.20260917114356-5c24783fcd76`; the fixture loads

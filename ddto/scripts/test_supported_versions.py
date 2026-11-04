@@ -37,6 +37,18 @@ class WindowTests(unittest.TestCase):
         self.assertEqual("v2-main", resolved["dd-trace-go"]["main"])
         self.assertEqual("orchestrion-main", resolved["orchestrion"]["main"])
 
+    def test_resolve_keeps_main_pin_when_branch_points_at_release(self):
+        recorded = {"orchestrion": {**ORCHESTRION, "releases": ["v1.14.0"], "main": "v1.15.0-0.20261001000000-deadbeefcafe"}}
+
+        def query(*args):
+            if args[0] == "-versions":
+                return ORCHESTRION["module"] + " v1.14.0 v1.15.0\n"
+            return json.dumps({"Path": ORCHESTRION["module"], "Version": "v1.15.0"})
+
+        resolved = supported_versions.resolve(recorded, query)["orchestrion"]
+        self.assertEqual(["v1.14.0", "v1.15.0"], resolved["releases"])
+        self.assertEqual(recorded["orchestrion"]["main"], resolved["main"])
+
     def test_differences_name_new_and_old_releases(self):
         recorded = {"dd-trace-go": {**SDK, "releases": ["v2.10.0", "v2.10.1"], "main": "old"}}
         resolved = {"dd-trace-go": {**SDK, "releases": ["v2.10.1", "v2.11.0"], "main": "new"}}

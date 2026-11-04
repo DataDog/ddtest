@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
   "repository": "https://github.com/DataDog/dd-trace-go",
-  "commit": "870449702d0a0cea26a6223eefe2f0a198069d79",
+  "commit": "2b09354014897e167caf1fd7616d2380897bc16a",
   "default_branch": "main",
-  "version": "v2.12.0-dev.3.0.20261008222249-870449702d0a",
+  "version": "v2.12.0",
   "module": "github.com/DataDog/dd-trace-go/v2",
   "licenses": [
     "LICENSE"
@@ -11,7 +11,7 @@
   "files": [
     {
       "path": "ADAPTATIONS.md",
-      "sha256": "9caddd5071da1f0571e72916e0be10bf93f935794cbbb734b24b8bfc5f972fd5",
+      "sha256": "53e1e189e9c35b8196138cae2fbc03959f697666a4c624d31c3268c232ccc12b",
       "role": "local"
     },
     {
@@ -30,12 +30,12 @@
     },
     {
       "path": "README.md",
-      "sha256": "09e694830f7dcf4b70f1641e5f76d1d2c00c6213256f28f91c2d060b3f2068de",
+      "sha256": "a00fbc6c3d518241055c666ecbaed29a0bc1eb4e0da5c3f7eab41a9eb60507ce",
       "role": "local"
     },
     {
       "path": "TESTS.json",
-      "sha256": "453b7c8543fba7eaf0c135301ac58b41d50f285981fe9072d2db8d05d7067c97",
+      "sha256": "b271a4ccbc8c6439e4b43be28cc20b3dce779134acff5ef7fe44e9fc3bfe7eb3",
       "role": "local"
     },
     {
@@ -161,7 +161,7 @@
       "sha256": "6a83217667c897d6ca996940a8c5e33f74238a7d7bc9eca2587d284c4237bb3d",
       "role": "adapted",
       "source_path": "internal/civisibility/integrations/civisibility.go",
-      "source_sha256": "1ef15ef198bb3b318e69b7602c562faccbeb40f94d505ba1cef67c36059c90d5"
+      "source_sha256": "f12b923a35e67b569bc31a85feab9bfb640a09c24416e3ef880766a6f16fcbcd"
     },
     {
       "path": "civisibility/integrations/civisibility_crash.go",
@@ -540,7 +540,7 @@
       "sha256": "212a133449ea14564b3396dc80e196cb2b14530c5c71efa08d57179179c21afc",
       "role": "adapted",
       "source_path": "internal/civisibility/integrations/gotesting/instrumentation_orchestrion.go",
-      "source_sha256": "e07e0e5d272cdf6148fea865f53b1f1f40dfe29b60b4c461bfe29a5dd52784b3"
+      "source_sha256": "88e71d11631e9fc57b026d076423ed28f12be116f35202c2a3760040f9d44faa"
     },
     {
       "path": "civisibility/integrations/gotesting/instrumentation_selector_test.go",
@@ -585,7 +585,7 @@
       "sha256": "7b177dc04251df3be578603d780c69d07b107a8bb5e137aba7a7b8f39b9d5302",
       "role": "adapted",
       "source_path": "internal/civisibility/integrations/gotesting/quarantine_process.go",
-      "source_sha256": "127b790b31e406e5b1d4702ef09e0a7b37cfff06488f0f97b20fa987d67cd8e5"
+      "source_sha256": "644a3fd35e2e83593a073f3db1ae19fe8358d6821b4db4e9c966f278c9a1ffb1"
     },
     {
       "path": "civisibility/integrations/gotesting/quarantine_race.go",
@@ -1915,7 +1915,7 @@
       "sha256": "dee1eadf4c0db7dea958dd27b19973295a3630554ef1941b00ee48e751428753",
       "role": "adapted",
       "source_path": "ddtrace/ext/tags.go",
-      "source_sha256": "432bb906c7f590c41e847d71e5e2b7856ca258ef4a0cf5429a55154a82dccd88"
+      "source_sha256": "cf58778049ebd505c5640672906b09778cfeefee87dd8e263a0a1358574dcc44"
     },
     {
       "path": "env.go",
@@ -2027,7 +2027,7 @@
       "sha256": "7899fd48591b0ed1fb0ec2ede7d9e05cebbd922a0920bed5924386a805825ad4",
       "role": "adapted",
       "source_path": "internal/log/log.go",
-      "source_sha256": "021fafa9f8f8b154356fdf3a80a099cd949fecd9eba8d212946ee61597600e74"
+      "source_sha256": "0fbc5649155020af8c3e7343ad829e929234b3418d41bed7722d03b5a7027e36"
     },
     {
       "path": "log/log_test.go",
@@ -2092,10 +2092,10 @@
     },
     {
       "path": "stacktrace/contribs_generated.go",
-      "sha256": "3b722208f41db61fe638bdfb38a598090fd0ae99a19d4d74550b5dcfdd8a4600",
+      "sha256": "5a8a25a96721696d3be14947e6cab216f0da97dd97017eb34f11ef1688867fe2",
       "role": "upstream",
       "source_path": "internal/stacktrace/contribs_generated.go",
-      "source_sha256": "3b722208f41db61fe638bdfb38a598090fd0ae99a19d4d74550b5dcfdd8a4600"
+      "source_sha256": "5a8a25a96721696d3be14947e6cab216f0da97dd97017eb34f11ef1688867fe2"
     },
     {
       "path": "stacktrace/stacktrace.go",
@@ -2177,7 +2177,7 @@
       "sha256": "8cac8dcd7a1ab7da1281275d0d50cbd9f1dd4893e71fb5b31c60ee9b2a36fa9d",
       "role": "adapted",
       "source_path": "internal/telemetry/internal/knownmetrics/known_metrics.common.go",
-      "source_sha256": "3701afc684a6481d00b834843f726186b195c75d054fb7cb338f00a85641c5c8"
+      "source_sha256": "af51d12fe34b95ceb3791a87624a6974f90cb5297399f7ceedf81d85bc216d0d"
     },
     {
       "path": "telemetry/internal/knownmetrics/known_metrics.go",
@@ -2488,7 +2488,7 @@
       "sha256": "47fa466f826a5452adb6292c824d44292bb4143acc36efc9c85e7ed220753f8b",
       "role": "adapted",
       "source_path": "internal/utils.go",
-      "source_sha256": "7b2caa9a9040c85c0d47c7512cb9280fe376cbbc9b62034210f368db94fc6353"
+      "source_sha256": "e31b9023a2adbbb9d28880466f3efc16e1a23856db02159f29a55659d2980be2"
     }
   ],
   "layout_mapping": {
@@ -2538,7 +2538,8 @@
           "source_path": "internal/civisibility/integrations/gotesting/quarantine_process.go",
           "source_sha256": "644a3fd35e2e83593a073f3db1ae19fe8358d6821b4db4e9c966f278c9a1ffb1"
         }
-      ]
+      ],
+      "integrated_commit": "2b09354014897e167caf1fd7616d2380897bc16a"
     },
     {
       "name": "go-fuzz-examples",
@@ -2704,7 +2705,8 @@
           "source_path": "internal/log/log.go",
           "source_sha256": "0fbc5649155020af8c3e7343ad829e929234b3418d41bed7722d03b5a7027e36"
         }
-      ]
+      ],
+      "integrated_commit": "2b09354014897e167caf1fd7616d2380897bc16a"
     },
     {
       "name": "settings-test-level",

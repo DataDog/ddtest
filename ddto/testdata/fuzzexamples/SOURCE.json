@@ -1,9 +1,9 @@
 {
   "repository": "https://github.com/DataDog/dd-trace-go",
   "pr": 5442,
-  "commit": "870449702d0a0cea26a6223eefe2f0a198069d79",
-  "version": "v2.12.0-dev.3.0.20261008222249-870449702d0a",
-  "base_commit": "870449702d0a0cea26a6223eefe2f0a198069d79",
+  "commit": "2b09354014897e167caf1fd7616d2380897bc16a",
+  "version": "v2.12.0",
+  "base_commit": "2b09354014897e167caf1fd7616d2380897bc16a",
   "files": [
     {
       "path": "app/app_test.go",
@@ -50,7 +50,7 @@
     {
       "path": "internal/fuzzfixture/subprocess.go",
       "source_path": "internal/civisibility/integrations/gotesting/fixtures/itrbackfill/internal/fuzzfixture/subprocess.go",
-      "source_sha256": "acff0cf7e152b04b9608b344ed76aa92ffd480c9864472d05f44cca30a0e1c7b",
+      "source_sha256": "82a127a60cd281a0ad576caabbf1dbb3e4f7fed3590834e284cdb6bb98a38911",
       "sha256": "31972d0e7155eb4e70f256c9103ed3f9ccb82bf59c8eaf08825e0b0f834164a5",
       "adaptation": "Preserve duration assertions; canonicalize only printed negative zero, rejecting negative nonzero values. Same parser for SDK and Mini."
     },

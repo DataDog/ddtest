@@ -53,6 +53,12 @@ def resolve(recorded, query=go_list):
     for name, entry in recorded.items():
         versions = query("-versions", entry["module"]).split()[1:]
         main = json.loads(query("-json", entry["module"] + "@main"))["Version"]
+        # A branch that points exactly at a release resolves to that release,
+        # not to a pseudo-version. The release is already in the window, so
+        # retain the previous main pin until the branch advances rather than
+        # testing the same commit twice and losing the stable pseudo-version.
+        if release_key(main):
+            main = entry["main"]
         resolved[name] = window(entry, versions, main)
     return resolved
 

@@ -1,5 +1,5 @@
 {
-  "sdk": "github.com/DataDog/dd-trace-go/v2@v2.12.0-dev.3.0.20261008222249-870449702d0a",
+  "sdk": "github.com/DataDog/dd-trace-go/v2@v2.12.0",
   "full_file_count": 60,
   "full_ci_test_file_count": 59,
   "selected_test_or_helper_files": 8,
@@ -544,7 +544,7 @@
     {
       "source": "internal/civisibility/integrations/gotesting/quarantine_process_race_test.go",
       "destination": "internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting/ci_coverage_concurrency_test.go",
-      "source_sha256": "9567417fe639c414d332aebd0aa5699c1b8d280892375c933a189fa703020413",
+      "source_sha256": "fa93160c8b3dc590760ab7ae224b47a96ea54950025c781eddb30099391c54a4",
       "adapted_sha256": "18f52c1dec6b2f04d6317dc193ec391aaa1e03aa3bc89cb2fe38b5f9c0a507ff",
       "kind": "selected tests",
       "adaptation": "Only TestQuarantinedRaceCoverageCoordinatorDiscardsOnlySiblingOverlap, TestQuarantinedRaceParallelContinuationDisablesCoverage and TestQuarantinedRaceAggregateCoverageStartsAtSelectedRoot are extracted; standard-library assertion helpers"
@@ -591,7 +591,7 @@
   ],
   "not_fully_ported_scope": "APM mock/span-count tests, Orchestrion-specific fixtures, subprocess control and platform cases are not represented as a complete upstream suite. POC-owned SDK/Orchestrion differential tests separately cover native testing and Testify lifecycle, retries, EFD, ITR, quarantine, attempt-to-fix, coverage and deferred delivery; they do not turn this inventory into a full upstream-suite port.",
   "ci_only_cleanup": "The retired APM endpoint test is explicitly marked replacement; reduced telemetry helpers are marked adapted. Full CI test-file count is unchanged. The unused telemetrytest MockClient helper is not incorporated, so tests need no testify/mock.",
-  "base_commit": "870449702d0a0cea26a6223eefe2f0a198069d79",
+  "base_commit": "2b09354014897e167caf1fd7616d2380897bc16a",
   "local_performance_tests": [
     {
       "path": "telemetry/concurrency_test.go",

@@ -2,7 +2,7 @@
 
 Mini is the default runtime. Explicit `--runtime=sdk` selects the unchanged
 public dd-trace-go SDK, pinned to
-[main at 870449702d0a](https://github.com/DataDog/dd-trace-go/tree/870449702d0a0cea26a6223eefe2f0a198069d79).
+[v2.12.0 at 2b0935401489](https://github.com/DataDog/dd-trace-go/tree/2b09354014897e167caf1fd7616d2380897bc16a).
 The reference is Orchestrion commit
 [5c24783fcd76](https://github.com/DataDog/orchestrion/commit/5c24783fcd76f00cd1ff21c418a6662785d6c811),
 built as `v1.13.2-0.20260917114356-5c24783fcd76` from the locked

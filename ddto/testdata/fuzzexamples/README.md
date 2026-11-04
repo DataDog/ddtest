@@ -1,7 +1,7 @@
 # SDK Fuzz and Examples fixtures
 
 These workloads and their assertions come from DataDog/dd-trace-go PR #5442
-at `870449702d0a0cea26a6223eefe2f0a198069d79`. [SOURCE.json](SOURCE.json)
+as included in v2.12.0 at `2b09354014897e167caf1fd7616d2380897bc16a`. [SOURCE.json](SOURCE.json)
 records every original path, original hash and local hash. [LICENSE](LICENSE)
 is the upstream Apache-2.0 license.
 

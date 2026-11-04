@@ -2,8 +2,8 @@
 
 - Repository: https://github.com/DataDog/dd-trace-go
 - Default branch: `main`
-- Base commit: `870449702d0a0cea26a6223eefe2f0a198069d79`
-- Go module version: `v2.12.0-dev.3.0.20261008222249-870449702d0a`
+- Base commit: `2b09354014897e167caf1fd7616d2380897bc16a`
+- Go module version: `v2.12.0`
 - License: original Apache-2.0 text in [LICENSE](LICENSE).
 - Files and hashes: [SOURCE.json](SOURCE.json).
 - Ported test inventory and adaptations: [TESTS.json](TESTS.json).

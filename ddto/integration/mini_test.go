@@ -172,8 +172,8 @@ var adaptedMiniCallSites = []struct{ function, mini, sdk string }{
 	{"integrations/gotesting.runTestWithRetry", "integrations/gotesting/instrumentation.go:1011", "integrations/gotesting/instrumentation.go:1011"},
 	{"integrations/gotesting.runRetryAttemptCapabilityFallback", "integrations/gotesting/instrumentation.go:1138", "integrations/gotesting/instrumentation.go:1138"},
 	{"integrations/gotesting.(*M).executeInternalTest.func1", "integrations/gotesting/testing.go:882", "integrations/gotesting/testing.go:864"},
-	{"integrations/gotesting.instrumentTestingTFuncWithSourceOptions.func1.1", "integrations/gotesting/instrumentation_orchestrion.go:427", "integrations/gotesting/instrumentation_orchestrion.go:424"},
-	{"integrations/gotesting.instrumentTestingTFuncWithSourceOptions.func1", "integrations/gotesting/instrumentation_orchestrion.go:433", "integrations/gotesting/instrumentation_orchestrion.go:430"},
+	{"integrations/gotesting.instrumentTestingTFuncWithSourceOptions.func1.1", "integrations/gotesting/instrumentation_orchestrion.go:427", "integrations/gotesting/instrumentation_orchestrion.go:431"},
+	{"integrations/gotesting.instrumentTestingTFuncWithSourceOptions.func1", "integrations/gotesting/instrumentation_orchestrion.go:433", "integrations/gotesting/instrumentation_orchestrion.go:437"},
 	{"integrations/gotesting.runRetryAttemptBody", "integrations/gotesting/retry_attempt_runner.go:452", "integrations/gotesting/retry_attempt_runner.go:452"},
 	{"integrations/gotesting.runFreshRetryAttemptOwner", "integrations/gotesting/retry_attempt_runner.go:202", "integrations/gotesting/retry_attempt_runner.go:202"},
 }

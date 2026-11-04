@@ -37,7 +37,7 @@ FUZZ_EXAMPLE_SCENARIOS = {
     "test-management", "active-fuzz", "filtered", "fatal-shutdown",
     "skip-lifecycle", "parallel-duration", "corpus-lifecycle", "repeat-run",
 }
-FUZZ_EXAMPLE_COMMIT = "870449702d0a0cea26a6223eefe2f0a198069d79"
+FUZZ_EXAMPLE_COMMIT = "2b09354014897e167caf1fd7616d2380897bc16a"
 
 
 def validate_fuzz_examples(report, expected=None):

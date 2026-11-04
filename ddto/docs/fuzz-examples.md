@@ -2,7 +2,7 @@
 
 Mini uses the Fuzz/Examples support from
 [dd-trace-go PR #5442](https://github.com/DataDog/dd-trace-go/pull/5442),
-integrated in `main` at `870449702d0a0cea26a6223eefe2f0a198069d79`. All CI
+included in `v2.12.0` at `2b09354014897e167caf1fd7616d2380897bc16a`. All CI
 features and differential tests use this
 [SDK base](../internal/thirdparty/dd-trace-go/SOURCE.json), and the feature adds
 no external runtime dependency.
@@ -202,5 +202,5 @@ the recorded SDK base:
 
 ```sh
 python scripts/upstream.py patch --library dd-trace-go --source /path/to/sdk \
-  --source-commit 870449702d0a0cea26a6223eefe2f0a198069d79 > fuzz-examples.patch
+  --source-commit 2b09354014897e167caf1fd7616d2380897bc16a > fuzz-examples.patch
 ```

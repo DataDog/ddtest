@@ -1,6 +1,6 @@
 # Runtime adaptations to the SDK port
 
-Base: [`870449702d0a0cea26a6223eefe2f0a198069d79`](https://github.com/DataDog/dd-trace-go/commit/870449702d0a0cea26a6223eefe2f0a198069d79).
+Base: [`2b09354014897e167caf1fd7616d2380897bc16a`](https://github.com/DataDog/dd-trace-go/commit/2b09354014897e167caf1fd7616d2380897bc16a).
 `SOURCE.json` retains each original path/hash alongside the local hash. This
 record explains changes that an upstream synchronization must review manually.
 
