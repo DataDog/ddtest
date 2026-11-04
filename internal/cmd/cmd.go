@@ -127,12 +127,16 @@ var rootPersistentFlagBindings = []persistentFlagBinding{
 	{configKey: "worker_env", flagName: "worker-env"},
 	{configKey: "ci_node", flagName: "ci-node"},
 	{configKey: "ci_node_workers", flagName: "ci-node-workers"},
+	{configKey: "ci_node_speedup", flagName: "ci-node-speedup"},
+	{configKey: "ci_node_file_overhead", flagName: "ci-node-file-overhead"},
 	{configKey: "command", flagName: "command"},
 	{configKey: "vitest_config", flagName: "vitest-config"},
 	{configKey: "tests_location", flagName: "tests-location"},
 	{configKey: "tests_exclude_pattern", flagName: "tests-exclude-pattern"},
 	{configKey: "test_discovery_cache", flagName: "test-discovery-cache"},
 	{configKey: "durations_file", flagName: "durations-file"},
+	{configKey: "test_durations_file", flagName: "test-durations-file"},
+	{configKey: "split_files_over", flagName: "split-files-over"},
 	{configKey: "test_skipping_mode", flagName: "test-skipping-mode"},
 	{configKey: "force_full_test_discovery", flagName: "force-full-test-discovery"},
 	{configKey: "strict_discovery", flagName: "strict-discovery"},
@@ -156,12 +160,16 @@ func init() {
 	rootCmd.PersistentFlags().String("worker-env", "", "Worker environment configuration")
 	rootCmd.PersistentFlags().Int("ci-node", -1, "CI node index to run (0-indexed; default: -1 disables CI-node mode)")
 	rootCmd.PersistentFlags().String("ci-node-workers", "1", `Number of parallel workers per CI node (positive integer or "ncpu"; default: 1)`)
+	rootCmd.PersistentFlags().String("ci-node-speedup", "1", "How many times faster than one test process a CI node runs its files, as with pytest-xdist workers in the test command (for example, 1.5); planning divides a node's test time by it")
+	rootCmd.PersistentFlags().String("ci-node-file-overhead", "0s", "Modeled time a CI node spends per test file it gets, such as collecting it (for example, 150ms; 0s disables it)")
 	rootCmd.PersistentFlags().String("command", "", "Test command that ddtest should wrap")
 	rootCmd.PersistentFlags().String("vitest-config", "", "Vitest configuration file for discovery and execution (defaults to Vitest config discovery)")
 	rootCmd.PersistentFlags().String("tests-location", "", "Glob pattern used to discover test files")
 	rootCmd.PersistentFlags().String("tests-exclude-pattern", "", "Glob pattern used to exclude test files from discovery")
 	rootCmd.PersistentFlags().String("test-discovery-cache", "", "Path to a restored test discovery cache file to import before planning")
 	rootCmd.PersistentFlags().String("durations-file", "", "Plan with the suite durations in this JSON file, in the shape Datadog's durations endpoint returns, instead of fetching them")
+	rootCmd.PersistentFlags().String("test-durations-file", "", `JSON file of per-test durations, {"files": {path: {test name: nanoseconds}}}, listing every test of each file it names, so planning can split those files (see --split-files-over)`)
+	rootCmd.PersistentFlags().String("split-files-over", "0s", "Split each test file expected to take longer than this, and whose tests --test-durations-file lists, into parts of its tests for different CI nodes (for example, 30s; 0s disables it)")
 	rootCmd.PersistentFlags().String("test-skipping-mode", "test", `TIA skipping granularity for Ruby and Python ("test" or "suite"; invalid values fall back to "test")`)
 	rootCmd.PersistentFlags().Bool("force-full-test-discovery", false, "Force full test discovery when the framework supports it")
 	rootCmd.PersistentFlags().Bool("strict-discovery", false, "Fail planning when full test discovery fails")

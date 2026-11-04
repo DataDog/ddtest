@@ -24,6 +24,7 @@ const (
 	PlanPlatformTagsCreationFailed             Code = "plan_platform_tags_creation_failed"
 	PlanRuntimeTagsInvalid                     Code = "plan_runtime_tags_invalid"
 	PlanDurationsFileInvalid                   Code = "plan_durations_file_invalid"
+	PlanTestDurationsFileInvalid               Code = "plan_test_durations_file_invalid"
 	PlanFrameworkDetectionFailed               Code = "plan_framework_detection_failed"
 	PlanOptimizationClientCreationFailed       Code = "plan_optimization_client_creation_failed"
 	PlanTestFilesResolutionFailed              Code = "plan_test_files_resolution_failed"

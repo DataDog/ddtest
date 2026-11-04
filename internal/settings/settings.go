@@ -3,6 +3,7 @@ package settings
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"runtime"
 	"strconv"
@@ -15,6 +16,7 @@ import (
 
 const (
 	defaultCiNodeWorkers          = 1
+	defaultCiNodeSpeedup          = 1.0
 	defaultParallelRunnerOverhead = 25 * time.Second
 	defaultTargetTime             = 0 * time.Second
 	ncpuCiNodeWorkers             = "ncpu"
@@ -28,6 +30,8 @@ const (
 	workerEnv                     = "DD_TEST_OPTIMIZATION_RUNNER_WORKER_ENV"
 	ciNodeEnv                     = "DD_TEST_OPTIMIZATION_RUNNER_CI_NODE"
 	ciNodeWorkersEnv              = "DD_TEST_OPTIMIZATION_RUNNER_CI_NODE_WORKERS"
+	ciNodeSpeedupEnv              = "DD_TEST_OPTIMIZATION_RUNNER_CI_NODE_SPEEDUP"
+	ciNodeFileOverheadEnv         = "DD_TEST_OPTIMIZATION_RUNNER_CI_NODE_FILE_OVERHEAD"
 	commandEnv                    = "DD_TEST_OPTIMIZATION_RUNNER_COMMAND"
 	testsLocationEnv              = "DD_TEST_OPTIMIZATION_RUNNER_TESTS_LOCATION"
 	testsExcludePatternEnv        = "DD_TEST_OPTIMIZATION_RUNNER_TESTS_EXCLUDE_PATTERN"
@@ -123,6 +127,8 @@ type Config struct {
 	WorkerEnv              string            `mapstructure:"worker_env"`
 	CiNode                 int               `mapstructure:"ci_node"`
 	CiNodeWorkers          int               `mapstructure:"ci_node_workers"`
+	CiNodeSpeedup          float64           `mapstructure:"ci_node_speedup"`
+	CiNodeFileOverhead     time.Duration     `mapstructure:"ci_node_file_overhead"`
 	Command                string            `mapstructure:"command"`
 	VitestConfig           string            `mapstructure:"vitest_config"`
 	TestsLocation          string            `mapstructure:"tests_location"`
@@ -136,6 +142,8 @@ type Config struct {
 	ReportEnabled          bool              `mapstructure:"report_enabled"`
 	RecordPayloads         string            `mapstructure:"record_payloads"`
 	DurationsFile          string            `mapstructure:"durations_file"`
+	TestDurationsFile      string            `mapstructure:"test_durations_file"`
+	SplitFilesOver         time.Duration     `mapstructure:"split_files_over"`
 }
 
 var (
@@ -201,6 +209,24 @@ func Init() {
 		os.Exit(1)
 	}
 	viper.Set("parallel_runner_overhead", parallelRunnerOverhead)
+	ciNodeSpeedup, err := ParseCiNodeSpeedup(viper.GetString("ci_node_speedup"))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
+		os.Exit(1)
+	}
+	viper.Set("ci_node_speedup", ciNodeSpeedup)
+	ciNodeFileOverhead, err := ParseNonNegativeDurationSetting(viper.GetString("ci_node_file_overhead"), 0, "ci-node-file-overhead")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
+		os.Exit(1)
+	}
+	viper.Set("ci_node_file_overhead", ciNodeFileOverhead)
+	splitFilesOver, err := ParseNonNegativeDurationSetting(viper.GetString("split_files_over"), 0, "split-files-over")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
+		os.Exit(1)
+	}
+	viper.Set("split_files_over", splitFilesOver)
 	targetTime, err := ParseNonNegativeDurationSetting(
 		viper.GetString("target_time"),
 		defaultTargetTime,
@@ -230,6 +256,8 @@ func setDefaults() {
 	viper.SetDefault("worker_env", "")
 	viper.SetDefault("ci_node", -1)
 	viper.SetDefault("ci_node_workers", strconv.Itoa(defaultCiNodeWorkers))
+	viper.SetDefault("ci_node_speedup", strconv.FormatFloat(defaultCiNodeSpeedup, 'f', -1, 64))
+	viper.SetDefault("ci_node_file_overhead", "0s")
 	viper.SetDefault("command", "")
 	viper.SetDefault("vitest_config", "")
 	viper.SetDefault("tests_location", "")
@@ -242,6 +270,8 @@ func setDefaults() {
 	viper.SetDefault("report_enabled", true)
 	viper.SetDefault("record_payloads", "")
 	viper.SetDefault("durations_file", "")
+	viper.SetDefault("test_durations_file", "")
+	viper.SetDefault("split_files_over", "0s")
 }
 
 // NormalizeTestSkippingLevel accepts only the backend-supported TIA skipping modes.
@@ -279,6 +309,20 @@ func ParseNonNegativeDurationSetting(value string, defaultValue time.Duration, s
 
 // ParseCiNodeWorkers resolves the ci_node_workers setting from either a positive integer
 // or the "ncpu" magic value.
+// ParseCiNodeSpeedup resolves the ci_node_speedup setting, a number of at
+// least 1.
+func ParseCiNodeSpeedup(value string) (float64, error) {
+	normalized := strings.TrimSpace(value)
+	if normalized == "" {
+		return defaultCiNodeSpeedup, nil
+	}
+	speedup, err := strconv.ParseFloat(normalized, 64)
+	if err != nil || math.IsNaN(speedup) || speedup < 1 {
+		return 0, fmt.Errorf("ci_node_speedup must be a number of at least 1, got %q", value)
+	}
+	return speedup, nil
+}
+
 func ParseCiNodeWorkers(value string) (int, error) {
 	normalized := strings.TrimSpace(value)
 	if normalized == "" {
@@ -335,6 +379,19 @@ func GetWorkerEnv() string {
 
 func GetCiNode() int {
 	return Get().CiNode
+}
+
+// GetCiNodeSpeedup is how many times faster than one test process a CI node
+// runs its files, as with pytest-xdist workers in the test command. Planning
+// divides a node's test time by it.
+func GetCiNodeSpeedup() float64 {
+	return Get().CiNodeSpeedup
+}
+
+// GetCiNodeFileOverhead is what planning adds to a CI node for every test
+// file it gets, such as the time to collect it.
+func GetCiNodeFileOverhead() time.Duration {
+	return Get().CiNodeFileOverhead
 }
 
 func GetCiNodeWorkers() int {
@@ -396,6 +453,18 @@ func GetRecordPayloads() string {
 // instead of fetching them from Datadog, or empty to fetch them as usual.
 func GetDurationsFile() string {
 	return Get().DurationsFile
+}
+
+// GetTestDurationsFile is a JSON file of per-test durations that lets
+// planning split long test files by test, or empty.
+func GetTestDurationsFile() string {
+	return Get().TestDurationsFile
+}
+
+// GetSplitFilesOver is how long a test file may be expected to take before
+// planning splits it by test, with GetTestDurationsFile, or 0 to never split.
+func GetSplitFilesOver() time.Duration {
+	return Get().SplitFilesOver
 }
 
 // GetRuntimeTagsMap parses the runtime_tags setting as JSON and returns it as a map.

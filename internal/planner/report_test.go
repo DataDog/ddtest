@@ -48,6 +48,8 @@ func TestPrintPlanReport_AllData(t *testing.T) {
 			WorkerEnv:              "RAILS_ENV=test;DATABASE_PASSWORD=secret",
 			CiNode:                 0,
 			CiNodeWorkers:          2,
+			CiNodeSpeedup:          1.5,
+			CiNodeFileOverhead:     150 * time.Millisecond,
 			Command:                "pytest -q",
 			TestsLocation:          "spec/**/*_spec.rb",
 			TestsExcludePattern:    "spec/system/**/*_spec.rb",
@@ -228,6 +230,8 @@ DDTest settings
   Worker env: DATABASE_PASSWORD, RAILS_ENV
   CI node: 0
   CI node workers: 2
+  CI node speedup: 1.5
+  CI node file overhead: 150ms
   Command: pytest -q
   Tests location: spec/**/*_spec.rb
   Tests exclude pattern: spec/system/**/*_spec.rb
@@ -570,6 +574,8 @@ func TestPrintDDTestSettingsReport_AllSupportedSettings(t *testing.T) {
 	config.TargetTime = 12 * time.Minute
 	config.CiNode = 0
 	config.CiNodeWorkers = 2
+	config.CiNodeSpeedup = 1.5
+	config.CiNodeFileOverhead = 150 * time.Millisecond
 	config.WorkerEnv = "TOKEN=secret"
 	config.TestsLocation = "tests/**/*_test.py"
 	config.TestsSelectionPattern = "tests/unit/**/*"
@@ -582,6 +588,8 @@ func TestPrintDDTestSettingsReport_AllSupportedSettings(t *testing.T) {
 	config.ReportEnabled = false
 	config.RecordPayloads = "/tmp/payloads"
 	config.DurationsFile = "/tmp/durations.json"
+	config.TestDurationsFile = "/tmp/test-durations.json"
+	config.SplitFilesOver = 30 * time.Second
 
 	var output strings.Builder
 	printDDTestSettingsReport(&output, &config)
@@ -610,6 +618,8 @@ func TestPrintDDTestSettingsReport_AllSupportedSettings(t *testing.T) {
 		"Worker env",
 		"CI node",
 		"CI node workers",
+		"CI node speedup",
+		"CI node file overhead",
 		"Command",
 		"Vitest config",
 		"Tests location",
@@ -623,6 +633,8 @@ func TestPrintDDTestSettingsReport_AllSupportedSettings(t *testing.T) {
 		"Report enabled",
 		"Record payloads",
 		"Durations file",
+		"Test durations file",
+		"Split files over",
 	}
 	if !reflect.DeepEqual(names, expectedNames) {
 		t.Fatalf("unexpected changed setting names:\ngot:  %v\nwant: %v", names, expectedNames)

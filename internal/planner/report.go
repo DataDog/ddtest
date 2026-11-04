@@ -144,6 +144,7 @@ func defaultDDTestSettings() settings.Config {
 		TargetTime:             settings.DefaultTargetTime(),
 		CiNode:                 -1,
 		CiNodeWorkers:          1,
+		CiNodeSpeedup:          1,
 		TestSkippingLevel:      settings.TestSkippingLevelTest,
 		ReportEnabled:          true,
 	}

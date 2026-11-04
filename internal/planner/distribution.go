@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"os"
 	"path/filepath"
 	"slices"
@@ -149,7 +150,7 @@ func (tp *TestPlanner) CreateTestSplits(testFiles map[string]int, parallelRunner
 	}
 	if parallelRunners > 1 {
 		// Distribute test files across parallel runners using weighted list scheduling.
-		distribution := tp.DistributeWeightedTestFiles(testFiles, parallelRunners)
+		distribution := expandSplitUnits(tp.DistributeWeightedTestFiles(testFiles, parallelRunners), tp.splitLines)
 		if err := writeDistributedTestSplits(distribution, constants.TestsSplitDir); err != nil {
 			return err
 		}
@@ -265,9 +266,35 @@ func scoreRunnerSplit(testFiles map[string]int, parallelRunners int, basenameAff
 // scorePreparedRunnerSplit scores a candidate against already prepared files
 // without building runner file lists, so wide parallelism ranges stay cheap.
 func scorePreparedRunnerSplit(prepared preparedSplitFiles, parallelRunners int) splitScore {
+	return scorePreparedNodeSplit(prepared, parallelRunners, defaultNodeModel)
+}
+
+func scorePreparedNodeSplit(prepared preparedSplitFiles, parallelRunners int, model nodeModel) splitScore {
 	builder := newTestSplitBuilder(parallelRunners)
 	builder.placePreparedFiles(prepared, nil)
-	return builder.score()
+	return builder.scoreNodes(model)
+}
+
+// nodeModel is how long a CI node takes for the files it gets. Each file's
+// weight is its duration in one test process; a node runs its load speedup
+// times faster, as when it runs its files with several processes such as
+// pytest-xdist workers, and pays fileOverhead for every file, collecting it.
+// The speedup is what the node really gets, not its process count: two
+// pytest-xdist workers on two vCPUs ran sympy's tests about 1.5 times as fast
+// as one process, and four workers on four vCPUs about 2.6 times.
+type nodeModel struct {
+	speedup      float64
+	fileOverhead time.Duration
+}
+
+// defaultNodeModel is one test process per node and no cost per file.
+var defaultNodeModel = nodeModel{speedup: 1}
+
+// nodeTime returns the modeled milliseconds of a node with load milliseconds
+// of tests in files files.
+func (m nodeModel) nodeTime(load, files int) int {
+	speedup := max(m.speedup, 1)
+	return int(math.Ceil(float64(load)/speedup)) + files*int(m.fileOverhead/time.Millisecond)
 }
 
 type testSplitBuilder struct {
@@ -289,6 +316,7 @@ func newTestSplitBuilder(parallelRunners int) testSplitBuilder {
 func (b *testSplitBuilder) addFile(weight int) int {
 	lightestRunner := heap.Pop(&b.loads).(runnerLoad)
 	lightestRunner.load += weight
+	lightestRunner.files++
 	heap.Push(&b.loads, lightestRunner)
 	return lightestRunner.index
 }
@@ -391,11 +419,13 @@ func (b *testSplitBuilder) lightestUnusedRunner(used map[int]bool) (int, bool) {
 	return best, best != -1
 }
 
-// addLoadToRunner adds weight to a runner by index, keeping the heap valid.
+// addLoadToRunner adds a file of weight to a runner by index, keeping the
+// heap valid.
 func (b *testSplitBuilder) addLoadToRunner(index int, weight int) {
 	for i := range b.loads {
 		if b.loads[i].index == index {
 			b.loads[i].load += weight
+			b.loads[i].files++
 			heap.Fix(&b.loads, i)
 			return
 		}
@@ -403,11 +433,25 @@ func (b *testSplitBuilder) addLoadToRunner(index int, weight int) {
 }
 
 func (b testSplitBuilder) score() splitScore {
-	minLoad, maxLoad, totalLoad := loadStats(b.loads)
+	return b.scoreNodes(defaultNodeModel)
+}
+
+// scoreNodes times each runner with model: the wall time and imbalance are
+// in modeled node time, the total runtime is the files' weights.
+func (b testSplitBuilder) scoreNodes(model nodeModel) splitScore {
+	_, _, totalLoad := loadStats(b.loads)
+	minTime, maxTime := -1, 0
+	for _, load := range b.loads {
+		t := model.nodeTime(load.load, load.files)
+		if minTime == -1 || t < minTime {
+			minTime = t
+		}
+		maxTime = max(maxTime, t)
+	}
 	return splitScore{
 		parallelRunners: b.parallelRunners,
-		wallTime:        maxLoad,
-		imbalance:       maxLoad - minLoad,
+		wallTime:        maxTime,
+		imbalance:       maxTime - minTime,
 		totalRuntime:    totalLoad,
 	}
 }
@@ -415,6 +459,7 @@ func (b testSplitBuilder) score() splitScore {
 type runnerLoad struct {
 	index int
 	load  int
+	files int
 }
 
 type minLoadHeap []runnerLoad

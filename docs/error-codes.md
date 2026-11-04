@@ -25,6 +25,7 @@ or API cause. Existing codes must not be reused for a different condition.
 | `plan_platform_tags_creation_failed` | Runtime or operating-system tags could not be collected from the selected platform. |
 | `plan_runtime_tags_invalid` | The `runtime-tags` override could not be parsed. |
 | `plan_durations_file_invalid` | The `--durations-file` could not be read, is not JSON, or has no `test_suites`. |
+| `plan_test_durations_file_invalid` | The `--test-durations-file` could not be read, is not JSON, or has no `files`. |
 | `plan_framework_detection_failed` | The configured test framework is not supported or could not be initialized for the selected platform. |
 | `plan_optimization_client_creation_failed` | The Test Optimization client could not be created. |
 | `plan_test_files_resolution_failed` | The test include/exclude patterns could not be resolved or the test-file scan failed. |

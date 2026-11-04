@@ -142,6 +142,9 @@ func TestInit(t *testing.T) {
 	if config.TargetTime != expectedDefaultTargetTime {
 		t.Errorf("expected default target_time to be %s, got %s", expectedDefaultTargetTime, config.TargetTime)
 	}
+	if config.CiNodeSpeedup != 1 || config.CiNodeFileOverhead != 0 {
+		t.Errorf("expected default ci_node_speedup 1 and ci_node_file_overhead 0s, got %v and %s", config.CiNodeSpeedup, config.CiNodeFileOverhead)
+	}
 	if config.WorkerEnv != "" {
 		t.Errorf("expected default worker_env to be empty, got %q", config.WorkerEnv)
 	}
@@ -311,6 +314,8 @@ func TestEnvironmentVariables(t *testing.T) {
 	_ = os.Setenv(workerEnv, "RAILS_DB=my_project_dev_{{nodeIndex}}")
 	_ = os.Setenv(ciNodeEnv, "5")
 	_ = os.Setenv(ciNodeWorkersEnv, "4")
+	_ = os.Setenv(ciNodeSpeedupEnv, "1.5")
+	_ = os.Setenv(ciNodeFileOverheadEnv, "150ms")
 	_ = os.Setenv(commandEnv, "bundle exec rspec")
 	_ = os.Setenv(testsLocationEnv, "spec/**/*_spec.rb")
 	_ = os.Setenv(testsExcludePatternEnv, "spec/system/**/*_spec.rb")
@@ -330,6 +335,8 @@ func TestEnvironmentVariables(t *testing.T) {
 		_ = os.Unsetenv(workerEnv)
 		_ = os.Unsetenv(ciNodeEnv)
 		_ = os.Unsetenv(ciNodeWorkersEnv)
+		_ = os.Unsetenv(ciNodeSpeedupEnv)
+		_ = os.Unsetenv(ciNodeFileOverheadEnv)
 		_ = os.Unsetenv(commandEnv)
 		_ = os.Unsetenv(testsLocationEnv)
 		_ = os.Unsetenv(testsExcludePatternEnv)
@@ -357,6 +364,9 @@ func TestEnvironmentVariables(t *testing.T) {
 	}
 	if config.ParallelRunnerOverhead != 40*time.Second {
 		t.Errorf("expected parallel_runner_overhead from env var to be 40s, got %s", config.ParallelRunnerOverhead)
+	}
+	if config.CiNodeSpeedup != 1.5 || config.CiNodeFileOverhead != 150*time.Millisecond {
+		t.Errorf("expected ci_node_speedup 1.5 and ci_node_file_overhead 150ms from env vars, got %v and %s", config.CiNodeSpeedup, config.CiNodeFileOverhead)
 	}
 	if config.TargetTime != 10*time.Minute {
 		t.Errorf("expected target_time from env var to be 10m, got %s", config.TargetTime)
@@ -931,6 +941,42 @@ func TestParseCiNodeWorkers(t *testing.T) {
 			}
 			if result != tt.expected {
 				t.Errorf("expected %d, got %d", tt.expected, result)
+			}
+		})
+	}
+}
+
+func TestParseCiNodeSpeedup(t *testing.T) {
+	tests := []struct {
+		name      string
+		value     string
+		expected  float64
+		expectErr bool
+	}{
+		{name: "empty value is one process", value: "", expected: 1},
+		{name: "decimal", value: "1.5", expected: 1.5},
+		{name: "integer", value: "4", expected: 4},
+		{name: "trims whitespace", value: " 2.6 ", expected: 2.6},
+		{name: "rejects less than one", value: "0.5", expectErr: true},
+		{name: "rejects zero", value: "0", expectErr: true},
+		{name: "rejects NaN", value: "NaN", expectErr: true},
+		{name: "rejects words", value: "fast", expectErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := ParseCiNodeSpeedup(tt.value)
+			if tt.expectErr {
+				if err == nil {
+					t.Fatalf("expected error, got %v", result)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("expected no error, got %v", err)
+			}
+			if result != tt.expected {
+				t.Errorf("expected %v, got %v", tt.expected, result)
 			}
 		})
 	}

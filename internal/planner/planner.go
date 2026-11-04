@@ -93,6 +93,9 @@ type TestPlanner struct {
 	telemetryClient         telemetry.Client
 	reportWriter            io.Writer
 	tiaSkippingEnabled      bool
+	// splitLines maps the parts of long files split by test
+	// (--split-files-over) to the test IDs their runner gets.
+	splitLines map[string][]string
 }
 
 const (
@@ -225,19 +228,25 @@ func (tp *TestPlanner) Plan(ctx context.Context) error {
 	if err := writeTestFilesArtifact(tp.testFileWeights); err != nil {
 		return errcode.WithCode(errcode.PlanTestFilesWriteFailed, err)
 	}
+	// The artifact and the plan cache keep whole files; the split and the
+	// report see the parts of long files.
+	if err := tp.splitLongTestFiles(); err != nil {
+		return err
+	}
 
 	percentageContent := fmt.Sprintf("%.2f", tp.skippablePercentage)
 	if err := writePlanFile(constants.SkippablePercentageOutputPath, []byte(percentageContent)); err != nil {
 		return errcode.WithCode(errcode.PlanSkippablePercentageWriteFailed, fmt.Errorf("failed to write skippable percentage: %w", err))
 	}
 
-	parallelRunnerSelection := calculateParallelRunnerSplitSelection(
+	parallelRunnerSelection := calculateNodeSplitSelection(
 		tp.testFileWeights,
 		settings.GetMinParallelism(),
 		settings.GetMaxParallelism(),
 		settings.GetParallelRunnerOverhead(),
 		settings.GetTargetTime(),
 		tp.basenameAffinityEnabled(),
+		nodeModel{speedup: settings.GetCiNodeSpeedup(), fileOverhead: settings.GetCiNodeFileOverhead()},
 	)
 	parallelRunnerSplit := parallelRunnerSelection.selected
 	parallelRunners := parallelRunnerSplit.parallelRunners
@@ -280,6 +289,11 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 	if path := settings.GetDurationsFile(); path != "" {
 		if _, err := testoptimization.ReadTestSuiteDurationsFile(path); err != nil {
 			return errcode.WithCode(errcode.PlanDurationsFileInvalid, err)
+		}
+	}
+	if path := settings.GetTestDurationsFile(); path != "" {
+		if _, err := readTestDurationsFile(path); err != nil {
+			return errcode.WithCode(errcode.PlanTestDurationsFileInvalid, err)
 		}
 	}
 
