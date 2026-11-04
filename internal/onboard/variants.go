@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/kballard/go-shellquote"
@@ -21,14 +22,21 @@ func resolveVariantStep(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 	// An action's environment is not inherited by subsequent run steps. Keep
 	// opaque actions outside local validation; do not demand their CI secrets.
 	cypressAction := len(frameworks) > 0 && frameworks[0] == "cypress" && strings.HasPrefix(strings.ToLower(step.Uses), "cypress-io/github-action@")
-	if step.Run == "" && step.Uses != "" && step.ResolutionError == "" && !cypressAction {
+	// An action a language reads as a command, such as a Gradle action's
+	// arguments input, runs with the workflow's, job's and step's env.
+	commandAction := false
+	if len(frameworks) > 0 {
+		reader, ok := discoveryLanguageFor(frameworks[0]).(ciCommandActionReader)
+		commandAction = ok && reader.commandAction(step)
+	}
+	if step.Run == "" && step.Uses != "" && step.ResolutionError == "" && !cypressAction && !commandAction {
 		return step, nil, nil
 	}
 	step.Run, err = interpolateMatrix(step.Run, row)
 	if err != nil {
 		return step, nil, err
 	}
-	step.Run, step.WithoutCIValues = withoutCIOnlyOptions(step.Run, step.WithoutCIValues)
+	step.Run, step.OmittedOptions, step.WithoutCIValues = withoutCIOnlyOptions(step.Run, step.OmittedOptions, step.WithoutCIValues)
 	// GitHub evaluates expressions before the shell runs, even inside single
 	// quotes. Anything left after matrix substitution cannot be reproduced.
 	if expression := workflowExpression.FindString(step.Run); expression != "" {
@@ -233,6 +241,15 @@ func resolveVariantStep(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 	if len(env) == 0 {
 		env = nil
 	}
+	// Options whose values only CI provides and never select tests, as a
+	// Maven settings file, are left out.
+	run, omitted, without := omitCIOnlyOptions(step.Run, func(name string) bool { _, known := env[name]; return !known })
+	step.Run, step.OmittedOptions = run, append(step.OmittedOptions, omitted...)
+	for _, option := range without {
+		if !slices.Contains(step.WithoutCIValues, option) {
+			step.WithoutCIValues = append(step.WithoutCIValues, option)
+		}
+	}
 	if len(env) == 0 || !strings.Contains(step.Run, "$") {
 		return step, env, nil
 	}
@@ -254,7 +271,7 @@ func resolveVariantStep(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 		}
 		if parameter, ok := node.(*syntax.ParamExp); ok && !keptRuntimeRead(parameter) {
 			value, exists := env[parameter.Param.Value]
-			if !exists || parameter.Index != nil || parameter.Slice != nil || parameter.Repl != nil || parameter.Exp != nil || parameter.Excl || parameter.Length || strings.ContainsAny(value, " \t\n*?[") {
+			if !exists || parameter.Index != nil || parameter.Slice != nil || parameter.Repl != nil || parameter.Exp != nil || parameter.Excl || parameter.Length || strings.ContainsAny(value, "\n*?[") {
 				expansionErr = fmt.Errorf("CI parameter %s requires explicit environment review", parameter.Param.Value)
 			}
 		}
@@ -528,43 +545,72 @@ func ciControlVariable(key string) bool {
 var jvmOptionPrefix = regexp.MustCompile(`(?:^|[\s"'=])(-[DP]([\w.-]+))=["']?$`)
 
 // ciOnlyOption reports whether a value ddtest cannot resolve that follows
-// text is one a JVM option passes only to a plugin that runs no tests: GPG
-// signing (gpg.*, as -Dgpg.passphrase=$GPG_PASSPHRASE), Gradle's signing
-// plugin (signing.*) or the Sonar scanner (sonar.*, as
-// -Dsonar.host.url=$SONAR_HOST_URL). Such a value selects no tests, so
-// validation runs with it empty; option is the flag, as -Dgpg.passphrase.
-// A credential the tests read, as -Ddb.password=${{ secrets.DB }}, or any
-// other property still requires review, whatever its or its value's name.
+// text is one a JVM option passes only to a plugin that runs no tests (see
+// ciOnlyProperty), as -Dgpg.passphrase= before a Jenkins interpolation; option
+// is the flag, as -Dgpg.passphrase. Such a value selects no tests, so
+// validation runs with it empty (see omitCIOnlyOptions).
 func ciOnlyOption(text string) (option string, ok bool) {
 	match := jvmOptionPrefix.FindStringSubmatch(text)
 	if match == nil {
 		return "", false
 	}
-	return match[1], slices.ContainsFunc(ciOnlyPlugins, func(prefix string) bool { return strings.HasPrefix(match[2], prefix) })
+	return match[1], ciOnlyProperty(match[1])
 }
 
-// ciOnlyPlugins prefix the properties of the plugins ciOnlyOption leaves out.
+// ciOnlyProperty reports a JVM option, as -Dgpg.passphrase or
+// -Psigning.password, of a plugin that runs no tests: GPG signing (gpg.*),
+// Gradle's signing plugin (signing.*) or the Sonar scanner (sonar.*, as
+// -Dsonar.host.url). A credential the tests read, as -Ddb.password, or any
+// other property still requires review, whatever its or its value's name.
+func ciOnlyProperty(option string) bool {
+	property, ok := strings.CutPrefix(option, "-D")
+	if !ok {
+		property, ok = strings.CutPrefix(option, "-P")
+	}
+	return ok && slices.ContainsFunc(ciOnlyPlugins, func(prefix string) bool { return strings.HasPrefix(property, prefix) })
+}
+
+// ciOnlyPlugins prefix the properties of the plugins ciOnlyProperty names.
 var ciOnlyPlugins = []string{"gpg.", "signing.", "sonar."}
 
-// withoutCIOnlyOptions empties the CI expressions JVM options pass in run
-// only to signing, publishing or reporting (see ciOnlyOption), adding each
-// option to without, the values validation runs without.
-func withoutCIOnlyOptions(run string, without []string) (string, []string) {
-	var text strings.Builder
-	last := 0
-	for _, match := range workflowExpression.FindAllStringIndex(run, -1) {
-		option, ok := ciOnlyOption(run[:match[0]])
-		if !ok {
-			continue
+// ciExpressionVariable stands for the CI expression it numbers while
+// omitCIOnlyOptions reads a command line, which does not parse them.
+const ciExpressionVariable = "DDTEST_CI_EXPRESSION_"
+
+// withoutCIOnlyOptions leaves out of run the CI-only options whose values are
+// CI expressions, as -Dgpg.passphrase=${{ secrets.GPG }} or
+// -s ${{ secrets.SETTINGS }} (see omitCIOnlyOptions), adding the removed
+// Maven settings options to omitted and the emptied JVM options to without,
+// the values validation runs without.
+func withoutCIOnlyOptions(run string, omitted, without []string) (string, []string, []string) {
+	expressions := workflowExpression.FindAllString(run, -1)
+	if len(expressions) == 0 {
+		return run, omitted, without
+	}
+	index := 0
+	placeholders := workflowExpression.ReplaceAllStringFunc(run, func(string) string {
+		index++
+		return "${" + ciExpressionVariable + strconv.Itoa(index-1) + "}"
+	})
+	text, removed, emptied := omitCIOnlyOptions(placeholders, func(name string) bool { return strings.HasPrefix(name, ciExpressionVariable) })
+	if len(removed)+len(emptied) == 0 {
+		return run, omitted, without
+	}
+	restore := func(text string) string {
+		for i, expression := range expressions {
+			text = strings.ReplaceAll(text, "${"+ciExpressionVariable+strconv.Itoa(i)+"}", expression)
 		}
-		text.WriteString(run[last:match[0]])
-		last = match[1]
+		return text
+	}
+	for _, option := range removed {
+		omitted = append(omitted, restore(option))
+	}
+	for _, option := range emptied {
 		if !slices.Contains(without, option) {
 			without = append(without, option)
 		}
 	}
-	text.WriteString(run[last:])
-	return text.String(), without
+	return restore(text), omitted, without
 }
 
 var credentialName = regexp.MustCompile(`(?i)(?:^|_)(?:TOKEN|SECRET|PASSWORD|PASSWD|PASSPHRASE|API_?KEY|ACCESS_?KEY|SECRET_?KEY|PRIVATE_?KEY|CREDENTIALS?|AUTH)$`)

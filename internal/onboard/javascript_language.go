@@ -202,7 +202,7 @@ func (javascriptDiscovery) ciSetupRequest(root, framework, site string, terms ci
 	if framework == "mocha" {
 		request.Notes = append(request.Notes, "Keep the export after "+terms.Entry+" only for Mocha ESM test files; CommonJS suites need only the preload.")
 	}
-	if note := setupImageNote(root, "javascript", framework, site); note != "" {
+	if note := setupImageNote(root, "javascript", framework); note != "" {
 		request.Notes = append(request.Notes, note)
 	}
 	if note := handWrittenSetupNote(root, "javascript", framework, site); note != "" {
@@ -536,3 +536,17 @@ func (javascriptDiscovery) checkTool(string, string, []string) (bool, bool) { re
 func (javascriptDiscovery) ciStepVariables(string) map[string]string { return nil }
 
 func (javascriptDiscovery) keepsHandWrittenJobs() bool { return false }
+
+// The fallback setup (see ciFallbackLanguage) installs dd-trace as the
+// official installer does: a global npm install with its prefix in the
+// tracer folder, so a later npm install or checkout cannot remove it, then
+// the same NODE_OPTIONS preload and DD_TRACE_ESM_IMPORT.
+func (javascriptDiscovery) ciFallbackInstall(string) (install, exports string) {
+	return `NPM_CONFIG_PREFIX="$DD_TRACER_FOLDER" npm install -g "dd-trace@$DD_TRACER_VERSION_JS" >&2`,
+		`NODE_OPTIONS="${NODE_OPTIONS:-} -r $DD_TRACER_FOLDER/lib/node_modules/dd-trace/ci/init" DD_TRACE_ESM_IMPORT="$DD_TRACER_FOLDER/lib/node_modules/dd-trace/register.js"`
+}
+
+func (javascriptDiscovery) ciFallbackTool() string { return "npm" }
+
+// Node images carry npm.
+func (javascriptDiscovery) ciFallbackUnavailable(string) string { return "" }

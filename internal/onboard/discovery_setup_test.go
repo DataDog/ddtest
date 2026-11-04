@@ -152,13 +152,20 @@ func TestNodeOptionsRemainValidForNode(t *testing.T) {
 
 // A report action after the tests, guarded by a status function such as
 // always(), cannot change them; the same action before them still could.
+// The status function is read on the passing path, where always() holds.
 func TestPostTestActionConditionsAreReviewed(t *testing.T) {
 	after := "jobs:\n  tests:\n    steps:\n      - run: jest\n      - uses: simple-elf/allure-report-action@v1.11\n        if: always()\n"
 	scope, err := DiscoverValidationScope(newJestRepository(t, after), "jest")
 	require.NoError(t, err)
 	require.Empty(t, scope.Unresolved)
+	require.NotContains(t, strings.Join(scope.Review, "\n"), "cannot statically resolve CI condition")
+	// An action's condition ddtest can't read is still only reviewed there.
+	after = "jobs:\n  tests:\n    steps:\n      - run: jest\n      - uses: simple-elf/allure-report-action@v1.11\n        if: always() && steps.tests.outputs.ready == 'true'\n"
+	scope, err = DiscoverValidationScope(newJestRepository(t, after), "jest")
+	require.NoError(t, err)
+	require.Empty(t, scope.Unresolved)
 	require.Contains(t, strings.Join(scope.Review, "\n"), "After the job's last jest test step, a condition that affects only an action outside the test path")
-	before := "jobs:\n  tests:\n    steps:\n      - uses: some/prepare-action@v1\n        if: always()\n      - run: jest\n"
+	before := "jobs:\n  tests:\n    steps:\n      - uses: some/prepare-action@v1\n        if: always() && steps.tests.outputs.ready == 'true'\n      - run: jest\n"
 	scope, err = DiscoverValidationScope(newJestRepository(t, before), "jest")
 	require.NoError(t, err)
 	blocked := len(scope.Unresolved) > 0
@@ -166,4 +173,11 @@ func TestPostTestActionConditionsAreReviewed(t *testing.T) {
 		blocked = blocked || len(entry.UnvalidatedSetup) > 0
 	}
 	require.True(t, blocked, "an action before the tests may prepare them")
+	// On the passing path, always() runs the action like no condition does.
+	guarded, err := DiscoverValidationScope(newJestRepository(t, "jobs:\n  tests:\n    steps:\n      - uses: some/prepare-action@v1\n        if: ${{ always() }}\n      - run: jest\n"), "jest")
+	require.NoError(t, err)
+	plain, err := DiscoverValidationScope(newJestRepository(t, "jobs:\n  tests:\n    steps:\n      - uses: some/prepare-action@v1\n      - run: jest\n"), "jest")
+	require.NoError(t, err)
+	require.Equal(t, plain.Unresolved, guarded.Unresolved)
+	require.Equal(t, plain.Commands[0].UnvalidatedSetup, guarded.Commands[0].UnvalidatedSetup)
 }

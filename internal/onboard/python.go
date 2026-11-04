@@ -864,9 +864,14 @@ func checkPythonCIRuntimes(ctx context.Context, root, localVersion, site string,
 		return selection, err
 	}
 	defaults := map[string]string{}
+	leaks := sharedSetupLeaks(root, workflows, "python", "pytest")
 	for _, workflow := range workflows {
 		for _, name := range slices.Sorted(maps.Keys(workflow.Jobs)) {
 			job := workflow.Jobs[name]
+			if leak, found := sharedSetupLeak(leaks, workflow, name); found {
+				result.Jobs = append(result.Jobs, leak)
+				continue
+			}
 			if !pythonJobCandidate(root, workflow, job) {
 				continue
 			}
@@ -1094,7 +1099,7 @@ func checkPythonCIRuntimes(ctx context.Context, root, localVersion, site string,
 							} else if value, ok := step.Env["PYTHONPATH"]; ok && !pythonKeepsTracerPath(value) {
 								reason := "The test step replaces the action's PYTHONPATH; preserve the injected tracer package path."
 								if !shared {
-									reason = "This test command's PYTHONPATH replaces the one the " + provider.setupName() + " exported, which carries the tracer. Extend it instead, with " + provider.setupTerms().Persist(`export PYTHONPATH="$PYTHONPATH:<paths>"`) + "."
+									reason = "This test command's PYTHONPATH replaces the one the " + provider.setupName() + " exported, which carries the tracer. Extend it instead, with " + provider.setupTerms().Persist(`export PYTHONPATH="${PYTHONPATH:+$PYTHONPATH:}<paths>"`) + "."
 								}
 								pythonFindingProblem(&finding, "incompatible", reason)
 							}
@@ -1149,7 +1154,10 @@ func pythonRestoredPaths(provider ciProvider, workflow ciWorkflow, job runtimeJo
 		start, values = next, nil
 	}
 	for i, step := range job.Steps {
-		if i > 0 && !step.sameShell && provider.name() != circleCIProvider {
+		// $BASH_ENV carries the orb's exports to every later step; another
+		// setup's, as the CircleCI setup without Bash or curl, reach only
+		// its own shell.
+		if i > 0 && !step.sameShell && !sameShell(job.Steps[i-1], step) && !pythonBashEnvSetup(provider) {
 			end(i)
 		}
 		if active, err := stepCondition(step, row, conditionEnvironment(workflow, job, step, row)); err == nil && !active {

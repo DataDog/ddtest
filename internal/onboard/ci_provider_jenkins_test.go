@@ -222,13 +222,14 @@ func TestJenkinsAgentsAndContainers(t *testing.T) {
     }
   }
 }`)
-	// Container stages set up with the setup snippet; the user states the
-	// runtime of a container whose image ddtest cannot read.
+	// Container stages set up with the setup snippet, or without Bash or
+	// curl in an image that lacks them; the user states the runtime of a
+	// container whose image ddtest cannot read.
 	docker := jobs["Docker"]
 	require.Equal(t, "node:22-alpine", docker.Image)
 	require.Empty(t, docker.SetupUnsupported)
-	require.Equal(t, jenkinsContainer{}, docker.SetupProvider)
-	require.Contains(t, docker.SetupImageProblem, "The step's image node:22-alpine has no Bash, which the Datadog installer needs")
+	require.Equal(t, newImageFallback(jenkinsContainer{}, "node:22-alpine", "no Bash"), docker.SetupProvider)
+	require.Empty(t, docker.SetupImageProblem)
 	require.Equal(t, "the container of agent { dockerfile … } (Dockerfile), where its Dockerfile Dockerfile cannot be read", jobs["Dockerfile"].Host)
 	require.Empty(t, jobs["Dockerfile"].ImageProblem)
 	// A container block runs in its own container, not the pod's default.

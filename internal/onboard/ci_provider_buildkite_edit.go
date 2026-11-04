@@ -25,6 +25,9 @@ type buildkiteInsertion struct {
 	entry buildkiteEntry
 	after []string
 	jobs  []string
+	// fallback inserts the setup without Bash or curl, for a step whose
+	// image cannot run the installer (see imageFallback).
+	fallback bool
 }
 
 // planSetupEdits inserts the setup snippet before each target's test
@@ -55,10 +58,16 @@ func (buildkite) planSetupEdits(root string, workflows []ciWorkflow, targets []c
 		}
 		executor := entry.executor
 		curl := gitLabCurlBefore(job, target.Step)
-		if reason := executor.setupProblem(curl); reason != "" {
+		mechanism, fallback := fallbackJob(job)
+		if fallback {
+			if err := mechanism.unavailableGap(location, request.Language); err != nil {
+				return nil, nil, err
+			}
+		}
+		if reason := executor.setupProblem(curl, fallback); reason != "" {
 			passed := *executor
 			passed.keyPassed = true
-			if !executor.container || executor.plugin == nil || executor.pluginAliased || passed.setupProblem(curl) != "" {
+			if !executor.container || executor.plugin == nil || executor.pluginAliased || passed.setupProblem(curl, fallback) != "" {
 				return nil, nil, &EditThenApplyGap{SetupGap{location, reason}}
 			}
 			keys[executor.plugin] = executor
@@ -69,13 +78,13 @@ func (buildkite) planSetupEdits(root string, workflows []ciWorkflow, targets []c
 		}
 		at := key{entry.node, entry.line}
 		if existing := planned[at]; existing != nil {
-			if !slices.Equal(existing.after, after) {
+			if !slices.Equal(existing.after, after) || existing.fallback != fallback {
 				return nil, nil, &SetupGap{position, "Steps " + strings.Join(append(existing.jobs, target.Job), ", ") + " share this command but need different setup; give each its own commands before applying."}
 			}
 			existing.jobs = append(existing.jobs, target.Job)
 			continue
 		}
-		planned[at] = &buildkiteInsertion{entry: entry, after: after, jobs: []string{target.Job}}
+		planned[at] = &buildkiteInsertion{entry: entry, after: after, jobs: []string{target.Job}, fallback: fallback}
 	}
 	// Every step that can run and uses an edited command must be a target.
 	for _, workflow := range workflows {
@@ -122,7 +131,11 @@ func (buildkite) planSetupEdits(root string, workflows []ciWorkflow, targets []c
 		for _, item := range byFile[file] {
 			request := request
 			request.After = item.after
-			change, err := buildkiteInsert(lines, item.entry, request)
+			snippet := buildkiteRequestSnippet(request).shell()
+			if item.fallback {
+				snippet = fallbackRequestSnippet(request, buildkiteSnippetForm).shell()
+			}
+			change, err := buildkiteInsert(lines, item.entry, snippet)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -155,8 +168,9 @@ func (buildkite) planSetupEdits(root string, workflows []ciWorkflow, targets []c
 	return edits, impact, nil
 }
 
-// buildkiteInsert plans the snippet before one command statement.
-func buildkiteInsert(lines []string, entry buildkiteEntry, request ciSetupRequest) (buildkiteEdit, error) {
+// buildkiteInsert plans snippet, shell text with a literal $, before one
+// command statement.
+func buildkiteInsert(lines []string, entry buildkiteEntry, snippet string) (buildkiteEdit, error) {
 	node := entry.node
 	location := entry.file + ":" + strconv.Itoa(node.Line)
 	if node.Line < 1 || node.Line > len(lines) {
@@ -172,7 +186,7 @@ func buildkiteInsert(lines []string, entry buildkiteEntry, request ciSetupReques
 		if !strings.HasSuffix(dash, "-") || strings.TrimSpace(strings.TrimSuffix(dash, "-")) != "" {
 			return buildkiteEdit{}, &EditThenApplyGap{SetupGap{location, "The command list is not a block list ddtest can extend; write it with one \"- command\" per line, then rerun onboard --apply."}}
 		}
-		return buildkiteEdit{start: node.Line - 1, end: node.Line - 1, lines: strings.Split(strings.TrimSuffix(buildkiteSetupText(request, dash[:len(dash)-1]), "\n"), "\n")}, nil
+		return buildkiteEdit{start: node.Line - 1, end: node.Line - 1, lines: strings.Split(strings.TrimSuffix(buildkiteEntryText(snippet, dash[:len(dash)-1]), "\n"), "\n")}, nil
 	case block:
 		values := strings.Split(node.Value, "\n")
 		index := node.Line - 1 + entry.line
@@ -187,7 +201,7 @@ func buildkiteInsert(lines []string, entry buildkiteEntry, request ciSetupReques
 			}
 		}
 		var inserted []string
-		for _, text := range strings.Split(buildkiteEscape(buildkiteRequestSnippet(request).shell()), "\n") {
+		for _, text := range strings.Split(buildkiteEscape(snippet), "\n") {
 			inserted = append(inserted, indent+text)
 		}
 		return buildkiteEdit{start: index, end: index, lines: inserted}, nil
@@ -198,7 +212,7 @@ func buildkiteInsert(lines []string, entry buildkiteEntry, request ciSetupReques
 			break
 		}
 		pad := strings.Repeat(" ", len(line)-len(strings.TrimLeft(line, " "))+2)
-		replacement := append([]string{key}, strings.Split(strings.TrimSuffix(buildkiteSetupText(request, pad), "\n"), "\n")...)
+		replacement := append([]string{key}, strings.Split(strings.TrimSuffix(buildkiteEntryText(snippet, pad), "\n"), "\n")...)
 		return buildkiteEdit{start: node.Line - 1, end: node.Line, lines: append(replacement, pad+"- "+line[column:])}, nil
 	}
 	return buildkiteEdit{}, &EditThenApplyGap{SetupGap{location, "The test command is not the first command of its entry, and its entry is not a block (|) ddtest can extend; write the test command as its own commands entry, then rerun onboard --apply."}}

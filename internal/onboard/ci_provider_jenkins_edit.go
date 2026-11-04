@@ -243,12 +243,18 @@ func jenkinsContainerTarget(root string, workflows []ciWorkflow, target ciSetupT
 	if language == nil {
 		return jenkinsSnippetTarget{}, &SetupGap{location, "ddtest cannot set up " + request.Framework + " in this container stage."}
 	}
-	container := setupProviderFor(jenkins{}, job).(jenkinsContainer)
+	mechanism := setupProviderFor(jenkins{}, job)
+	container, _ := setupHost(mechanism).(jenkinsContainer)
+	if fallback, ok := mechanism.(imageFallback); ok {
+		if err := fallback.unavailableGap(location, request.Language); err != nil {
+			return jenkinsSnippetTarget{}, err
+		}
+	}
 	site := request.Site
 	if site == "" {
 		site = defaultDatadogSite
 	}
-	snippet := language.ciSetupRequest(root, request.Framework, site, container.setupTerms())
+	snippet := language.ciSetupRequest(root, request.Framework, site, mechanism.setupTerms())
 	snippet.Framework = request.Framework
 	if target.After != nil {
 		snippet.After = target.After
@@ -289,13 +295,12 @@ func jenkinsContainerTarget(root string, workflows []ciWorkflow, target ciSetupT
 	if key != "" && key != jenkinsSecret("DD_API_KEY") {
 		return jenkinsSnippetTarget{}, &SetupGap{location, "DD_API_KEY reaches this stage from " + key + ", not from a Jenkins credential ddtest can see; bind it with withCredentials(" + jenkinsCredentialBinding + ") { … } or credentials('" + jenkinsCredentialID + "') instead, then rerun onboard --apply."}
 	}
-	written := jenkinsSnippet(snippet, container.reset)
-	lines := strings.Split(written.shell(), "\n")
-	// An image without Bash runs the language's setup for a POSIX shell.
-	if shell, ok := language.(ciShellSetup); ok && job.SetupImageShellOnly {
-		lines = append(slices.Clone(written.before), strings.Split(shell.shellSetup(site, release, jenkinsSnippetForm), "\n")...)
+	shell := jenkinsSnippet(snippet, container.reset).shell()
+	if fallback, ok := mechanism.(imageFallback); ok {
+		// The image cannot run the installer: the setup without Bash or curl.
+		shell = fallback.snippet(snippet).shell()
 	}
-	return jenkinsSnippetTarget{job: target.Job, call: origin.call, statement: origin.statement, lines: lines, wrap: key == ""}, nil
+	return jenkinsSnippetTarget{job: target.Job, call: origin.call, statement: origin.statement, lines: strings.Split(shell, "\n"), wrap: key == ""}, nil
 }
 
 // jenkinsSnippetBefore reports a setup snippet before step among a

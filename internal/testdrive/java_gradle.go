@@ -493,7 +493,7 @@ func (b *gradleBuild) karateProbe(target javaProbeTarget, directory func(string)
 func (b *gradleBuild) results(exitCode int, output string) ([]javaResult, string, error) {
 	tests, err := gradle.ReadReports(b.root, b.all)
 	if errors.Is(err, gradle.ErrNoTestCases) || errors.Is(err, gradle.ErrNoReports) {
-		err = errors.Join(errNoJavaResults, err)
+		err = errors.Join(errNoJavaResults, javaBuildFailure("Gradle", exitCode, gradle.BuildFailure(output), err))
 	}
 	if err != nil {
 		return nil, "", err

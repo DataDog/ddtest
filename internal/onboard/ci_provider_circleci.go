@@ -43,6 +43,11 @@ func (circleCI) name() string { return circleCIProvider }
 func (circleCI) displayName() string       { return "CircleCI" }
 func (circleCI) checkoutReference() string { return "$CIRCLE_WORKING_DIRECTORY" }
 
+// CIRCLE_WORKING_DIRECTORY holds the working directory as written, as
+// ~/project, which a shell doesn't expand when it reads the variable; a
+// job's checkout paths come from its working directory (see circleCheckout).
+func (circleCI) checkoutVariable() string { return "" }
+
 func (circleCI) environment() map[string]string {
 	return map[string]string{"CI": "true", "CIRCLECI": "true"}
 }
@@ -876,11 +881,27 @@ func (c *circleConfig) convert(invocation circleInvocation, definition *yaml.Nod
 	owner := circleOwner{kind: "job", name: invocation.job, editable: orb == nil}
 	expander.expand(steps, scope, owner, "", 0)
 	expander.expand(invocation.post, &circleScope{matrix: invocation.matrix}, circleOwner{kind: "post-steps"}, "", 0)
-	converted := runtimeJob{Env: job.env, Image: job.image, ImageTemplate: job.template}
+	converted := runtimeJob{Env: job.env, Image: job.image, ImageTemplate: job.template, Checkout: circleCheckout(job)}
 	if job.keyProblem {
 		converted.KeyProblem = circleKeyWritten
 	}
 	converted.Steps = c.steps(job, raw)
+	// Only an install that certainly runs provides curl; one under a
+	// condition still never starts tests.
+	var commands []string
+	for _, step := range raw {
+		if step.setup != nil || step.conditional != "" && installsCurl(step.run) {
+			commands = append(commands, "")
+		} else {
+			commands = append(commands, step.run)
+		}
+	}
+	curl := curlBeforeTests(commands)
+	if missing := imageMissingTools(job.image, false, false, curl); missing != "" && job.imageProblem == "" {
+		// The orb cannot run here: the job gets the setup without Bash or
+		// curl instead, in the run step that runs the tests.
+		converted.SetupProvider = newImageFallback(circleCI{}, job.image, missing)
+	}
 	return converted
 }
 
@@ -903,7 +924,13 @@ type circleStep struct {
 	// setupProblem is why the Datadog orb step could not set up the job if
 	// it ran right before this step.
 	setupProblem string
+	// shellID identifies the shell of a run step: the steps read from one
+	// run step's command share it (see circleFallbackPieces).
+	shellID int
 }
+
+// Each run step runs a shell of its own.
+func (s circleStep) shell() int { return s.shellID }
 
 // circleRawStep is one expanded step before $BASH_ENV is followed.
 type circleRawStep struct {
@@ -922,6 +949,11 @@ type circleRawStep struct {
 	review      string
 	// runtime holds the runtimes a modeled orb step selects.
 	runtime map[string]string
+	// continued marks the commands of a run step before its setup without
+	// Bash or curl, and the exports and assignments after it (see
+	// circleFallbackPieces): the later pieces run in their shell, after
+	// their cd and exports.
+	continued bool
 }
 
 // circleExpander expands one job's steps.
@@ -1156,14 +1188,178 @@ func (e *circleExpander) run(value *yaml.Node, scope *circleScope, step circleRa
 		}
 		step.workdir = mapped
 	}
+	step.origin.shellID = len(*e.steps) + 1
 	if step.problem == "" {
-		if command, review, err := circleTestSplitting(step.run); err != nil {
-			step.problem = err.Error()
-		} else if review != "" {
-			step.run, step.review = command, review
+		for _, piece := range circleFallbackPieces(step) {
+			e.add(piece)
 		}
+		return
 	}
 	e.add(step)
+}
+
+// circleStatePieces splits the commands after the setup without Bash or
+// curl of a run step (see circleFallbackPieces) around the exports and
+// assignments among them, as export PYTHONPATH="${PYTHONPATH:+$PYTHONPATH:}src"
+// before pytest: each such run of statements is a piece that only changes
+// the step's shell (continued), which the later pieces run in, as the
+// commands of a script after its setup do on other providers. The other
+// commands stay together.
+func circleStatePieces(piece circleRawStep) []circleRawStep {
+	file, ok := parseCIShell(piece.run)
+	if piece.problem != "" || !ok || !slices.ContainsFunc(file.Stmts, gitLabStateOnly) {
+		return []circleRawStep{piece}
+	}
+	var pieces []circleRawStep
+	review := piece.review
+	for start := 0; start < len(file.Stmts); {
+		state := gitLabStateOnly(file.Stmts[start])
+		end := start + 1
+		for end < len(file.Stmts) && gitLabStateOnly(file.Stmts[end]) == state {
+			end++
+		}
+		group := piece
+		group.run = strings.TrimSpace(piece.run[file.Stmts[start].Pos().Offset():file.Stmts[end-1].End().Offset()])
+		group.continued, group.review = state, ""
+		if !state {
+			// Test splitting's note, once, on the commands.
+			group.review, review = review, ""
+		}
+		pieces = append(pieces, group)
+		start = end
+	}
+	if review != "" {
+		pieces[len(pieces)-1].review = review
+	}
+	return pieces
+}
+
+// circleFallbackPieces splits a run step whose command runs the setup
+// without Bash or curl (see imageFallback) into the commands before it, the
+// setup and the commands after it, which share the step's shell; a step
+// without it stays whole. Test splitting applies to the commands of each.
+func circleFallbackPieces(step circleRawStep) []circleRawStep {
+	split := func(piece circleRawStep) circleRawStep {
+		if piece.problem == "" && piece.run != "" {
+			if command, review, err := circleTestSplitting(piece.run); err != nil {
+				piece.problem = err.Error()
+			} else if review != "" {
+				piece.run, piece.review = command, review
+			}
+		}
+		return piece
+	}
+	file, parsed := parseCIShell(step.run)
+	if !parsed {
+		return []circleRawStep{split(step)}
+	}
+	// around is the commands before start and after end, with the setup
+	// between them when it runs.
+	around := func(start, end syntax.Pos, setup *ciSetup) []circleRawStep {
+		var pieces []circleRawStep
+		before, after := step, step
+		before.run = strings.TrimRight(step.run[:start.Offset()], " \t\n")
+		after.run = strings.Trim(step.run[end.Offset():], " \t\n")
+		if prefix, ok := parseCIShell(before.run); ok && len(prefix.Stmts) > 0 {
+			before.continued = true
+			pieces = append(pieces, split(before))
+		}
+		if setup != nil {
+			installed := step
+			installed.run, installed.setup, installed.review = "", setup, ""
+			pieces = append(pieces, installed)
+		}
+		if suffix, ok := parseCIShell(after.run); ok && len(suffix.Stmts) > 0 {
+			pieces = append(pieces, circleStatePieces(split(after))...)
+		}
+		return pieces
+	}
+	for i, stmt := range file.Stmts {
+		setup, runs, guarded := circleGuardedFallback(step, stmt)
+		consumed, found := 1, guarded
+		if !guarded {
+			setup, consumed, found = fallbackSetupAt(step.run, file.Stmts, i, nil, circleSnippetForm, nil)
+			runs = true
+		}
+		if !found {
+			continue
+		}
+		if !runs {
+			// A guard on a job parameter keeps it out of this invocation.
+			return around(stmt.Pos(), stmt.End(), nil)
+		}
+		if !setup.shaped {
+			// It may run anything, tests included: an unresolved step.
+			step.problem = setup.Problem
+			return []circleRawStep{step}
+		}
+		return around(stmt.Pos(), file.Stmts[i+consumed-1].End(), &setup)
+	}
+	return []circleRawStep{split(step)}
+}
+
+// circleSetupParameter is the boolean job parameter that enables the setup
+// only for the workflow invocations of a shared job that run the tests (see
+// circleSharedJobs).
+const circleSetupParameter = "datadog_test_optimization"
+
+// circleSetupGuard is the condition the setup without Bash or curl runs
+// under, inside the run step of a shared job: CircleCI writes the
+// parameter's value into the command, so each invocation reads true or
+// false.
+const circleSetupGuard = `if [ "<< parameters.` + circleSetupParameter + ` >>" = true ]; then`
+
+// circleGuardedFallback reads stmt as the setup without Bash or curl behind
+// a condition on values CircleCI wrote into the command, as circleSetupGuard
+// is once its parameter is substituted: an if clause, without else, whose
+// test reads only literal words and whose body is only that setup. runs
+// reports whether the condition holds in this invocation.
+func circleGuardedFallback(step circleRawStep, stmt *syntax.Stmt) (setup ciSetup, runs, ok bool) {
+	clause, isIf := stmt.Cmd.(*syntax.IfClause)
+	if !isIf || clause.Else != nil || len(clause.Then) == 0 || stmt.Negated || stmt.Background || len(stmt.Redirs) > 0 {
+		return ciSetup{}, false, false
+	}
+	truth, static := ciStaticTest(clause.Cond, nil, "", step.shell != "sh")
+	if !static {
+		return ciSetup{}, false, false
+	}
+	setup, consumed, found := fallbackSetupAt(step.run, clause.Then, 0, nil, circleSnippetForm, nil)
+	if !found || consumed != len(clause.Then) {
+		return ciSetup{}, false, false
+	}
+	return setup, truth, true
+}
+
+// circleCheckout lists the paths at which a job's commands find the
+// checkout, its working directory (~/project unless working_directory says
+// otherwise): an absolute one as written, and one in the home directory as
+// ~, $HOME or the home of a Docker image's user, /home/circleci in cimg/
+// and legacy circleci/ images, /root in others, which run as root unless
+// they set another user.
+func circleCheckout(job *circleJob) []string {
+	directory := strings.TrimSuffix(job.directory, "/")
+	if circleReads(directory) || strings.ContainsAny(directory, "*?[]`") {
+		return nil
+	}
+	for _, home := range []string{"~/", "$HOME/", "${HOME}/"} {
+		rest, ok := strings.CutPrefix(directory, home)
+		if !ok || rest == "" || strings.Contains(rest, "$") {
+			continue
+		}
+		paths := []string{"~/" + rest, "$HOME/" + rest, "${HOME}/" + rest}
+		switch image := mirroredImage(job.image); {
+		case job.image == "" || job.imageProblem != "":
+		case strings.HasPrefix(image, "cimg/") || strings.HasPrefix(image, "circleci/"):
+			paths = append(paths, "/home/circleci/"+rest)
+		default:
+			paths = append(paths, "/root/"+rest)
+		}
+		return paths
+	}
+	if path.IsAbs(directory) && !strings.Contains(directory, "$") && path.Clean(directory) != "/" {
+		return []string{path.Clean(directory)}
+	}
+	return nil
 }
 
 // circleDirectory maps a step's working directory into the repository: the
@@ -1536,6 +1732,11 @@ func (c *circleConfig) steps(job *circleJob, raw []circleRawStep) []runtimeStep 
 	// the value they had when it was appended.
 	deferredReads := map[string]string{}
 	var steps []runtimeStep
+	// shells are the state of a run step split around a setup without Bash
+	// or curl (see circleFallbackPieces): the cd and exports of its commands
+	// before the setup, and what the setup exported, for the later commands
+	// of that step only.
+	shells := map[int]*ciShellState{}
 	for i, item := range raw {
 		// An edit moves a version 2 configuration to 2.1 itself.
 		editable := *job
@@ -1567,6 +1768,18 @@ func (c *circleConfig) steps(job *circleJob, raw []circleRawStep) []runtimeStep 
 		} else if setupApplied {
 			problem = joinDiagnostic(problem, "the step runs with /bin/sh, which does not read $BASH_ENV, so the Datadog orb's exports don't reach it; run it with Bash")
 		}
+		local := shells[item.origin.shellID]
+		if local == nil && item.continued && item.origin.shellID != 0 {
+			local = &ciShellState{dialect: state.dialect, env: map[string]string{}, references: maps.Clone(state.references), job: job.env}
+			shells[item.origin.shellID] = local
+		}
+		if local != nil && item.origin.shellID != 0 {
+			env = mergeEnvironment(env, local.env)
+			if local.directory != "" {
+				step.WorkingDirectory = path.Join(item.workdir, local.directory)
+			}
+			problem = joinDiagnostic(problem, local.problem)
+		}
 		if len(env) > 0 {
 			step.Env = env
 		}
@@ -1582,6 +1795,29 @@ func (c *circleConfig) steps(job *circleJob, raw []circleRawStep) []runtimeStep 
 		}
 		if item.review != "" {
 			c.review = append(c.review, item.source+": "+item.review)
+		}
+		if item.setup != nil && item.setup.fallback {
+			// Its exports reach only the later commands of its run step.
+			setup := *item.setup
+			if setup.Problem == "" {
+				setup.Problem = circleFallbackProblem(job)
+			}
+			setup.shellLocal = true
+			step.Setup = &setup
+			if setup.Supported && setup.Problem == "" && item.origin.shellID != 0 {
+				exports := local
+				if exports == nil {
+					exports = &ciShellState{dialect: state.dialect, env: map[string]string{}, references: maps.Clone(state.references), job: job.env}
+				}
+				current := mergeEnvironment(mergeEnvironment(mergeEnvironment(job.env, item.env), state.env), exports.env)
+				exports.applySetup(setup, current)
+				for _, stmt := range setup.after {
+					exports.statement(stmt, mergeEnvironment(mergeEnvironment(current, exports.env), exports.references))
+				}
+				shells[item.origin.shellID] = exports
+			}
+			steps = append(steps, step)
+			continue
 		}
 		if item.setup != nil {
 			setup := *item.setup
@@ -1607,11 +1843,21 @@ func (c *circleConfig) steps(job *circleJob, raw []circleRawStep) []runtimeStep 
 		} else if problem == "" {
 			before := maps.Clone(state.references)
 			consumed, followed := circleFollowBashEnv(&state, run, mergeEnvironment(mergeEnvironment(job.env, item.env), state.env), deferredReads)
+			if item.continued && local != nil {
+				// The commands before the setup change the shell its later
+				// pieces run in; ones that only do that run nothing.
+				current := mergeEnvironment(mergeEnvironment(mergeEnvironment(job.env, item.env), state.env), local.env)
+				consumed = local.apply(run, current) || consumed
+			}
 			if consumed {
 				step.Run = ""
 			} else {
+				references := state.references
+				if local != nil && item.origin.shellID != 0 {
+					references = mergeEnvironment(references, local.references)
+				}
 				step.readScopedPrefix()
-				step.foldInlineEnvironment(mergeEnvironment(mergeEnvironment(mergeEnvironment(job.env, item.env), state.env), state.references), state.dialect.projectVariable)
+				step.foldInlineEnvironment(mergeEnvironment(mergeEnvironment(mergeEnvironment(job.env, item.env), state.env), references), state.dialect.projectVariable)
 			}
 			if !followed {
 				// Later steps start from an environment ddtest doesn't know.

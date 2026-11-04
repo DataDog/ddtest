@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"go.yaml.in/yaml/v3"
+	"mvdan.cc/sh/v3/syntax"
 )
 
 // Tools that read, check or scan a project and never start a test runner:
@@ -62,9 +63,13 @@ func recognizedTool(root, directory string, words []string, framework string, de
 	case slices.Contains(checkAndPackageTools, name):
 		return false, true
 	case name == "docker" || name == "podman":
-		return dockerMayStart(root, directory, args, framework, depth), true
+		return dockerMayStart(root, directory, args, depth, func(body string) bool {
+			return mayStartTestsIn(root, "", runtimeStep{Run: body}, framework, depth+1)
+		}), true
 	case name == "ng":
 		return angularMayStart(root, directory, args, framework), true
+	case name == "vue-cli-service":
+		return vueCLICommand(args) != "", true
 	case publishToolName(words[0]) == "semantic-release":
 		return semanticReleaseMayStart(root, directory, args, framework, depth), true
 	case publishTool(words[0]):
@@ -359,10 +364,10 @@ func semanticReleaseConfiguration(root, directory string) (map[string]any, bool)
 var dockerInertSubcommands = []string{"push", "tag", "login", "logout", "pull", "images", "rmi", "save", "load", "inspect", "ps", "version", "info", "manifest", "network", "volume", "context", "search", "history", "import", "logs", "stop", "kill", "rm", "port", "top", "stats", "events", "diff"}
 
 // dockerMayStart reports whether a docker (or podman) command may start
-// framework's tests. Running a container (run, compose, exec, start) may;
-// moving or inspecting images can't; a build may only through the Dockerfile
-// RUN instructions it executes.
-func dockerMayStart(root, directory string, args []string, framework string, depth int) bool {
+// tests. Running a container (run, compose, exec, start) may; moving or
+// inspecting images can't; a build may only through the Dockerfile RUN
+// instructions it executes, which runMayStart classifies by their command.
+func dockerMayStart(root, directory string, args []string, depth int, runMayStart func(string) bool) bool {
 	for len(args) > 0 && strings.HasPrefix(args[0], "-") {
 		option := args[0]
 		args = args[1:]
@@ -375,9 +380,9 @@ func dockerMayStart(root, directory string, args []string, framework string, dep
 	}
 	switch subcommand, rest := args[0], args[1:]; {
 	case subcommand == "build":
-		return dockerBuildMayStart(root, directory, rest, framework, depth)
+		return dockerBuildMayStart(root, directory, rest, depth, runMayStart)
 	case (subcommand == "buildx" || subcommand == "image" || subcommand == "builder") && len(rest) > 0 && rest[0] == "build":
-		return dockerBuildMayStart(root, directory, rest[1:], framework, depth)
+		return dockerBuildMayStart(root, directory, rest[1:], depth, runMayStart)
 	case subcommand == "image" && len(rest) > 0 && slices.Contains([]string{"ls", "list", "rm", "remove", "prune", "tag", "push", "pull", "inspect", "history", "save", "load", "import"}, rest[0]),
 		subcommand == "buildx" && len(rest) > 0 && slices.Contains([]string{"create", "use", "inspect", "ls", "rm", "stop", "version", "imagetools", "prune", "du"}, rest[0]):
 		return false
@@ -397,7 +402,7 @@ var dockerBuildFlags = []string{"--load", "--push", "--pull", "--no-cache", "-q"
 // tests: whether any RUN instruction of the Dockerfile it builds may. A
 // Dockerfile ddtest cannot locate or read, a remote context, a custom
 // frontend or a heredoc may.
-func dockerBuildMayStart(root, directory string, args []string, framework string, depth int) bool {
+func dockerBuildMayStart(root, directory string, args []string, depth int, runMayStart func(string) bool) bool {
 	if directory == "" || depth >= 8 {
 		return true
 	}
@@ -442,17 +447,17 @@ func dockerBuildMayStart(root, directory string, args []string, framework string
 	if err != nil {
 		return true
 	}
-	return dockerfileMayStart(root, string(data), framework, depth)
+	return dockerfileMayStart(string(data), runMayStart)
 }
 
 var dockerSyntaxDirective = regexp.MustCompile(`(?i)^#\s*syntax\s*=\s*(\S+)`)
 var dockerEscapeDirective = regexp.MustCompile(`(?i)^#\s*escape\s*=`)
 
 // dockerfileMayStart reports whether any RUN instruction of a Dockerfile may
-// start framework's tests. RUN commands execute inside the image, whose
-// package scripts ddtest doesn't read, so each is classified by its words
-// alone: any package script may be a wrapper.
-func dockerfileMayStart(root, text, framework string, depth int) bool {
+// start tests, as runMayStart classifies its command. RUN commands execute
+// inside the image, whose package scripts ddtest doesn't read, so each is
+// classified by its words alone: any package script may be a wrapper.
+func dockerfileMayStart(text string, runMayStart func(string) bool) bool {
 	// Spaces or tabs separate an instruction from its arguments.
 	split := func(line string) (string, string) {
 		if index := strings.IndexAny(line, " \t"); index >= 0 {
@@ -485,7 +490,7 @@ func dockerfileMayStart(root, text, framework string, depth int) bool {
 			}
 			body = strings.Join(argv, " ")
 		}
-		return mayStartTestsIn(root, "", runtimeStep{Run: body}, framework, depth+1)
+		return runMayStart(body)
 	}
 	for line := range strings.Lines(text) {
 		trimmed := strings.TrimSpace(line)
@@ -510,6 +515,28 @@ func dockerfileMayStart(root, text, framework string, depth int) bool {
 		}
 	}
 	return instruction.Len() > 0 && flush()
+}
+
+// Vue CLI service commands that build, serve or lint and run no test: its
+// own, and @vue/cli-plugin-eslint's lint.
+var vueCLICommands = []string{"serve", "build", "inspect", "help", "lint"}
+
+// vueCLICommand returns the command a vue-cli-service invocation, with args
+// after the executable, runs when it may start tests: test:unit, test:e2e or
+// another plugin's command, which runs code ddtest doesn't read (a third-party
+// plugin such as vue-cli-plugin-styleguidist's styleguidist:build). It is ""
+// for the commands that can't (see vueCLICommands) and for usage only.
+func vueCLICommand(args []string) string {
+	for _, arg := range args {
+		if strings.HasPrefix(arg, "-") {
+			continue
+		}
+		if slices.Contains(vueCLICommands, arg) {
+			return ""
+		}
+		return arg
+	}
+	return ""
 }
 
 // Angular CLI command aliases.
@@ -664,16 +691,223 @@ func repositoryScriptMayStart(root, directory, path, framework string, depth int
 	switch filepath.Ext(path) {
 	case ".js", ".cjs", ".mjs", ".ts", ".cts", ".mts":
 		return nodeScriptMayStart(root, directory, filepath.Join(directory, path), framework)
-	case ".sh", ".bash", "":
-		data, err := os.ReadFile(filepath.Join(directory, path))
-		if err != nil {
+	}
+	text, ok := repositoryShellScript(root, directory, path)
+	return !ok || mayStartTestsIn(root, directory, runtimeStep{Run: text}, framework, depth+1)
+}
+
+// repositoryShellScript reads a repository shell script a command in
+// directory names by path: ok is false for a path ddtest can't resolve
+// statically, outside the repository or too large, and for a script of
+// another kind or interpreter.
+func repositoryShellScript(root, directory, path string) (string, bool) {
+	if directory == "" || strings.ContainsAny(path, "$`*?~") || filepath.IsAbs(path) || !slices.Contains([]string{".sh", ".bash", ""}, filepath.Ext(path)) {
+		return "", false
+	}
+	info, ok := repositoryFile(root, directory, path)
+	if !ok || info.IsDir() || info.Size() > 1<<20 {
+		return "", false
+	}
+	data, err := os.ReadFile(filepath.Join(directory, path))
+	if err != nil {
+		return "", false
+	}
+	text := string(data)
+	if first, _, _ := strings.Cut(text, "\n"); strings.HasPrefix(first, "#!") && !shellShebang.MatchString(first) {
+		return "", false // Another interpreter's script.
+	}
+	return text, true
+}
+
+// repositoryRelativeCommands writes the paths of a job's command text that
+// start at the checkout, such as $CI_PROJECT_DIR/scripts/check.sh or
+// CircleCI's /root/project/scripts/check.sh (see runtimeJob.Checkout), as
+// paths relative to directory, the repository directory the commands run
+// in, so the repository scripts they run are read as ./scripts/check.sh is.
+// A checkout path must be a whole word or the start of one, followed by /.
+func repositoryRelativeCommands(text string, checkout []string, directory string) string {
+	if len(checkout) == 0 {
+		return text
+	}
+	up, err := filepath.Rel(filepath.Clean(directory), ".")
+	if err != nil || !filepath.IsLocal(filepath.Clean(directory)) {
+		return text
+	}
+	quoted := make([]string, 0, len(checkout))
+	for _, prefix := range slices.SortedFunc(slices.Values(checkout), func(a, b string) int { return len(b) - len(a) }) {
+		quoted = append(quoted, regexp.QuoteMeta(prefix))
+	}
+	const delimiters = "\\s;&|()<>\"'`="
+	pattern := regexp.MustCompile(`(^|[` + delimiters + `])(` + strings.Join(quoted, "|") + `)(/|$|[` + delimiters + `])`)
+	// A delimiter ends one match and starts the next: replace until none is
+	// left.
+	for range 64 {
+		replaced := pattern.ReplaceAllString(text, "${1}"+filepath.ToSlash(up)+"${3}")
+		if replaced == text {
+			break
+		}
+		text = replaced
+	}
+	return text
+}
+
+// shellCommandClassifier reports whether one simple command of a shell
+// script may start tests: call is the command, and start the index of its
+// executable after the wrappers shellScriptMayStart reads through. handled
+// is false for a repository path it leaves to shellScriptMayStart.
+type shellCommandClassifier func(call *syntax.CallExpr, start int) (mayStart, handled bool)
+
+// shellScriptMayStart reports whether shell text, run in directory ("" when
+// unreadable) with args, may start tests. It reads what the text runs, in
+// source order: the bodies of the functions it defines, which a call by name
+// runs, and the repository scripts it sources or runs, followed with the
+// literal arguments they get ("$@" in a script dispatching to one of its
+// functions, as ./scripts/build.sh push_image, runs that function). Any
+// other command is classify's to decide. An expansion that chooses a
+// command, eval, a shell reading stdin, a directory change before a
+// repository script, or a script ddtest can't read may.
+func shellScriptMayStart(root, directory, text string, args []string, depth int, classify shellCommandClassifier) bool {
+	return readShellScript(root, directory, text, args, depth, classify, map[string]bool{})
+}
+
+// readShellScript is shellScriptMayStart, with functions holding the
+// functions the text, or a script it sourced, defines.
+func readShellScript(root, directory, text string, args []string, depth int, classify shellCommandClassifier, functions map[string]bool) bool {
+	if depth >= 8 {
+		return true
+	}
+	file, err := syntax.NewParser(syntax.Variant(syntax.LangBash)).Parse(strings.NewReader(text), "")
+	if err != nil {
+		return true
+	}
+	// A shell reading a downloaded installer from a pipe, as in
+	// curl -s https://get.sdkman.io | bash, runs no repository code.
+	installers := map[*syntax.CallExpr]bool{}
+	syntax.Walk(file, func(node syntax.Node) bool {
+		switch node := node.(type) {
+		case *syntax.FuncDecl:
+			if node.Name != nil {
+				functions[node.Name.Value] = true
+			}
+		case *syntax.BinaryCmd:
+			if from, to := pipeCall(node.X), pipeCall(node.Y); node.Op == syntax.Pipe && from != nil && to != nil && slices.Contains([]string{"curl", "wget"}, shellLiteral(from.Args[0])) {
+				installers[to] = true
+			}
+		}
+		return true
+	})
+	moved, may := false, false
+	syntax.Walk(file, func(node syntax.Node) bool {
+		call, ok := node.(*syntax.CallExpr)
+		if may || !ok || len(call.Args) == 0 {
+			return !may
+		}
+		start := 0
+		for start < len(call.Args) && slices.Contains([]string{"env", "time", "nohup", "sudo", "exec", "command", "builtin"}, shellLiteral(call.Args[start])) {
+			start++
+			for start < len(call.Args) && (strings.HasPrefix(shellLiteral(call.Args[start]), "-") || strings.Contains(shellLiteral(call.Args[start]), "=")) {
+				start++
+			}
+		}
+		if start == len(call.Args) {
 			return true
 		}
-		text := string(data)
-		if first, _, _ := strings.Cut(text, "\n"); strings.HasPrefix(first, "#!") && !shellShebang.MatchString(first) {
-			return true // Another interpreter's script.
+		name, literal := shellLiteralWord(call.Args[start])
+		var rest []string
+		restLiteral := true
+		for _, word := range call.Args[start+1:] {
+			value, ok := shellLiteralWord(word)
+			rest = append(rest, value)
+			restLiteral = restLiteral && ok
 		}
-		return mayStartTestsIn(root, directory, runtimeStep{Run: text}, framework, depth+1)
+		switch {
+		case !literal:
+			// "$@" runs the script's arguments: one of its functions, or nothing.
+			positional := shellPositional(call.Args[start])
+			may = !positional || len(args) > 0 && !functions[args[0]]
+		case functions[name]:
+		case slices.Contains([]string{"cd", "pushd", "popd"}, name):
+			moved = true
+		case name == "eval":
+			may = true
+		case (name == "source" || name == ".") && len(rest) > 0 && filepath.IsAbs(rest[0]):
+			// A file the runner provides, outside the checkout, as SDKMAN's
+			// init script.
+		case name == "source" || name == ".":
+			script, ok := "", len(rest) > 0 && restLiteral && !moved
+			if ok {
+				script, ok = repositoryShellScript(root, directory, rest[0])
+			}
+			may = !ok || readShellScript(root, directory, script, rest[1:], depth+1, classify, functions)
+		case slices.Contains([]string{"bash", "sh", "zsh", "dash"}, name):
+			switch {
+			case len(rest) > 1 && rest[0] == "-c" && restLiteral:
+				may = readShellScript(root, directory, rest[1], nil, depth+1, classify, map[string]bool{})
+			case len(rest) > 0 && !strings.HasPrefix(rest[0], "-") && restLiteral && !moved:
+				script, ok := repositoryShellScript(root, directory, rest[0])
+				may = !ok || readShellScript(root, directory, script, rest[1:], depth+1, classify, map[string]bool{})
+			case installers[call] && !slices.ContainsFunc(rest, func(arg string) bool { return !strings.HasPrefix(arg, "-") }):
+			default:
+				may = true // A shell reading stdin or options ddtest doesn't read.
+			}
+		default:
+			var handled bool
+			if may, handled = classify(call, start); handled {
+				break
+			}
+			script, ok := repositoryShellScript(root, directory, name)
+			if !restLiteral {
+				rest = nil // "$@" then holds values ddtest doesn't read.
+			}
+			may = moved || !ok || readShellScript(root, directory, script, rest, depth+1, classify, map[string]bool{}) || !restLiteral && strings.Contains(script, "$@")
+		}
+		return !may
+	})
+	return may
+}
+
+// shellLiteralWord is a word's text when it is wholly literal, quoted or not.
+func shellLiteralWord(word *syntax.Word) (string, bool) {
+	var text strings.Builder
+	for _, part := range word.Parts {
+		switch part := part.(type) {
+		case *syntax.Lit:
+			text.WriteString(part.Value)
+		case *syntax.SglQuoted:
+			text.WriteString(part.Value)
+		case *syntax.DblQuoted:
+			for _, inner := range part.Parts {
+				lit, ok := inner.(*syntax.Lit)
+				if !ok {
+					return "", false
+				}
+				text.WriteString(lit.Value)
+			}
+		default:
+			return "", false
+		}
 	}
-	return true
+	return text.String(), true
+}
+
+// shellLiteral is shellLiteralWord's text, "" for a word with expansions.
+func shellLiteral(word *syntax.Word) string {
+	text, _ := shellLiteralWord(word)
+	return text
+}
+
+// shellPositional reports a word that is only "$@" (or $@), the arguments a
+// script or function was called with.
+func shellPositional(word *syntax.Word) bool {
+	parts := word.Parts
+	if len(parts) == 1 {
+		if quoted, ok := parts[0].(*syntax.DblQuoted); ok {
+			parts = quoted.Parts
+		}
+	}
+	if len(parts) != 1 {
+		return false
+	}
+	expansion, ok := parts[0].(*syntax.ParamExp)
+	return ok && expansion.Param != nil && expansion.Param.Value == "@" && !expansion.Length && expansion.Exp == nil && expansion.Slice == nil && expansion.Repl == nil && expansion.Index == nil
 }

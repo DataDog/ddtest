@@ -104,7 +104,10 @@ type validationRun struct {
 	root                string
 	checkoutRoot        string
 	// Why a real-suite Mocha run may report no per-test coverage.
-	coverageCause                   string
+	coverageCause string
+	// noCoverableSource marks a Mocha package with no file nyc instruments,
+	// whose real suite can report no source coverage.
+	noCoverableSource               bool
 	framework                       string
 	Name                            string
 	Command                         string
@@ -205,6 +208,12 @@ func (r validationRun) summary() runSummary {
 			return filepath.Ext(test.File) == ".mjs" || filepath.Ext(test.File) == ".mts"
 		}) {
 			cause = mochaESMCoverageCause
+		}
+		if status != "observed" && r.noCoverableSource {
+			// As for Jest and Vitest, which have no such check, a suite with
+			// nothing to cover is not blocked on coverage.
+			summary.Coverage.Status = "not applicable"
+			cause = mochaNoSourceCause
 		}
 		if status != "observed" && cause != "" {
 			summary.Coverage.Reason += " " + cause
@@ -541,7 +550,7 @@ func finishValidation(output io.Writer, repositoryRoot string, result validation
 			_, _ = fmt.Fprintln(output)
 		}
 		for _, entry := range result.CIRuntime.Review {
-			command := entry.Command
+			command := onboard.StepCommandLabel(entry.Command)
 			if onboard.RedactsCommandKeys(result.Framework) {
 				command = onboard.RedactCypressCommand(command)
 			}
@@ -817,7 +826,7 @@ func tracerDescription(result validationResult) string {
 // The reason of the first real-suite run without coverage, or "".
 func missingRealCoverageReason(result validationResult) string {
 	for _, run := range result.Runs {
-		if run.Coverage != nil && run.Coverage.Status != "observed" {
+		if run.Coverage != nil && run.Coverage.Status != "observed" && run.Coverage.Status != "not applicable" {
 			return run.Coverage.Reason
 		}
 	}
@@ -829,7 +838,7 @@ func missingRealCoverage(result validationResult) bool {
 		return false
 	}
 	for _, run := range result.Runs {
-		if run.Coverage != nil && run.Coverage.Status != "observed" {
+		if run.Coverage != nil && run.Coverage.Status != "observed" && run.Coverage.Status != "not applicable" {
 			return true
 		}
 	}

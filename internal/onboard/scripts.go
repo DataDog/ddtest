@@ -42,6 +42,9 @@ type commandResolution struct {
 	ReviewReason      string
 	// Code classifies a Review outcome for reports, such as CodeUninstrumentedJob.
 	Code string
+	// Caveat is a note for the scope's caveats on what the step runs outside
+	// the framework's test configurations, such as mutation testing.
+	Caveat string
 	// trailing holds the commands after the tests that were accepted as
 	// outside this validation (see resolveJestSequence).
 	trailing []trailingCommand
@@ -585,6 +588,7 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 		}
 		if framework == "mocha" {
 			entry.mochaIstanbul = MochaBabelIstanbulConfigured(directory)
+			entry.mochaNoSource = !entry.mochaIstanbul && !mochaInstrumentableSource(root, directory)
 			entry.mochaRunnerArgs = slices.Clone(words[1:])
 			entry.mochaProbeCommand = shellquote.Join(words...)
 			entry.mochaLookupDirectory = filepath.ToSlash(relative)

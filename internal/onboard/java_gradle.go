@@ -6,9 +6,12 @@
 package onboard
 
 import (
+	"cmp"
+	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/DataDog/ddtest/internal/gradle"
@@ -206,4 +209,79 @@ func otherGradleFrameworkProjects(projects []gradle.Project, framework string) [
 		}
 	}
 	return others
+}
+
+// javaGradleActionMajor is the major release a tag of a Gradle action names,
+// as v3 or v3.5.0.
+var javaGradleActionMajor = regexp.MustCompile(`^v([0-9]+)(?:\.[0-9]+)*$`)
+
+// ciCommandActionReader is a language that reads some actions as the command
+// they run, which runs with the step's environment like a run step's
+// command (see resolveVariantStep).
+type ciCommandActionReader interface {
+	// commandAction reports an action step the language reads as a command.
+	commandAction(step runtimeStep) bool
+}
+
+// A Gradle action with an arguments input runs a Gradle command.
+func (javaDiscovery) commandAction(step runtimeStep) bool { return javaGradleArgumentsAction(step) }
+
+// javaGradleArgumentsAction reports a step of a Gradle action with an
+// arguments input (see javaGradleActionStep), which runs a Gradle command
+// with the step's environment, as a run step does.
+func javaGradleArgumentsAction(step runtimeStep) bool {
+	name, _, _ := strings.Cut(strings.ToLower(strings.TrimSpace(step.Uses)), "@")
+	return (name == "gradle/gradle-build-action" || name == "gradle/actions/setup-gradle") && strings.TrimSpace(step.With["arguments"]) != ""
+}
+
+// javaGradleActionStep reads a GitHub Actions step of gradle/gradle-build-action,
+// or gradle/actions/setup-gradle before v4, which removed the input, whose
+// arguments input is a Gradle command line: the action runs the build's
+// wrapper, or Gradle on PATH without one, in build-root-directory, splitting
+// the arguments as a shell would without expanding them. ok is false for any
+// other step, or one without arguments, which only sets up Gradle; resolved
+// is set when the step is decided without running it as a command.
+func javaGradleActionStep(root string, step runtimeStep, framework string) (command runtimeStep, resolved *commandResolution, ok bool) {
+	if !javaGradleArgumentsAction(step) {
+		return step, nil, false
+	}
+	name, ref, _ := strings.Cut(strings.ToLower(strings.TrimSpace(step.Uses)), "@")
+	arguments := strings.TrimSpace(step.With["arguments"])
+	unresolved := func(reason string) (runtimeStep, *commandResolution, bool) {
+		resolution := unresolvedCommand(reason)
+		return step, &resolution, true
+	}
+	if name == "gradle/actions/setup-gradle" {
+		match := javaGradleActionMajor.FindStringSubmatch(ref)
+		if match == nil {
+			return unresolved("Gradle action " + step.Uses + " is not a release ddtest can read; setup-gradle v4 and later ignore its arguments input, so ddtest cannot tell whether this step runs " + framework + " tests")
+		}
+		if major, _ := strconv.Atoi(match[1]); major >= 4 {
+			return step, &commandResolution{Review: true, Reason: "setup-gradle v4 and later ignore the arguments input, so this step only sets up Gradle and runs no " + framework + " tests: " + step.Uses}, true
+		}
+	}
+	if strings.Contains(arguments, "${{") || strings.Contains(step.With["build-root-directory"], "${{") {
+		return unresolved("Gradle action input expression was not resolved; ddtest cannot tell which tests it runs: " + arguments)
+	}
+	if executable := strings.TrimSpace(step.With["gradle-executable"]); executable != "" {
+		return unresolved("Gradle action runs " + executable + " in place of the build's wrapper; local validation cannot run that Gradle")
+	}
+	if version := strings.TrimSpace(step.With["gradle-version"]); version != "" && version != "wrapper" {
+		return unresolved("Gradle action downloads Gradle " + version + " in place of the build's wrapper; local validation cannot run that Gradle")
+	}
+	words, err := shellquote.Split(arguments)
+	if err != nil {
+		return unresolved("Gradle action arguments could not be read: " + err.Error())
+	}
+	directory := filepath.Clean(cmp.Or(strings.TrimSpace(step.With["build-root-directory"]), "."))
+	executable := "gradle"
+	if filepath.IsLocal(directory) || directory == "." {
+		if _, err := os.Stat(filepath.Join(root, directory, "gradlew")); err == nil {
+			executable = "./gradlew"
+		}
+	}
+	command = step
+	command.Uses, command.With = "", nil
+	command.Run, command.WorkingDirectory = shellquote.Join(append([]string{executable}, words...)...), directory
+	return command, nil, true
 }

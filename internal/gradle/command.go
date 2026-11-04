@@ -120,20 +120,31 @@ func taskName(task string) string {
 var buildingPrefixes = []string{"assemble", "compile", "bundle", "package", "process", "generate", "merge", "lint", "jar"}
 
 // TestTask reports whether a task runs tests: test or a task named like it,
-// such as integrationTest, or check and build, which depend on test.
+// such as integrationTest, or check and build, which depend on test. A
+// mutation testing task, such as pitest, is not one (see MutationTask).
 func TestTask(task string) bool {
 	name := strings.ToLower(taskName(task))
 	if name == "check" || name == "build" {
 		return true
 	}
-	return strings.HasSuffix(name, "test") && !slices.ContainsFunc(buildingPrefixes, func(prefix string) bool { return strings.HasPrefix(name, prefix) })
+	return strings.HasSuffix(name, "test") && !MutationTask(task) && !slices.ContainsFunc(buildingPrefixes, func(prefix string) bool { return strings.HasPrefix(name, prefix) })
+}
+
+// MutationTask reports a task of the PIT mutation testing plugin
+// (info.solidsoft.pitest), such as pitest or pitestReport. It depends on the
+// compiled classes, not on a Test task, and runs the tests in PIT's own
+// processes, which write no test reports.
+func MutationTask(task string) bool {
+	return strings.HasPrefix(strings.ToLower(taskName(task)), "pitest")
 }
 
 // nonTestPrefixes, nonTestSuffixes and nonTestTasks name tasks that, by
-// convention, run no tests: cleaning, building, documentation, analysis and
-// publishing, including staging repositories as closeSonatypeStagingRepository.
+// convention, run no tests: cleaning, building, documentation, analysis,
+// signing and publishing, including staging repositories as
+// closeSonatypeStagingRepository. Mutation testing (see MutationTask) runs
+// no Test task either.
 var (
-	nonTestPrefixes = append([]string{"clean", "javadoc", "dokka", "spotless", "ktlint", "detekt", "checkstyle", "pmd", "spotbugs", "sonar", "jacoco", "license", "dist", "publish", "install", "upload", "release", "close", "native", "image", "jib", "docker", "shadow", "boot"}, buildingPrefixes...)
+	nonTestPrefixes = append([]string{"clean", "javadoc", "dokka", "spotless", "ktlint", "detekt", "checkstyle", "pmd", "spotbugs", "sonar", "jacoco", "license", "dist", "publish", "install", "upload", "release", "close", "native", "image", "jib", "docker", "shadow", "boot", "sign", "sources", "pitest"}, buildingPrefixes...)
 	nonTestSuffixes = []string{"stagingrepository", "stagingrepositories"}
 	nonTestTasks    = []string{"dependencies", "help", "tasks", "properties", "projects", "wrapper", "buildenvironment", "init", "run"}
 )

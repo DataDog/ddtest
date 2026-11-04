@@ -6,6 +6,7 @@
 package onboard
 
 import (
+	"cmp"
 	"fmt"
 	"maps"
 	"os"
@@ -38,6 +39,7 @@ func (gitLabCI) name() string { return gitLabCIProvider }
 
 func (gitLabCI) displayName() string       { return "GitLab CI" }
 func (gitLabCI) checkoutReference() string { return "$CI_PROJECT_DIR" }
+func (gitLabCI) checkoutVariable() string  { return "CI_PROJECT_DIR" }
 
 func (gitLabCI) environment() map[string]string {
 	return map[string]string{"CI": "true", "GITLAB_CI": "true"}
@@ -933,6 +935,11 @@ func (c *gitLabConfig) convert(job gitLabJob, globals map[string]string) map[str
 			converted.Image = gitLabExpand(converted.Image, env)
 		}
 		converted.Steps = c.steps(fields, env, converted.Image)
+		if missing := imageMissingTools(converted.Image, false, false, curlBeforeTests(setupFreeCommands(converted.Steps))); missing != "" {
+			// Datadog's setup script cannot run here: the job gets the
+			// fallback setup, which needs neither Bash nor curl.
+			converted.SetupProvider = newImageFallback(gitLabCI{}, converted.Image, missing)
+		}
 		converted.Env = gitLabDropRuntimeAxes(converted, row, gitLabScalar(fields["image"])+gitLabScalar(gitLabMembers(fields["image"])["name"]))
 		if rules.unknownVariables {
 			for i := range converted.Steps {
@@ -1467,6 +1474,27 @@ func gitLabShell(entries []gitLabStep, env map[string]string, offset int, image 
 		}
 		command := entry.node.Value
 		current := mergeEnvironment(env, state.env)
+		if file, parsed := parseCIShell(command); parsed && len(file.Stmts) > 0 {
+			if setup, consumed, ok := fallbackSetupAt(command, file.Stmts, 0, mergeEnvironment(current, state.references), gitLabSnippetForm, nil); ok {
+				if !setup.shaped || consumed != len(file.Stmts) {
+					// It may run anything, tests included: an unresolved
+					// command, never a setup step that hides it.
+					step.Run = command
+					step.ResolutionError = joinDiagnostic(step.ResolutionError, cmp.Or(setup.Problem, "GitLab CI script entry combines the "+fallbackSetupName+" with other commands; give it its own entry, exactly in the form ddtest prescribes"))
+					steps = append(steps, step)
+					continue
+				}
+				step.Setup = &setup
+				if setup.Problem == "" {
+					state.applySetup(setup, current)
+					for _, stmt := range setup.after {
+						state.statement(stmt, mergeEnvironment(mergeEnvironment(current, state.env), state.references))
+					}
+				}
+				steps = append(steps, step)
+				continue
+			}
+		}
 		if setup, ok := gitLabSetupInvocation(command, mergeEnvironment(current, state.references), state.literal); ok {
 			if setup.Problem == "" && !setup.shaped {
 				// Other commands in the entry would disappear with the setup.
@@ -1515,10 +1543,10 @@ func gitLabShellProblem(image string) string {
 		return ""
 	}
 	if strings.Contains(mirroredImage(name), "$") {
-		return "The job image " + image + " depends on a variable ddtest cannot resolve, so it cannot tell whether the image has the Bash and curl the Datadog setup script needs. Give the job a literal image (or a variable defined in the configuration) that has both."
+		return "The job image " + image + " depends on a variable ddtest cannot resolve, so it cannot tell whether the image has the Bash and curl the Datadog setup script needs, and does not validate this job's setup. ddtest reads an image written literally in the configuration or in a variable defined there; tell the user."
 	}
 	if imageWithoutBash(image) {
-		return "The job image " + image + " has no Bash, so GitLab runs its script with sh and the Datadog setup script (source, process substitution) cannot run. Use a Bash-capable image for this job, such as the non-Alpine variant, or a custom image with Bash preinstalled; installing Bash in the script does not change the job's shell."
+		return "The job image " + image + " has no Bash, so GitLab runs its script with sh and the Datadog setup script (source, process substitution) cannot run; installing Bash in the script does not change the job's shell. " + fallbackInstead("this job")
 	}
 	return ""
 }
@@ -1534,7 +1562,7 @@ func gitLabImageProblem(image string, curl bool) string {
 		return reason
 	}
 	if !curl && imageWithoutDownloader(image) {
-		return "The job image " + image + " has no curl, so the Datadog setup script cannot be downloaded and its tests would run untraced. Use the full image (without -slim), or add an entry that installs curl before the setup entry: " + gitLabCurlInstall + "."
+		return "The job image " + image + " has no curl, so the Datadog setup script cannot be downloaded and its tests would run untraced. " + fallbackInstead("this job")
 	}
 	return ""
 }

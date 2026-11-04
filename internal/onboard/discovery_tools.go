@@ -26,6 +26,7 @@ var discoveryTools = map[string]discoveryTool{
 	"false":         failingTool,   // Always fails; && followers cannot be assumed to execute.
 	"mkdir":         metadataTool,  // Creates directories; does not dispatch a test runner.
 	"cp":            metadataTool,  // Copies files; mutations are retained as setup diagnostics.
+	"print-env":     metadataTool,  // @bahmutov/print-env: prints the environment variables its arguments prefix; runs no command.
 	"jq":            reviewTool,    // Transforms data; only literal filters/paths are accepted for redirection.
 	"ls-engines":    reviewTool,    // Dependency runtime checker; no selected test invocation.
 	"gherkin-lint":  reviewTool,    // Feature-file linter; plugins need separate review.
@@ -45,6 +46,7 @@ var discoveryTools = map[string]discoveryTool{
 	"oxfmt":         reviewTool,    // Common formatter; configuration needs separate review.
 	"flow":          reviewTool,    // Type checker; not a Jest entry point.
 	"codecov":       reviewTool,    // Coverage uploader; not a Jest entry point.
+	"allure":        reviewTool,    // Allure Report CLI: builds, opens or serves a report from result files; runs no test.
 	"documentation": reviewTool,    // Documentation generator; plugins need separate review.
 	"docusaurus":    reviewTool,    // Documentation builder; plugins/configuration need separate review.
 	"vitepress":     reviewTool,    // Documentation builder; plugins/configuration need separate review.

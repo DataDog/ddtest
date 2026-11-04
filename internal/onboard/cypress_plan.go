@@ -3,6 +3,7 @@ package onboard
 import (
 	"encoding/json"
 	"fmt"
+	"path"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -172,6 +173,44 @@ func cypressRunnerPlatform(runsOn any) string {
 	return ""
 }
 
+// cypressBackgroundServer returns the server a CI step that only starts one
+// in the background runs, as npm run start & does: one npm, Yarn, pnpm or
+// Node command with arguments, no redirect, negation or other statement.
+func cypressBackgroundServer(command string) ([]string, bool) {
+	file, ok := parseCIShell(command)
+	if !ok || len(file.Stmts) != 1 {
+		return nil, false
+	}
+	start := file.Stmts[0]
+	if !start.Background || start.Negated || start.Coprocess || start.Disown || len(start.Redirs) != 0 {
+		return nil, false
+	}
+	servers, err := staticCommands(shellText(start.Cmd))
+	if err != nil || len(servers) != 1 || len(servers[0]) < 2 || !slices.Contains([]string{"npm", "yarn", "pnpm", "node"}, servers[0][0]) {
+		return nil, false
+	}
+	return servers[0], true
+}
+
+// cypressStartedTest gives a Cypress CLI test the server an earlier step of
+// its job started in the background, as GitLab's and CircleCI's separate
+// script entries (npm run start &, then npm run e2e) do: validation starts
+// it the same way before the CLI, as for one step that does both (see
+// cypressBackgroundPlan). ok is false for a test it can't start that way,
+// such as an action's or one with its own startup.
+func cypressStartedTest(entry TestCommand, server []string) (TestCommand, bool) {
+	if entry.Cypress != nil {
+		return entry, false
+	}
+	executable, arguments, assignments, err := ParseValidationCommand(entry.Command)
+	if err != nil {
+		return entry, false
+	}
+	entry.Environment = mergeEnvironment(entry.Environment, assignments)
+	entry.Cypress = &CypressCommand{CLI: append([]string{executable}, arguments...), Start: [][]string{server}, WaitTimeout: cypressDefaultWaitTimeout}
+	return entry, true
+}
+
 // Support the ordinary two-command startup pattern without executing shell
 // syntax or discarding additional commands, redirects, or background consumers.
 func cypressBackgroundPlan(root string, workflow ciWorkflow, job runtimeJob, step runtimeStep) (commandResolution, bool) {
@@ -208,4 +247,89 @@ func cypressBackgroundPlan(root string, workflow ciWorkflow, job runtimeJob, ste
 	entry.Cypress = &CypressCommand{CLI: append([]string{executable}, arguments...), Start: servers, WaitTimeout: cypressDefaultWaitTimeout}
 	resolved.Tests, resolved.Evidence = []TestCommand{entry}, fmt.Sprintf("Managed startup %s -> %s", shellquote.Join(servers[0]...), shellquote.Join(commands[0]...))
 	return resolved, true
+}
+
+// cypressPairedServer returns the server a step of the job that only starts
+// one in the background (see cypressBackgroundServer) starts for the Cypress
+// test of the next step that runs anything (see cypressStartsNextTest), on
+// matrix row. run is the step's command resolved for the row. Such a step is
+// the test's managed startup: neither a test nor an unresolved command.
+// Validation starts the server with the test's environment and directory,
+// so the step must run in the same (see cypressSameContext).
+func cypressPairedServer(root string, workflow ciWorkflow, job runtimeJob, row map[string]any, index int, language, run string) ([]string, bool) {
+	server, ok := cypressBackgroundServer(run)
+	if !ok || !cypressStartsNextTest(root, workflow, job, row, index, language, server) {
+		return nil, false
+	}
+	return server, true
+}
+
+// cypressStartsNextTest reports whether the next step after step index of
+// the job that runs anything (see cypressKeepsServer), on matrix row, runs
+// one Cypress CLI test that server can start for (see cypressStartedTest),
+// with no condition or environment ddtest can't read, in the context of
+// step index.
+func cypressStartsNextTest(root string, workflow ciWorkflow, job runtimeJob, row map[string]any, index int, language string, server []string) bool {
+	next := index + 1
+	for next < len(job.Steps) && cypressKeepsServer(job.Steps[next]) {
+		next++
+	}
+	if next >= len(job.Steps) {
+		return false
+	}
+	step := job.Steps[next]
+	if active, err := stepCondition(step, row, conditionEnvironment(workflow, job, runtimeStep{}, row)); err != nil || !active {
+		return false
+	}
+	resolved, env, err := resolveVariantStep(workflow, job, step, row, "cypress")
+	if err != nil {
+		return false
+	}
+	starter, starterEnv, err := resolveVariantStep(workflow, job, job.Steps[index], row, "cypress")
+	if err != nil || !cypressSameContext(stepDirectory(workflow, job, starter), starterEnv, stepDirectory(workflow, job, resolved), env) {
+		return false
+	}
+	resolution := resolveTestStep(root, workflow, job, resolved, language, "cypress")
+	if !resolution.Matched || resolution.Reason != "" || len(resolution.Tests) != 1 {
+		return false
+	}
+	_, ok := cypressStartedTest(resolution.Tests[0], server)
+	return ok
+}
+
+// cypressSameContext reports whether a background server's step, in
+// directory with environment env, and the Cypress test's step it starts for
+// run in one context: validation starts the server in the test's directory
+// with the test's environment (see cypressStartedTest), so a server that
+// has its own, such as PORT=3001 or another working directory, would start
+// another application. Only the test may have tracer variables (DD_* or a
+// language's preload variable, such as NODE_OPTIONS) the server lacks: the
+// Datadog setup writes them for the test.
+func cypressSameContext(directory string, env map[string]string, testDirectory string, testEnv map[string]string) bool {
+	if path.Clean("./"+directory) != path.Clean("./"+testDirectory) {
+		return false
+	}
+	for name, value := range env {
+		if testValue, ok := testEnv[name]; !ok || testValue != value {
+			return false
+		}
+	}
+	for name := range testEnv {
+		if _, ok := env[name]; !ok && !strings.HasPrefix(name, "DD_") && !slices.ContainsFunc(discoveryLanguages, func(language discoveryLanguage) bool { return language.preloadVariable(name) }) {
+			return false
+		}
+	}
+	return true
+}
+
+// cypressKeepsServer reports whether step may sit between a background
+// server's step and the Cypress test it starts for: the Datadog setup,
+// which ddtest's instructions put immediately before the test command, or
+// a step that only reads or prints. Neither starts a test nor touches the
+// server.
+func cypressKeepsServer(step runtimeStep) bool {
+	if _, ok := datadogSetup(step); ok {
+		return true
+	}
+	return step.Run != "" && step.ResolutionError == "" && checkOnlyStep(step.Run)
 }

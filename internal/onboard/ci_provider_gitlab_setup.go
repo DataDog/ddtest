@@ -307,6 +307,9 @@ func (gitLabCI) setupTerms() ciSetupTerms {
 func (gitLabCI) setupName() string { return "Datadog setup script" }
 
 func (g gitLabCI) setupProblem(setup ciSetup, tracerInput string, exact func(string) bool, example, site string) string {
+	if setup.fallback {
+		return fallbackSetupProblem(setup, tracerInput, exact, example, site)
+	}
 	if setup.Problem != "" {
 		return setup.Problem
 	}
@@ -335,6 +338,20 @@ func (g gitLabCI) setupProblem(setup ciSetup, tracerInput string, exact func(str
 
 func (gitLabCI) apiKeyAction(bool) string {
 	return "Add DD_API_KEY as a masked GitLab CI/CD variable (Settings > CI/CD > Variables), available to every branch whose pipelines run the tests (a protected variable only reaches protected branches). Until it exists, Test Optimization is disabled for those jobs and their tests run untraced."
+}
+
+// gitLabSnippetForm is the fallback setup's form in GitLab CI jobs (see
+// imageFallback), whose whole script runs in one shell.
+var gitLabSnippetForm = snippetForm{provider: gitLabCIProvider, job: true}
+
+// gitLabFallbackText is the fallback setup for request as a script entry,
+// every line prefixed with indent.
+func gitLabFallbackText(request ciSetupRequest, indent string) string {
+	lines := []string{"- |"}
+	for _, line := range strings.Split(fallbackRequestSnippet(request, gitLabSnippetForm).shell(), "\n") {
+		lines = append(lines, "  "+line)
+	}
+	return indent + strings.Join(lines, "\n"+indent) + "\n"
 }
 
 // gitLabMissingKeyMessage is what a job without DD_API_KEY logs: the tests
@@ -374,7 +391,7 @@ func (g gitLabCI) setupInstructions(request ciSetupRequest) string {
 	text.WriteString("2. In every GitLab CI job that runs the tests listed above, add this entry to its script immediately before the first test command, after dependency installation and any cd into the test directory. Keep every existing command, variable and rule unchanged; where a template or !reference supplies the script, add it there only when every job using it runs these tests.\n\n```yaml\n")
 	text.WriteString(gitLabSetupText(request, ""))
 	text.WriteString("```\n")
-	text.WriteString("\nThe entry needs Bash: in jobs whose image lacks it (Alpine variants, BusyBox, distroless), GitLab runs the script with sh, so switch those jobs to a Bash-capable image such as the non-Alpine variant; installing Bash in the script does not change the job's shell.\n")
+	text.WriteString("\nThe entry needs Bash and curl: GitLab runs the script with sh in images without Bash (Alpine variants, BusyBox, distroless), and installing Bash in the script does not change the job's shell. Jobs whose image lacks them get the " + fallbackSetupName + " instead, as their own instructions show; never change a job's image.\n")
 	text.WriteString("\n3. Set the environment and working directory the tests depend on before the entry. After it, extend the variables it exports instead of replacing them.\n")
 	for _, note := range request.Notes {
 		text.WriteString("\n- " + strings.ReplaceAll(note, "\n", "\n  "))

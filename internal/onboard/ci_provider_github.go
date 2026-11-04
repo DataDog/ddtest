@@ -27,6 +27,7 @@ func (gitHubActions) name() string { return gitHubActionsProvider }
 
 func (gitHubActions) displayName() string       { return "GitHub Actions" }
 func (gitHubActions) checkoutReference() string { return ciProjectDirectory }
+func (gitHubActions) checkoutVariable() string  { return "GITHUB_WORKSPACE" }
 
 func (gitHubActions) environment() map[string]string {
 	return map[string]string{"CI": "true", "GITHUB_ACTIONS": "true"}

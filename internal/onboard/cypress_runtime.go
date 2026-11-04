@@ -168,14 +168,33 @@ func cypressExcludedBootstrap(workflow ciWorkflow, job runtimeJob, step runtimeS
 	return ""
 }
 
-// Cypress browser image short tags name their Node release. Unknown images
-// remain unresolved rather than inheriting the evaluator's runtime.
+// The Node release Cypress's Docker images name in their tags
+// (github.com/cypress-io/cypress-docker-images): cypress/base:<node> (and the
+// older -slim variants), cypress/browsers:<node> and every full tag with a
+// node-<version> part, as cypress/browsers:node-22.15.0-chrome-…,
+// cypress/included:cypress-14.4.0-node-22.15.0-… or the older
+// cypress/browsers:node16.14.2-slim-chrome100-ff99-edge.
+// cypress/included:<cypress version> names Cypress, not the Node release it
+// bundles, which changes between image builds, so it stays unresolved.
+var (
+	cypressImageNode     = regexp.MustCompile(`^cypress/(?:base:([0-9]+(?:\.[0-9]+){0,2})(?:-slim)?|browsers:([0-9]+\.[0-9]+\.[0-9]+))$`)
+	cypressImageNodePart = regexp.MustCompile(`^cypress/(?:base|browsers|included):(?:.+-)?node-?([0-9]+(?:\.[0-9]+){0,2})(?:-.+)?$`)
+)
+
+// cypressContainerNode is the Node release a Cypress image's tag names.
+// Unknown images remain unresolved rather than inheriting the evaluator's
+// runtime.
 func cypressContainerNode(container any) string {
 	image, _ := container.(string)
 	if value, ok := container.(map[string]any); ok {
 		image, _ = value["image"].(string)
 	}
-	if matched := regexp.MustCompile(`^cypress/browsers:([0-9]+\.[0-9]+\.[0-9]+)$`).FindStringSubmatch(image); len(matched) > 0 {
+	// A digest pins one build of the tag, which names the same Node.
+	image, _, _ = strings.Cut(dockerHubName(mirroredImage(image)), "@")
+	if matched := cypressImageNode.FindStringSubmatch(image); len(matched) > 0 {
+		return matched[1] + matched[2]
+	}
+	if matched := cypressImageNodePart.FindStringSubmatch(image); len(matched) > 0 {
 		return matched[1]
 	}
 	return ""

@@ -31,6 +31,10 @@ type ciProvider interface {
 	// checkout directory, such as $CI_PROJECT_DIR, which the shared model
 	// writes as ${{ github.workspace }} (see displayCIText).
 	checkoutReference() string
+	// checkoutVariable names the variable the provider sets in every job to
+	// the checkout directory, such as CI_PROJECT_DIR; empty when it sets
+	// none that commands can use as one (see repositoryRelativeCommands).
+	checkoutVariable() string
 	// configurationFiles lists the repository-relative CI configuration files
 	// the provider owns; none means the repository does not use it. Listing
 	// never parses them.
@@ -102,6 +106,9 @@ type ciSetup struct {
 	Problem string
 	// shaped reports a setup step in a form the provider recognizes entirely.
 	shaped bool
+	// fallback reports ddtest's setup without Bash or curl (see
+	// fallbackSetupAt), which every provider validates the same way.
+	fallback bool
 	// after are shell statements that run only with the setup, inside its
 	// guard.
 	after []*syntax.Stmt
@@ -113,9 +120,6 @@ type ciSetup struct {
 	// Jenkinsfile sh step: a step of its job in another shell does not have
 	// them (see ciShellOrigin).
 	shellLocal bool
-	// withoutBash reports a setup a POSIX shell runs alone, in an image
-	// without the Bash Datadog's installer needs (see ciShellSetup).
-	withoutBash bool
 	// Inputs are the installer inputs keyed by the setup action's input
 	// names: languages, api_key, site and <language>-tracer-version. Values
 	// are verbatim; unresolved references stay as written.
@@ -171,6 +175,10 @@ type ciSetupRequest struct {
 	// Jobs are the jobs the setup is for, when the provider sets its jobs up
 	// with several mechanisms (see runtimeJob.SetupProvider); empty for all.
 	Jobs []string
+	// Shared are the job definitions of these jobs whose other invocations
+	// run no tests (see circleSharedJobs): the setup is enabled only for the
+	// invocations that run the tests.
+	Shared []ciSharedJob
 }
 
 // ciSetupTerms are how a provider without the shared workflow syntax names
@@ -217,6 +225,10 @@ type ciSetupTerms struct {
 	// because the secret store holds it: a hand-written setup without
 	// DD_API_KEY in its environment then reports nothing.
 	KeyBinding bool
+	// Fallback reports the setup without Bash or curl (see imageFallback),
+	// which installs the tracer with the job's own tools: languages describe
+	// what it exports.
+	Fallback bool
 	// Plugin reports a setup that is a CI server plugin, enabled in the
 	// configuration, that installs the tracers on the build agent and sets
 	// their variables for every step (the Datadog Jenkins plugin), instead of
@@ -377,6 +389,17 @@ type ciAPIKeyActions interface {
 func CIProviderAPIKeyActionFor(check *RuntimeCheck, skipped bool) string {
 	provider := activeOrDefaultCIProvider()
 	several, ok := provider.(ciAPIKeyActions)
+	if !ok && check != nil {
+		// Jobs on the setup without Bash or curl skip it without the key.
+		fallback := slices.ContainsFunc(check.Jobs, func(job RuntimeFinding) bool { return job.Action == fallbackSetupName })
+		others := slices.ContainsFunc(check.Jobs, func(job RuntimeFinding) bool { return job.Action != "" && job.Action != fallbackSetupName })
+		switch {
+		case fallback && others:
+			return provider.apiKeyAction(skipped) + " " + newImageFallback(provider, "", "").apiKeyAction(skipped)
+		case fallback:
+			return newImageFallback(provider, "", "").apiKeyAction(skipped)
+		}
+	}
 	if !ok || check == nil {
 		return provider.apiKeyAction(skipped)
 	}

@@ -121,7 +121,7 @@ func setupMochaCoverage(root, directory, framework, command string) (string, err
 		remaining := &scriptBudget{left: setupCommandBudget}
 		resolution := resolveJestSequence(root, current, shellText(call), nil, remaining, "mocha")
 		// Recognized Babel/Istanbul instrumentation already reports coverage.
-		if len(resolution.Tests) == 1 && !resolution.Tests[0].usesNYC && !resolution.Tests[0].mochaIstanbul {
+		if len(resolution.Tests) == 1 && !resolution.Tests[0].mochaCoverageSettled() {
 			offsets = append(offsets, int(call.Args[0].Pos().Offset()))
 			directories = append(directories, current)
 			esm = esm || resolution.Tests[0].mochaESM

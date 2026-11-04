@@ -130,7 +130,7 @@ func TestGitLabRubyAgentOnboarding(t *testing.T) {
 }
 
 func TestGitLabMinitestInstructionsExtendTheExportedOptions(t *testing.T) {
-	text := providerSetupInstructions(t.TempDir(), gitLabCI{}, "ruby", "minitest", "", true)
+	text := providerSetupInstructions(rubyIsolationRepository(t), gitLabCI{}, "ruby", "minitest", "", true)
 	require.Contains(t, text, `- export RUBYOPT="$RUBYOPT -r./ci/datadog_test_optimization.rb"`)
 	require.Contains(t, text, "Datadog.configure")
 	require.NotContains(t, text, "${{ env.RUBYOPT }}")
@@ -466,22 +466,28 @@ func TestGitLabMissingKeyDisablesTheSetup(t *testing.T) {
 }
 
 // The setup entry needs Bash; images known to lack it run the job with sh.
+// Their jobs get the setup without Bash or curl instead, never another
+// image; an image without any shell gets no setup.
 func TestGitLabSetupNeedsBash(t *testing.T) {
 	useCIProvider(t, "gitlab")
 	root := gitLabRubyRepository(t, rubyJob("ruby:3.3-alpine", "", ""))
 	require.False(t, rubyDiscovery{}.ciSetupConfigured(root, "rspec", ""))
 	jobs, _ := gitLabJobs(t, root)
 	require.Contains(t, jobs["rspec"].Steps[0].Setup.Problem, "has no Bash")
+	require.Contains(t, jobs["rspec"].Steps[0].Setup.Problem, "Use the "+fallbackSetupName+" in this job instead")
+	require.NotContains(t, jobs["rspec"].Steps[0].Setup.Problem, "Bash-capable image")
 	require.Empty(t, jobs["rspec"].Steps[1].Env["RUBYOPT"], "a setup that cannot run exports nothing")
-	for image, refused := range map[string]bool{"node:22-alpine": true, "node:22-alpine3.20": true, "busybox": true, "gcr.io/distroless/nodejs22-debian12": true, "node:22": false, "registry.example.com/ci/node:22": false} {
-		_, _, err := planGitLab(t, "jest", map[string]string{".gitlab-ci.yml": "unit:\n  image: " + image + "\n  script:\n    - npm test\n"})
-		if refused {
+	for image, setup := range map[string]string{"node:22-alpine": fallbackComment[0], "node:22-alpine3.20": fallbackComment[0], "busybox": fallbackComment[0], "gcr.io/distroless/nodejs22-debian12": "", "node:22": gitLabSetupDownload, "registry.example.com/ci/node:22": gitLabSetupDownload} {
+		plan, _, err := planGitLab(t, "jest", map[string]string{".gitlab-ci.yml": "unit:\n  image: " + image + "\n  script:\n    - npm test\n"})
+		if setup == "" {
 			var gap *SetupGap
 			require.ErrorAs(t, err, &gap, image)
-			require.Contains(t, gap.Reason, "Bash-capable image", image)
-		} else {
-			require.NoError(t, err, image)
+			require.Contains(t, gap.Reason, "the image has no shell to run any setup in", image)
+			require.Contains(t, gap.Reason, "do not change its image", image)
+			continue
 		}
+		require.NoError(t, err, image)
+		require.Contains(t, plannedFile(t, plan, ".gitlab-ci.yml"), setup, image)
 	}
 }
 
@@ -562,7 +568,7 @@ func TestGitLabApplyRefusesAnUnresolvedLanguageSelector(t *testing.T) {
 }
 
 func TestGitLabApplyMochaNeedsCoverage(t *testing.T) {
-	files := map[string]string{"package.json": `{"devDependencies": {"mocha": "11.0.0", "nyc": "17.0.0"}}`, "test/unit.js": "it('a', () => {})\n", "test/esm.mjs": "it('b', () => {})\n"}
+	files := map[string]string{"package.json": `{"devDependencies": {"mocha": "11.0.0", "nyc": "17.0.0"}}`, "lib/index.js": "module.exports = 1\n", "test/unit.js": "it('a', () => {})\n", "test/esm.mjs": "it('b', () => {})\n"}
 	files[".gitlab-ci.yml"] = "unit:\n  image: node:22\n  script:\n    - npx mocha test/unit.js\n"
 	_, root, err := planGitLab(t, "mocha", files)
 	var gap *SetupGap
@@ -888,22 +894,26 @@ func TestGitLabRubyGemsUpdateMustPrecedeTheSetup(t *testing.T) {
 }
 
 // Official slim images have no curl, so the setup script can't be
-// downloaded: the setup is incomplete and apply asks for the fix. An
-// earlier curl install makes it runnable.
+// downloaded: the setup is incomplete, and apply writes the setup without
+// Bash or curl instead. An earlier curl install makes the script runnable.
 func TestGitLabSlimImagesNeedCurl(t *testing.T) {
 	useCIProvider(t, "gitlab")
 	root := gitLabRubyRepository(t, rubyJob("ruby:3.3-slim", "", ""))
 	require.False(t, rubyDiscovery{}.ciSetupConfigured(root, "rspec", ""))
 	jobs, _ := gitLabJobs(t, root)
 	require.Contains(t, jobs["rspec"].Steps[0].Setup.Problem, "has no curl")
+	require.Contains(t, jobs["rspec"].Steps[0].Setup.Problem, "Use the "+fallbackSetupName+" in this job instead")
 	root = gitLabRubyRepository(t, rubyJob("ruby:3.3-slim", "    - "+gitLabCurlInstall+"\n", ""))
 	require.True(t, rubyDiscovery{}.ciSetupConfigured(root, "rspec", ""))
-	_, _, err := planGitLab(t, "jest", map[string]string{".gitlab-ci.yml": "unit:\n  image: node:22-bookworm-slim\n  script:\n    - npm test\n"})
-	var gap *EditThenApplyGap
-	require.ErrorAs(t, err, &gap)
-	require.Contains(t, gap.Reason, gitLabCurlInstall)
-	_, _, err = planGitLab(t, "jest", map[string]string{".gitlab-ci.yml": "unit:\n  image: node:22-slim\n  script:\n    - " + gitLabCurlInstall + "\n    - npm test\n"})
+	plan, _, err := planGitLab(t, "jest", map[string]string{".gitlab-ci.yml": "unit:\n  image: node:22-bookworm-slim\n  script:\n    - npm test\n"})
 	require.NoError(t, err)
+	written := plannedFile(t, plan, ".gitlab-ci.yml")
+	require.Contains(t, written, fallbackComment[1])
+	require.Contains(t, written, `npm install -g "dd-trace@$DD_TRACER_VERSION_JS"`)
+	require.NotContains(t, written, gitLabSetupDownload)
+	plan, _, err = planGitLab(t, "jest", map[string]string{".gitlab-ci.yml": "unit:\n  image: node:22-slim\n  script:\n    - " + gitLabCurlInstall + "\n    - npm test\n"})
+	require.NoError(t, err)
+	require.Contains(t, plannedFile(t, plan, ".gitlab-ci.yml"), gitLabSetupDownload)
 }
 
 // An image ddtest cannot resolve may lack Bash or curl: no apply, no

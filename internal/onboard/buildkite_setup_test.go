@@ -101,7 +101,7 @@ func TestBuildkiteRubyAgentOnboarding(t *testing.T) {
 // Options that must follow the snippet are later commands of the same step,
 // with every $ escaped for pipeline upload.
 func TestBuildkiteMinitestInstructionsExtendTheExportedOptions(t *testing.T) {
-	text := providerSetupInstructions(t.TempDir(), buildkite{}, "ruby", "minitest", "", true)
+	text := providerSetupInstructions(rubyIsolationRepository(t), buildkite{}, "ruby", "minitest", "", true)
 	require.Contains(t, text, "Right after the Datadog setup snippet, append the initializer to the exported options:")
 	require.Contains(t, text, `- export RUBYOPT="$$RUBYOPT -r./ci/datadog_test_optimization.rb"`)
 	require.NotContains(t, text, "${{ env.RUBYOPT }}")
@@ -164,14 +164,27 @@ func TestBuildkiteRubyImageBuiltFromADockerfile(t *testing.T) {
 			require.Equal(t, tc.reason == "", rubyDiscovery{}.ciSetupConfigured(root, "rspec", ""))
 		})
 	}
-	t.Run("the instructions name the missing curl before the snippet is written", func(t *testing.T) {
+	t.Run("the instructions prescribe the setup without Bash or curl before the snippet is written", func(t *testing.T) {
 		root := buildkiteRubyRepository(t, strings.Replace(pipeline, snippet, "", 1))
 		writeFile(t, root, "docker-compose.yml", "version: '2'\nservices:\n  app:\n    build: .\n")
 		writeFile(t, root, "Dockerfile", freshshellDockerfile)
-		notes := strings.Join(rubyDiscovery{}.ciSetupRequest(root, "rspec", "datadoghq.com", buildkite{}.setupTerms()).Notes, "\n")
-		require.Contains(t, notes, ".buildkite/pipeline.yml / rspec: The step's image is built from Dockerfile, whose final stage is FROM ruby:3.4.7-slim-trixie, which has neither curl nor wget")
+		instructions := providerSetupInstructions(root, buildkite{}, "ruby", "rspec", "", true)
+		require.Contains(t, instructions, "These jobs (.buildkite/pipeline.yml / rspec) run in ruby:3.4.7-slim-trixie, which has neither curl nor wget")
+		require.Contains(t, instructions, buildkiteEscape(fallbackComment[0]))
+		require.Contains(t, instructions, `bundle add datadog-ci -v "$$DD_TRACER_VERSION_RUBY"`)
+		require.NotContains(t, instructions, "build FROM the full image")
 		jobs := RubyCIConfigurationForSite(root, "rspec", "").Jobs
 		require.Len(t, jobs, 1)
 		require.Equal(t, "3.4.7", jobs[0].Runtime)
+	})
+	t.Run("the setup without Bash or curl is complete there", func(t *testing.T) {
+		fallback := buildkiteEntryText(fallbackRequestSnippet(ciSetupRequest{Language: "ruby", Site: "datadoghq.com", TracerVersion: "1.42.0"}, buildkiteSnippetForm).shell(), "      ")
+		root := buildkiteRubyRepository(t, strings.Replace(pipeline, snippet, fallback, 1))
+		writeFile(t, root, "docker-compose.yml", "version: '2'\nservices:\n  app:\n    build: .\n")
+		writeFile(t, root, "Dockerfile", freshshellDockerfile)
+		jobs := RubyCIConfigurationForSite(root, "rspec", "").Jobs
+		require.Len(t, jobs, 1)
+		require.Equal(t, fallbackSetupName, jobs[0].Action)
+		require.True(t, rubyDiscovery{}.ciSetupConfigured(root, "rspec", ""), jobs[0].Reason)
 	})
 }

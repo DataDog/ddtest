@@ -215,6 +215,16 @@ const javaInstallerAgent = "-javaagent:${{ env.DD_JAVA_AGENT }}"
 // JAVA_TOOL_OPTIONS for every Java process.
 var javaAgentCarriers = []string{"MAVEN_OPTS", "GRADLE_OPTS", "JAVA_TOOL_OPTIONS"}
 
+// javaCarriersNote says where the setup adds -javaagent: the installer's
+// variables, or, for the setup without Bash or curl, the ones it exports
+// (see javaDiscovery.ciFallbackInstall).
+func javaCarriersNote(terms ciSetupTerms) string {
+	if terms.Fallback {
+		return "The " + terms.Installer + " downloads the dd-java-agent release it names from Maven Central with curl or wget, or else with the job's JDK, checks its SHA256 and adds -javaagent for " + terms.Later + " to " + strings.Join(javaFallbackCarriers(activeOrDefaultCIProvider().name()), ", ") + ", before the options the job set earlier."
+	}
+	return "The " + terms.Installer + " adds -javaagent for " + terms.Later + " " + javaInstallerCarriers(activeOrDefaultCIProvider().name()) + ", before the options the job set earlier; its build system input, if set, must name the build tool the tests run (maven or gradle)."
+}
+
 // javaInstallerCarriers names, in a sentence, the variables a provider's setup
 // adds the agent to without a build system input: the installer of the
 // Datadog CircleCI orb instruments every Java process.
@@ -245,9 +255,9 @@ func (javaDiscovery) ciSetupRequest(root, framework, site string, terms ciSetupT
 	request := ciSetupRequest{Language: "java", Site: site, TracerInput: "java-tracer-version", TracerVersion: "<exact dd-java-agent release>"}
 	request.Notes = []string{
 		"Replace <exact dd-java-agent release> with an exact dd-java-agent release, such as " + javaRecommendedTracer + "; local validation runs that release, and a floating one cannot be validated. Keep the existing build files, Maven or Gradle wrapper, JDK images, Maven goals or Gradle tasks, profiles, modules or projects, plugins, JVM options, test arguments and matrices. One Maven or Gradle command runs every framework the build declares: do not split it or filter it by " + framework + ". Local validation runs only the Maven test lifecycle or Gradle test tasks and never installs or publishes.",
-		"The " + terms.Installer + " adds -javaagent for " + terms.Later + " " + javaInstallerCarriers(activeOrDefaultCIProvider().name()) + ", before the options the job set earlier; its build system input, if set, must name the build tool the tests run (maven or gradle). A later command that sets one of these variables must keep the agent: extend it with " + terms.Persist(`export MAVEN_OPTS="$MAVEN_OPTS <options>"`) + ", never replace it. Do not add -javaagent options or set DD_CIVISIBILITY_ENABLED yourself.",
-		"ddtest reads the JDK of each instrumented job from its image, such as maven:3.9-eclipse-temurin-21, gradle:8.10-jdk17, eclipse-temurin:17-jdk or cimg/openjdk:17.0. A job that runs on the build agent's own JDK, or in an image whose name selects no JDK version, stays unverified: tell the user, and give it such an image only with their approval.",
-		setupImageNote(root, "java", framework, site),
+		javaCarriersNote(terms) + " A later command that sets one of these variables must keep the agent: extend it with " + terms.Persist(`export MAVEN_OPTS="$MAVEN_OPTS <options>"`) + ", never replace it. Do not add -javaagent options or set DD_CIVISIBILITY_ENABLED yourself.",
+		"ddtest reads the JDK of each instrumented job from its image, such as maven:3.9-eclipse-temurin-21, gradle:8.10-jdk17, eclipse-temurin:17-jdk or cimg/openjdk:17.0. A job that runs on the build agent's own JDK, or in an image whose name selects no JDK version, stays unverified: tell the user. Never change a job's image or JDK to make it verifiable.",
+		setupImageNote(root, "java", framework),
 		setupUnsupportedNote(root, "java", framework),
 		"If a job or matrix entry runs a JDK the agent cannot instrument (early-access builds, Java older than 8), keep its tests running uninstrumented in a job without " + terms.Entry + "; ddtest reports such jobs as excluded. Report each exclusion and its reason; do not drop entries, guard the tests or change JDK versions to obtain a pass. At least one instrumented job is required.",
 		"Exclude .testoptimization/ from Git (add /.testoptimization/ to the repository .gitignore).",
@@ -401,3 +411,82 @@ func (javaDiscovery) ciPluginReset() string {
 // A hand-written dd-java-agent setup is the job's own -javaagent, which the
 // Datadog Jenkins plugin never writes.
 func (javaDiscovery) keepsHandWrittenJobs() bool { return true }
+
+// javaFallbackDownload is the Java source file the fallback setup runs with
+// the JDK's own launcher (java File.java, JDK 11 and later) where the image
+// has neither curl nor wget: like the official installer, it downloads
+// dd-java-agent-<release>.jar and its .sha256 from Maven Central and keeps
+// the agent only when the checksum matches. It holds no backslash, $ or
+// single quote, so it reads the same in a single-quoted shell word, a
+// pipeline file and a Groovy string.
+const javaFallbackDownload = `class DatadogAgentDownload { public static void main(String[] args) throws Exception { String url = "https://repo1.maven.org/maven2/com/datadoghq/dd-java-agent/" + args[0] + "/dd-java-agent-" + args[0] + ".jar"; byte[] jar; try (java.io.InputStream in = java.net.URI.create(url).toURL().openStream()) { jar = in.readAllBytes(); } String expected; try (java.io.InputStream in = java.net.URI.create(url + ".sha256").toURL().openStream()) { expected = new String(in.readAllBytes(), "US-ASCII").trim().split(" ")[0]; } String actual = String.format("%064x", new java.math.BigInteger(1, java.security.MessageDigest.getInstance("SHA-256").digest(jar))); if (!actual.equalsIgnoreCase(expected)) { throw new IllegalStateException("dd-java-agent " + args[0] + " does not match its SHA256"); } java.nio.file.Files.write(java.nio.file.Paths.get(args[1]), jar); } }`
+
+// javaFallbackURL is the dd-java-agent JAR the fallback setup downloads:
+// the exact release $DD_TRACER_VERSION_JAVA, from Maven Central.
+const javaFallbackURL = "https://repo1.maven.org/maven2/com/datadoghq/dd-java-agent/$DD_TRACER_VERSION_JAVA/dd-java-agent-$DD_TRACER_VERSION_JAVA.jar"
+
+// The fallback setup (see ciFallbackLanguage) downloads dd-java-agent and
+// its SHA256 with curl or wget and checks it with sha256sum, which Alpine
+// and BusyBox images have even on a JDK older than 11; an image without
+// either, as an official -slim one, downloads and checks it with the JDK
+// (javaFallbackDownload). It adds -javaagent to the variables the official
+// installer adds it to: every build tool's options by default, or
+// JAVA_TOOL_OPTIONS where ddtest reads the CircleCI orb as instrumenting
+// every Java process (see javaAgentVariable).
+func (javaDiscovery) ciFallbackInstall(provider string) (install, exports string) {
+	jar, checksum := `"$DD_TRACER_FOLDER/dd-java-agent.jar"`, `"$DD_TRACER_FOLDER/dd-java-agent.jar.sha256"`
+	install = strings.Join([]string{
+		"{ { { curl -fsSL -o " + jar + " " + javaFallbackURL + " || wget -qO " + jar + " " + javaFallbackURL + "; } &&",
+		"    { curl -fsSL -o " + checksum + " " + javaFallbackURL + ".sha256 || wget -qO " + checksum + " " + javaFallbackURL + ".sha256; } &&",
+		`    echo "$(cat ` + checksum + `)  $DD_TRACER_FOLDER/dd-java-agent.jar" | { sha256sum -c - || shasum -a 256 -c -; } >/dev/null 2>&1; } ||`,
+		`    { printf '%s' '` + javaFallbackDownload + `' >"$DD_TRACER_FOLDER/DatadogAgentDownload.java" &&`,
+		`    java "$DD_TRACER_FOLDER/DatadogAgentDownload.java" "$DD_TRACER_VERSION_JAVA" "$DD_TRACER_FOLDER/dd-java-agent.jar" >&2; }; }`,
+	}, "\n")
+	carriers := javaFallbackCarriers(provider)
+	assignments := make([]string, 0, len(carriers))
+	for _, carrier := range carriers {
+		assignments = append(assignments, carrier+`="-javaagent:$DD_TRACER_FOLDER/dd-java-agent.jar ${`+carrier+`:-}"`)
+	}
+	return install, strings.Join(assignments, " ")
+}
+
+// javaFallbackCarriers are the variables the fallback setup adds
+// -javaagent to on provider, as the official installer does without a build
+// system input: every build tool's options (install_test_visibility_v15.sh
+// prints GRADLE_OPTS, MAVEN_OPTS, SBT_OPTS and ANT_OPTS), or JAVA_TOOL_OPTIONS
+// on CircleCI, whose orb ddtest reads as instrumenting every Java process.
+func javaFallbackCarriers(provider string) []string {
+	if provider == circleCIProvider {
+		return []string{"JAVA_TOOL_OPTIONS"}
+	}
+	return []string{"GRADLE_OPTS", "MAVEN_OPTS", "SBT_OPTS", "ANT_OPTS"}
+}
+
+func (javaDiscovery) ciFallbackTool() string { return "curl or wget (or else its JDK)" }
+
+// The download needs curl or wget, or else a JDK 11 or later, which runs a
+// Java source file.
+func (javaDiscovery) ciFallbackUnavailable(image string) string {
+	if !imageWithoutDownloader(image) {
+		return ""
+	}
+	_, tag, _ := strings.Cut(strings.ToLower(image[strings.LastIndex(image, "/")+1:]), ":")
+	if strings.Contains(tag, "jre") {
+		return "without curl or wget, it downloads dd-java-agent with the JDK's java launcher, which runs a Java source file only in a JDK, and " + image + " has only a Java runtime (JRE)"
+	}
+	version := javaImageRuntime(image)
+	major := 0
+	for _, digit := range version {
+		if digit < '0' || digit > '9' {
+			break
+		}
+		major = major*10 + int(digit-'0')
+	}
+	if major == 0 {
+		return "without curl or wget, it downloads dd-java-agent with the JDK's java launcher, which runs Java source files from JDK 11 on, and ddtest cannot tell the JDK of " + image
+	}
+	if major < 11 {
+		return "without curl or wget, it downloads dd-java-agent with the JDK's java launcher, which runs Java source files from JDK 11 on, and " + image + " has JDK " + version
+	}
+	return ""
+}

@@ -272,3 +272,24 @@ func pythonModule(args []string) ([]string, bool) {
 func (pythonDiscovery) ciStepVariables(string) map[string]string { return nil }
 
 func (pythonDiscovery) keepsHandWrittenJobs() bool { return false }
+
+// pythonFallbackCoverage is the coverage release the official installer
+// (install_test_visibility_v15.sh) installs beside ddtrace by default.
+const pythonFallbackCoverage = "7.13.5"
+
+// The fallback setup (see ciFallbackLanguage) installs ddtrace and coverage
+// with the python on PATH, as the official installer does, into a folder of
+// their own instead of its virtual environment, and exports the same
+// PYTHONPATH (that folder before the job's) and PYTEST_ADDOPTS. The separator
+// follows the folder only when the job has a PYTHONPATH: an empty entry,
+// which "$folder:$PYTHONPATH" leaves when it is unset, puts the working
+// directory on Python's path.
+func (pythonDiscovery) ciFallbackInstall(string) (install, exports string) {
+	return `python -m pip install --upgrade --target "$DD_TRACER_FOLDER/python" "ddtrace==$DD_TRACER_VERSION_PYTHON" "coverage==` + pythonFallbackCoverage + `" >&2`,
+		`PYTHONPATH="$DD_TRACER_FOLDER/python${PYTHONPATH:+:$PYTHONPATH}" PYTEST_ADDOPTS="--ddtrace ${PYTEST_ADDOPTS:-}"`
+}
+
+func (pythonDiscovery) ciFallbackTool() string { return "python and pip" }
+
+// Python images carry pip.
+func (pythonDiscovery) ciFallbackUnavailable(string) string { return "" }

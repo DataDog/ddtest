@@ -199,7 +199,7 @@ func TestJavaRunsWriteTheXMLReportsAPropertyTurnsOff(t *testing.T) {
 	require.Equal(t, []string{"verify", "-DcloseTestReports=false", "-Dgpg.skip=true"}, build.arguments(args, nil), "validation reads the reports and signs nothing")
 	require.Equal(t, []string{"verify"}, args)
 	probe := &javaProbe{args: []string{"-Dtest=" + javaProbeClass}}
-	require.Equal(t, []string{"test", "-Dtest=" + javaProbeClass, "-DcloseTestReports=false", "-Dgpg.skip=true"}, build.arguments(args, probe), "probe runs read them too")
+	require.Equal(t, append(append([]string{"test", "-Dtest=" + javaProbeClass}, javaProbeSourceCheckSkips...), "-DcloseTestReports=false", "-Dgpg.skip=true"), build.arguments(args, probe), "probe runs read them too")
 }
 
 func TestJavaRefusesADatadogAgentInJVMConfig(t *testing.T) {
@@ -934,4 +934,52 @@ func TestJavaPackageCheckInspectsTheReactorsCommandsSelect(t *testing.T) {
 	check, _ = javaLanguage{}.packageExclusions(drive, t.Context())
 	require.Equal(t, "passed", check.Status)
 	require.Contains(t, check.Reason, "Maven resource declarations; none packages the reports. Gradle commands package only")
+}
+
+// From camunda/feel-scala: a profile binds license-maven-plugin's check to
+// validate, so the probe build failed on the probe's own missing header and
+// was diagnosed as missing XML reporting. Probe runs skip source checks that
+// would judge the synthetic probe, and a build that fails before any test
+// reports names its failure.
+func TestJavaProbeRunsSkipSourceChecks(t *testing.T) {
+	root := t.TempDir()
+	requireWriteFile(t, filepath.Join(root, "pom.xml"), `<project><artifactId>feel-engine</artifactId></project>`)
+	drive := &Testdrive{repositoryRoot: root, configurationRoot: root, command: "mvn", args: []string{"-B", "clean", "-P", "checkFormat", "verify"}}
+	build, err := drive.javaBuild(drive.args)
+	require.NoError(t, err)
+	probe := &javaProbe{args: []string{"-Dtest=" + javaProbeClass}}
+	args := build.arguments(drive.args, probe)
+	for _, skip := range []string{"-Dlicense.skip=true", "-Dlicense.skipCheckLicense=true", "-Drat.skip=true", "-Dcheckstyle.skip=true", "-Dspotless.check.skip=true"} {
+		require.Contains(t, args, skip)
+	}
+	require.Equal(t, []string{"-B", "clean", "-P", "checkFormat", "verify", "-Dgpg.skip=true"}, build.arguments(drive.args, nil), "the customer's own runs keep every check, skipping only signing")
+}
+
+func TestJavaBuildFailureBeforeTestsIsNamed(t *testing.T) {
+	root := t.TempDir()
+	requireWriteFile(t, filepath.Join(root, "pom.xml"), `<project><artifactId>feel-engine</artifactId></project>`)
+	drive := &Testdrive{repositoryRoot: root, configurationRoot: root, command: "mvn", args: []string{"verify"}}
+	build, err := drive.javaBuild(drive.args)
+	require.NoError(t, err)
+	output := "[WARNING] Missing header in: " + filepath.Join(root, "src/test/scala/ddtest/DdtestValidationTest.scala") + "\n[INFO] BUILD FAILURE\n" +
+		"[ERROR] Failed to execute goal com.mycila:license-maven-plugin:3.0:check (check-license) on project feel-engine: Some files do not have the expected license header -> [Help 1]\n"
+	_, _, err = build.results(1, output)
+	require.ErrorIs(t, err, errNoJavaResults)
+	require.ErrorContains(t, err, "the Maven build failed before any test wrote native results: Failed to execute goal com.mycila:license-maven-plugin:3.0:check (check-license) on project feel-engine: Some files do not have the expected license header")
+	require.NotContains(t, err.Error(), "configure Surefire", "the XML reporting advice does not explain a failed build")
+	// A build that ran and wrote nothing still gets the reporting advice.
+	_, _, err = build.results(0, "[INFO] BUILD SUCCESS\n")
+	require.ErrorContains(t, err, "configure Surefire")
+}
+
+func TestJavaGradleBuildFailureBeforeTestsIsNamed(t *testing.T) {
+	root := t.TempDir()
+	requireWriteFile(t, filepath.Join(root, "settings.gradle.kts"), "rootProject.name = \"app\"\n")
+	requireWriteFile(t, filepath.Join(root, "build.gradle.kts"), "plugins { java }\ndependencies { testImplementation(\"junit:junit:4.13.2\") }\n")
+	drive := &Testdrive{repositoryRoot: root, configurationRoot: root, command: "gradle", args: []string{"test"}}
+	build, err := drive.javaBuild(drive.args)
+	require.NoError(t, err)
+	_, _, err = build.results(1, "FAILURE: Build failed with an exception.\n\n* What went wrong:\nExecution failed for task ':licenseTest'.\n> License violations were found\n\n* Try:\n")
+	require.ErrorIs(t, err, errNoJavaResults)
+	require.ErrorContains(t, err, "the Gradle build failed before any test wrote native results: Execution failed for task ':licenseTest'. > License violations were found")
 }

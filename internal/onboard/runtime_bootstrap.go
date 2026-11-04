@@ -97,7 +97,7 @@ func checkTestBootstrap(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 			if command.mochaESM && checkJestBootstrap(workflow, job, step, row, true) != "" {
 				return mochaESMImportReason
 			}
-			if !command.usesNYC && !command.mochaIstanbul {
+			if !command.mochaCoverageSettled() {
 				reason := MochaCoverageGap + command.Command + ". Wrap the original command with npx --no-install nyc --, adding nyc as a dev dependency if the project does not declare it; real source coverage is checked separately."
 				if words, err := shellquote.Split(command.Command); err == nil && len(words) > 0 && filepath.Base(words[0]) == "c8" {
 					reason = "Mocha CI command uses c8: " + command.Command + ". c8's V8 coverage is not reported per test; wrap the Mocha command with npx --no-install nyc -- instead."

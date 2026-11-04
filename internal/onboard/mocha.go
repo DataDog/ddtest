@@ -201,7 +201,8 @@ func resolveMochaNode(root, directory string, words []string) commandResolution 
 		return commandResolution{MochaAuxiliary: true, MochaReferenced: nodeScriptMayRun(root, directory, path, "mocha", map[string]bool{})}
 	}
 	directoryRelative, _ := filepath.Rel(root, directory)
-	return commandResolution{Matched: true, SingleJest: true, Evidence: command, Tests: []TestCommand{{mochaIstanbul: MochaBabelIstanbulConfigured(directory), mochaProbeCommand: command, mochaLookupDirectory: repositoryPath(root, filepath.Dir(path)), mochaProbeDirectory: filepath.ToSlash(directoryRelative), mochaESM: mochaESMInputs(directory, words[1:]), Directory: filepath.ToSlash(directoryRelative), Command: command}}}
+	istanbul := MochaBabelIstanbulConfigured(directory)
+	return commandResolution{Matched: true, SingleJest: true, Evidence: command, Tests: []TestCommand{{mochaIstanbul: istanbul, mochaNoSource: !istanbul && !mochaInstrumentableSource(root, directory), mochaProbeCommand: command, mochaLookupDirectory: repositoryPath(root, filepath.Dir(path)), mochaProbeDirectory: filepath.ToSlash(directoryRelative), mochaESM: mochaESMInputs(directory, words[1:]), Directory: filepath.ToSlash(directoryRelative), Command: command}}}
 }
 
 // MochaProbeCommand omits companion lint/assertion checks only for synthetic

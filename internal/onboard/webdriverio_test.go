@@ -197,3 +197,40 @@ func TestWebdriverIOBootstrapFollowsInitializedForwardingLeaves(t *testing.T) {
 		}
 	}
 }
+
+// tic-tac-toe-wdio's Allure steps run after the tests under !cancelled(): the
+// condition holds on the passing path and allure only builds a report.
+func TestWebdriverIOStatusGuardedReportAfterTests(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".github/workflows"), 0700))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "package.json"), []byte(`{"scripts":{"test":"wdio run wdio.conf.ts","report:generate":"allure generate allure-results --clean -o allure-report"},"devDependencies":{"@wdio/cli":"^9.12.4","allure-commandline":"^2.43.0"}}`), 0600))
+	workflow := `jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm ci
+      - name: Run WebdriverIO suite
+        id: tests
+        run: npm test
+      - name: Generate Allure HTML report
+        if: ${{ !cancelled() }}
+        run: npm run report:generate
+        continue-on-error: true
+      - name: Rerun on failure
+        if: ${{ failure() }}
+        run: npm test
+`
+	require.NoError(t, os.WriteFile(filepath.Join(root, ".github/workflows/ci.yml"), []byte(workflow), 0600))
+	scope, err := DiscoverValidationScope(root, "webdriverio")
+	require.NoError(t, err)
+	unresolved := strings.Join(scope.Unresolved, "\n")
+	require.NotContains(t, unresolved, "unsupported operand")
+	require.NotContains(t, unresolved, "report:generate")
+	require.Contains(t, strings.Join(scope.Review, "\n"), "allure generate allure-results")
+	// A test step that runs only after a failure is CI ddtest can't validate.
+	require.Len(t, scope.Commands, 2)
+	require.Empty(t, scope.Commands[0].UnvalidatedSetup)
+	require.Contains(t, scope.Commands[1].Locations[0], "step 5 (npm test)")
+	require.Contains(t, strings.Join(scope.Commands[1].UnvalidatedSetup, "\n"), "holds only after an earlier step or job fails")
+}

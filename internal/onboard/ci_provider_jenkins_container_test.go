@@ -154,7 +154,11 @@ func TestJenkinsDockerfileAgents(t *testing.T) {
 	require.Empty(t, ruby.SetupImageProblem, "its Dockerfile installs curl")
 	node := workflow.Jobs["Node"]
 	require.Equal(t, "node:22-alpine", node.Image)
-	require.Contains(t, node.SetupImageProblem, "The step's image is built from ci/Dockerfile, whose final stage is FROM node:22-alpine, which has no Bash")
+	require.Empty(t, node.SetupImageProblem, "it takes the setup without Bash or curl")
+	fallback, ok := fallbackJob(node)
+	require.True(t, ok, "its image has no Bash")
+	require.Equal(t, "no Bash", fallback.missing)
+	require.True(t, jenkinsContainerJob(node))
 	arguments := workflow.Jobs["Arguments"]
 	require.Empty(t, arguments.Image, "the build overrides the argument the base image reads")
 	require.Contains(t, arguments.Host, "the container of agent { dockerfile … } (Dockerfile.ci), where its Dockerfile Dockerfile.ci")
@@ -618,8 +622,9 @@ func TestJenkinsRubySnippetInEveryContainerTestShell(t *testing.T) {
 	require.False(t, rubyDiscovery{}.ciSetupConfigured(root, "rspec", "datadoghq.com"))
 }
 
-// A container stage's image note names the setup snippet, its setup
-// mechanism, not the Datadog Jenkins plugin of the host agents.
+// A container stage whose image cannot run the installer gets the setup
+// without Bash or curl in its Jenkins form, not the Datadog Jenkins plugin
+// of the host agents, and no image note.
 func TestJenkinsContainerImageNoteNamesTheSnippet(t *testing.T) {
 	for _, tc := range []struct{ framework, language, image, command string }{
 		{"jest", "javascript", "node:22-slim", "npm test"},
@@ -627,13 +632,17 @@ func TestJenkinsContainerImageNoteNamesTheSnippet(t *testing.T) {
 	} {
 		t.Run(tc.framework, func(t *testing.T) {
 			root := jenkinsApplyRepository(t, tc.framework, jenkinsContainerStage("docker { image '"+tc.image+"' }", "", tc.command))
-			note := setupImageNote(root, tc.language, tc.framework, "")
-			require.Contains(t, note, "These CI steps cannot run the Datadog setup snippet in their current image, so their tests would stay untraced even with it in place; changing an image or Dockerfile is not part of this setup, so tell the user and ask before making it:\nJenkinsfile / Test: The step's image "+tc.image+" has neither curl nor wget")
-			require.NotContains(t, note, jenkinsPluginReference)
-			require.Equal(t, 1, strings.Count(note, "These CI steps cannot run"))
+			require.Empty(t, setupImageNote(root, tc.language, tc.framework))
+			text := providerSetupInstructions(root, jenkins{}, tc.language, tc.framework, "", true)
+			require.Contains(t, text, "These jobs (Jenkinsfile / Test) run in "+tc.image+", which has neither curl nor wget, so Datadog's official installer cannot run there")
+			require.Contains(t, text, fallbackComment[1]+"\nif [ \"${DD_API_KEY:+set}\" = set ]; then\n  "+strings.Join(fallbackBase, "\n  ")+"\n  export DD_TRACER_FOLDER=\""+strings.ReplaceAll(jenkinsTracerFolder, "$PWD", "$DD_TRACER_BASE")+"\"")
+			require.Contains(t, text, `DD_CIVISIBILITY_AUTO_INSTRUMENTATION_PROVIDER="jenkins"`)
+			require.Contains(t, text, "add "+jenkinsTracerIgnore+" to the repository .gitignore")
+			require.NotContains(t, text, "need another image")
 		})
 	}
-	// Other languages' setups still need Bash.
+	// An image without Bash gets it too, for every language.
 	root := jenkinsApplyRepository(t, "jest", jenkinsContainerStage("docker { image 'node:22-alpine' }", "", "npm test"))
-	require.Contains(t, setupImageNote(root, "javascript", "jest", ""), "has no Bash, which the Datadog installer needs")
+	require.Empty(t, setupImageNote(root, "javascript", "jest"))
+	require.Contains(t, providerSetupInstructions(root, jenkins{}, "javascript", "jest", "", true), "These jobs (Jenkinsfile / Test) run in node:22-alpine, which has no Bash, so Datadog's official installer cannot run there")
 }

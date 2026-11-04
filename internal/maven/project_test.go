@@ -301,3 +301,12 @@ func TestUpToTestStopsProbeBuildsAfterSurefire(t *testing.T) {
 		require.Equal(t, want, strings.Join(UpToTest(strings.Fields(args)), " "), args)
 	}
 }
+
+func TestMutationGoal(t *testing.T) {
+	for _, goal := range []string{"pitest:mutationCoverage", "pitest:scmMutationCoverage", "org.pitest:pitest-maven:mutationCoverage", "org.pitest:pitest-maven:1.15.0:mutationCoverage"} {
+		require.True(t, MutationGoal(goal), goal)
+	}
+	for _, goal := range []string{"test", "verify", "surefire:test", "org.apache.maven.plugins:maven-surefire-plugin:test", "org.pitest:other:goal", "pitest"} {
+		require.False(t, MutationGoal(goal), goal)
+	}
+}

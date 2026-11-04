@@ -97,7 +97,7 @@ func (rubyDiscovery) handWrittenSetup(root string, provider ciProvider, workflow
 		setup.Pin = lockfile
 		setup.Reference = handWrittenReference("datadog-ci "+setup.Tracer, mechanism)
 	} else {
-		setup.missing(lockfile + " does not lock datadog-ci, so the tests cannot load the release ddtest validates: add gem \"datadog-ci\", \"<exact release>\" (such as 1.42.0) to the test group of its Gemfile and run bundle lock.")
+		setup.missing(lockfile + " does not lock datadog-ci, so the tests cannot load the release ddtest validates: add gem \"datadog-ci\", \"<exact release>\" (such as " + rubyExampleRelease + ") to the test group of its Gemfile and run bundle lock.")
 	}
 	handWrittenFrameworkDisabled(setup, env, framework)
 	handWrittenConfiguration(setup, provider, job, env, site, enabled, reporting)

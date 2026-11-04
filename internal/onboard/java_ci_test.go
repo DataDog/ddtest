@@ -228,6 +228,35 @@ func TestJavaValidatesWithoutCIOnlyOptions(t *testing.T) {
 	}
 }
 
+// One rule leaves out every CI-only option, whichever way CI writes its
+// value: a Maven settings file and a signing or Sonar option, from a CI
+// expression or from a variable validation cannot read.
+func TestJavaCIOnlyOptionsAreOneRule(t *testing.T) {
+	for run, expected := range map[string]struct {
+		command, without, note string
+	}{
+		"mvn -B verify -Dgpg.passphrase=${{ secrets.GPG }} -s ${{ secrets.SETTINGS }}": {"mvn -B verify -Dgpg.passphrase=", "-Dgpg.passphrase", "-s ${{ secrets.SETTINGS }}"},
+		"mvn -B verify -Dgpg.passphrase=$GPG_PASSPHRASE -s $MAVEN_SETTINGS":            {"mvn -B verify -Dgpg.passphrase=", "-Dgpg.passphrase", "-s $MAVEN_SETTINGS"},
+		`mvn -B verify "-Dsonar.token=$SONAR_TOKEN" --settings=$MAVEN_SETTINGS`:        {"mvn -B verify -Dsonar.token=", "-Dsonar.token", "--settings=$MAVEN_SETTINGS"},
+	} {
+		root := javaWorkflowFixture(t, "jobs:\n  tests:\n    steps:\n      - run: '"+strings.ReplaceAll(run, "'", "''")+"'\n", nil)
+		scope, err := DiscoverValidationScope(root, "junit5")
+		require.NoError(t, err)
+		require.Empty(t, scope.Unresolved, run)
+		require.Len(t, scope.Commands, 1, run)
+		require.Equal(t, expected.command, scope.Commands[0].Command, run)
+		require.Contains(t, scope.Commands[0].WithoutCIValues, expected.without, run)
+		require.Contains(t, strings.Join(scope.Commands[0].StepScopeNotes, "\n"), "This CI step passes Maven "+expected.note+", a settings file only CI provides", run)
+	}
+	// Another option's unread value still requires review.
+	for _, run := range []string{"mvn -B verify -Ddb.password=$DB_PASSWORD", "mvn -B verify -Dgroups=$GROUPS -s $MAVEN_SETTINGS"} {
+		root := javaWorkflowFixture(t, "jobs:\n  tests:\n    steps:\n      - run: "+run+"\n", nil)
+		scope, err := DiscoverValidationScope(root, "junit5")
+		require.NoError(t, err)
+		require.NotEmpty(t, scope.Unresolved, run)
+	}
+}
+
 func TestJavaReplayKeepsTheJobsJVMOptions(t *testing.T) {
 	java := javaDiscovery{}
 	for key, tc := range map[string]struct{ value, replay string }{

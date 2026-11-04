@@ -72,3 +72,38 @@ func TestWorkflowAsksTheUserToAcceptASubstituteRuntime(t *testing.T) {
 	require.True(t, strings.HasPrefix(result.FinalResponse, "NOT COMPLETE"), result.FinalResponse)
 	require.Contains(t, result.Instruction, onboard.FinalResponseInstruction)
 }
+
+// tradukisto's decision named "set JAVA_HOME to an existing Java 21 JDK and
+// set JAVA_HOME to an existing Java 24 JDK": one run has one JAVA_HOME, so
+// the remedy names it once and offers CI's versions as alternatives.
+func TestSubstituteChoiceNamesEachRuntimeAndRemedyOnce(t *testing.T) {
+	java := func(ci string) runtimeSubstitution {
+		return runtimeSubstitution{CI: ci, Local: "17.0.20.1", Runtime: "Java", Remedy: "set JAVA_HOME to an existing Java " + ci + " JDK"}
+	}
+	evidence, remedy := substituteChoice([]runtimeSubstitution{java("21"), java("24"), java("24")})
+	require.Equal(t, "Java 17.0.20.1 in place of CI's Java 21 and 24", evidence)
+	require.Equal(t, "set JAVA_HOME to an existing Java 21 or 24 JDK", remedy)
+
+	evidence, remedy = substituteChoice([]runtimeSubstitution{{CI: "20", Local: "v24.14.1"}, java("21")})
+	require.Equal(t, "Node v24.14.1 in place of CI's Node 20 and Java 17.0.20.1 in place of CI's Java 21", evidence)
+	require.Equal(t, "put an existing Node 20 first on PATH and set JAVA_HOME to an existing Java 21 JDK", remedy)
+}
+
+func TestWorkflowDecisionDoesNotRepeatTheRemedy(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	requireWriteFile(t, filepath.Join(root, "package.json"), `{"private":true}`)
+	fixture := substitutedFixture(false)
+	fixture.RuntimeSubstitutions = []runtimeSubstitution{*fixture.RuntimeSubstitution, *fixture.RuntimeSubstitution}
+	fixture.RuntimeSubstitutions[1].CI = "22"
+	drive := &Testdrive{repositoryRoot: root, framework: &framework.Vitest{}, language: "javascript", tracerVersion: "6.20.1", projectTracer: "fixture", executor: workflowCheckExecutor{}, nodeVersion: currentNodeVersion}
+	drive.workflowRun = func(_ context.Context, out io.Writer) error {
+		return finishValidation(out, root, fixture)
+	}
+	var output bytes.Buffer
+	require.Error(t, drive.Workflow(t.Context(), &output, WorkflowOptions{Format: "json"}))
+	var result onboard.AgentResult
+	require.NoError(t, json.Unmarshal(output.Bytes(), &result))
+	require.Equal(t, "substitute_runtime_unaccepted", result.Code, result.Reason)
+	require.Equal(t, []string{"User decision: accept the evidence from Node v24.14.1 in place of CI's Node 20 and 22 by running resume_command, or put an existing Node 20 or 22 first on PATH and rerun resume_command without " + AcceptSubstituteRuntimeFlag + "."}, result.RequiredInput)
+}

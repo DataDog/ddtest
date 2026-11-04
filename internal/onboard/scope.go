@@ -53,12 +53,15 @@ type TestCommand struct {
 	Platform                        string          `json:"platform,omitempty"` // GOOS of the resolved hosted CI runner, when known.
 	ProbeCoverageThresholdsDisabled bool            `json:"-"`
 	mochaIstanbul                   bool
-	LifecyclePrerequisites          []BuildCommand `json:"lifecycle_prerequisites,omitempty"`
-	LifecycleHooks                  []string       `json:"lifecycle_hooks,omitempty"`
-	mochaRunnerArgs                 []string
-	mochaLookupDirectory            string
-	mochaProbeDirectory             string
-	mochaProbeEnvironment           map[string]string
+	// mochaNoSource marks a Mocha package with no file nyc instruments (see
+	// mochaInstrumentableSource): no setup can report its source coverage.
+	mochaNoSource          bool
+	LifecyclePrerequisites []BuildCommand `json:"lifecycle_prerequisites,omitempty"`
+	LifecycleHooks         []string       `json:"lifecycle_hooks,omitempty"`
+	mochaRunnerArgs        []string
+	mochaLookupDirectory   string
+	mochaProbeDirectory    string
+	mochaProbeEnvironment  map[string]string
 
 	ScopeCommand     string `json:"-"` // Original invocation before adding a forwarding wrapper.
 	ProbeLintSkipped bool   `json:"probe_lint_skipped,omitempty"`
@@ -204,9 +207,12 @@ func discoverValidationScope(root, framework string, allowSetupFacts bool) (Vali
 					}
 					consumer = true
 				}
-				var outside, reviewed []string
+				var outside, reviewed, caveats []string
 				for i, step := range job.Steps {
 					resolution := resolveTestStep(root, workflow, job, step, language, framework)
+					if resolution.Caveat != "" {
+						caveats = append(caveats, commandLocation{Workflow: workflow.Path, Job: name, Step: stepNumber(step, i), Command: step.Run}.String()+": "+resolution.Caveat)
+					}
 					switch {
 					case resolution.Review:
 						reviewed = append(reviewed, commandLocation{Workflow: workflow.Path, Job: name, Step: stepNumber(step, i), Command: step.Run}.String()+": "+resolution.Reason)
@@ -229,6 +235,9 @@ func discoverValidationScope(root, framework string, allowSetupFacts bool) (Vali
 						scope.Review = append(scope.Review, "Not a "+framework+" test consumer: "+reason)
 					}
 					scope.Review = append(scope.Review, reviewed...)
+					for _, caveat := range caveats {
+						scope.Caveats = appendCaveat(scope.Caveats, caveat)
+					}
 					if len(outside) > 0 {
 						scope.Caveats = appendCaveat(scope.Caveats, outsideJobCaveat(workflow.Path+" / "+name, framework, pluginSetup || slices.ContainsFunc(job.Steps, func(step runtimeStep) bool { _, setup := datadogSetup(step); return setup })))
 					}
@@ -236,6 +245,9 @@ func discoverValidationScope(root, framework string, allowSetupFacts bool) (Vali
 				}
 			}
 
+			if fallback, ok := fallbackJob(job); ok {
+				scope.Caveats = appendCaveat(scope.Caveats, workflow.Path+" / "+name+": "+fallback.recommendation(setupActionLanguage(language)))
+			}
 			rows, computed, err := jobMatrix(job)
 			if err != nil {
 				scope.Unresolved = append(scope.Unresolved, workflow.Path+" / "+name+": "+err.Error())
@@ -298,6 +310,10 @@ func discoverValidationScope(root, framework string, allowSetupFacts bool) (Vali
 				var preparation []BuildCommand
 				var unresolved, setupUnresolved, review []scopeDiagnostic
 				var commands []TestCommand
+				// A server an earlier step started in the background, for the
+				// Cypress test of the next step that runs one (see
+				// cypressStartsNextTest).
+				var startedServer []string
 				for i, step := range job.Steps {
 					_, isSetup := datadogSetup(step)
 					if framework == "cypress" && isSetup && step.Run == "" && step.ResolutionError == "" {
@@ -328,6 +344,24 @@ func discoverValidationScope(root, framework string, allowSetupFacts bool) (Vali
 						}
 					}
 					resolution := resolveTestStep(root, workflow, job, resolved, language, framework)
+					server := startedServer
+					startedServer = nil
+					if server != nil && cypressKeepsServer(step) {
+						startedServer = server
+					}
+					if framework == "cypress" && conditionErr == nil && envErr == nil && !resolution.Matched {
+						if candidate, ok := cypressPairedServer(root, workflow, job, row, i, language, resolved.Run); ok {
+							startedServer = candidate
+							review = append(review, scopeDiagnostic{location, "Starts the application in the background for the next step's Cypress tests; validation starts it the same way before them: " + shellquote.Join(candidate...)})
+							continue
+						}
+					}
+					if server != nil && len(resolution.Tests) == 1 {
+						resolution.Tests[0], _ = cypressStartedTest(resolution.Tests[0], server)
+					}
+					if resolution.Caveat != "" {
+						scope.Caveats = appendCaveat(scope.Caveats, location.String()+": "+resolution.Caveat)
+					}
 					if readsComputedAxis(step.Run, computed, row) && !resolution.Matched && !stepMayStartTests(root, workflow, job, step, framework) {
 						// A dependency install of a computed variant is the axis
 						// itself; the tests run with the installed dependencies.
@@ -463,7 +497,7 @@ func discoverValidationScope(root, framework string, allowSetupFacts bool) (Vali
 								scope.Caveats = append(scope.Caveats, caveat)
 							}
 						}
-						if framework == "mocha" && !entry.usesNYC && !entry.mochaIstanbul {
+						if framework == "mocha" && !entry.mochaCoverageSettled() {
 							parts, err := staticCommands(entry.Command)
 							if err == nil && len(parts) == 1 && len(parts[0]) > 0 && !strings.Contains(parts[0][0], "=") {
 								entry.CICoverageCommand = "npx --no-install nyc -- " + entry.Command

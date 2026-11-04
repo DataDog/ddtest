@@ -9,6 +9,7 @@ import (
 	"cmp"
 	"fmt"
 	"slices"
+	"strings"
 )
 
 // localRuntimeError reports that a CI path runs on a Node major this host does
@@ -55,6 +56,41 @@ func (s *runtimeSubstitution) name() string { return cmp.Or(s.Runtime, "Node") }
 // remedy is how to validate on CI's runtime instead.
 func (s *runtimeSubstitution) remedy() string {
 	return cmp.Or(s.Remedy, "put an existing Node "+s.CI+" first on PATH")
+}
+
+// substituteChoice describes substitutions for the user's decision, naming
+// each local runtime and each remedy once: "Java 17 in place of CI's Java 21
+// and 24" and "set JAVA_HOME to an existing Java 21 or 24 JDK". A run uses one
+// local runtime, so the remedy offers CI's versions as alternatives.
+func substituteChoice(subs []runtimeSubstitution) (evidence, remedy string) {
+	var locals, remedies []string
+	names, ciVersions := map[string]string{}, map[string][]string{}
+	remedyVersions := map[string][]string{}
+	for _, sub := range subs {
+		local := sub.name() + " " + sub.Local
+		if !slices.Contains(locals, local) {
+			locals = append(locals, local)
+			names[local] = sub.name()
+		}
+		if !slices.Contains(ciVersions[local], sub.CI) {
+			ciVersions[local] = append(ciVersions[local], sub.CI)
+		}
+		// The CI version in the remedy becomes a slot for every version.
+		template := strings.Replace(sub.remedy(), sub.CI, "\x00", 1)
+		if !slices.Contains(remedies, template) {
+			remedies = append(remedies, template)
+		}
+		if !slices.Contains(remedyVersions[template], sub.CI) {
+			remedyVersions[template] = append(remedyVersions[template], sub.CI)
+		}
+	}
+	for i, local := range locals {
+		locals[i] = local + " in place of CI's " + names[local] + " " + strings.Join(ciVersions[local], " and ")
+	}
+	for i, template := range remedies {
+		remedies[i] = strings.Replace(template, "\x00", strings.Join(remedyVersions[template], " or "), 1)
+	}
+	return strings.Join(locals, " and "), strings.Join(remedies, " and ")
 }
 
 // caveat describes accepted evidence from the substitute.
