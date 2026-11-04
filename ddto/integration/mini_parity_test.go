@@ -54,11 +54,12 @@ func sessionCITags(events []map[string]any) map[string]map[string]any {
 	return result
 }
 
-// Compare all event attributes except known APM enrichment and process-local
-// identities/timings. CI attributes (including _dd.test.*) are never excluded.
+// Compare all event attributes except known APM enrichment, process-local
+// identities/timings and the SDK's internal CI tracer routing marker. CI
+// product attributes (including _dd.test.*) are never excluded.
 func ciWireEvents(events []map[string]any) []string {
 	inherited := sessionCITags(events)
-	ignoredMeta := map[string]bool{"runtime-id": true, "language": true, "_dd.p.tid": true, "_dd.p.dm": true, "_dd.base_service": true, "_dd.trace_span_attribute_schema": true, "_dd.tags.process": true, "_dd.git.commit.sha": true, "_dd.git.repository_url": true, "test_session_id": true, "test_module_id": true, "test_suite_id": true}
+	ignoredMeta := map[string]bool{"runtime-id": true, "language": true, "_dd.p.tid": true, "_dd.p.dm": true, "_dd.base_service": true, "_dd.trace_span_attribute_schema": true, "_dd.tags.process": true, "_dd.git.commit.sha": true, "_dd.git.repository_url": true, "_dd.civisibility.tracer_type": true, "test_session_id": true, "test_module_id": true, "test_suite_id": true}
 	ignoredMetrics := map[string]bool{"process_id": true, "_sampling_priority_v1": true, "_dd.top_level": true, "_dd.agent_psr": true, "_dd.rule_psr": true, "_dd.limit_psr": true, "_dd.tracer_kr": true, "_dd.profiling.enabled": true, "_dd.trace_span_attribute_schema": true}
 	var out []string
 	for _, event := range events {
@@ -393,7 +394,7 @@ func TestCIComparatorRetainsProductAttributes(t *testing.T) {
 	if reflect.DeepEqual(base, ciWireEvents(event(map[string]any{}, map[string]any{"_dd.host.vcpu_count": 8}))) {
 		t.Fatal("CI metric excluded")
 	}
-	if !reflect.DeepEqual(base, ciWireEvents(event(map[string]any{"_dd.p.dm": "-0"}, map[string]any{"_dd.profiling.enabled": 1}))) {
+	if !reflect.DeepEqual(base, ciWireEvents(event(map[string]any{"_dd.p.dm": "-0", "_dd.civisibility.tracer_type": "ciapp"}, map[string]any{"_dd.profiling.enabled": 1}))) {
 		t.Fatal("APM enrichment retained")
 	}
 }

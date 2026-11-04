@@ -444,8 +444,8 @@ func TestCanonicalMiniCallSitesRetainOtherLocations(t *testing.T) {
 		function  string
 		mini, sdk int
 	}{
-		{"instrumentTestingTFuncWithSourceOptions.func1.1", 427, 424},
-		{"instrumentTestingTFuncWithSourceOptions.func1", 433, 430},
+		{"instrumentTestingTFuncWithSourceOptions.func1.1", 427, 431},
+		{"instrumentTestingTFuncWithSourceOptions.func1", 433, 437},
 	} {
 		function := "integrations/gotesting." + site.function
 		location := fmt.Sprintf("integrations/gotesting/instrumentation_orchestrion.go:%d", site.mini)
@@ -476,14 +476,14 @@ func TestTestifyMovedCallSitesInFormattedDiagnostics(t *testing.T) {
 	sdkPrefix := "/sdk/internal/civisibility/"
 	miniPrefix := "/poc/internal/thirdparty/dd-trace-go/civisibility/"
 	file := "integrations/gotesting/instrumentation_orchestrion.go:"
-	sdk := "test panicked: fixture\n    goroutine 12 [running]:\n    github.com/DataDog/dd-trace-go/v2/internal/civisibility/integrations/gotesting.instrumentTestingTFuncWithSourceOptions.func1(0x123)\n    \t" + sdkPrefix + file + "430 +0x123\n"
+	sdk := "test panicked: fixture\n    goroutine 12 [running]:\n    github.com/DataDog/dd-trace-go/v2/internal/civisibility/integrations/gotesting.instrumentTestingTFuncWithSourceOptions.func1(0x123)\n    \t" + sdkPrefix + file + "437 +0x123\n"
 	mini := strings.ReplaceAll(sdk, "github.com/DataDog/dd-trace-go/v2/internal/civisibility/", "github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/")
-	mini = strings.ReplaceAll(strings.ReplaceAll(mini, sdkPrefix, miniPrefix), file+"430", file+"433")
+	mini = strings.ReplaceAll(strings.ReplaceAll(mini, sdkPrefix, miniPrefix), file+"437", file+"433")
 	if canonicalTestifyDiagnostic(sdk) != canonicalTestifyDiagnostic(mini) {
 		t.Error("indented stack mapping lost")
 	}
-	sdk = "\n\tError Trace:\t/work/app_test.go:18\n\t            \t\t\t\t" + sdkPrefix + file + "430\n\tError:      \tfixture failed"
-	mini = strings.ReplaceAll(strings.ReplaceAll(sdk, sdkPrefix, miniPrefix), file+"430", file+"433")
+	sdk = "\n\tError Trace:\t/work/app_test.go:18\n\t            \t\t\t\t" + sdkPrefix + file + "437\n\tError:      \tfixture failed"
+	mini = strings.ReplaceAll(strings.ReplaceAll(sdk, sdkPrefix, miniPrefix), file+"437", file+"433")
 	if canonicalTestifyDiagnostic(sdk) != canonicalTestifyDiagnostic(mini) {
 		t.Error("formatted assertion source mapping lost")
 	}
