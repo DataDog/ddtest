@@ -89,6 +89,8 @@ func TestJavaJenkinsPluginPinnedRelease(t *testing.T) {
 		// A custom host may serve another agent under a release's path.
 		"https://mirror.example/com/datadoghq/dd-java-agent/1.67.1/dd-java-agent-1.67.1.jar",
 		"https://github.com/example/fork/releases/download/v1.67.1/dd-java-agent-1.67.1.jar",
+		// The path and the file name name different releases.
+		"https://repo1.maven.org/maven2/com/datadoghq/dd-java-agent/1.67.1/dd-java-agent-1.68.0.jar",
 	} {
 		root = javaJenkinsRepository(t, javaJenkinsfile(", additionalVariables: ["+javaPluginTracerURL+": '"+url+"']"))
 		ci = JavaCIConfiguration(root, "junit5", "")
@@ -301,4 +303,16 @@ func TestJavaReportingOverrides(t *testing.T) {
 	require.Empty(t, javaReportingOverride(env, javaMaven, "datadoghq.com"))
 	env = javaRowEnvironment(workflow, job, runtimeStep{}, map[string]any{"site": "datadoghq.eu"})
 	require.Contains(t, javaReportingOverride(env, javaMaven, "datadoghq.com"), "-Ddd.site=datadoghq.eu in JAVA_TOOL_OPTIONS")
+
+	// Agentless reporting turned off reports through an Agent, which only the
+	// user can confirm; a later list may turn it back on.
+	agent := map[string]string{"JAVA_TOOL_OPTIONS": "-Ddd.civisibility.agentless.enabled=false"}
+	require.Contains(t, javaReportingOverride(agent, javaMaven, "datadoghq.com"), "turns agentless reporting off")
+	require.NotContains(t, javaReportingOverride(agent, javaMaven, "datadoghq.com"), "--ci-confirm", "GitHub Actions defines no Agent fact")
+	require.Empty(t, javaReportingOverride(map[string]string{"JAVA_TOOL_OPTIONS": "-Ddd.civisibility.agentless.enabled=false", "MAVEN_OPTS": "-Ddd.civisibility.agentless.enabled=true"}, javaMaven, "datadoghq.com"))
+	useCIProvider(t, gitLabCIProvider)
+	require.Contains(t, javaReportingOverride(agent, javaMaven, "datadoghq.com"), "--ci-confirm datadog-agent")
+	require.NoError(t, UseCIStatements(nil, []CIFact{{Key: handWrittenAgent}}))
+	t.Cleanup(func() { require.NoError(t, UseCIStatements(nil, nil)) })
+	require.Empty(t, javaReportingOverride(agent, javaMaven, "datadoghq.com"), "a confirmed Agent")
 }

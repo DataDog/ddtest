@@ -65,7 +65,11 @@ func TestHandWrittenJavaSetups(t *testing.T) {
 		// lacks and of what ddtest cannot read, each keeping it uncertified.
 		reference, problem, unresolved string
 	}{
-		{name: "tool options and properties", env: map[string]string{"JAVA_TOOL_OPTIONS": "-javaagent:/opt/dd-java-agent-1.67.1.jar -Ddd.civisibility.enabled=true -Ddd.civisibility.agentless.enabled=true -Ddd.site=datadoghq.com"}, before: []string{}, command: "mvn test", reference: "hand-written dd-java-agent 1.67.1 setup (JAVA_TOOL_OPTIONS)"},
+		{name: "tool options and properties", env: map[string]string{"JAVA_TOOL_OPTIONS": "-javaagent:/opt/dd-java-agent-1.67.1.jar -Ddd.civisibility.enabled=true -Ddd.civisibility.agentless.enabled=true -Ddd.site=datadoghq.com"}, before: []string{"curl -Lo /opt/dd-java-agent-1.67.1.jar https://repo1.maven.org/maven2/com/datadoghq/dd-java-agent/1.67.1/dd-java-agent-1.67.1.jar"}, command: "mvn test", reference: "hand-written dd-java-agent 1.67.1 setup (JAVA_TOOL_OPTIONS)"},
+		// A release in the attached file's name says nothing of its bytes.
+		{name: "versioned file, no download", env: with(agentless, "MAVEN_OPTS", "-javaagent:/opt/dd-java-agent-1.67.1.jar"), before: []string{}, command: "mvn test", problem: "No command of the job downloads /opt/dd-java-agent-1.67.1.jar with an exact release"},
+		{name: "versioned file, latest download", env: with(agentless, "MAVEN_OPTS", "-javaagent:dd-java-agent-1.67.1.jar"), before: []string{"curl -Lo dd-java-agent-1.67.1.jar https://dtdg.co/latest-java-tracer"}, command: "mvn test", problem: "The job downloads the latest dd-java-agent"},
+		{name: "custom mirror", before: []string{"curl -Lo dd-java-agent.jar https://mirror.example/com/datadoghq/dd-java-agent/1.67.1/dd-java-agent-1.67.1.jar"}, command: "mvn test", problem: "which is not an exact release's artifact on Maven Central or the DataDog/dd-trace-java GitHub releases"},
 		{name: "GitHub release", before: []string{"wget -O dd-java-agent.jar https://github.com/DataDog/dd-trace-java/releases/download/v1.68.0/dd-java-agent-1.68.0.jar"}, command: "mvn test", reference: "hand-written dd-java-agent 1.68.0 setup (MAVEN_OPTS)"},
 		{name: "latest", before: []string{"curl -Lo dd-java-agent.jar https://dtdg.co/latest-java-tracer"}, command: "mvn test", reference: "hand-written dd-java-agent setup (MAVEN_OPTS)", problem: "The job downloads the latest dd-java-agent"},
 		{name: "no download", before: []string{}, command: "mvn test", problem: "No command of the job downloads dd-java-agent.jar with an exact release"},

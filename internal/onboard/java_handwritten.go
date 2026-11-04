@@ -33,16 +33,6 @@ const javaRecommendedTracer = "1.67.1"
 // javaHandWrittenDownload is an exact-release download URL for messages.
 const javaHandWrittenDownload = "https://repo1.maven.org/maven2/com/datadoghq/dd-java-agent/" + javaRecommendedTracer + "/dd-java-agent-" + javaRecommendedTracer + ".jar"
 
-var (
-	// javaHandWrittenJarRelease is the release a dd-java-agent JAR's file
-	// name carries, as dd-java-agent-1.67.1.jar.
-	javaHandWrittenJarRelease = regexp.MustCompile(`dd-java-agent-([0-9]+\.[0-9]+\.[0-9]+)\.jar`)
-	// javaHandWrittenURLRelease is the release a download URL selects: Maven
-	// Central's com/datadoghq/dd-java-agent/<release>/ or a GitHub release
-	// tag, v<release>.
-	javaHandWrittenURLRelease = regexp.MustCompile(`(?:dd-java-agent/|/download/v)([0-9]+\.[0-9]+\.[0-9]+)/`)
-)
-
 // javaHandWrittenCarrier is a JVM option list a hand-written setup attaches
 // dd-java-agent through: its name, such as MAVEN_OPTS, and value.
 type javaHandWrittenCarrier struct {
@@ -266,14 +256,12 @@ func javaHandWrittenFileOptions(file, property string) string {
 	return ""
 }
 
-// javaHandWrittenTracer finds the exact dd-java-agent release jar is: the
-// release its file name carries, otherwise the one a download command of the
-// job, before the tests, selects. It records on setup why none is pinned.
+// javaHandWrittenTracer finds the exact dd-java-agent release jar is: the one
+// the last download command of the job before the tests that writes jar
+// selects, when it is a canonical artifact (see javaCanonicalRelease). A file
+// name alone, as dd-java-agent-1.67.1.jar, never says which bytes the job
+// attaches. It records on setup why none is pinned.
 func javaHandWrittenTracer(setup *handWrittenSetup, jar string, job runtimeJob, index int, env map[string]string) string {
-	if match := javaHandWrittenJarRelease.FindStringSubmatch(jar); match != nil {
-		return match[1]
-	}
-	// The last download before the tests that writes the attached JAR.
 	download := ""
 	for _, step := range job.Steps[:index+1] {
 		for _, words := range javaDownloadCommands(step.Run) {
@@ -294,10 +282,11 @@ func javaHandWrittenTracer(setup *handWrittenSetup, jar string, job runtimeJob, 
 		setup.missing("The job downloads the latest dd-java-agent (" + download + "), so each build can attach another release: download an exact release instead, such as " + javaHandWrittenDownload + ".")
 	case strings.Contains(download, "$"):
 		setup.unresolved("the job downloads dd-java-agent from " + download + ", whose release only CI knows.")
-	case javaHandWrittenURLRelease.MatchString(download):
-		return javaHandWrittenURLRelease.FindStringSubmatch(download)[1]
 	default:
-		setup.missing("The job downloads dd-java-agent from " + download + ", which names no exact release: download an exact release instead, such as " + javaHandWrittenDownload + ".")
+		if release, ok := javaCanonicalRelease(download); ok {
+			return release
+		}
+		setup.missing("The job downloads dd-java-agent from " + download + ", which is not an exact release's artifact on Maven Central or the DataDog/dd-trace-java GitHub releases, so ddtest cannot tell which agent it attaches: download an exact release from one of them instead, such as " + javaHandWrittenDownload + ".")
 	}
 	return ""
 }

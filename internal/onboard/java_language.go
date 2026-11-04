@@ -92,7 +92,7 @@ func (javaDiscovery) localCommands(root, command, framework string) ([]TestComma
 
 // Local validation owns the agent option; keep the customer's other JVM
 // options. A reference to workflow or job values needs them explicitly.
-func (javaDiscovery) variantValue(workflow ciWorkflow, job runtimeJob, _ runtimeStep, _ map[string]any, key, value string) (string, bool, error) {
+func (javaDiscovery) variantValue(workflow ciWorkflow, job runtimeJob, _ runtimeStep, row map[string]any, key, value string) (string, bool, error) {
 	// Deploy credentials matter only to the goals validation never runs.
 	if slices.Contains(javaDeployCredentials(job), key) {
 		return "", true, nil
@@ -103,6 +103,11 @@ func (javaDiscovery) variantValue(workflow ciWorkflow, job runtimeJob, _ runtime
 	inherited := strings.NewReplacer("${{ env."+key+" }}", "", "${{env."+key+"}}", "").Replace(value)
 	if inherited != value && (job.Env[key] != "" || workflow.Env[key] != "") {
 		return "", false, fmt.Errorf("%s extends workflow or job JVM options; validate with those options explicitly", key)
+	}
+	// The row's values, as ${{ matrix.service }}, come before the options
+	// are split, since an expression's spaces are not the options'.
+	if resolved, err := interpolateMatrix(inherited, row); err == nil {
+		inherited = resolved
 	}
 	// The installer's agent, which a shell-sharing setup exported before the
 	// job's own options, is local validation's too, and so are the -Ddd.*
@@ -296,10 +301,26 @@ func (javaDiscovery) ciPluginTracerRelease(variables map[string]string) (string,
 	if !set {
 		return "", false
 	}
-	if match := javaCanonicalAgentURL.FindStringSubmatch(url); match != nil && (match[1] == match[2] || match[3] == match[4]) {
-		return match[1] + match[3], true
+	if release, ok := javaCanonicalRelease(url); ok {
+		return release, true
 	}
 	return url, true
+}
+
+// javaCanonicalRelease is the exact release a canonical dd-java-agent
+// download is (see javaCanonicalAgentURL): its path and file name must name
+// the same one.
+func javaCanonicalRelease(url string) (string, bool) {
+	match := javaCanonicalAgentURL.FindStringSubmatch(url)
+	switch {
+	case match == nil:
+		return "", false
+	case match[1] != "" && match[1] == match[2]:
+		return match[1], true
+	case match[3] != "" && match[3] == match[4]:
+		return match[3], true
+	}
+	return "", false
 }
 
 // javaCanonicalAgentURL is a dd-java-agent JAR's canonical download, with its

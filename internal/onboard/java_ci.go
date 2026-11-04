@@ -195,8 +195,9 @@ func unresolvedJavaWrapper(root string, workflow ciWorkflow, job runtimeJob, ste
 	// In a job without the Datadog action, any command that may start tests
 	// is shown, since nothing there reports them.
 	uninstrumented := parts != nil && javaOutsideUninstrumentedJob(root, workflow, job, framework)
-	// A URL names a download, as https://dtdg.co/latest-java-tracer, not tests.
-	text := urlWord.ReplaceAllString(step.Run, "")
+	// A URL names a download, as https://dtdg.co/latest-java-tracer, not
+	// tests, unless the download runs in a shell, as curl …/run-tests.sh | bash.
+	text := withoutPassiveURLs(step.Run)
 	if namesTests := strings.Contains(text, "test") || strings.Contains(text, "verify"); !namesTests && (!uninstrumented || !javaStepMayRunTests(root, workflow, job, step)) {
 		return commandResolution{}
 	}
@@ -208,6 +209,32 @@ func unresolvedJavaWrapper(root string, workflow ciWorkflow, job runtimeJob, ste
 
 // urlWord is a URL in shell text.
 var urlWord = regexp.MustCompile(`[A-Za-z][A-Za-z0-9+.-]*://\S+`)
+
+var (
+	// executedAfter follows a URL whose download a shell runs: piped into
+	// one on the same line, as curl … | bash.
+	executedAfter = regexp.MustCompile(`^[^\n;&]*\|\s*(?:sudo\s+)?(?:ba|z|da)?sh\b`)
+	// executedBefore precedes one a shell runs from a process or command
+	// substitution, as bash <(curl …) or sh -c "$(curl …)".
+	executedBefore = regexp.MustCompile(`(?:<\(|\$\()\s*(?:curl|wget)\b[^\n)]*$`)
+)
+
+// withoutPassiveURLs removes from shell text the URLs of downloads no shell
+// runs, keeping those a shell executes, whose names may say what they run.
+func withoutPassiveURLs(run string) string {
+	var text strings.Builder
+	last := 0
+	for _, match := range urlWord.FindAllStringIndex(run, -1) {
+		lineStart := strings.LastIndex(run[:match[0]], "\n") + 1
+		if executedAfter.MatchString(run[match[1]:]) || executedBefore.MatchString(run[lineStart:match[0]]) {
+			continue
+		}
+		text.WriteString(run[last:match[0]])
+		last = match[1]
+	}
+	text.WriteString(run[last:])
+	return text.String()
+}
 
 // javaMetadataScript reports a script whose commands only print or move files
 // and run Maven for help goals, such as help:evaluate, or its version, which
@@ -773,12 +800,23 @@ func javaMayStartTests(root string, workflow ciWorkflow, job runtimeJob, step ru
 // an exact agent release and the selected site (empty: not selected).
 // javaReportingOverride explains a -Ddd.* system property in the JVM option
 // lists the build reads that sends its reports elsewhere than the selected
-// site (empty: any): a dd.site of another site, or a custom agentless URL.
-// Later lists override earlier ones, JAVA_TOOL_OPTIONS first, and options
-// override DD_* variables; local replay removes them, so they are checked
-// here.
+// site (empty: any): a dd.site of another site, a custom agentless URL, or
+// agentless reporting turned off for a Datadog Agent the user has not
+// confirmed. Later lists override earlier ones, JAVA_TOOL_OPTIONS first, and
+// options override DD_* variables; local replay removes them, so they are
+// checked here.
 func javaReportingOverride(env map[string]string, tool, site string) string {
 	properties, from := javaEffectiveProperties(env, tool)
+	if value, set := properties["DD_CIVISIBILITY_AGENTLESS_ENABLED"]; set && handWrittenFalse(value) {
+		if _, confirmed := statedFact(handWrittenAgent); !confirmed {
+			reason := "-Ddd.civisibility.agentless.enabled=" + value + " in " + from["DD_CIVISIBILITY_AGENTLESS_ENABLED"] + " turns agentless reporting off, so this step's tests report through a Datadog Agent, which no CI configuration shows and local validation does not use: remove it"
+			// Only a provider whose setups ddtest reads by hand asks about an Agent.
+			if slices.ContainsFunc(ciProviderFacts[activeOrDefaultCIProvider().name()], func(fact ciFactDefinition) bool { return fact.Key == handWrittenAgent }) {
+				reason += ", or confirm the Agent with --ci-confirm " + handWrittenAgent
+			}
+			return reason + "."
+		}
+	}
 	if value, set := properties["DD_SITE"]; set && site != "" && value != site {
 		return "-Ddd.site=" + value + " in " + from["DD_SITE"] + " sends this step's reports to " + value + ", not " + site + ", the selected site: remove it or select " + value + "."
 	}

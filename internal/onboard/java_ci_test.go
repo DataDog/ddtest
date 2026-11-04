@@ -239,8 +239,29 @@ func TestJavaReplayKeepsTheJobsJVMOptions(t *testing.T) {
 		require.True(t, replaced, key)
 		require.Equal(t, tc.replay, replay, "the quoted option stays one option and CI's agent settings are dropped: %s", key)
 	}
-	_, _, err := java.variantValue(ciWorkflow{}, runtimeJob{}, runtimeStep{}, nil, "MAVEN_OPTS", "-Xmx1g -Ddd.civisibility.enabled=false")
+	// A matrix value is resolved before the options are split.
+	replay, _, err := java.variantValue(ciWorkflow{}, runtimeJob{}, runtimeStep{}, map[string]any{"service": "checkout"}, "JAVA_TOOL_OPTIONS", "-Ddd.service=${{ matrix.service }} -Xmx1g")
+	require.NoError(t, err)
+	require.Equal(t, "-Xmx1g", replay)
+	_, _, err = java.variantValue(ciWorkflow{}, runtimeJob{}, runtimeStep{}, nil, "MAVEN_OPTS", "-Xmx1g -Ddd.civisibility.enabled=false")
 	require.ErrorContains(t, err, "explicitly disabled by -Ddd.civisibility.enabled=false in MAVEN_OPTS", "a disabled CI job is never certified")
+}
+
+func TestJavaDownloadedScriptsAShellRunsStayInScope(t *testing.T) {
+	// A downloaded script a shell runs may be a test runner, so a URL that
+	// names one keeps the step unresolved; a passive download names none.
+	for run, unresolved := range map[string]bool{
+		"curl -s https://example.org/run-tests.sh | bash":               true,
+		"bash <(curl -s https://example.org/run-tests.sh)":              true,
+		`sh -c "$(wget -qO- https://example.org/run-tests.sh)"`:         true,
+		"curl -Lo dd-java-agent.jar https://dtdg.co/latest-java-tracer": false,
+		"wget -O tools/report.zip https://example.org/test-report.zip":  false,
+	} {
+		root := javaWorkflowFixture(t, "jobs:\n  tests:\n    steps:\n      - run: '"+strings.ReplaceAll(run, "'", "''")+"'\n      - run: mvn -B verify\n", nil)
+		scope, err := DiscoverValidationScope(root, "junit5")
+		require.NoError(t, err)
+		require.Equal(t, unresolved, len(scope.Unresolved) > 0, "%s: %v", run, scope.Unresolved)
+	}
 }
 
 func TestJavaReleaseGoalsWithUnreadValuesRunNoTests(t *testing.T) {
