@@ -226,6 +226,23 @@ class RunnerTests(unittest.TestCase):
             remote = subprocess.check_output(["git", "-C", str(trial / "repo"), "remote", "get-url", "origin"], text=True).strip()
             self.assertEqual(remote, expected.stdout.strip())
 
+    def test_relative_submodules_of_a_local_repository_without_origin_are_mirrored(self):
+        # Without an origin, relative submodule URLs resolve against the
+        # mirror, so each relative submodule's repository is mirrored beside
+        # it; a URL with a scheme is left to Git.
+        local = self.root / "work" / "app"
+        local.mkdir(parents=True)
+        subprocess.run(["git", "clone", "--bare", "--quiet", self.source, str(self.root / "work" / "shared.git")], check=True)
+        checkout = self.root / "checkout"
+        checkout.mkdir()
+        (checkout / ".gitmodules").write_text('[submodule "shared"]\n\tpath = shared\n\turl = ../shared.git\n'
+                                              '[submodule "remote"]\n\tpath = remote\n\turl = https://example.com/remote.git\n')
+        source = self.root / "trial" / "harness" / "source.git"
+        source.mkdir(parents=True)
+        mirrors = run_eval.local_submodule_mirrors(checkout, local, source)
+        self.assertEqual(mirrors, [self.root / "trial" / "harness" / "shared.git"])
+        self.assertTrue((mirrors[0] / "HEAD").exists())
+
     def test_preflight_refresh_is_redacted_before_finalization(self):
         source = self.root / "selected-login.json"
         source.write_text(json.dumps({"tokens": {"access_token": "synthetic-original-access", "refresh_token": "synthetic-original-refresh"}}))

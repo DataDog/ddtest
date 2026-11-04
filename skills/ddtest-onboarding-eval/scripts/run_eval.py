@@ -228,6 +228,26 @@ def printed_executable(output):
 # all trial storage, and the Docker VM's mount cannot hide a folder from it.)
 
 
+def local_submodule_mirrors(checkout, local, source):
+    """Mirrors, beside the mirror source of the local repository local, each
+    relative submodule repository the checkout's .gitmodules names, resolved
+    from local as Git resolves it without a remote, so the container can
+    clone them. Returns the mirrors made."""
+    listed = subprocess.run(["git", "config", "-f", str(checkout / ".gitmodules"), "--get-regexp", r"^submodule\..*\.url$"],
+                            capture_output=True, text=True)
+    mirrors = []
+    for line in listed.stdout.splitlines():
+        url = line.split(None, 1)[1].strip() if len(line.split(None, 1)) == 2 else ""
+        if not url.startswith(("./", "../")):
+            continue
+        origin = (local / url).resolve()
+        mirror = Path(os.path.normpath(source / url))
+        if origin.is_dir() and not mirror.exists():
+            subprocess.run(["git", "clone", "--mirror", "--quiet", "--", str(origin), str(mirror)], check=True)
+            mirrors.append(mirror)
+    return mirrors
+
+
 def binstub_names(directory):
     """The binstub folder's file names. Setup code may replace the folder, so
     it is listed without following a symlink out of the trial."""
@@ -1229,15 +1249,22 @@ def run(args):
         command(["git", "clone", "--", str(source), str(checkout)])
         command(["git", "fetch", "--update-shallow", "--no-tags", "origin", args.ref], cwd=checkout)
         command(["git", "checkout", "--detach", "FETCH_HEAD"], cwd=checkout)
+        copies = []
         if source != args.repo:
-            # Relative submodule URLs resolve against the source's own remote.
+            copies.append(source)
+            # Relative submodule URLs resolve against the checkout's remote:
+            # the source's own origin, or, without one, the mirror, beside
+            # which each relative submodule's repository is mirrored too.
             origin = subprocess.run(["git", "-C", str(local), "remote", "get-url", "origin"], capture_output=True, text=True)
             if origin.returncode == 0 and origin.stdout.strip():
                 command(["git", "remote", "set-url", "origin", origin.stdout.strip()], cwd=checkout)
-            shutil.rmtree(source)
+            elif getattr(args,"submodules",False):
+                copies.extend(local_submodule_mirrors(checkout, local, source))
         manifest["submodules"] = "requested" if getattr(args,"submodules",False) else "not requested"
         if getattr(args,"submodules",False):
             command(["git", "submodule", "update", "--init", "--recursive"], cwd=checkout)
+        for copy in copies:
+            shutil.rmtree(copy, ignore_errors=True)
         manifest["commit"] = command(["git", "rev-parse", "HEAD"], cwd=checkout)
         if pnpm is not None:
             manifest["failure_stage"] = "package_manager"

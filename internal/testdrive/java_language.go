@@ -213,7 +213,7 @@ func (javaLanguage) runEnvironment(t *Testdrive, path string) map[string]string 
 func withoutDatadogAgent(carrier, options string) string {
 	words := platform.JavaCarrierWords(carrier, options)
 	kept := slices.DeleteFunc(slices.Clone(words), func(word string) bool {
-		jar, ok := strings.CutPrefix(platform.JavaUnquoted(word), "-javaagent:")
+		jar, ok := strings.CutPrefix(platform.JavaCarrierValue(carrier, word), "-javaagent:")
 		if !ok {
 			return false
 		}

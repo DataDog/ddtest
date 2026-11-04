@@ -335,3 +335,16 @@ func TestJavaJenkinsPluginResetIsOneStatement(t *testing.T) {
 	require.False(t, jenkinsResetMissing(setup), "ddtest accepts its own reset")
 	require.True(t, jenkinsResetMissing(ciSetup{Inputs: setup.Inputs}), "a snippet without it still lacks it")
 }
+
+// A pipeline whose host stages get the plugin, which downloads the latest
+// release, and whose container stages get the snippet, which installs the
+// recommended one, cannot be certified by one validation, so apply asks to
+// pin the plugin first.
+func TestJavaJenkinsMixedStagesPinThePluginFirst(t *testing.T) {
+	root := javaJenkinsRepository(t, "pipeline {\n  agent none\n  stages {\n    stage('Host') {\n      agent { label 'java' }\n      steps {\n        sh 'mvn -B verify'\n      }\n    }\n    stage('Container') {\n      agent { docker { image 'maven:3.9-eclipse-temurin-17' } }\n      steps {\n        sh 'mvn -B verify'\n      }\n    }\n  }\n}\n")
+	_, err := PlanProviderSetup(root, "junit5", "")
+	var gap *EditThenApplyGap
+	require.ErrorAs(t, err, &gap)
+	require.Contains(t, gap.Error(), "downloads the latest tracer, but this container stage's snippet installs "+javaRecommendedTracer)
+	require.Contains(t, gap.Error(), "Pin the plugin to that release")
+}

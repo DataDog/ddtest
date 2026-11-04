@@ -257,9 +257,14 @@ func jenkinsContainerTarget(root string, workflows []ciWorkflow, target ciSetupT
 		}
 	}
 	// A tracer no dependency carries has the exact release ddtest
-	// recommends, as the setup instructions do.
+	// recommends, as the setup instructions do. The plugin that host stages
+	// run beside it downloads the latest release, and one validation cannot
+	// certify both, so it is pinned to that release first.
 	if release == "" || strings.HasPrefix(release, "<") {
 		if recommended, ok := language.(ciRecommendedTracer); ok {
+			if plugin {
+				return jenkinsSnippetTarget{}, &EditThenApplyGap{SetupGap{location, "The Datadog Jenkins plugin that sets up the host stages downloads the latest tracer, but this container stage's snippet installs " + recommended.recommendedTracer() + ", and one validation cannot certify both. Pin the plugin to that release, as the setup instructions show, then rerun onboard --apply."}}
+			}
 			release = recommended.recommendedTracer()
 		}
 	}

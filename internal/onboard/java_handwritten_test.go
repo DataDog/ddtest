@@ -80,6 +80,11 @@ func TestHandWrittenJavaSetups(t *testing.T) {
 		// A download that may not run does not tell which jar the tests attach.
 		{name: "download in an if", before: []string{"if [ -n \"$PIN\" ]; then " + handWrittenAgentDownload + "; fi"}, command: "mvn test", unresolved: "inside conditional shell control flow"},
 		{name: "download after &&", before: []string{"echo pinning && " + handWrittenAgentDownload}, command: "mvn test", unresolved: "inside conditional shell control flow"},
+		// Any other write of the attached jar may replace the downloaded bytes.
+		{name: "conditional overwrite", before: []string{handWrittenAgentDownload, "if [ -n \"$MIRROR\" ]; then curl -Lo dd-java-agent.jar https://mirror.example/dd-java-agent.jar; fi"}, command: "mvn test", unresolved: "more than one command of the job may write dd-java-agent.jar"},
+		{name: "copied over", before: []string{handWrittenAgentDownload, "cp /cache/agent.jar dd-java-agent.jar"}, command: "mvn test", unresolved: "more than one command of the job may write dd-java-agent.jar"},
+		{name: "copied in", before: []string{"cp /cache/agent.jar dd-java-agent.jar"}, command: "mvn test", unresolved: "dd-java-agent.jar comes from cp /cache/agent.jar dd-java-agent.jar, not a download"},
+		{name: "several URLs", before: []string{"curl -o dd-java-agent.jar https://mirror.example/custom.jar https://repo1.maven.org/maven2/com/datadoghq/dd-java-agent/1.67.1/dd-java-agent-1.67.1.jar"}, command: "mvn test", unresolved: "one command downloads several URLs"},
 		{name: "latest", before: []string{"curl -Lo dd-java-agent.jar https://dtdg.co/latest-java-tracer"}, command: "mvn test", reference: "hand-written dd-java-agent setup (MAVEN_OPTS)", problem: "The job downloads the latest dd-java-agent"},
 		{name: "no download", before: []string{}, command: "mvn test", problem: "No command of the job downloads dd-java-agent.jar with an exact release"},
 		{name: "another tool's release", before: []string{"curl -Lo java-helper.zip https://github.com/example/tools/releases/download/v1.67.1/java-helper.zip"}, command: "mvn test", problem: "No command of the job downloads dd-java-agent.jar with an exact release"},
@@ -87,6 +92,9 @@ func TestHandWrittenJavaSetups(t *testing.T) {
 		{name: "literal key", env: with(agentless, "DD_API_KEY", "0123456789abcdef"), command: "mvn test", problem: "never commit the key"},
 		{name: "Gradle reads no MAVEN_OPTS", command: "./gradlew test", files: gradleBuild, problem: "this job runs Gradle, which does not read it"},
 		{name: "Gradle JVM arguments", env: with(agentless, "MAVEN_OPTS", ""), command: "./gradlew test -Dorg.gradle.jvmargs=-javaagent:dd-java-agent.jar", files: gradleBuild, reference: "hand-written dd-java-agent 1.67.1 setup (org.gradle.jvmargs)", unresolved: "which local validation cannot remove from the build"},
+		// Maven passes MAVEN_OPTS's quotes on, so "true" does not enable it.
+		{name: "quoted enablement in MAVEN_OPTS", env: map[string]string{"MAVEN_OPTS": `-javaagent:dd-java-agent.jar -Ddd.civisibility.enabled="true" -Ddd.civisibility.agentless.enabled=true -Ddd.site=datadoghq.com`}, command: "mvn test", problem: `DD_CIVISIBILITY_ENABLED="true" leaves Test Optimization off`},
+		{name: "quoted enablement in JAVA_TOOL_OPTIONS", env: map[string]string{"JAVA_TOOL_OPTIONS": `-javaagent:dd-java-agent.jar -Ddd.civisibility.enabled="true" -Ddd.civisibility.agentless.enabled=true -Ddd.site=datadoghq.com`}, command: "mvn test", reference: "hand-written dd-java-agent 1.67.1 setup (JAVA_TOOL_OPTIONS)"},
 		{name: "APM tracing off", env: with(agentless, "DD_TRACE_ENABLED", "false"), command: "mvn test", reference: "hand-written dd-java-agent 1.67.1 setup (MAVEN_OPTS)"},
 		{name: "curl --output=", before: []string{"curl -L --output=dd-java-agent.jar https://repo1.maven.org/maven2/com/datadoghq/dd-java-agent/1.67.1/dd-java-agent-1.67.1.jar"}, command: "mvn test", reference: "hand-written dd-java-agent 1.67.1 setup (MAVEN_OPTS)"},
 		{name: "downloader path", before: []string{"/usr/bin/wget -O dd-java-agent.jar https://repo1.maven.org/maven2/com/datadoghq/dd-java-agent/1.67.1/dd-java-agent-1.67.1.jar"}, command: "mvn test", reference: "hand-written dd-java-agent 1.67.1 setup (MAVEN_OPTS)"},
@@ -117,7 +125,7 @@ func TestHandWrittenJavaSetups(t *testing.T) {
 				require.Contains(t, finding.Reason, "keep it, without adding a second setup")
 				require.Contains(t, finding.Reason, tc.problem)
 			case tc.unresolved != "":
-				require.Equal(t, CodeUnverifiedInitialization, finding.Code)
+				require.Equal(t, CodeUnverifiedInitialization, finding.Code, finding.Reason)
 				require.Contains(t, finding.Reason, tc.unresolved)
 			default:
 				require.Equal(t, "not checked", finding.Status, finding.Reason)
@@ -174,19 +182,45 @@ func TestJavaReplayDropsAgentProperties(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, handled)
 	require.Equal(t, "-Xmx1g -Ddd.trace.jdbc.enabled=false", value)
-	key, setting, ok := javaAgentProperty("-Ddd.civisibility.enabled=true")
+	key, setting, ok := javaAgentProperty("JAVA_TOOL_OPTIONS", "-Ddd.civisibility.enabled=true")
 	require.True(t, ok)
 	require.Equal(t, "DD_CIVISIBILITY_ENABLED", key)
 	require.Equal(t, "true", setting)
-	_, _, ok = javaAgentProperty("-Dmaven.repo.local=/cache")
+	_, _, ok = javaAgentProperty("JAVA_TOOL_OPTIONS", "-Dmaven.repo.local=/cache")
 	require.False(t, ok)
+	// Maven's launcher keeps quotes in MAVEN_OPTS; the JVM removes them.
+	_, setting, _ = javaAgentProperty("MAVEN_OPTS", `-Ddd.civisibility.enabled="true"`)
+	require.Equal(t, `"true"`, setting)
+	_, setting, _ = javaAgentProperty("JAVA_TOOL_OPTIONS", `-Ddd.civisibility.enabled="true"`)
+	require.Equal(t, "true", setting)
 }
 
-// A curl command continued on the next line is one download.
-func TestJavaDownloadCommandsJoinContinuations(t *testing.T) {
-	commands := javaDownloadCommands("curl -L -o dd-java-agent.jar \\\n  https://repo1.maven.org/maven2/com/datadoghq/dd-java-agent/1.67.1/dd-java-agent-1.67.1.jar\nmvn test")
-	require.Len(t, commands, 1)
-	address, target := javaDownload(commands[0])
-	require.Equal(t, "dd-java-agent.jar", target)
-	require.Contains(t, address, "/1.67.1/")
+// Writes are read from the script's syntax tree: a continued command is one
+// download, a here-document's body is data, and each write says whether it
+// may not run.
+func TestJavaFileWrites(t *testing.T) {
+	writes, ok := javaFileWrites("curl -L -o dd-java-agent.jar \\\n  https://repo1.maven.org/maven2/com/datadoghq/dd-java-agent/1.67.1/dd-java-agent-1.67.1.jar\nmvn test", nil)
+	require.True(t, ok)
+	require.Len(t, writes, 1)
+	require.Equal(t, "dd-java-agent.jar", writes[0].target)
+	require.Len(t, writes[0].addresses, 1)
+	require.False(t, writes[0].conditional)
+
+	writes, ok = javaFileWrites("cat <<EOF\n"+handWrittenAgentDownload+"\nEOF\n", nil)
+	require.True(t, ok)
+	require.Empty(t, writes, "a here-document's body is data")
+
+	writes, _ = javaFileWrites("curl -o dd-java-agent.jar https://mirror.example/custom.jar https://repo1.maven.org/x.jar", nil)
+	require.Len(t, writes, 1)
+	require.Len(t, writes[0].addresses, 2, "one command, several URLs")
+
+	writes, _ = javaFileWrites("wget -q \"$AGENT_URL\"\nif x; then cp /cache/a.jar dd-java-agent.jar; fi\necho ok > dd-java-agent.jar &\nV=$(curl -Lo dd-java-agent.jar https://x/y.jar)", map[string]string{"AGENT_URL": "https://repo1.maven.org/maven2/com/datadoghq/dd-java-agent/1.67.1/dd-java-agent.jar"})
+	require.Len(t, writes, 4)
+	require.Equal(t, "dd-java-agent.jar", writes[0].target, "wget keeps the remote name, with the known URL")
+	require.False(t, writes[0].conditional)
+	for _, write := range writes[1:] {
+		require.True(t, write.conditional, write.command)
+	}
+	_, ok = javaFileWrites("if then", nil)
+	require.False(t, ok)
 }

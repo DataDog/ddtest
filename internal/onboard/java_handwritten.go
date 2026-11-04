@@ -9,7 +9,6 @@ import (
 	"bufio"
 	"os"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strings"
 
@@ -133,99 +132,169 @@ func javaHandWrittenSetup(root string, provider ciProvider, workflow ciWorkflow,
 	return setup
 }
 
-// javaConditionalCommands are the source texts of a script's commands that
-// may not run: those inside if, case or a loop, and those after && or ||.
-// A script the shell parser cannot read is conditional as a whole.
-func javaConditionalCommands(script string) []string {
+// javaFileWrite is a command of a job's script that writes, or may write,
+// a file: a curl or wget download, another command that writes files, as
+// cp or tee, or an output redirection.
+type javaFileWrite struct {
+	// command is its source text.
+	command, target string
+	// addresses are the URLs a download fetches in the same command; empty
+	// for any other write.
+	addresses []string
+	// conditional reports a command that may not run, or not at that point:
+	// inside if, case, a loop, a function, a subshell, a pipeline, after &&
+	// or ||, in the background, or in a command substitution.
+	conditional bool
+}
+
+// javaFileWrites are the commands of script that may write a file, read
+// from its shell syntax tree with env's known values, so a here-document's
+// body is data, never commands. ok is false for a script the parser cannot
+// read.
+func javaFileWrites(script string, env map[string]string) (writes []javaFileWrite, ok bool) {
 	file, err := syntax.NewParser(syntax.Variant(syntax.LangBash)).Parse(strings.NewReader(script), "")
 	if err != nil {
-		return []string{script}
+		return nil, false
 	}
-	var branches []string
-	add := func(node syntax.Node) {
-		if node != nil && node.Pos().IsValid() && node.End().IsValid() {
-			branches = append(branches, script[node.Pos().Offset():node.End().Offset()])
+	source := func(node syntax.Node) string {
+		if node.Pos().IsValid() && node.End().IsValid() && int(node.End().Offset()) <= len(script) {
+			return script[node.Pos().Offset():node.End().Offset()]
+		}
+		return ""
+	}
+	word := func(w *syntax.Word) string {
+		value, _ := ciShellWord(w, env, "", "")
+		return value
+	}
+	var statement func(stmt *syntax.Stmt, conditional bool)
+	// nested visits the statements inside node, as a command substitution's,
+	// each of which may not run.
+	nested := func(node syntax.Node) {
+		syntax.Walk(node, func(child syntax.Node) bool {
+			if stmt, ok := child.(*syntax.Stmt); ok {
+				statement(stmt, true)
+				return false
+			}
+			return true
+		})
+	}
+	statement = func(stmt *syntax.Stmt, conditional bool) {
+		conditional = conditional || stmt.Background || stmt.Coprocess
+		for _, redirect := range stmt.Redirs {
+			if slices.Contains([]syntax.RedirOperator{syntax.RdrOut, syntax.AppOut, syntax.RdrAll, syntax.AppAll, syntax.RdrClob, syntax.RdrInOut}, redirect.Op) && redirect.Word != nil {
+				writes = append(writes, javaFileWrite{command: source(stmt), target: word(redirect.Word), conditional: conditional})
+			}
+			nested(redirect)
+		}
+		switch command := stmt.Cmd.(type) {
+		case *syntax.CallExpr:
+			for _, assign := range command.Assigns {
+				nested(assign)
+			}
+			var words []string
+			for _, argument := range command.Args {
+				words = append(words, word(argument))
+				nested(argument)
+			}
+			for _, write := range javaCommandWrites(words) {
+				write.command, write.conditional = source(stmt), conditional
+				writes = append(writes, write)
+			}
+		case *syntax.Block:
+			for _, inner := range command.Stmts {
+				statement(inner, conditional)
+			}
+		case nil:
+		default:
+			nested(command)
 		}
 	}
-	syntax.Walk(file, func(node syntax.Node) bool {
-		switch node := node.(type) {
-		case *syntax.IfClause, *syntax.CaseClause, *syntax.WhileClause, *syntax.ForClause:
-			add(node)
-			return false
-		case *syntax.BinaryCmd:
-			if node.Op == syntax.AndStmt || node.Op == syntax.OrStmt {
-				add(node.Y)
+	for _, stmt := range file.Stmts {
+		statement(stmt, false)
+	}
+	return writes, true
+}
+
+// javaCommandWrites are the files a simple command, as words, writes: the
+// outputs of a curl or wget download, each with every URL the command
+// fetches, and the targets of the commands that copy, move, link or write
+// files.
+func javaCommandWrites(words []string) []javaFileWrite {
+	if len(words) == 0 {
+		return nil
+	}
+	name := filepath.Base(words[0])
+	var operands []string
+	for _, word := range words[1:] {
+		if !strings.HasPrefix(word, "-") {
+			operands = append(operands, word)
+		}
+	}
+	switch name {
+	case "curl", "wget":
+		return javaDownloadWrites(name, words[1:])
+	case "cp", "mv", "ln", "install", "rsync", "scp":
+		if len(operands) > 1 {
+			return []javaFileWrite{{target: operands[len(operands)-1]}}
+		}
+	case "tee":
+		var writes []javaFileWrite
+		for _, operand := range operands {
+			writes = append(writes, javaFileWrite{target: operand})
+		}
+		return writes
+	case "dd":
+		for _, operand := range operands {
+			if target, ok := strings.CutPrefix(operand, "of="); ok {
+				return []javaFileWrite{{target: target}}
 			}
 		}
-		return true
-	})
-	return branches
-}
-
-// javaDownloadCommands are the curl and wget commands of a script, each as
-// its words; a backslash-newline continues a command.
-func javaDownloadCommands(script string) [][]string {
-	var commands [][]string
-	for _, command := range javaCommandSeparator.Split(strings.ReplaceAll(script, "\\\n", " "), -1) {
-		words := strings.Fields(command)
-		// Assignments and the shell keywords that open a branch's commands
-		// come before the command itself.
-		for len(words) > 0 && (strings.Contains(words[0], "=") || slices.Contains([]string{"then", "else", "do", "!", "{", "("}, words[0])) {
-			words = words[1:]
-		}
-		if len(words) > 0 && slices.Contains([]string{"curl", "wget"}, filepath.Base(words[0])) {
-			commands = append(commands, words)
-		}
 	}
-	return commands
+	return nil
 }
 
-// javaCommandSeparator separates a script's simple commands.
-var javaCommandSeparator = regexp.MustCompile(`\n|;|&&|\|\||\|`)
-
-// javaDownload is the URL a curl or wget command downloads and the file it
-// writes: its -o/-O output, or the URL's last segment when it keeps the
-// remote name.
-func javaDownload(words []string) (address, target string) {
-	words = append([]string{filepath.Base(words[0])}, words[1:]...)
-	output, remoteName := "", words[0] == "wget"
-	for i := 1; i < len(words); i++ {
-		word := strings.Trim(words[i], `"'`)
+// javaDownloadWrites are the files a curl or wget command, by its
+// arguments, writes: curl's -o/--output and -O/--remote-name outputs, or
+// wget's -O/--output-document or the URL's last segment. Each carries every
+// URL the command fetches, since one command with several URLs cannot say
+// which output holds which.
+func javaDownloadWrites(name string, arguments []string) []javaFileWrite {
+	var addresses, outputs []string
+	remoteName := name == "wget"
+	for i := 0; i < len(arguments); i++ {
+		word := arguments[i]
+		short := strings.HasPrefix(word, "-") && !strings.HasPrefix(word, "--")
 		switch {
 		case strings.Contains(word, "://"):
-			address = word
-		case words[0] == "curl" && strings.HasPrefix(word, "--output="):
-			output = strings.Trim(strings.TrimPrefix(word, "--output="), `"'`)
-		case words[0] == "curl" && (word == "-o" || word == "--output") && i+1 < len(words):
-			i++
-			output = strings.Trim(words[i], `"'`)
-		case words[0] == "curl" && (word == "-O" || word == "--remote-name"):
-			remoteName = true
-		case words[0] == "curl" && strings.HasPrefix(word, "-") && !strings.HasPrefix(word, "--") && strings.HasSuffix(word, "o") && i+1 < len(words):
+			addresses = append(addresses, word)
+		case name == "curl" && strings.HasPrefix(word, "--output="):
+			outputs = append(outputs, strings.TrimPrefix(word, "--output="))
+		case name == "curl" && (word == "--output" || short && strings.HasSuffix(word, "o")) && i+1 < len(arguments):
 			// Combined short options, as -Lo or -sSLo, end with -o's value next.
 			i++
-			output = strings.Trim(words[i], `"'`)
-		case words[0] == "curl" && strings.HasPrefix(word, "-") && !strings.HasPrefix(word, "--") && strings.HasSuffix(word, "O"):
+			outputs = append(outputs, arguments[i])
+		case name == "curl" && (word == "--remote-name" || short && strings.HasSuffix(word, "O")):
 			remoteName = true
-		case words[0] == "wget" && (word == "-O" || word == "--output-document") && i+1 < len(words):
+		case name == "wget" && strings.HasPrefix(word, "--output-document="):
+			outputs = append(outputs, strings.TrimPrefix(word, "--output-document="))
+		case name == "wget" && (word == "--output-document" || short && strings.HasSuffix(word, "O")) && i+1 < len(arguments):
 			i++
-			output = strings.Trim(words[i], `"'`)
-		case words[0] == "wget" && strings.HasPrefix(word, "--output-document="):
-			output = strings.TrimPrefix(word, "--output-document=")
-		case words[0] == "wget" && strings.HasPrefix(word, "-") && !strings.HasPrefix(word, "--") && strings.HasSuffix(word, "O") && i+1 < len(words):
-			i++
-			output = strings.Trim(words[i], `"'`)
+			outputs = append(outputs, arguments[i])
 		}
 	}
-	switch {
-	case address == "":
-		return "", ""
-	case output != "":
-		return address, output
-	case remoteName:
-		return address, address[strings.LastIndex(address, "/")+1:]
+	if len(addresses) == 0 {
+		return nil
 	}
-	return "", ""
+	if len(outputs) == 0 && remoteName {
+		for _, address := range addresses {
+			outputs = append(outputs, address[strings.LastIndex(address, "/")+1:])
+		}
+	}
+	writes := make([]javaFileWrite, 0, len(outputs))
+	for _, output := range outputs {
+		writes = append(writes, javaFileWrite{target: output, addresses: addresses})
+	}
+	return writes
 }
 
 // javaSameAgentPath reports whether target, which a command of
@@ -253,7 +322,7 @@ func javaSameAgentPath(workflow ciWorkflow, job runtimeJob, downloadStep runtime
 // (-javaagent:<path>), empty when it attaches none.
 func javaHandWrittenAgent(carrier, options string) string {
 	for _, word := range platform.JavaCarrierWords(carrier, options) {
-		jar, ok := strings.CutPrefix(platform.JavaUnquoted(word), "-javaagent:")
+		jar, ok := strings.CutPrefix(platform.JavaCarrierValue(carrier, word), "-javaagent:")
 		if !ok {
 			continue
 		}
@@ -271,7 +340,7 @@ func javaHandWrittenAgent(carrier, options string) string {
 func javaHandWrittenProperties(carrier, options string) map[string]string {
 	properties := map[string]string{}
 	for _, word := range platform.JavaCarrierWords(carrier, options) {
-		if key, value, ok := javaAgentProperty(word); ok {
+		if key, value, ok := javaAgentProperty(carrier, word); ok {
 			properties[key] = value
 		}
 	}
@@ -281,8 +350,8 @@ func javaHandWrittenProperties(carrier, options string) map[string]string {
 // javaAgentProperty reads a JVM option that sets a dd-java-agent system
 // property, -Ddd.<name>=<value>, as the DD_* variable it stands for and its
 // value; ok is false for any other option.
-func javaAgentProperty(word string) (key, value string, ok bool) {
-	property, ok := strings.CutPrefix(platform.JavaUnquoted(word), "-Ddd.")
+func javaAgentProperty(carrier, word string) (key, value string, ok bool) {
+	property, ok := strings.CutPrefix(platform.JavaCarrierValue(carrier, word), "-Ddd.")
 	if !ok {
 		return "", "", false
 	}
@@ -311,47 +380,63 @@ func javaHandWrittenFileOptions(file, property string) string {
 	return ""
 }
 
-// javaHandWrittenTracer finds the exact dd-java-agent release jar is: the one
-// the last download command of the job before the tests that writes jar
-// selects, when it is a canonical artifact (see javaCanonicalRelease). A file
-// name alone, as dd-java-agent-1.67.1.jar, never says which bytes the job
-// attaches. It records on setup why none is pinned.
+// javaHandWrittenTracer finds the exact dd-java-agent release jar is. One
+// rule establishes it: exactly one command of the job before the tests
+// writes jar, and that command is an unconditional curl or wget download of
+// one canonical artifact (see javaCanonicalRelease). Any other write of jar,
+// or a write ddtest cannot place, leaves the release unknown, since CI may
+// then attach other bytes; a file name alone, as dd-java-agent-1.67.1.jar,
+// never says which. It records on setup why none is pinned.
 func javaHandWrittenTracer(setup *handWrittenSetup, jar string, workflow ciWorkflow, job runtimeJob, index int, env map[string]string) string {
-	download, ambiguous, conditional := "", "", ""
+	var writes, unplaced []javaFileWrite
 	for _, step := range job.Steps[:index+1] {
-		branches := javaConditionalCommands(step.Run)
-		for _, words := range javaDownloadCommands(step.Run) {
-			address, target := javaDownload(words)
-			if address == "" || filepath.Base(target) != filepath.Base(jar) {
+		stepWrites, readable := javaFileWrites(step.Run, env)
+		if !readable {
+			if strings.Contains(step.Run, filepath.Base(jar)) {
+				setup.unresolved("a step that names " + filepath.Base(jar) + " is not shell ddtest can read, so it cannot tell which dd-java-agent the tests attach.")
+				return ""
+			}
+			continue
+		}
+		for _, write := range stepWrites {
+			if filepath.Base(write.target) != filepath.Base(jar) {
 				continue
 			}
-			// A download that may not run does not tell which jar the
-			// tests attach.
-			if slices.ContainsFunc(branches, func(branch string) bool { return strings.Contains(branch, address) }) {
-				conditional = target
-				continue
+			same, known := javaSameAgentPath(workflow, job, step, write.target, job.Steps[index], jar)
+			switch {
+			case !known:
+				unplaced = append(unplaced, write)
+			case same:
+				writes = append(writes, write)
 			}
-			same, known := javaSameAgentPath(workflow, job, step, target, job.Steps[index], jar)
-			if !known {
-				ambiguous = target
-				continue
-			}
-			if !same {
-				continue
-			}
-			for key, value := range env {
-				address = strings.ReplaceAll(strings.ReplaceAll(address, "${"+key+"}", value), "$"+key, value)
-			}
-			download, ambiguous = address, ""
 		}
 	}
+	commands := func(writes []javaFileWrite) string {
+		var texts []string
+		for _, write := range writes {
+			texts = append(texts, strings.TrimSpace(write.command))
+		}
+		return strings.Join(texts, "; ")
+	}
 	switch {
-	case download == "" && conditional != "":
-		setup.unresolved("the job downloads " + conditional + " inside conditional shell control flow, so ddtest cannot tell whether that download runs and which dd-java-agent the tests attach.")
-	case download == "" && ambiguous != "":
-		setup.unresolved("the job downloads " + ambiguous + ", but ddtest cannot tell whether it is the " + jar + " the tests attach, so it cannot tell which dd-java-agent they run.")
-	case download == "":
+	case len(writes) == 0 && len(unplaced) > 0:
+		setup.unresolved("the job writes " + unplaced[0].target + ", but ddtest cannot tell whether it is the " + jar + " the tests attach, so it cannot tell which dd-java-agent they run.")
+		return ""
+	case len(writes) == 0:
 		setup.missing("No command of the job downloads " + jar + " with an exact release, so ddtest cannot tell which dd-java-agent it attaches: download an exact release before the tests, such as curl -Lo dd-java-agent.jar " + javaHandWrittenDownload + ".")
+		return ""
+	case len(writes)+len(unplaced) > 1:
+		setup.unresolved("more than one command of the job may write " + jar + " (" + commands(append(writes, unplaced...)) + "), so ddtest cannot tell which dd-java-agent the tests attach; download it once, unconditionally.")
+		return ""
+	}
+	write := writes[0]
+	switch download := strings.Join(write.addresses, " "); {
+	case len(write.addresses) == 0:
+		setup.unresolved(jar + " comes from " + strings.TrimSpace(write.command) + ", not a download of an exact release, so ddtest cannot tell which dd-java-agent the tests attach.")
+	case write.conditional:
+		setup.unresolved("the job downloads " + write.target + " inside conditional shell control flow, so ddtest cannot tell whether that download runs and which dd-java-agent the tests attach.")
+	case len(write.addresses) > 1:
+		setup.unresolved("one command downloads several URLs (" + download + "), so ddtest cannot tell which of them " + jar + " holds; download dd-java-agent in a command of its own.")
 	case strings.Contains(download, "dtdg.co/latest-java-tracer") || strings.Contains(download, "/latest/"):
 		setup.missing("The job downloads the latest dd-java-agent (" + download + "), so each build can attach another release: download an exact release instead, such as " + javaHandWrittenDownload + ".")
 	case strings.Contains(download, "$"):

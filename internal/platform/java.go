@@ -242,7 +242,13 @@ func JavaCarrierWords(carrier, options string) []string {
 	return JavaOptionWords(options)
 }
 
-// JavaUnquoted is a JVM option without the quotes the JVM removes.
-func JavaUnquoted(word string) string {
+// JavaCarrierValue is a JVM option of carrier as the JVM receives it:
+// without the quotes the reader removes, or, for MAVEN_OPTS and
+// .mvn/jvm.config, which Maven's launcher expands unquoted, with them kept,
+// so -Ddd.civisibility.enabled="true" is "true" with its quotes.
+func JavaCarrierValue(carrier, word string) string {
+	if carrier == "MAVEN_OPTS" || carrier == ".mvn/jvm.config" {
+		return word
+	}
 	return strings.NewReplacer(`"`, "", `'`, "").Replace(word)
 }

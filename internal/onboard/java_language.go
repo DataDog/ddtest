@@ -156,7 +156,7 @@ func javaEffectiveEnablement(workflow ciWorkflow, job runtimeJob, step runtimeSt
 func javaWithoutAgentProperties(carrier, options string) string {
 	words := platform.JavaCarrierWords(carrier, options)
 	kept := slices.DeleteFunc(slices.Clone(words), func(word string) bool {
-		key, _, ok := javaAgentProperty(word)
+		key, _, ok := javaAgentProperty(carrier, word)
 		return ok && !TracerPluginSetting(key)
 	})
 	if len(kept) == len(words) {
