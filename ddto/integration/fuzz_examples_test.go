@@ -396,7 +396,8 @@ func normalizeFuzzExampleEvents(events []map[string]any, fixture fuzzExampleFixt
 	return result
 }
 
-func TestNormalizeFuzzExampleEventsUsesPinnedSDKVersion(t *testing.T) {
+func assertFuzzExamplePinnedSDKVersion(t *testing.T) {
+	t.Helper()
 	events := []map[string]any{{"content": map[string]any{"meta": map[string]any{
 		"library_version": fuzzExampleSDKVersion,
 		"library_name":    nil,
@@ -471,6 +472,7 @@ func canonicalFuzzStack(stack string) string {
 }
 
 func TestFuzzExampleStackComparisonKeepsApplicationFrames(t *testing.T) {
+	assertFuzzExamplePinnedSDKVersion(t)
 	original := "ci-runtime/civisibility/integrations/gotesting.wrapper\n\t/sdk/internal/civisibility/wrapper.go:10\nci-runtime/civisibility/integrations/gotesting/fixtures/fuzzexamplesport/app.TestFoo\n\tfixture/app/app_test.go:31\n"
 	adapted := strings.Replace(original, "/sdk/internal/civisibility/wrapper.go:10", "/port/internal/thirdparty/dd-trace-go/wrapper.go:14", 1)
 	if canonicalFuzzStack(original) != canonicalFuzzStack(adapted) {
