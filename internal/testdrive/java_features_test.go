@@ -44,6 +44,7 @@ type simulatedBuild struct {
 	// unreportedSkips writes no report for a probe that never starts, as
 	// Surefire 3.0.0-M5 does for a skipped Spock specification.
 	unreportedSkips bool
+	probeTags       map[string]string
 	calls           []map[string]string
 	args            [][]string
 }
@@ -127,6 +128,9 @@ func (m *simulatedBuild) run(t *testing.T, args []string, env map[string]string)
 	var events []intake.Event
 	event := func(status string, tags ...string) {
 		values := map[string]string{"test.module": m.scenario.Module, "test.suite": javaProbeClass, "test.name": "ddtestProbe", "test.status": status}
+		for key, value := range m.probeTags {
+			values[key] = value
+		}
 		for i := 0; i+1 < len(tags); i += 2 {
 			values[tags[i]] = tags[i+1]
 		}
@@ -145,8 +149,10 @@ func (m *simulatedBuild) run(t *testing.T, args []string, env map[string]string)
 	switch m.scenario.Feature {
 	case "reporting-only":
 		status := body()
+		event(status)
+		events[0].Tags["test.module"] = m.module(false)
 		native = map[string]string{"pass": "", "fail": "fail"}[status]
-		m.facts = intake.Facts{TestEventCount: 1, Tests: []intake.Test{{
+		m.facts = intake.Facts{TestEventCount: 1, Events: events, Tests: []intake.Test{{
 			Module: m.module(false), Suite: javaProbeClass, Name: "ddtestProbe", SourceFile: javaProbeSourceFile,
 			Attempts: []intake.TestRun{{Status: status, SpanID: 1}},
 		}}}

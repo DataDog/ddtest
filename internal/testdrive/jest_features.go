@@ -276,13 +276,13 @@ func explainInjectedGlobalFailures(features []featureResult, project jestProject
 func runProbeFeatures(run func(string, intake.Scenario, string) (validationRun, error), result *validationResult) error {
 	// Verify the probe in the actual project configuration before claiming anything
 	// about feature behavior. Never fall back to a clean, unrelated Jest config.
-	passControl, err := run("probe-pass-control", intake.Scenario{}, "pass")
+	passControl, err := run("probe-pass-control", intake.Scenario{CollectEvents: true}, "pass")
 	passControl = markTimeout(passControl)
 	result.Runs = append(result.Runs, passControl.summary())
 	if err != nil {
 		return err
 	}
-	failControl, err := run("probe-fail-control", intake.Scenario{}, "fail")
+	failControl, err := run("probe-fail-control", intake.Scenario{CollectEvents: true}, "fail")
 	failControl = markTimeout(failControl)
 	result.Runs = append(result.Runs, failControl.summary())
 	if err != nil {
@@ -301,6 +301,10 @@ func runProbeFeatures(run func(string, intake.Scenario, string) (validationRun, 
 		feature := policy.Name
 		if policy.Status != "required" {
 			result.Features = append(result.Features, featureResult{Name: feature, Status: policy.Status, Reason: policy.Reason})
+			continue
+		}
+		if unsupported, ok := unsupportedTracerFeature(result.Framework, feature, passControl, failControl); ok {
+			result.Features = append(result.Features, unsupported)
 			continue
 		}
 		if feature == "skipping" && identity.SourceFile == "" && !frameworkFeaturePolicies[result.Framework].TestLevelSkipping {
