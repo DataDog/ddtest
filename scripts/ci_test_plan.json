@@ -10,6 +10,7 @@
   ],
   "shared": [
     "internal/testdrive/jest*.go",
+    "internal/testdrive/mocha.go",
     "internal/onboard/jest_command.go",
     "internal/onboard/python_handwritten.go"
   ],

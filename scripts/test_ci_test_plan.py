@@ -28,7 +28,8 @@ class SelectionTests(unittest.TestCase):
 
     def test_shared_unknown_build_and_deleted_inputs_select_every_smoke(self):
         for path in ("internal/ext/command.go", "internal/onboard/ci_shell_state.go",
-                     "internal/testdrive/jest_features.go", "internal/testdrive/new_fixture.json",
+                     "internal/testdrive/jest_features.go", "internal/testdrive/mocha.go",
+                     "internal/testdrive/new_fixture.json",
                      "go.mod", "go.sum", ".github/workflows/ci.yml"):
             with self.subTest(path=path):
                 plan = planner.make_plan([path], CONFIG)
