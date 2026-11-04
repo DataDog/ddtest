@@ -377,7 +377,7 @@ func normalizeFuzzExampleEvents(events []map[string]any, fixture fuzzExampleFixt
 	for _, event := range result {
 		content := event["content"].(map[string]any)
 		meta, _ := content["meta"].(map[string]any)
-		wantVersion, wantName := "v2.12.0-dev.3", any(nil)
+		wantVersion, wantName := fuzzExampleSDKVersion, any(nil)
 		if fixture.runtime == "mini" {
 			wantVersion, wantName = minitracer.Version, "ddtest"
 		}
@@ -394,6 +394,18 @@ func normalizeFuzzExampleEvents(events []map[string]any, fixture fuzzExampleFixt
 		}
 	}
 	return result
+}
+
+func TestNormalizeFuzzExampleEventsUsesPinnedSDKVersion(t *testing.T) {
+	events := []map[string]any{{"content": map[string]any{"meta": map[string]any{
+		"library_version": fuzzExampleSDKVersion,
+		"library_name":    nil,
+	}}}}
+	result := normalizeFuzzExampleEvents(events, fuzzExampleFixture{runtime: "sdk"})
+	meta := result[0]["content"].(map[string]any)["meta"].(map[string]any)
+	if _, present := meta["library_version"]; present {
+		t.Fatal("normalized SDK library version retained")
+	}
 }
 
 // Ported functions keep their names/order, while their source lines move with
