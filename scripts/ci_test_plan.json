@@ -119,12 +119,12 @@
       ],
       "inputs": [
         "internal/framework/jvm*",
-        "internal/platform/java*",
+        "internal/platform/java[._]*",
         "internal/gradle/**",
         "internal/maven/**",
-        "internal/onboard/java*",
+        "internal/onboard/java[._]*",
         "internal/onboard/instructions/java*",
-        "internal/testdrive/java*"
+        "internal/testdrive/java[._]*"
       ],
       "smoke": [
         {

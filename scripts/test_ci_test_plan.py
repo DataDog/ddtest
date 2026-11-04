@@ -59,14 +59,26 @@ class SelectionTests(unittest.TestCase):
         self.assertEqual(set(plan["suites"]), {"javascript", "jest", "vitest", "mocha", "cypress",
                                               "playwright", "cucumber", "webdriverio", "onboarding"})
 
-    def test_javascript_testdrive_sources_select_every_javascript_consumer(self):
+    def test_javascript_sources_select_only_javascript_consumers(self):
         consumers = {"javascript", "jest", "vitest", "mocha", "cypress", "playwright",
                      "cucumber", "webdriverio", "onboarding"}
-        for path in ("internal/testdrive/javascript.go", "internal/testdrive/javascript_language.go"):
+        for directory in ("platform", "onboard", "testdrive"):
+            for name in ("javascript.go", "javascript_language.go"):
+                path = f"internal/{directory}/{name}"
+                with self.subTest(path=path):
+                    self.assertEqual(set(planner.make_plan([path], CONFIG)["suites"]), consumers)
+
+    def test_java_sources_still_select_both_build_tool_smokes(self):
+        for path, suites in (
+            ("internal/platform/java.go", {"java"}),
+            ("internal/onboard/java_ci.go", {"java", "onboarding"}),
+            ("internal/testdrive/java_validation.go", {"java"}),
+        ):
             with self.subTest(path=path):
                 plan = planner.make_plan([path], CONFIG)
-                self.assertTrue(consumers.issubset(plan["suites"]))
-                self.assertFalse({"python", "ruby"}.intersection(plan["suites"]))
+                self.assertEqual(set(plan["suites"]), suites)
+                self.assertTrue({"java-maven", "java-gradle"}.issubset(
+                    entry["id"] for entry in plan["integrations"]))
 
     def test_cross_framework_onboarding_helpers_select_all_smokes(self):
         for path in ("internal/onboard/jest_command.go", "internal/onboard/python_handwritten.go"):
