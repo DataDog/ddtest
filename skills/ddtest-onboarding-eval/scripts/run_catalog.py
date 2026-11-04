@@ -5,7 +5,8 @@ Each case: run_eval.py with the catalog's image, commit, trims, setup, readiness
 flags and answers -> retain the .testoptimization reports and small untracked
 files -> run_eval.py --cleanup. Required trims are always applied, speed trims
 only with --speed-trims; each is committed with a scratch identity inside the
-trial container, so the checkout stays clean.
+trial container, so the checkout stays clean; run_eval.py records the HEAD after
+setup as `agent_baseline`, so changes.patch excludes the trims.
 
 After each case its evidence is checked against the case's `expected` outcome
 (catalog_check.py); the batch ends with a summary table, an ERROR block per case
@@ -397,13 +398,25 @@ def run_case(case, argv, output, log, supervisor, rerun=None, agent="codex"):
         code = supervisor.run(argv, stream, cleanup=shlex.join(cleanup_argv))
         with supervisor.lock:
             supervisor.cleanup_commands[agent] = shlex.join(cleanup_argv)
-        result = retain(output)
-        stream.write(f"\nexit={code}\n{result}\n")
-        stream.flush()
-        cleanup = supervisor.run(cleanup_argv, stream, forward=False)
+        retention_error, result = None, "retention did not finish"
+        try:
+            result = retain(output)
+        except OSError as error:
+            # Cleanup still runs and the batch goes on; the case fails below.
+            retention_error = f"retention failed: {error}"
+            result = retention_error
+        finally:
+            stream.write(f"\nexit={code}\n{result}\n")
+            stream.flush()
+            cleanup = supervisor.run(cleanup_argv, stream, forward=False)
     with supervisor.lock:
         supervisor.cleanup_commands.pop(agent, None)
     record = catalog_check.evaluate(case, output, log, rerun, agent)
+    if retention_error and record["outcome"] != "harness_failure":
+        record["harness_category"] = "retention"
+        record = catalog_check.finish(record, "harness_failure", retention_error, "", rerun)
+    elif retention_error:
+        record["problems"].append(retention_error)
     if cleanup and record["outcome"] != "harness_failure":
         record["harness_category"] = "cleanup"
         record = catalog_check.finish(record, "harness_failure", f"cleanup (run_eval.py --cleanup exit {cleanup})",
@@ -411,6 +424,8 @@ def run_case(case, argv, output, log, supervisor, rerun=None, agent="codex"):
     expected = record["expected"]["verdict"] or "none"
     lines = [f"[{agent}] {case['id']}: exit {code}, {summary(output)} (expected {expected}); cleanup exit {cleanup}; "
              f"outcome {catalog_check.label(record)}; log {log}"]
+    if retention_error:
+        lines.append(f"[{agent}] {case['id']}: {retention_error}")
     if cleanup:
         lines.append(f"[{agent}] {case['id']}: cleanup failed; retry with: {shlex.join(cleanup_argv)}")
     for line in lines:

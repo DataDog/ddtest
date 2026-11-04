@@ -158,7 +158,9 @@ Repeat with `--agent claude`, its selected login and a new output directory.
 The runner mounts storage at the short container path `/trial`, explicitly fetches the ref, records its resolved SHA, and creates a
 fresh clone and private caches every time. Submodules are opt-in with
 `--submodules`. Setup arguments use `shlex` without an implicit shell; setup must
-leave tracked/untracked Git state clean. Optional `--node` selects an absolute
+leave tracked/untracked Git state clean; it may commit, and `changes.patch`
+starts from HEAD after setup and readiness (`agent_baseline` in `run.json`;
+`commit` stays the fetched SHA). Optional `--node` selects an absolute
 **image** executable for Codex, not a host binary. The recorded final ddtest
 runtime must match it. Optional `--model` selects a model; otherwise the fresh
 CLI default applies. `run.json` records the CLI version and requested model.
@@ -248,6 +250,8 @@ untracked files to `<evidence>/retained/` (untracked paths come from
 `status.txt`, with Git's path quoting decoded; Git never runs on the host in the
 trial checkout, and symlinks and paths outside it are skipped), then runs
 `run_eval.py --cleanup`. Each trial's output goes to `<id>-<agent>.log`.
+If copying fails (such as a full disk), cleanup still runs, the case is a
+`harness_failure` (`retention`) and the batch goes on.
 Each trial runs in its own session: the first Ctrl-C (or SIGTERM/SIGHUP) is
 forwarded once, and the runner waits for the trial to finalize `run.json` and
 remove its container, retains, cleans up and stops the batch with a non-zero
@@ -297,6 +301,8 @@ Trims are setup commands that edit or `git rm` files; `run_catalog.py` commits
 each trim inside the trial container with a scratch identity
 (`ddtest-eval-scratch`), so setup still leaves `git status` clean. The trial's
 private HOME has no Git configuration, and nothing changes signing settings.
+`changes.patch` diffs against `agent_baseline`, the HEAD after the trim
+commits and setup, so it holds only the agent's changes.
 `trims.required` (the suite can't pass without it on the image, such as expired
 certificates) always applies; `trims.optional_speed` applies only with
 `--speed-trims`, and changes what the agent sees, so compare like with like.
@@ -325,7 +331,7 @@ Each trial gets one outcome:
 | `verdict_mismatch (worse)` | a regression; `STOPPED` means no report | yes |
 | `verdict_mismatch (better: update expected)` | an improvement | no, exit 3 |
 | `unexpected_blockers` | the expected verdict with a blocker not allowed, or none of the expected ones | yes |
-| `harness_failure` | container, clone, setup, readiness, login, timeout, interruption, cleanup or missing evidence | yes |
+| `harness_failure` | container, clone, setup, readiness, login, timeout, interruption, retention, cleanup or missing evidence | yes |
 | `agent_failure` | no ddtest result or report, no final answer, or `run.json` `agent_reporting` is not `pass` | yes |
 
 Expected blockers that are no longer reported only add a note. Whether the agent

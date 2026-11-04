@@ -9,7 +9,8 @@ final-response.md, retained/.testoptimization/testdrive.json) and classifies it:
   unexpected_blockers  the expected verdict, but a blocker `expected.blockers`
                        does not allow, or none of the expected ones.
   harness_failure      container, clone, setup, readiness, authentication,
-                       timeout, interruption, cleanup or missing evidence.
+                       timeout, interruption, retention, cleanup or missing
+                       evidence.
   agent_failure        no ddtest result or report, no final answer, or the
                        answer fails run.json's agent_reporting check.
 
@@ -296,6 +297,8 @@ def finish(record, outcome, problem, excerpt, rerun):
 HARNESS_HINTS = {
     "evidence": "the trial left no usable run.json; read {log}",
     "interrupted": "the trial was interrupted; nothing to fix in ddtest",
+    "retention": "copying the reports and untracked files to {evidence}/retained failed (see problems); "
+                 "check disk space and permissions there",
     "cleanup": "run `run_eval.py --cleanup {evidence}` and confirm its container is gone (docker ps) before retrying",
     "authentication": "the agent CLI login failed; log in again on the host",
     "readiness": "{name}'s readiness_commands failed on the image; check the image and the commands",

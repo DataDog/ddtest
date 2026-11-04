@@ -940,6 +940,34 @@ class RunnerTests(unittest.TestCase):
         self.assertIn("setup changed", manifest["error"])
         self.assertFalse((Path(manifest["checkout"]) / "observed.json").exists())
 
+    def test_changes_patch_starts_after_setup_commits(self):
+        # A catalog trim: remove a tracked file and commit it inside the trial,
+        # as run_catalog.py does, before the agent starts.
+        import run_catalog
+        tracked = "skills/ddtest-onboarding-eval/catalog/cases.yaml"
+        case = {"trims": {"required": {"reason": "test trim", "commands": [f"git rm -q {tracked}"]}}}
+        self.args.setup_command = run_catalog.trim_commands(case)
+        code, manifest = self.trial()
+        self.assertEqual(code, 0, manifest.get("error"))
+        checkout = Path(manifest["checkout"])
+        self.assertFalse((checkout / tracked).exists())
+        self.assertEqual(manifest["commit"], subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=self.source, text=True).strip())
+        self.assertNotEqual(manifest["agent_baseline"], manifest["commit"])
+        rev_parses = [entry for entry in manifest["commands"] if entry["argv"] == ["git", "rev-parse", "HEAD"]]
+        self.assertEqual(len(rev_parses), 2)
+        patch_text = (self.args.output / "changes.patch").read_text()
+        self.assertIn("Fake agent changed", patch_text)
+        self.assertNotIn(tracked, patch_text)
+        self.assertNotIn(tracked, (self.args.output / "status.txt").read_text())
+
+    def test_failed_setup_diffs_against_the_fetched_commit(self):
+        self.args.setup_command = [f"{shlex.quote(sys.executable)} -c 'import sys; sys.exit(7)'"]
+        code, manifest = self.trial()
+        self.assertEqual(code, 1)
+        self.assertNotIn("agent_baseline", manifest)
+        self.assertTrue((self.args.output / "changes.patch").is_file())
+
     def test_error_event_is_failure_even_with_zero_cli_exit(self):
         self.args.agent = "claude"
         code, manifest = self.trial({"FAKE_AGENT_ERROR": "1"})

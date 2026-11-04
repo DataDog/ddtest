@@ -329,6 +329,35 @@ class MainTests(unittest.TestCase):
             self.assertIn("--cleanup " + str(root / "out" / "E01-nion-codex"), killed)
             self.assertIn("--cleanup " + str(root / "out" / "E01-nion-claude"), killed)
 
+    def test_retention_failure_still_cleans_up_and_the_batch_goes_on(self):
+        real_retain = run_catalog.retain
+
+        def retain(output):
+            if output.name.startswith("E01-"):
+                raise OSError(28, "No space left on device")
+            return real_retain(output)
+
+        for agent in ("codex", "both"):
+            with self.subTest(agent=agent), tempfile.TemporaryDirectory() as temporary, \
+                    patch.object(run_catalog, "retain", retain):
+                root = Path(temporary)
+                code, output, events = self.trials(root, "complete", "E01", "E02", agent=agent)
+                self.assertEqual(code, 1, output)
+                agents = ("codex", "claude") if agent == "both" else ("codex",)
+                for name in agents:
+                    for case in ("E01-nion", "E02-pipeline-schema"):
+                        self.assertIn(f"cleanup {root / 'out' / f'{case}-{name}'}", events)
+                    self.assertIn(f"[{name}] E01-nion: retention failed: [Errno 28] No space left on device", output)
+                    self.assertIn("retention failed", (root / "out" / f"E01-nion-{name}.log").read_text())
+                results = json.loads((root / "out" / "results.json").read_text())
+                outcomes = {(case["id"], case["agent"]): case for case in results["cases"]}
+                for name in agents:
+                    failed = outcomes[("E01-nion", name)]
+                    self.assertEqual((failed["outcome"], failed["harness_category"]), ("harness_failure", "retention"))
+                    self.assertIn("retention failed: [Errno 28] No space left on device", failed["problems"])
+                    self.assertIn("/retained failed", failed["next_step"])
+                    self.assertEqual(outcomes[("E02-pipeline-schema", name)]["outcome"], "pass")
+
     def test_dry_run_both_prints_each_lane(self):
         code, output = self.main("--dry-run", "E02", "E07", "--agent", "both")
         self.assertEqual(code, 0)

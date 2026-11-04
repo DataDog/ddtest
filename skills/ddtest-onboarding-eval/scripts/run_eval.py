@@ -1351,6 +1351,9 @@ def run(args):
         if readiness and command(["git", "status", "--porcelain"], cwd=checkout):
             raise RuntimeError("A readiness command changed the checkout; choose readiness checks that leave it clean")
         manifest.pop("failure_stage",None)
+        # Setup may commit (catalog trims do): the agent's changes start here,
+        # while "commit" stays the fetched ref's SHA.
+        manifest["agent_baseline"] = command(["git", "rev-parse", "HEAD"], cwd=checkout)
         # Setup descendants cannot mutate credential directories during installation.
         if hasattr(container,"control"):
             container.control("pause",container.name)
@@ -1419,10 +1422,12 @@ def run(args):
                 manifest["isolation"]["processes_stopped"] = False
                 code = finalization_failed(str(error))
         # Processes that could not be stopped may still change the checkout, so
-        # its diff and status would not be stable evidence.
+        # its diff and status would not be stable evidence. The diff starts
+        # from the post-setup baseline, or the fetched commit if setup failed.
         if "commit" in manifest and manifest["isolation"].get("processes_stopped", True):
+            baseline = manifest.get("agent_baseline", manifest["commit"])
             for name, argv in (
-                ("changes.patch", ["git", "diff", "--no-ext-diff", "--no-textconv", manifest["commit"], "--"]),
+                ("changes.patch", ["git", "diff", "--no-ext-diff", "--no-textconv", baseline, "--"]),
                 # Default quoting keeps status.txt ASCII; run_catalog.py decodes it.
                 ("status.txt", ["git", "-c", "core.quotePath=true", "status", "--short", "--untracked-files=all"]),
             ):
