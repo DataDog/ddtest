@@ -125,9 +125,15 @@ func javaHandWrittenSetup(root string, provider ciProvider, workflow ciWorkflow,
 		setup.Tracer = version
 		setup.Reference = handWrittenReference("dd-java-agent "+version, carrier.name)
 	}
-	// -Ddd.* system properties in the agent's options configure it like
-	// DD_* variables, and take precedence over them.
-	configuration := mergeEnvironment(commandEnv, javaHandWrittenProperties(carrier.value))
+	// -Ddd.* system properties configure the agent like DD_* variables, and
+	// take precedence over them, from every JVM option list the build reads,
+	// not only the one that attaches it; a carrier outside the environment,
+	// as org.gradle.jvmargs, comes last.
+	properties, _ := javaEffectiveProperties(commandEnv, tool)
+	configuration := mergeEnvironment(commandEnv, properties)
+	if _, environment := commandEnv[carrier.name]; !environment {
+		configuration = mergeEnvironment(configuration, javaHandWrittenProperties(carrier.value))
+	}
 	// dd-java-agent reports tests with APM tracing off.
 	delete(configuration, "DD_TRACE_ENABLED")
 	handWrittenConfiguration(setup, provider, job, configuration, site, false, reportingFromEnvironment)
@@ -135,10 +141,10 @@ func javaHandWrittenSetup(root string, provider ciProvider, workflow ciWorkflow,
 }
 
 // javaDownloadCommands are the curl and wget commands of a script, each as
-// its words.
+// its words; a backslash-newline continues a command.
 func javaDownloadCommands(script string) [][]string {
 	var commands [][]string
-	for _, command := range javaCommandSeparator.Split(script, -1) {
+	for _, command := range javaCommandSeparator.Split(strings.ReplaceAll(script, "\\\n", " "), -1) {
 		words := strings.Fields(command)
 		for len(words) > 0 && strings.Contains(words[0], "=") {
 			words = words[1:]
@@ -157,12 +163,15 @@ var javaCommandSeparator = regexp.MustCompile(`\n|;|&&|\|\||\|`)
 // writes: its -o/-O output, or the URL's last segment when it keeps the
 // remote name.
 func javaDownload(words []string) (address, target string) {
+	words = append([]string{filepath.Base(words[0])}, words[1:]...)
 	output, remoteName := "", words[0] == "wget"
 	for i := 1; i < len(words); i++ {
 		word := strings.Trim(words[i], `"'`)
 		switch {
 		case strings.Contains(word, "://"):
 			address = word
+		case words[0] == "curl" && strings.HasPrefix(word, "--output="):
+			output = strings.Trim(strings.TrimPrefix(word, "--output="), `"'`)
 		case words[0] == "curl" && (word == "-o" || word == "--output") && i+1 < len(words):
 			i++
 			output = strings.Trim(words[i], `"'`)

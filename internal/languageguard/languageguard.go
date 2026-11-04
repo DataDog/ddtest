@@ -45,7 +45,9 @@ type language struct {
 // owns the shared files, so it has no prefix; its markers only keep it out of
 // other languages' files.
 var languages = []language{
-	{name: "javascript", marker: regexp.MustCompile(`(?i)javascript|dd-trace|node_options|jest|vitest|mocha|cypress|playwright|cucumber|webdriverio`)},
+	// dd-trace is the npm package and dd-trace-js its repository; other
+	// tracers' repositories, as dd-trace-java, are not.
+	{name: "javascript", marker: regexp.MustCompile(`(?i)javascript|dd-trace($|[^-]|-js)|node_options|jest|vitest|mocha|cypress|playwright|cucumber|webdriverio`)},
 	{name: "python", prefix: "python", marker: regexp.MustCompile(`(?i)python|pytest|ddtrace`)},
 	// datadog-ci is the gem; .datadog-ci-container.XXXXXX, the folders
 	// Jenkins container shells install every tracer into, are not.

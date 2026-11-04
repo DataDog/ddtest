@@ -714,8 +714,8 @@ func JavaCIConfiguration(root, framework, site string) RuntimeCheck {
 						finding.Reason = "The " + provider.setupName() + " at " + expired + " runs in another shell than this test command, and its exports reach only the later commands of its own shell, so the tests run without it; run it in the same shell, before the test command."
 					case action == "" && handWritten == nil:
 						finding.Reason = "No " + provider.setupName() + " selects java before this test step, so its tests are not instrumented."
-					case javaReportingOverride(handWrittenEnvironment(workflow, job, step), tool, site) != "":
-						finding.Code, finding.Reason = CodeIncompleteCISetup, javaReportingOverride(handWrittenEnvironment(workflow, job, step), tool, site)
+					case javaReportingOverride(javaRowEnvironment(workflow, job, step, row), tool, site) != "":
+						finding.Code, finding.Reason = CodeIncompleteCISetup, javaReportingOverride(javaRowEnvironment(workflow, job, step, row), tool, site)
 					case handWritten == nil && javaSetupProblem(finding, site) != "":
 						finding.Code, finding.Reason = CodeIncompleteCISetup, javaSetupProblem(finding, site)
 					case provider.sharedSyntax() && !exactJavaRelease.MatchString(tracer):
@@ -778,23 +778,48 @@ func javaMayStartTests(root string, workflow ciWorkflow, job runtimeJob, step ru
 // override DD_* variables; local replay removes them, so they are checked
 // here.
 func javaReportingOverride(env map[string]string, tool, site string) string {
-	carriers := []string{"JAVA_TOOL_OPTIONS", "MAVEN_OPTS"}
-	if tool == javaGradle {
-		carriers = []string{"JAVA_TOOL_OPTIONS", "JAVA_OPTS", "GRADLE_OPTS"}
-	}
-	properties, from := map[string]string{}, map[string]string{}
-	for _, carrier := range carriers {
-		for key, value := range javaHandWrittenProperties(env[carrier]) {
-			properties[key], from[key] = value, carrier
-		}
-	}
+	properties, from := javaEffectiveProperties(env, tool)
 	if value, set := properties["DD_SITE"]; set && site != "" && value != site {
 		return "-Ddd.site=" + value + " in " + from["DD_SITE"] + " sends this step's reports to " + value + ", not " + site + ", the selected site: remove it or select " + value + "."
 	}
 	if value, set := properties["DD_CIVISIBILITY_AGENTLESS_URL"]; set {
 		return "-Ddd.civisibility.agentless.url=" + value + " in " + from["DD_CIVISIBILITY_AGENTLESS_URL"] + " sends this step's reports to a custom URL instead of the selected site's intake, which local validation cannot check: remove it."
+	} else if value := env["DD_CIVISIBILITY_AGENTLESS_URL"]; value != "" {
+		return "DD_CIVISIBILITY_AGENTLESS_URL=" + value + " sends this step's reports to a custom URL instead of the selected site's intake, which local validation cannot check: remove it."
 	}
 	return ""
+}
+
+// javaRowEnvironment is the environment a test step starts with in a matrix
+// row, its matrix expressions resolved, as -Ddd.site=${{ matrix.site }}; a
+// value the row cannot resolve stays as written.
+func javaRowEnvironment(workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any) map[string]string {
+	env := maps.Clone(handWrittenEnvironment(workflow, job, step))
+	for key, value := range env {
+		if resolved, err := interpolateMatrix(value, row); err == nil {
+			env[key] = resolved
+		}
+	}
+	return env
+}
+
+// javaEffectiveProperties are the DD_* variables the -Ddd.* system
+// properties set in the JVM option lists a build of tool reads, and the list
+// each comes from: Maven reads JAVA_TOOL_OPTIONS, then MAVEN_OPTS; Gradle
+// reads JAVA_TOOL_OPTIONS, JAVA_OPTS, then GRADLE_OPTS. A later list
+// overrides an earlier one.
+func javaEffectiveProperties(env map[string]string, tool string) (properties, from map[string]string) {
+	carriers := []string{"JAVA_TOOL_OPTIONS", "MAVEN_OPTS"}
+	if tool == javaGradle {
+		carriers = []string{"JAVA_TOOL_OPTIONS", "JAVA_OPTS", "GRADLE_OPTS"}
+	}
+	properties, from = map[string]string{}, map[string]string{}
+	for _, carrier := range carriers {
+		for key, value := range javaHandWrittenProperties(env[carrier]) {
+			properties[key], from[key] = value, carrier
+		}
+	}
+	return properties, from
 }
 
 func javaSetupProblem(job RuntimeFinding, site string) string {

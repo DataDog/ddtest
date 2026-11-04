@@ -84,10 +84,19 @@ func TestJavaJenkinsPluginPinnedRelease(t *testing.T) {
 	require.Equal(t, javaRecommendedTracer, ci.Jobs[0].TracerRequested)
 	require.False(t, ci.Jobs[0].TracerFloating)
 
-	root = javaJenkinsRepository(t, javaJenkinsfile(", additionalVariables: ["+javaPluginTracerURL+": 'https://dtdg.co/latest-java-tracer']"))
-	ci = JavaCIConfiguration(root, "junit5", "")
-	require.Equal(t, CodeIncompleteCISetup, ci.Jobs[0].Code)
-	require.Contains(t, ci.Jobs[0].Reason, "which is not an exact tracer release")
+	for _, url := range []string{
+		"https://dtdg.co/latest-java-tracer",
+		// A custom host may serve another agent under a release's path.
+		"https://mirror.example/com/datadoghq/dd-java-agent/1.67.1/dd-java-agent-1.67.1.jar",
+		"https://github.com/example/fork/releases/download/v1.67.1/dd-java-agent-1.67.1.jar",
+	} {
+		root = javaJenkinsRepository(t, javaJenkinsfile(", additionalVariables: ["+javaPluginTracerURL+": '"+url+"']"))
+		ci = JavaCIConfiguration(root, "junit5", "")
+		require.Equal(t, CodeIncompleteCISetup, ci.Jobs[0].Code, url)
+		require.Contains(t, ci.Jobs[0].Reason, "which is not an exact tracer release", url)
+	}
+	release, _ := (javaDiscovery{}).ciPluginTracerRelease(map[string]string{javaPluginTracerURL: "https://github.com/DataDog/dd-trace-java/releases/download/v1.68.0/dd-java-agent-1.68.0.jar"})
+	require.Equal(t, "1.68.0", release)
 }
 
 // The plugin computes MAVEN_OPTS once per agent from the first step it
@@ -214,6 +223,14 @@ func TestJavaShellSetupIsRecognizedAsWritten(t *testing.T) {
 		require.True(t, setup.withoutBash && setup.Supported)
 		require.Equal(t, map[string]string{"languages": "java", "api_key": "$DD_API_KEY", "site": tc.site, "java-tracer-version": tc.release}, setup.Inputs)
 	}
+	// It runs under set -u, where either option list may be unset, and the
+	// agent's path has no whitespace, which the option lists split on.
+	written := java.shellSetup("datadoghq.com", "1.67.1", jenkinsSnippetForm)
+	require.Contains(t, written, `${MAVEN_OPTS:-}`)
+	require.Contains(t, written, `${GRADLE_OPTS:-}`)
+	require.Contains(t, written, `case "$DD_TRACER_BASE" in *[[:space:]]*) DD_TRACER_BASE="${TMPDIR:-/tmp}" ;; esac`)
+	require.Contains(t, written, `mktemp -d "$DD_TRACER_BASE/.datadog-ci-container.XXXXXX"`)
+	require.NotContains(t, written, `"$PWD/`, "the folder's base is chosen first")
 	edited := strings.Replace(java.shellSetup("datadoghq.com", "1.67.1", jenkinsSnippetForm), "GRADLE_OPTS=", "JAVA_OPTS=", 1)
 	file, parsed := parseCIShell(edited)
 	require.True(t, parsed)
@@ -269,9 +286,19 @@ func TestJavaReportingOverrides(t *testing.T) {
 		{map[string]string{"JAVA_OPTS": "-Ddd.site=datadoghq.eu"}, javaMaven, ""},
 		{map[string]string{"JAVA_OPTS": "-Ddd.site=datadoghq.eu"}, javaGradle, "in JAVA_OPTS"},
 		{map[string]string{"GRADLE_OPTS": "-Ddd.civisibility.agentless.url=https://intake.example"}, javaGradle, "custom URL"},
+		{map[string]string{"DD_CIVISIBILITY_AGENTLESS_URL": "https://ci.example/intake"}, javaMaven, "DD_CIVISIBILITY_AGENTLESS_URL=https://ci.example/intake sends this step's reports to a custom URL"},
 	} {
 		require.Equal(t, tc.reason == "", javaReportingOverride(tc.env, tc.tool, "datadoghq.com") == "", "%v", tc.env)
 		require.Contains(t, javaReportingOverride(tc.env, tc.tool, "datadoghq.com"), tc.reason, "%v", tc.env)
 	}
 	require.Empty(t, javaReportingOverride(map[string]string{"MAVEN_OPTS": "-Ddd.site=datadoghq.eu"}, javaMaven, ""), "any site when none is selected")
+
+	// A matrix row's value is the one CI passes.
+	workflow := ciWorkflow{}
+	job := runtimeJob{Env: map[string]string{"JAVA_TOOL_OPTIONS": "-Ddd.site=${{ matrix.site }}"}}
+	env := javaRowEnvironment(workflow, job, runtimeStep{}, map[string]any{"site": "datadoghq.com"})
+	require.Equal(t, "-Ddd.site=datadoghq.com", env["JAVA_TOOL_OPTIONS"])
+	require.Empty(t, javaReportingOverride(env, javaMaven, "datadoghq.com"))
+	env = javaRowEnvironment(workflow, job, runtimeStep{}, map[string]any{"site": "datadoghq.eu"})
+	require.Contains(t, javaReportingOverride(env, javaMaven, "datadoghq.com"), "-Ddd.site=datadoghq.eu in JAVA_TOOL_OPTIONS")
 }

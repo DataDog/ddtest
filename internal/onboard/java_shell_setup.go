@@ -40,16 +40,22 @@ func (javaDiscovery) shellSetup(site, release string, form snippetForm) string {
 	if folder == "" {
 		folder = "$PWD/.datadog"
 	}
+	// MAVEN_OPTS and GRADLE_OPTS split on whitespace, so the agent's path
+	// has none: a workspace whose path has some keeps the folder under the
+	// temporary directory instead, still one per shell.
+	folder = strings.ReplaceAll(folder, "$PWD", "$DD_TRACER_BASE")
 	jar, checksum := `"$DD_TRACER_FOLDER/dd-java-agent.jar"`, `"$DD_TRACER_FOLDER/dd-java-agent.jar.sha256"`
 	agent := "-javaagent:$DD_TRACER_FOLDER/dd-java-agent.jar"
 	return strings.Join([]string{
 		"if " + form.keyGuard() + "; then",
+		`  DD_TRACER_BASE="$PWD"`,
+		`  case "$DD_TRACER_BASE" in *[[:space:]]*) DD_TRACER_BASE="${TMPDIR:-/tmp}" ;; esac`,
 		`  export DD_TRACER_FOLDER="` + folder + `" DD_SITE="` + site + `" DD_CIVISIBILITY_AUTO_INSTRUMENTATION_PROVIDER="` + form.provider + `" DD_CIVISIBILITY_ENABLED=true DD_CIVISIBILITY_AGENTLESS_ENABLED=true`,
 		`  if mkdir -p "$DD_TRACER_FOLDER" &&`,
 		"    { curl -fsSL -o " + jar + " " + url + " || wget -qO " + jar + " " + url + "; } &&",
 		"    { curl -fsSL -o " + checksum + " " + url + ".sha256 || wget -qO " + checksum + " " + url + ".sha256; } &&",
 		`    echo "$(cat ` + checksum + `)  $DD_TRACER_FOLDER/dd-java-agent.jar" | { sha256sum -c - || shasum -a 256 -c -; } >/dev/null 2>&1; then`,
-		`    export MAVEN_OPTS="` + agent + ` $MAVEN_OPTS" GRADLE_OPTS="` + agent + ` $GRADLE_OPTS"`,
+		`    export MAVEN_OPTS="` + agent + ` ${MAVEN_OPTS:-}" GRADLE_OPTS="` + agent + ` ${GRADLE_OPTS:-}"`,
 		"  else",
 		`    echo "` + javaShellSetupMessage + `" >&2`,
 		"  fi",

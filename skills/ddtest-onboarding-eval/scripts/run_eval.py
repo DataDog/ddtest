@@ -1230,6 +1230,10 @@ def run(args):
         command(["git", "fetch", "--update-shallow", "--no-tags", "origin", args.ref], cwd=checkout)
         command(["git", "checkout", "--detach", "FETCH_HEAD"], cwd=checkout)
         if source != args.repo:
+            # Relative submodule URLs resolve against the source's own remote.
+            origin = subprocess.run(["git", "-C", str(local), "remote", "get-url", "origin"], capture_output=True, text=True)
+            if origin.returncode == 0 and origin.stdout.strip():
+                command(["git", "remote", "set-url", "origin", origin.stdout.strip()], cwd=checkout)
             shutil.rmtree(source)
         manifest["submodules"] = "requested" if getattr(args,"submodules",False) else "not requested"
         if getattr(args,"submodules",False):

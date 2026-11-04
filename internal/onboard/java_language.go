@@ -8,6 +8,7 @@ package onboard
 import (
 	_ "embed"
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -286,19 +287,25 @@ func (javaDiscovery) ciPluginComposes(key string) string {
 // signature.
 const javaPluginTracerURL = "DATADOG_JENKINS_PLUGIN_TRACER_DISTRIBUTION_URL"
 
-// The release a replaced download names, as Maven Central's
-// com/datadoghq/dd-java-agent/<release>/ path does; the URL itself when it
-// names none, which is not an exact release.
+// The release a replaced download is, when it is a canonical dd-java-agent
+// artifact: Maven Central's or the DataDog/dd-trace-java GitHub release's.
+// Another URL, even one whose path names a release, may serve any agent the
+// plugin accepts, so it is the URL itself, which is not an exact release.
 func (javaDiscovery) ciPluginTracerRelease(variables map[string]string) (string, bool) {
 	url, set := variables[javaPluginTracerURL]
 	if !set {
 		return "", false
 	}
-	if match := javaHandWrittenURLRelease.FindStringSubmatch(url); match != nil {
-		return match[1], true
+	if match := javaCanonicalAgentURL.FindStringSubmatch(url); match != nil && (match[1] == match[2] || match[3] == match[4]) {
+		return match[1] + match[3], true
 	}
 	return url, true
 }
+
+// javaCanonicalAgentURL is a dd-java-agent JAR's canonical download, with its
+// release twice: in Maven Central's path and file name, or in a GitHub
+// release's tag and file name.
+var javaCanonicalAgentURL = regexp.MustCompile(`^(?:https://repo1\.maven\.org/maven2/com/datadoghq/dd-java-agent/([0-9]+\.[0-9]+\.[0-9]+)/dd-java-agent-([0-9]+\.[0-9]+\.[0-9]+)\.jar|https://github\.com/DataDog/dd-trace-java/releases/download/v([0-9]+\.[0-9]+\.[0-9]+)/dd-java-agent-([0-9]+\.[0-9]+\.[0-9]+)\.jar)$`)
 
 func (javaDiscovery) ciShellAfter(ciWorkflow, runtimeJob, runtimeStep, string, commandResolution) (bool, string) {
 	return false, ""

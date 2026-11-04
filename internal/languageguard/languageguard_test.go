@@ -152,6 +152,8 @@ func TestJavaNamesCucumberJVMButNotJavaScript(t *testing.T) {
 		"java_cucumber.go": "package p\n\nconst glue = \"io.cucumber.junit.platform.engine\"\nconst javaCucumberProbe = 1\n",
 		// Other JavaScript terms stay out, even next to a shared one.
 		"java_steps.go": "package p\n\nconst runner = \"cucumber with dd-trace\"\n",
+		// Another tracer's repository names no JavaScript.
+		"java_release.go": "package p\n\nconst release = \"https://github.com/DataDog/dd-trace-java/releases\"\n",
 		// Shared code keeps naming Cucumber.js.
 		"cucumber.go": "package p\n\nconst runner = \"cucumber-js\"\n",
 	}

@@ -220,6 +220,11 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(manifest["repository"], self.source)
         self.assertEqual(manifest["repository_source"], "local")
         self.assertTrue((trial / "repo" / ".git").exists())
+        # Relative submodule URLs resolve against the source's own remote.
+        expected = subprocess.run(["git", "-C", self.source, "remote", "get-url", "origin"], capture_output=True, text=True)
+        if expected.returncode == 0:
+            remote = subprocess.check_output(["git", "-C", str(trial / "repo"), "remote", "get-url", "origin"], text=True).strip()
+            self.assertEqual(remote, expected.stdout.strip())
 
     def test_preflight_refresh_is_redacted_before_finalization(self):
         source = self.root / "selected-login.json"

@@ -75,6 +75,9 @@ func TestHandWrittenJavaSetups(t *testing.T) {
 		{name: "Gradle reads no MAVEN_OPTS", command: "./gradlew test", files: gradleBuild, problem: "this job runs Gradle, which does not read it"},
 		{name: "Gradle JVM arguments", env: with(agentless, "MAVEN_OPTS", ""), command: "./gradlew test -Dorg.gradle.jvmargs=-javaagent:dd-java-agent.jar", files: gradleBuild, reference: "hand-written dd-java-agent 1.67.1 setup (org.gradle.jvmargs)", unresolved: "which local validation cannot remove from the build"},
 		{name: "APM tracing off", env: with(agentless, "DD_TRACE_ENABLED", "false"), command: "mvn test", reference: "hand-written dd-java-agent 1.67.1 setup (MAVEN_OPTS)"},
+		{name: "curl --output=", before: []string{"curl -L --output=dd-java-agent.jar https://repo1.maven.org/maven2/com/datadoghq/dd-java-agent/1.67.1/dd-java-agent-1.67.1.jar"}, command: "mvn test", reference: "hand-written dd-java-agent 1.67.1 setup (MAVEN_OPTS)"},
+		{name: "downloader path", before: []string{"/usr/bin/wget -O dd-java-agent.jar https://repo1.maven.org/maven2/com/datadoghq/dd-java-agent/1.67.1/dd-java-agent-1.67.1.jar"}, command: "mvn test", reference: "hand-written dd-java-agent 1.67.1 setup (MAVEN_OPTS)"},
+		{name: "Agent mode in another option list", env: with(agentless, "JAVA_TOOL_OPTIONS", "-Ddd.civisibility.agentless.enabled=false"), command: "mvn test", unresolved: "--ci-confirm datadog-agent"},
 		{name: "test JVMs only", env: with(agentless, "MAVEN_OPTS", ""), command: "mvn test -DargLine=-javaagent:dd-java-agent.jar", unresolved: "-DargLine attaches dd-java-agent to the forked test JVMs only"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -156,4 +159,13 @@ func TestJavaReplayDropsAgentProperties(t *testing.T) {
 	require.Equal(t, "true", setting)
 	_, _, ok = javaAgentProperty("-Dmaven.repo.local=/cache")
 	require.False(t, ok)
+}
+
+// A curl command continued on the next line is one download.
+func TestJavaDownloadCommandsJoinContinuations(t *testing.T) {
+	commands := javaDownloadCommands("curl -L -o dd-java-agent.jar \\\n  https://repo1.maven.org/maven2/com/datadoghq/dd-java-agent/1.67.1/dd-java-agent-1.67.1.jar\nmvn test")
+	require.Len(t, commands, 1)
+	address, target := javaDownload(commands[0])
+	require.Equal(t, "dd-java-agent.jar", target)
+	require.Contains(t, address, "/1.67.1/")
 }
