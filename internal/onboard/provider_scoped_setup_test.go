@@ -886,12 +886,16 @@ func TestEveryReportPipePrescriptionReadsBack(t *testing.T) {
 		"cucumber-js --format json | { cucumber-junit; }":                                                               false,
 		"cucumber-js --format json | { cucumber-junit > junit.xml; } # convert":                                         false,
 		"cucumber-js --format json | (cucumber-junit > junit.xml)":                                                      false,
-		"cucumber-js --format json | cucumber-junit > \"$status.xml\"":                                                  false,
-		"cucumber-js --format json | cucumber-junit --name \"$converted\"":                                              false,
-		"cucumber-js --format json | cucumber-junit | exit 0":                                                           false,
-		"CI=1 cucumber-js --format json | cucumber-junit":                                                               false,
-		"cucumber-js --format json | cucumber-junit > junit.xml; echo done":                                             false,
-		"cucumber-js --format json | cucumber-junit > junit.xml && echo done":                                           false,
+		// The subshell's variables are ones the pipe doesn't reference.
+		"cucumber-js --format json | cucumber-junit > \"$status.xml\"":                          true,
+		"cucumber-js --format json | cucumber-junit --name \"$converted\"":                      true,
+		"cucumber-js \"$status\" --format json | cucumber-junit":                                true,
+		"cucumber-js \"$converted\" --format json | cucumber-junit":                             true,
+		"cucumber-js ${status:-a} --format json | cucumber-junit --name \"$datadog_converted\"": true,
+		"cucumber-js --format json | cucumber-junit | exit 0":                                   false,
+		"CI=1 cucumber-js --format json | cucumber-junit":                                       false,
+		"cucumber-js --format json | cucumber-junit > junit.xml; echo done":                     false,
+		"cucumber-js --format json | cucumber-junit > junit.xml && echo done":                   false,
 	} {
 		t.Run(pipe, func(t *testing.T) {
 			_, err := directScopedCommand(t.TempDir(), runtimeStep{Run: pipe}, TestCommand{}, "cucumber")
@@ -908,6 +912,13 @@ func TestEveryReportPipePrescriptionReadsBack(t *testing.T) {
 			require.Len(t, read.afterTests, 1, split.Command)
 			require.Contains(t, read.Run, "cucumber-js", split.Command)
 			require.Equal(t, split.Command, read.statusWrapper[0]+read.Run+read.statusWrapper[1])
+			original, ok := parseCIShell(pipe)
+			require.True(t, ok)
+			status, converted := statusVariables(read.Run, read.afterTests[0])
+			require.True(t, strings.HasPrefix(split.Command, "("+status+"=0; "), split.Command)
+			require.Contains(t, split.Command, "{ "+converted+"=$?; ")
+			require.False(t, referencesVariable(original, status), "the pipe's $%s is not the subshell's", status)
+			require.False(t, referencesVariable(original, converted), "the pipe's $%s is not the subshell's", converted)
 			require.NotContains(t, split.Command, "#")
 			require.NotContains(t, split.Command, ";;")
 			for _, shell := range shells {
@@ -971,6 +982,15 @@ func TestStatusSubshellReadsOnlyThePrescribedForm(t *testing.T) {
 		`(status=0; npx cucumber-js || status=$?; cucumber-junit || ( converted=$?; [ "$status" -ne 0 ] || status=$converted ); exit "$status")`:             {},
 		`(status=0; npx cucumber-js || status=$?; cucumber-junit $converted || { converted=$?; [ "$status" -ne 0 ] || status=$converted; }; exit "$status")`: {},
 		`(status=0; npx cucumber-js || status=$?; exit 0` + guard + `; exit "$status")`:                                                                      {},
+		// Tests that read either variable would get the subshell's value, not CI's.
+		`(status=0; npx cucumber-js "$status" || status=$?; cat r.json | cucumber-junit` + guard + `; exit "$status")`:           {},
+		`(status=0; npx cucumber-js ${status:-1} || status=$?; cat r.json | cucumber-junit` + guard + `; exit "$status")`:        {},
+		`(status=0; npx cucumber-js $((status + 1)) || status=$?; cat r.json | cucumber-junit` + guard + `; exit "$status")`:     {},
+		`(status=0; npx cucumber-js --name "$converted" || status=$?; cat r.json | cucumber-junit` + guard + `; exit "$status")`: {},
+		// Other variable names, as ddtest picks when the pipe references status or converted.
+		`(datadog_status=0; rm -f r.json; npx cucumber-js "$status" --format json:r.json || datadog_status=$?; cat r.json | cucumber-junit --name "$converted" || { datadog_converted=$?; [ "$datadog_status" -ne 0 ] || datadog_status=$datadog_converted; }; exit "$datadog_status")`: {"npx cucumber-js \"$status\" --format json:r.json", []string{"cat r.json | cucumber-junit --name \"$converted\""}},
+		`(datadog_status=0; npx cucumber-js "$datadog_status" || datadog_status=$?; cat r.json | cucumber-junit || { datadog_converted=$?; [ "$datadog_status" -ne 0 ] || datadog_status=$datadog_converted; }; exit "$datadog_status")`:                                                {},
+		`(datadog_status=0; npx cucumber-js "$datadog_converted" || datadog_status=$?; cat r.json | cucumber-junit || { datadog_converted=$?; [ "$datadog_status" -ne 0 ] || datadog_status=$datadog_converted; }; exit "$datadog_status")`:                                             {},
 	} {
 		step := runtimeStep{Run: run}
 		step.readStatusSubshell()
@@ -1295,4 +1315,115 @@ func TestReportNameTakenReadsTheStepDirectory(t *testing.T) {
 	require.False(t, taken("cucumber-report.json"), "the root's file is not the step's")
 	require.True(t, taken("cucumber-report.xml"))
 	require.True(t, taken("cucumber-report.html"), "tracked, though missing from the checkout")
+}
+
+// The status subshell records the statuses in variables neither its tests
+// nor its conversion reference: status and converted, else datadog_status
+// and datadog_converted, then those with a numeric suffix.
+func TestStatusVariablesAvoidThePipesVariables(t *testing.T) {
+	for commands, want := range map[[2]string][2]string{
+		{"cucumber-js --format json:r.json", "cat r.json | cucumber-junit"}:                                {"status", "converted"},
+		{"cucumber-js status --format json:r.json", "cat r.json | cucumber-junit > converted.xml"}:         {"status", "converted"},
+		{`cucumber-js "$status" --format json:r.json`, "cat r.json | cucumber-junit"}:                      {"datadog_status", "datadog_converted"},
+		{"cucumber-js --format json:r.json", `cat r.json | cucumber-junit --name "${converted}"`}:          {"datadog_status", "datadog_converted"},
+		{"cucumber-js $((status + 1)) --format json:r.json", "cat r.json | cucumber-junit"}:                {"datadog_status", "datadog_converted"},
+		{"cucumber-js --format json:r.json", "cat r.json | status=1 cucumber-junit"}:                       {"datadog_status", "datadog_converted"},
+		{`cucumber-js "$status" "$datadog_converted" --format json:r.json`, "cat r.json | cucumber-junit"}: {"datadog_status_2", "datadog_converted_2"},
+		{`cucumber-js "$status" "$datadog_status_2"`, `cat r.json | cucumber-junit "$datadog_status"`}:     {"datadog_status_3", "datadog_converted_3"},
+	} {
+		status, converted := statusVariables(commands[0], commands[1])
+		require.Equal(t, want, [2]string{status, converted}, commands)
+		command := statusSubshell("r.json", commands[0], commands[1])
+		require.True(t, strings.HasPrefix(command, "("+want[0]+"=0; rm -f r.json; "), command)
+		require.True(t, strings.HasSuffix(command, ` || { `+want[1]+`=$?; [ "$`+want[0]+`" -ne 0 ] || `+want[0]+`=$`+want[1]+`; }; exit "$`+want[0]+`")`), command)
+	}
+}
+
+// Tests that read the job's status variable keep reading it inside the
+// status subshell ddtest writes for them, which records into other
+// variables, on every provider whose scripts stop at the first failing
+// command (Buildkite's with $$): onboarding reads its tests with the job's
+// value. In a subshell that records into status itself, the tests would
+// read the subshell's 0 instead, and the command stays unresolved.
+func TestEveryProviderReadsTheJobsStatusVariableInsideTheSubshell(t *testing.T) {
+	tests := `./node_modules/.bin/cucumber-js ./features --tags "$status" --format json:cucumber-report.json`
+	conversion := "cat cucumber-report.json | ./node_modules/.bin/cucumber-junit > junit.xml"
+	shadowed := `(status=0; rm -f cucumber-report.json; ` + tests + ` || status=$?; ` + conversion + ` || { converted=$?; [ "$status" -ne 0 ] || status=$converted; }; exit "$status")`
+	command := statusSubshell("cucumber-report.json", tests, conversion)
+	require.Equal(t, `(datadog_status=0; rm -f cucumber-report.json; `+tests+` || datadog_status=$?; `+conversion+` || { datadog_converted=$?; [ "$datadog_status" -ne 0 ] || datadog_status=$datadog_converted; }; exit "$datadog_status")`, command)
+	for name, write := range map[string]func(root, command string){
+		gitLabCIProvider: func(root, command string) {
+			writeFile(t, root, gitLabCIFile, "test:\n  image: node:22\n  variables:\n    status: smoke\n  script:\n    - npm ci\n    - "+command+"\n")
+		},
+		circleCIProvider: func(root, command string) {
+			writeFile(t, root, circleCIFile, "version: 2.1\njobs:\n  test:\n    docker:\n      - image: cimg/node:22.11\n    environment:\n      status: smoke\n    steps:\n      - checkout\n      - run: npm ci\n      - run: "+command+"\n"+circleWorkflow("      - test\n"))
+		},
+		buildkiteProvider: func(root, command string) {
+			writeFile(t, root, buildkiteFile, "steps:\n  - label: test\n    env:\n      status: smoke\n    command:\n      - npm ci\n      - "+buildkiteEscape(command)+"\n")
+		},
+		jenkinsProvider: func(root, command string) {
+			writeFile(t, root, "Jenkinsfile", "pipeline {\n  agent any\n  environment {\n    status = 'smoke'\n  }\n  stages {\n    stage('Test') {\n      steps {\n        sh 'npm ci'\n        sh '''\n          "+command+"\n        '''\n      }\n    }\n  }\n}\n")
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			writeFile(t, root, "package.json", `{"devDependencies":{"@cucumber/cucumber":"11.0.1","cucumber-junit":"1.7.1"}}`)
+			t.Chdir(root)
+			useCIProvider(t, name)
+			write(root, command)
+			scope, err := DiscoverValidationScope(root, "cucumber")
+			require.NoError(t, err)
+			require.Empty(t, scope.Unresolved)
+			require.Len(t, scope.Commands, 1)
+			require.Equal(t, "cucumber-js ./features --tags smoke --format json:cucumber-report.json", scope.Commands[0].Command, "the job's status")
+			require.Contains(t, scope.Commands[0].StepScopeNotes, "This CI step runs "+conversion+" after its cucumber tests, whether they pass or fail, then exits with the tests' status, or with the status of a command after them that fails when they pass.")
+
+			write(root, shadowed)
+			scope, err = DiscoverValidationScope(root, "cucumber")
+			require.NoError(t, err)
+			require.Empty(t, scope.Commands, "the tests would read the subshell's status")
+			require.NotEmpty(t, scope.Unresolved)
+		})
+	}
+}
+
+// In a real shell, the tests and the conversion get the values CI gave
+// status and converted, whatever the subshell records, and the command
+// still exits with the tests' status, or the conversion's when only it
+// fails.
+func TestStatusSubshellKeepsTheShellsStatusVariable(t *testing.T) {
+	var shells []string
+	for _, name := range []string{"sh", "bash", "dash"} {
+		if _, err := exec.LookPath(name); err == nil {
+			shells = append(shells, name)
+		}
+	}
+	if len(shells) == 0 {
+		t.Skip("no sh")
+	}
+	for _, shell := range shells {
+		for _, options := range []string{"set -e", "set +e"} {
+			for tests, want := range map[string]int{
+				`sh -c 'echo "tests $1" > report.json' _ "$status"`:         5,
+				`sh -c 'echo "tests $1" > report.json; exit 3' _ "$status"`: 3,
+			} {
+				t.Run(shell+" "+options+" "+tests, func(t *testing.T) {
+					conversion := `cat report.json | sh -c 'cat > junit.xml; echo "conversion $1" >> junit.xml; exit 5' _ "$converted"`
+					command := statusSubshell("report.json", tests, conversion)
+					require.True(t, strings.HasPrefix(command, "(datadog_status=0; "), command)
+					directory := t.TempDir()
+					script := options + "\nstatus=ci-status\nconverted=ci-converted\n" + command + "\n"
+					run := exec.Command(shell, "-c", script)
+					run.Dir = directory
+					err := run.Run()
+					var exit *exec.ExitError
+					require.ErrorAs(t, err, &exit)
+					require.Equal(t, want, exit.ExitCode())
+					junit, err := os.ReadFile(filepath.Join(directory, "junit.xml"))
+					require.NoError(t, err)
+					require.Equal(t, "tests ci-status\nconversion ci-converted\n", string(junit))
+				})
+			}
+		}
+	}
 }

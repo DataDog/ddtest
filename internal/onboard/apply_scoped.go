@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/kballard/go-shellquote"
@@ -106,8 +107,9 @@ func (s *runtimeStep) readScopedPrefix() {
 // which resolution checks can't start tests and reads as a plain sequence
 // after them, and statusWrapper the text around the tests. Each of those
 // commands must fall through to the exit (see fallsThrough) and record its
-// failure as the prescription does (see guardedCommand); any other command
-// stays as written.
+// failure as the prescription does (see guardedCommand), and the tests must
+// reference neither the status variable nor a saved one, which the subshell
+// shadows (see statusVariables); any other command stays as written.
 func (s *runtimeStep) readStatusSubshell() {
 	run := strings.TrimSpace(s.Run)
 	file, ok := parseCIShell(run)
@@ -151,11 +153,15 @@ func (s *runtimeStep) readStatusSubshell() {
 	}
 	var after []string
 	for _, stmt := range stmts[2 : len(stmts)-1] {
-		command := guardedCommand(stmt, variable)
-		if command == nil {
+		command, saved := guardedCommand(stmt, variable)
+		if command == nil || referencesVariable(record.X, saved) {
 			return
 		}
 		after = append(after, stmtText(run, command))
+	}
+	if referencesVariable(record.X, variable) {
+		// The tests would read the subshell's status, not the one CI set.
+		return
 	}
 	start, end := record.X.Pos().Offset(), record.X.End().Offset()
 	s.Run, s.afterTests, s.statusWrapper = stmtText(run, record.X), after, [2]string{run[:start], run[end:]}
@@ -216,37 +222,93 @@ func readsReport(stmt *syntax.Stmt, report string) bool {
 //	cat report.json | cucumber-junit > junit.xml || { converted=$?; [ "$status" -ne 0 ] || status=$converted; }
 //
 // The command must fall through to the exit (see fallsThrough) without
-// touching either variable. It is nil for any other statement, such as the
-// command alone, which would let a passing run with a failing conversion
-// pass when errexit is off.
-func guardedCommand(stmt *syntax.Stmt, variable string) *syntax.Stmt {
+// touching either variable. saved is the variable that records its status.
+// command is nil for any other statement, such as the command alone, which
+// would let a passing run with a failing conversion pass when errexit is
+// off.
+func guardedCommand(stmt *syntax.Stmt, variable string) (command *syntax.Stmt, saved string) {
 	guard, isBinary := stmt.Cmd.(*syntax.BinaryCmd)
 	if !plainStmt(stmt) || !isBinary || guard.Op != syntax.OrStmt {
-		return nil
+		return nil, ""
 	}
 	block, isBlock := guard.Y.Cmd.(*syntax.Block)
 	if !plainStmt(guard.Y) || !isBlock || len(block.Stmts) != 2 {
-		return nil
+		return nil, ""
 	}
 	saved, value := onlyAssignment(block.Stmts[0])
 	if saved == "" || saved == variable || !lastStatus(value) {
-		return nil
+		return nil, ""
 	}
 	if !fallsThrough(guard.X, variable) || !fallsThrough(guard.X, saved) {
-		return nil
+		return nil, ""
 	}
 	keep, isBinary := block.Stmts[1].Cmd.(*syntax.BinaryCmd)
 	if !plainStmt(block.Stmts[1]) || !isBinary || keep.Op != syntax.OrStmt {
-		return nil
+		return nil, ""
 	}
 	check, isCall := keep.X.Cmd.(*syntax.CallExpr)
 	if !plainStmt(keep.X) || !isCall || len(check.Assigns) > 0 || len(check.Args) != 5 || check.Args[0].Lit() != "[" || !readsOnly(check.Args[1], variable) || check.Args[2].Lit() != "-ne" || check.Args[3].Lit() != "0" || check.Args[4].Lit() != "]" {
-		return nil
+		return nil, ""
 	}
 	if name, value := onlyAssignment(keep.Y); name != variable || !readsOnly(value, saved) {
-		return nil
+		return nil, ""
 	}
-	return guard.X
+	return guard.X, saved
+}
+
+// referencesVariable reports a node that expands or assigns the variable,
+// as $status, ${status:-1}, status=1 or $((status + 1)) do.
+func referencesVariable(node syntax.Node, variable string) bool {
+	found := false
+	syntax.Walk(node, func(node syntax.Node) bool {
+		switch node := node.(type) {
+		case *syntax.ParamExp:
+			found = found || (node.Param != nil && node.Param.Value == variable)
+		case *syntax.Assign:
+			found = found || (node.Name != nil && node.Name.Value == variable)
+		case *syntax.ArithmExp, *syntax.ArithmCmd, *syntax.LetClause:
+			// Arithmetic reads a variable by its bare name.
+			syntax.Walk(node, func(inner syntax.Node) bool {
+				if literal, ok := inner.(*syntax.Lit); ok && literal.Value == variable {
+					found = true
+				}
+				return !found
+			})
+		}
+		return !found
+	})
+	return found
+}
+
+// statusVariables are the names of the variables statusSubshell records the
+// tests' status and the conversion's in: status and converted, unless tests
+// or conversion reference either (see referencesVariable), as
+// cucumber-js "$status" does, which the subshell's would shadow; then
+// datadog_status and datadog_converted, then those with a numeric suffix.
+func statusVariables(tests, conversion string) (status, converted string) {
+	var nodes []syntax.Node
+	for _, command := range []string{tests, conversion} {
+		if file, ok := parseCIShell(command); ok {
+			nodes = append(nodes, file)
+		}
+	}
+	free := func(names ...string) bool {
+		return !slices.ContainsFunc(nodes, func(node syntax.Node) bool {
+			return slices.ContainsFunc(names, func(name string) bool { return referencesVariable(node, name) })
+		})
+	}
+	if free("status", "converted") {
+		return "status", "converted"
+	}
+	for suffix := 1; ; suffix++ {
+		status, converted = "datadog_status", "datadog_converted"
+		if suffix > 1 {
+			status, converted = status+"_"+strconv.Itoa(suffix), converted+"_"+strconv.Itoa(suffix)
+		}
+		if free(status, converted) {
+			return status, converted
+		}
+	}
 }
 
 // plainStmt reports a statement that runs in the foreground, as written,
@@ -513,9 +575,11 @@ func (s *ReportPipeSplit) Error() string {
 // The command first removes report, the intermediate file the tests write
 // and conversion reads, so tests that fail before writing it, in a reused
 // workspace or after another command that wrote it, leave cat a missing
-// file, never an earlier run's report.
+// file, never an earlier run's report. The variables are ones neither tests
+// nor conversion reference (see statusVariables).
 func statusSubshell(report, tests, conversion string) string {
-	return `(status=0; rm -f ` + report + `; ` + tests + ` || status=$?; ` + conversion + ` || { converted=$?; [ "$status" -ne 0 ] || status=$converted; }; exit "$status")`
+	status, converted := statusVariables(tests, conversion)
+	return `(` + status + `=0; rm -f ` + report + `; ` + tests + ` || ` + status + `=$?; ` + conversion + ` || { ` + converted + `=$?; [ "$` + status + `" -ne 0 ] || ` + status + `=$` + converted + `; }; exit "$` + status + `")`
 }
 
 // Cucumber's formatters by the extension of the file their output is
