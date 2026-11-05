@@ -22,7 +22,7 @@ import (
 // Any other executable, such as the JVM, another build tool, a task runner,
 // a package manager, a command runner (xargs, timeout, ssh) or one ddtest
 // doesn't know, may.
-var javaNonLaunchingTools = slices.Concat(javaReleaseTools, checkAndPackageTools, []string{
+var javaNonLaunchingTools = slices.Concat(javaReleaseTools, checkAndPackageTools, reportTools, []string{
 	"read", "local", "declare", "typeset", "readonly", "unset", "shift", "return", "false", ":", "trap", "wait", "umask", "getopts",
 	"rmdir", "chown", "stat", "mktemp", "readlink", "realpath", "uname", "whoami", "hostname", "nproc", "id", "printenv", "envsubst", "yq",
 	"groupadd", "useradd", "usermod", "groupmod", "addgroup", "adduser", "update-ca-certificates",

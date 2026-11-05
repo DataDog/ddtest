@@ -26,6 +26,17 @@ var checkAndPackageTools = []string{
 	"shellcheck", "hadolint", "actionlint", "yamllint", "editorconfig-checker", "typos", "codespell",
 }
 
+// Test-report converters, mergers and viewers: they read result files a test
+// run left (or stdin) and write a report, and start no test runner. A CI step
+// that converts the tests' report after them, as
+// cat cucumber.json | cucumber-junit > junit.xml, is outside the tests.
+// Converters run as a test framework's reporter option, such as
+// mocha-junit-reporter, are not commands and are not listed.
+var reportTools = []string{
+	"cucumber-junit", "cucumber-junit-convert", "junit-merge", "junit-report-merger", "jrm",
+	"mochawesome-merge", "marge", "mochawesome-report-generator", "xunit-viewer", "junit-viewer", "allure", "junit2html",
+}
+
 // Publishing CLIs that only upload what the project built, running at most
 // the package's own publish lifecycle scripts. Tools documented to run the
 // project's tests, a build command or other hooks, such as np, release-it,
@@ -60,7 +71,7 @@ func recognizedTool(root, directory string, words []string, framework string, de
 	name := strings.ToLower(filepath.Base(words[0]))
 	args := words[1:]
 	switch {
-	case slices.Contains(checkAndPackageTools, name):
+	case slices.Contains(checkAndPackageTools, name) || reportTool(words[0]):
 		return false, true
 	case name == "docker" || name == "podman":
 		return dockerMayStart(root, directory, args, depth, func(body string) bool {
@@ -81,6 +92,13 @@ func recognizedTool(root, directory string, words []string, framework string, de
 		}
 	}
 	return false, false
+}
+
+// reportTool reports a known report converter (see reportTools) by its
+// executable or unscoped package name, pinned or not: a scoped package of the
+// same name, such as @acme/cucumber-junit, has no documented behavior.
+func reportTool(executable string) bool {
+	return !strings.HasPrefix(executable, "@") && slices.Contains(reportTools, publishToolName(executable))
 }
 
 // publishTool reports a known publish-only CLI by its executable or package

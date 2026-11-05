@@ -877,3 +877,42 @@ func TestVueCLIPluginCommandsAreUnreadPackages(t *testing.T) {
 	require.Contains(t, unresolved, "/e2e")
 	require.Contains(t, unresolved, "docs_then_tests / step 1 (npm run styleguide:build)")
 }
+
+// Report converters read the results a test run left and start no test
+// runner, in any language's CI: a conversion after the tests is outside
+// them. A scoped package of the same name, or an unknown converter, may.
+func TestReportConvertersCannotStartTests(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "package.json", `{"scripts":{"test":"cucumber-js"}}`)
+	for run, want := range map[string]bool{
+		"cat report.json | ./node_modules/.bin/cucumber-junit > junit.xml":            false,
+		"npx cucumber-junit@1.7.1 < report.json > junit.xml":                          false,
+		"npx junit-merge -d reports -o junit.xml":                                     false,
+		"npx jrm junit.xml 'reports/*.xml'":                                           false,
+		"npx mochawesome-merge reports/*.json > report.json && npx marge report.json": false,
+		"npx xunit-viewer -r reports -o report.html":                                  false,
+		"allure generate allure-results --clean":                                      false,
+		"tail -n 20 report.json | tee summary.txt":                                    false,
+		"npx @acme/cucumber-junit < report.json":                                      true,
+		"cat report.json | ./node_modules/.bin/report-tool > junit.xml":               true,
+	} {
+		require.Equal(t, want, mayStartTestsIn(root, root, runtimeStep{Run: run}, "cucumber", 0), run)
+	}
+	require.False(t, javaShellMayRunTests(root, root, "cat target/report.json | cucumber-junit > junit.xml\njunit2html junit.xml report.html\n", nil, false, 0))
+	require.True(t, javaShellMayRunTests(root, root, "cat target/report.json | report-tool > junit.xml\n", nil, false, 0))
+}
+
+// A GitLab job that converts the Cucumber report in a later script line, as
+// onboarding prescribes for a report pipe, keeps that line outside the
+// tests: it is a caveat, not unresolved scope.
+func TestPostTestReportConversionIsOutsideTheTests(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "package.json", `{"devDependencies":{"@cucumber/cucumber":"11.0.1","nyc":"17.1.0","cucumber-junit":"1.7.1"}}`)
+	writeFile(t, root, gitLabCIFile, "acceptance:\n  image: node:24\n  script:\n    - npm install\n    - ./node_modules/.bin/cucumber-js ./features --format json:report.json\n    - cat report.json | ./node_modules/.bin/cucumber-junit > junit.xml\n")
+	useCIProvider(t, gitLabCIProvider)
+	scope, err := DiscoverValidationScope(root, "cucumber")
+	require.NoError(t, err)
+	require.Empty(t, scope.Unresolved)
+	require.Len(t, scope.Commands, 1)
+	require.Contains(t, strings.Join(scope.Caveats, "\n"), "step 3 (cat report.json | ./node_modules/.bin/cucumber-junit > junit.xml) runs after the job's last cucumber test and can't start cucumber")
+}
