@@ -151,7 +151,7 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 				result.NextAction = "run_command"
 				result.NextCommand = onboard.DDTestCommand("onboard", "--framework", name, "--instructions")
 				result.ResumeCommand, result.RequiredInput = nil, nil
-				result.Needs = scopeUnresolvedNeeds(result.Needs)
+				result.Needs = scopeUnresolvedNeeds(result.Needs, options.Site)
 			case "setup_dependencies_missing", "project_dependencies_missing":
 				result.NextAction = "run_command"
 			case "ci_edit_required", "report_exclusions_required":
@@ -509,6 +509,11 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 			// unresolved scope; only the tracer release they leave to the
 			// reader is named here.
 			setting := "dd-trace " + selected + " in place of its tracer release placeholder (" + onboard.CIProviderTracerSetting("js", selected) + ")"
+			if site := onboard.CIProviderSiteSetting(plan.Site); site != "" {
+				// The instructions show the default site; resume_command
+				// validates the selected one.
+				setting = site + ", and " + setting
+			}
 			result.Location = "CI initialization"
 			result.RequiredInput = []string{"the " + onboard.CIProviderDisplayName() + " setup next_command prints, exactly as shown, with " + setting}
 			result.ResumeCommand = t.workflowValidationResume(recoveryCommand[0], name, selected, options)
@@ -516,7 +521,7 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 			checkpoint.All = true
 			result.ResumeCommand = append(result.ResumeCommand, "--resume", checkpoint.RunID)
 			result.NextCommand = onboard.DDTestCommand("onboard", "--framework", name, "--instructions")
-			return fail("unsupported", "ci_edit_unsupported", "onboard --apply does not write the "+displayName(name)+" CI setup on "+onboard.CIProviderDisplayName()+". next_command prints it: apply that setup exactly as shown, with "+setting+": the release ddtest selected and validates.", "Run next_command, apply only the CI setup it prints, exactly as shown and with "+setting+", then run resume_command. Do not write a loader, hook or plugin integration of your own, and do not run testdrive or the tests first.")
+			return fail("unsupported", "ci_edit_unsupported", "onboard --apply does not write the "+displayName(name)+" CI setup on "+onboard.CIProviderDisplayName()+". next_command prints it: apply that setup exactly as shown, with "+setting+": what ddtest selected and resume_command validates.", "Run next_command, apply only the CI setup it prints, exactly as shown and with "+setting+", then run resume_command. Do not write a loader, hook or plugin integration of your own, and do not run testdrive or the tests first.")
 		}
 		progress("apply")
 		var sourcePlan *onboard.SetupPlan
@@ -583,7 +588,7 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 					result.ResumeCommand = append(result.ResumeCommand, "--allow-dirty")
 				}
 				result.NextCommand = nil
-				return fail("needs_input", "ci_edit_required", err.Error(), "Make only the edit reason names, then run resume_command: onboard --apply adds the Datadog CI setup and validates. Do not run testdrive first.")
+				return fail("needs_input", "ci_edit_required", err.Error(), "Make only the edit reason names, then run resume_command: onboard --apply adds the Datadog CI setup and validates. Do not run testdrive first."+manualSiteSentence(options.Site))
 			}
 			var gap *onboard.SetupGap
 			if errors.As(err, &gap) {
@@ -594,7 +599,7 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 				checkpoint.All = true
 				result.ResumeCommand = append(result.ResumeCommand, "--resume", checkpoint.RunID)
 				result.NextCommand = nil
-				return fail("unsupported", "ci_edit_unsupported", err.Error(), "Integrate only this CI hook, then run resume_command. Do not repeatedly retry the automatic editor or drop configurations.")
+				return fail("unsupported", "ci_edit_unsupported", err.Error(), "Integrate only this CI hook, then run resume_command. Do not repeatedly retry the automatic editor or drop configurations."+manualSiteSentence(options.Site))
 			}
 			return fail("blocked_environment", "ci_edit_unavailable", err.Error(), "Restore filesystem access. Completed source edits are listed in changes; do not overwrite customer edits.")
 		}
@@ -1357,12 +1362,22 @@ const manualCITracerPrefix = " For manual CI edits use "
 
 // scopeUnresolvedNeeds sends unresolved CI to the manual instructions,
 // keeping the tracer release every CI Node runs that prior named for them.
-func scopeUnresolvedNeeds(prior string) string {
+func scopeUnresolvedNeeds(prior, site string) string {
 	needs := "Run next_command for the unsupported CI integration, then validate the discovered commands with testdrive. Keep unresolved CI explicitly unvalidated and report it. " + onboard.ScopeBlockerInstruction + " Setup facts cannot resolve CI parsing or shrink scope; do not guess a facts schema, inspect the binary, or retry unchanged --apply."
 	if _, tracer, found := strings.Cut(prior, manualCITracerPrefix); found {
 		needs += manualCITracerPrefix + tracer
 	}
-	return needs
+	return needs + manualSiteSentence(site)
+}
+
+// manualSiteSentence names the selected site for CI setup written by hand
+// from onboard --instructions, which shows the default site; empty for that
+// default.
+func manualSiteSentence(site string) string {
+	if setting := onboard.CIProviderSiteSetting(site); setting != "" {
+		return " In CI setup written by hand, use " + setting + " that onboard --instructions shows."
+	}
+	return ""
 }
 
 func (t *Testdrive) setPlanTracer(plan *onboard.ExecutionPlan, tracer string) {
