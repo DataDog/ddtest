@@ -1,11 +1,31 @@
 name: CI
 
 on:
+  workflow_call:
   push:
     branches:
       - "**"
 
 jobs:
+  test-binary:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
+        with:
+          go-version-file: go.mod
+      - name: Build the CLI once for the public integration journeys
+        env:
+          CGO_ENABLED: '0'
+        run: |
+          mkdir -p "$RUNNER_TEMP/test-binary"
+          go build -o "$RUNNER_TEMP/test-binary/ddtest" .
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: integration-cli
+          path: ${{ runner.temp }}/test-binary/ddtest
+          if-no-files-found: error
+
   test-support:
     runs-on: ubuntu-latest
     steps:
@@ -61,11 +81,13 @@ jobs:
         shard: [1, 2, 3]
     env:
       DATADOG_API_KEY_CONFIGURED: ${{ secrets.DATADOG_API_KEY != '' }}
+      ORCHESTRION_VERSION: 5df280060f05cbf2863d43748667fcf9cd18c448
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Go
+        id: go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
         with:
           go-version-file: go.mod
@@ -97,9 +119,13 @@ jobs:
           path: |
             ~/.cache/go-build
             ~/go/pkg/mod
-          key: ${{ runner.os }}-go-${{ hashFiles('go.mod') }}-${{ hashFiles('**/go.sum') }}
+            ~/go/bin/orchestrion
+          # Cache entries are immutable: a new revision must save fresh compiler
+          # output, including the SDK install and instrumented test builds.
+          key: ${{ runner.os }}-${{ runner.arch }}-go-orchestrion-v2-${{ steps.go.outputs.go-version }}-${{ env.ORCHESTRION_VERSION }}-${{ hashFiles('go.mod') }}-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
           restore-keys: |
-            ${{ runner.os }}-go-${{ hashFiles('go.mod') }}-
+            ${{ runner.os }}-${{ runner.arch }}-go-orchestrion-v2-${{ steps.go.outputs.go-version }}-${{ env.ORCHESTRION_VERSION }}-${{ hashFiles('go.mod') }}-${{ hashFiles('**/go.sum') }}-
+            ${{ runner.os }}-${{ runner.arch }}-go-orchestrion-v2-${{ steps.go.outputs.go-version }}-${{ env.ORCHESTRION_VERSION }}-${{ hashFiles('go.mod') }}-
 
       - name: Download dependencies
         run: go mod download
@@ -135,9 +161,12 @@ jobs:
         uses: datadog/test-visibility-github-action@7ce545f228901e4ac4ef0b45d946120f1c4124e0 # v3.3.0
         with:
           languages: go
+          # The compiler cache above already owns modules and Orchestrion.
+          # Avoid restoring the action's overlapping module cache a second time.
+          cache: false
           # Pin upstream Go 1.27 compatibility fixes until they reach a stable
           # Orchestrion release.
-          go-tracer-version: 5df280060f05cbf2863d43748667fcf9cd18c448
+          go-tracer-version: ${{ env.ORCHESTRION_VERSION }}
           api_key: ${{ secrets.DATADOG_API_KEY }}
           site: datadoghq.com
           service: ddtest
@@ -206,6 +235,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Go
+        id: go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
         with:
           go-version-file: go.mod
@@ -238,9 +268,10 @@ jobs:
           path: |
             ~/.cache/go-build
             ~/go/pkg/mod
-          key: ${{ runner.os }}-go-ddtest-instrument-${{ hashFiles('go.mod') }}-${{ hashFiles('**/go.sum') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-go-ddtest-instrument-v2-${{ steps.go.outputs.go-version }}-${{ hashFiles('go.mod') }}-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
           restore-keys: |
-            ${{ runner.os }}-go-ddtest-instrument-${{ hashFiles('go.mod') }}-
+            ${{ runner.os }}-${{ runner.arch }}-go-ddtest-instrument-v2-${{ steps.go.outputs.go-version }}-${{ hashFiles('go.mod') }}-${{ hashFiles('**/go.sum') }}-
+            ${{ runner.os }}-${{ runner.arch }}-go-ddtest-instrument-v2-${{ steps.go.outputs.go-version }}-${{ hashFiles('go.mod') }}-
 
       - name: Download dependencies
         run: go mod download
@@ -619,6 +650,7 @@ jobs:
           args: --timeout=5m
 
   jest-testdrive-workflow:
+    needs: test-binary
     name: jest-testdrive-workflow (${{ matrix.node }}, ${{ matrix.jest }}, ${{ matrix.group }} ${{ matrix.shard }})
     runs-on: ubuntu-latest
     strategy:
@@ -640,16 +672,25 @@ jobs:
           - {node: '20', jest: '29.7.0', tracer: '5.132.0', typescript: 'ts-jest@29 typescript@5 @types/jest@29', group: configurations, shard: '1/1', tests: 'TestPublicJest(Configurations|TwoPackageConfiguration|LoaderConfiguration)'}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: integration-cli
+          path: ${{ runner.temp }}/test-binary
+      - name: Make the shared CLI executable
+        run: |
+          chmod +x "$RUNNER_TEMP/test-binary/ddtest"
+          echo "DDTEST_TEST_BINARY=$RUNNER_TEMP/test-binary/ddtest" >> "$GITHUB_ENV"
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
         with:
           go-version-file: go.mod
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ matrix.node }}
-      - name: Install real Jest and tracer
-        run: |
-          npm install --prefix "${RUNNER_TEMP}/jest-testdrive" jest@${{ matrix.jest }} dd-trace@${{ matrix.tracer }} ${{ matrix.typescript }} typescript@5
-          npm ls --prefix "${RUNNER_TEMP}/jest-testdrive" --depth=0
+      - name: Reuse the locked Jest and tracer fixture
+        uses: ./.github/actions/node-test-fixture
+        with:
+          directory: ${{ runner.temp }}/jest-testdrive
+          dependencies: jest@${{ matrix.jest }} dd-trace@${{ matrix.tracer }} ${{ matrix.typescript }} typescript@5
       - name: Validate paired outcomes, all feature probes and cleanup
         env:
           DDTEST_JEST_NODE_MODULES: ${{ runner.temp }}/jest-testdrive/node_modules
@@ -668,6 +709,7 @@ jobs:
 
 
   testdrive-language-workflow:
+    needs: test-binary
     runs-on: ubuntu-latest
     timeout-minutes: 25
     strategy:
@@ -676,6 +718,14 @@ jobs:
         framework: [pytest]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: integration-cli
+          path: ${{ runner.temp }}/test-binary
+      - name: Make the shared CLI executable
+        run: |
+          chmod +x "$RUNNER_TEMP/test-binary/ddtest"
+          echo "DDTEST_TEST_BINARY=$RUNNER_TEMP/test-binary/ddtest" >> "$GITHUB_ENV"
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
         with:
           go-version-file: go.mod
@@ -695,6 +745,7 @@ jobs:
           path: ${{ runner.temp }}/ddtest-workflow-reports
 
   ruby-testdrive:
+    needs: test-binary
     runs-on: ubuntu-latest
     timeout-minutes: 40
     strategy:
@@ -714,6 +765,14 @@ jobs:
           - name: latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: integration-cli
+          path: ${{ runner.temp }}/test-binary
+      - name: Make the shared CLI executable
+        run: |
+          chmod +x "$RUNNER_TEMP/test-binary/ddtest"
+          echo "DDTEST_TEST_BINARY=$RUNNER_TEMP/test-binary/ddtest" >> "$GITHUB_ENV"
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
         with:
           go-version-file: go.mod
@@ -753,6 +812,7 @@ jobs:
           retention-days: 7
 
   java-testdrive:
+    needs: test-binary
     name: java-testdrive (${{ matrix.name }}, ${{ matrix.java }}, ${{ matrix.tracer }}, ${{ matrix.shard }})
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -772,6 +832,14 @@ jobs:
             tracer: latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: integration-cli
+          path: ${{ runner.temp }}/test-binary
+      - name: Make the shared CLI executable
+        run: |
+          chmod +x "$RUNNER_TEMP/test-binary/ddtest"
+          echo "DDTEST_TEST_BINARY=$RUNNER_TEMP/test-binary/ddtest" >> "$GITHUB_ENV"
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
         with:
           go-version-file: go.mod
@@ -813,6 +881,7 @@ jobs:
           retention-days: 7
 
   testdrive-vitest-workflow:
+    needs: test-binary
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -829,6 +898,14 @@ jobs:
             tracer: '6.21.0'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: integration-cli
+          path: ${{ runner.temp }}/test-binary
+      - name: Make the shared CLI executable
+        run: |
+          chmod +x "$RUNNER_TEMP/test-binary/ddtest"
+          echo "DDTEST_TEST_BINARY=$RUNNER_TEMP/test-binary/ddtest" >> "$GITHUB_ENV"
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
         with:
           go-version-file: go.mod
@@ -847,10 +924,19 @@ jobs:
         run: go test -v ./internal/testdrive -run '^TestPublicVitestRunnerTestdrive$' -count=1 -timeout=15m
 
   onboard-apply-workflow:
+    needs: test-binary
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: integration-cli
+          path: ${{ runner.temp }}/test-binary
+      - name: Make the shared CLI executable
+        run: |
+          chmod +x "$RUNNER_TEMP/test-binary/ddtest"
+          echo "DDTEST_TEST_BINARY=$RUNNER_TEMP/test-binary/ddtest" >> "$GITHUB_ENV"
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
         with:
           go-version-file: go.mod
@@ -873,6 +959,7 @@ jobs:
         run: DDTEST_ACTIONLINT="$(go env GOPATH)/bin/actionlint" go test -v ./internal/testdrive -run '^TestPublic(OnboardApply|MochaApply|WebdriverIOApply|CucumberApply)$' -count=1 -timeout=8m
 
   testdrive-mocha-workflow:
+    needs: test-binary
     runs-on: ubuntu-latest
     timeout-minutes: 12
     strategy:
@@ -882,6 +969,14 @@ jobs:
         shard: ['1/2', '2/2']
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: integration-cli
+          path: ${{ runner.temp }}/test-binary
+      - name: Make the shared CLI executable
+        run: |
+          chmod +x "$RUNNER_TEMP/test-binary/ddtest"
+          echo "DDTEST_TEST_BINARY=$RUNNER_TEMP/test-binary/ddtest" >> "$GITHUB_ENV"
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
         with:
           go-version-file: go.mod
@@ -907,7 +1002,7 @@ jobs:
         run: echo "version=$(npm view @playwright/test version)" >> "$GITHUB_OUTPUT"
 
   testdrive-playwright-workflow:
-    needs: playwright-latest
+    needs: [test-binary, playwright-latest]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
@@ -923,6 +1018,14 @@ jobs:
       PLAYWRIGHT_VERSION: ${{ matrix.playwright == 'latest' && needs.playwright-latest.outputs.version || matrix.playwright }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: integration-cli
+          path: ${{ runner.temp }}/test-binary
+      - name: Make the shared CLI executable
+        run: |
+          chmod +x "$RUNNER_TEMP/test-binary/ddtest"
+          echo "DDTEST_TEST_BINARY=$RUNNER_TEMP/test-binary/ddtest" >> "$GITHUB_ENV"
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
         with:
           go-version-file: go.mod
@@ -946,6 +1049,7 @@ jobs:
         run: go test -v ./internal/testdrive -run '^(TestPublicPlaywrightTestdrive|TestPlaywrightDiscoveryOwnsImportSideEffects|TestPlaywrightDiscoveryKeepsConfiguredReportsOutOfTheCheckout)$' -count=1 -timeout=12m
 
   testdrive-cypress-workflow:
+    needs: test-binary
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
@@ -957,6 +1061,14 @@ jobs:
         shard: ['1/5', '2/5', '3/5', '4/5', '5/5']
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: integration-cli
+          path: ${{ runner.temp }}/test-binary
+      - name: Make the shared CLI executable
+        run: |
+          chmod +x "$RUNNER_TEMP/test-binary/ddtest"
+          echo "DDTEST_TEST_BINARY=$RUNNER_TEMP/test-binary/ddtest" >> "$GITHUB_ENV"
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
         with:
           go-version-file: go.mod
@@ -985,49 +1097,78 @@ jobs:
           DDTEST_TEST_SHARD: ${{ matrix.shard }}
         run: xvfb-run -a go test -v ./internal/testdrive -run '^(TestPublicCypressTestdrive|TestCypressTypeScriptWrapperTranspilesToCommonJS)$' -failfast -count=1 -timeout=12m
 
+  # Resolve floating dependencies before expanding the matrix. Identical aliases
+  # share locked fixtures and jobs within this comprehensive run.
+  cucumber-matrix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+      - name: Resolve versions, lock fixtures and select distinct configurations
+        id: plan
+        run: |
+          python3 scripts/ci_cucumber_matrix.py --output "$RUNNER_TEMP/cucumber-fixtures" \
+            --github-output "$GITHUB_OUTPUT" --summary "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ci-cucumber-fixtures
+          path: ${{ runner.temp }}/cucumber-fixtures
+          if-no-files-found: error
+          retention-days: 14
+
   testdrive-cucumber-workflow:
+    name: testdrive-cucumber-workflow (${{ matrix.configuration.cucumber }}, ${{ matrix.configuration.shard }})
+    needs: [cucumber-matrix, test-binary]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        # 10.9.0 and 13.3.0 run every scenario across shards; 8.11.1 the floor check.
-        include:
-          - {cucumber: '8.11.1', shard: '1/1'}
-          - {cucumber: '10.9.0', shard: '1/4'}
-          - {cucumber: '10.9.0', shard: '2/4'}
-          - {cucumber: '10.9.0', shard: '3/4'}
-          - {cucumber: '10.9.0', shard: '4/4'}
-          - {cucumber: '13.3.0', shard: '1/4'}
-          - {cucumber: '13.3.0', shard: '2/4'}
-          - {cucumber: '13.3.0', shard: '3/4'}
-          - {cucumber: '13.3.0', shard: '4/4'}
-          - {cucumber: 'latest', shard: '1/4'}
-          - {cucumber: 'latest', shard: '2/4'}
-          - {cucumber: 'latest', shard: '3/4'}
-          - {cucumber: 'latest', shard: '4/4'}
+        configuration: ${{ fromJSON(needs.cucumber-matrix.outputs.matrix).include }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: integration-cli
+          path: ${{ runner.temp }}/test-binary
+      - name: Make the shared CLI executable
+        run: |
+          chmod +x "$RUNNER_TEMP/test-binary/ddtest"
+          echo "DDTEST_TEST_BINARY=$RUNNER_TEMP/test-binary/ddtest" >> "$GITHUB_ENV"
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
         with:
           go-version-file: go.mod
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: '24'
+          node-version: ${{ matrix.configuration.node }}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ci-cucumber-fixtures
+          path: ${{ runner.temp }}/cucumber-fixtures
       - name: Install Cucumber testdrive fixture dependencies
         run: |
-          npm install --prefix "$RUNNER_TEMP/cucumber-testdrive" "@cucumber/cucumber@${{ matrix.cucumber }}" nyc@17.1.0 c8@12.0.0 dd-trace@6.20.1 @istanbuljs/esm-loader-hook@0.3.0 tsx@4.23.15 --save-exact --no-audit --no-fund
-          npm ls --prefix "$RUNNER_TEMP/cucumber-testdrive" --depth=0
+          test "$(npm --version)" = '${{ matrix.configuration.npm }}'
+          echo 'Cucumber ${{ matrix.configuration.version }} covers: ${{ matrix.configuration.aliases }}'
+          mkdir -p "$RUNNER_TEMP/cucumber-testdrive"
+          cp "$RUNNER_TEMP/cucumber-fixtures/${{ matrix.configuration.fixture }}"/package*.json "$RUNNER_TEMP/cucumber-testdrive/"
+      - name: Reuse the locked Cucumber fixture
+        uses: ./.github/actions/node-test-fixture
+        with:
+          directory: ${{ runner.temp }}/cucumber-testdrive
       - name: Validate native scenarios, matching failures and source coverage
         env:
           DDTEST_CUCUMBER_NODE_MODULES: ${{ runner.temp }}/cucumber-testdrive/node_modules
-          DDTEST_TEST_SHARD: ${{ matrix.shard }}
+          DDTEST_TEST_SHARD: ${{ matrix.configuration.shard }}
         run: |
-          test_filter='^TestPublicCucumberTestdrive$'
-          if [ '${{ matrix.cucumber }}' = '8.11.1' ]; then test_filter='^TestPublicCucumberTestdrive/passing$'; fi
-          go test -v ./internal/testdrive -run "$test_filter" -failfast -count=1 -timeout=12m
+          go test -v ./internal/testdrive -run '${{ matrix.configuration.tests }}' -failfast -count=1 -timeout=12m
 
   testdrive-webdriverio-workflow:
+    needs: test-binary
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
@@ -1048,6 +1189,14 @@ jobs:
           - {package-manager: npm, wdio: 'latest', tracer: 'latest', shard: '4/4'}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: integration-cli
+          path: ${{ runner.temp }}/test-binary
+      - name: Make the shared CLI executable
+        run: |
+          chmod +x "$RUNNER_TEMP/test-binary/ddtest"
+          echo "DDTEST_TEST_BINARY=$RUNNER_TEMP/test-binary/ddtest" >> "$GITHUB_ENV"
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
         with:
           go-version-file: go.mod

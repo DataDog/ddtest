@@ -1,0 +1,48 @@
+name: Locked Node test fixture
+description: Reuse installed test dependencies only for an identical lockfile and runtime.
+inputs:
+  directory:
+    description: Absolute fixture directory.
+    required: true
+  dependencies:
+    description: Space-separated npm dependencies, or empty for a supplied lockfile.
+    default: ''
+runs:
+  using: composite
+  steps:
+    - name: Resolve the fixture and identify its complete dependency graph
+      id: lock
+      shell: bash
+      env:
+        FIXTURE_DIRECTORY: ${{ inputs.directory }}
+        FIXTURE_DEPENDENCIES: ${{ inputs.dependencies }}
+      run: |
+        set -euo pipefail
+        mkdir -p "$FIXTURE_DIRECTORY"
+        cd "$FIXTURE_DIRECTORY"
+        if [ -n "$FIXTURE_DEPENDENCIES" ]; then
+          printf '%s\n' '{"name":"ddtest-ci-fixture","version":"1.0.0","private":true}' > package.json
+          read -ra dependencies <<< "$FIXTURE_DEPENDENCIES"
+          npm install --package-lock-only --ignore-scripts --save-exact --no-audit --no-fund "${dependencies[@]}"
+        fi
+        lock=$(sha256sum "$FIXTURE_DIRECTORY/package-lock.json" | cut -d ' ' -f 1)
+        echo "key=$(node --version)-$(npm --version)-$lock" >> "$GITHUB_OUTPUT"
+    - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+      id: modules
+      with:
+        path: ${{ inputs.directory }}/node_modules
+        key: ${{ runner.os }}-${{ runner.arch }}-node-test-fixture-${{ steps.lock.outputs.key }}
+    - name: Install a missing fixture from its lockfile
+      if: steps.modules.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        FIXTURE_DIRECTORY: ${{ inputs.directory }}
+      run: |
+        cd "$FIXTURE_DIRECTORY"
+        npm ci --no-audit --no-fund
+    # Save the prepared dependencies before tests can write framework caches.
+    - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+      if: steps.modules.outputs.cache-hit != 'true'
+      with:
+        path: ${{ inputs.directory }}/node_modules
+        key: ${{ runner.os }}-${{ runner.arch }}-node-test-fixture-${{ steps.lock.outputs.key }}

@@ -19,6 +19,7 @@ import (
 	"time"
 
 	shard "github.com/DataDog/ddtest/internal/testdrive"
+	"github.com/DataDog/ddtest/internal/testutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -32,8 +33,7 @@ func TestJavaValidationIntegration(t *testing.T) {
 	tracer := cmp.Or(os.Getenv("DDTEST_JAVA_TRACER_VERSION"), "1.67.1")
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Minute)
 	defer cancel()
-	binary := filepath.Join(t.TempDir(), "ddtest")
-	integrationCommand(t, ctx, "../..", nil, "go", "build", "-o", binary, ".")
+	binary := testutil.DDTest(t)
 
 	type javaReport struct {
 		Success       bool

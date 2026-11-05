@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/DataDog/ddtest/internal/testutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -29,8 +30,7 @@ func runRubyValidationIntegration(t *testing.T, frameworks ...string) {
 	metadata := integrationCommand(t, ctx, ".", nil, "ruby", "-rjson", "-e", `puts JSON.generate(ruby: RUBY_VERSION, rspec: Gem::Specification.find_by_name("rspec-core").version.to_s, minitest: Gem::Specification.find_by_name("minitest").version.to_s, tracer: Gem::Specification.find_by_name("datadog-ci").version.to_s, rake: Gem::Specification.find_by_name("rake").version.to_s)`)
 	var gems struct{ Ruby, Rspec, Minitest, Tracer, Rake string }
 	require.NoError(t, json.Unmarshal([]byte(metadata), &gems))
-	binary := filepath.Join(t.TempDir(), "ddtest")
-	integrationCommand(t, ctx, "../..", nil, "go", "build", "-o", binary, ".")
+	binary := testutil.DDTest(t)
 	for _, framework := range frameworks {
 		t.Run(framework, func(t *testing.T) {
 			root := filepath.Join(t.TempDir(), "project space")

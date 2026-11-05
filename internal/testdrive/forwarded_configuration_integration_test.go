@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/DataDog/ddtest/internal/testdrive/workspace"
+	"github.com/DataDog/ddtest/internal/testutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -59,9 +60,8 @@ func TestPublicJestForwardedConfiguration(t *testing.T) {
 		cmd.Env = append(cmd.Env, "NODE_OPTIONS=")
 		return cmd.CombinedOutput()
 	}
-	binary := filepath.Join(t.TempDir(), "ddtest")
-	data, err := command("../..", "go", "build", "-o", binary, ".")
-	require.NoError(t, err, string(data))
+	binary := testutil.DDTest(t)
+	var data []byte
 	data, err = command(root, "git", "init", "-q")
 	require.NoError(t, err, string(data))
 	for _, flags := range [][]string{{}, {"--command", "npm test"}} {

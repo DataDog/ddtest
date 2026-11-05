@@ -22,7 +22,7 @@ class ShardTests(unittest.TestCase):
         result = subprocess.CompletedProcess([], 0, "TestCase\nTestCase\nExample\nFuzzSeed\nBenchmarkOther\nok\tpkg\n")
         with patch.object(subprocess, "run", return_value=result) as run:
             self.assertEqual(shards.discover_tests(), ["Example", "FuzzSeed", "TestCase"])
-        self.assertEqual(run.call_args.args[0], ["go", "test", "-race", "-list", ".", "./..."])
+        self.assertEqual(run.call_args.args[0], ["go", "run", "./scripts/testnames"])
 
     def test_failed_or_empty_discovery_cannot_silently_pass(self):
         with patch.object(subprocess, "run", side_effect=subprocess.CalledProcessError(1, ["go"])):

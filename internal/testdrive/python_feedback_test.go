@@ -80,6 +80,26 @@ func TestPythonValidationProbesRespectTimeout(t *testing.T) {
 	}
 }
 
+func TestPythonPrerequisiteProbeDoesNotStartDatadogReporting(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX executable fixture")
+	}
+	directory := t.TempDir()
+	result := filepath.Join(directory, "probe-environment")
+	python := filepath.Join(directory, "python")
+	require.NoError(t, os.WriteFile(python, []byte("#!/bin/sh\nprintf '%s %s %s' \"$DD_INSTRUMENTATION_TELEMETRY_ENABLED\" \"$DD_TRACE_ENABLED\" \"$DD_CIVISIBILITY_ENABLED\" > \"$PROBE_ENVIRONMENT\"\n"), 0755))
+	t.Setenv("PROBE_ENVIRONMENT", result)
+	t.Setenv("DDTEST_PYTEST_PYTHON", python)
+	for _, key := range []string{"DD_INSTRUMENTATION_TELEMETRY_ENABLED", "DD_TRACE_ENABLED", "DD_CIVISIBILITY_ENABLED"} {
+		t.Setenv(key, "true")
+	}
+	require.Equal(t, python, feedbackPython(t))
+	data, err := os.ReadFile(result)
+	require.NoError(t, err)
+	require.Equal(t, "false false false", string(data))
+	require.Equal(t, "true", os.Getenv("DD_CIVISIBILITY_ENABLED"))
+}
+
 func feedbackPython(t *testing.T) string {
 	t.Helper()
 	python := os.Getenv("DDTEST_PYTEST_PYTHON")
@@ -89,7 +109,11 @@ func feedbackPython(t *testing.T) string {
 	if python == "" {
 		t.Skip("Python required")
 	}
-	if output, err := exec.CommandContext(t.Context(), python, "-c", `import pytest, ddtrace; from packaging.version import Version; assert Version(ddtrace.__version__) >= Version("4.11.0") and Version(pytest.__version__) >= Version("7.2")`).CombinedOutput(); err != nil {
+	probe := exec.CommandContext(t.Context(), python, "-c", `import pytest, ddtrace; from packaging.version import Version; assert Version(ddtrace.__version__) >= Version("4.11.0") and Version(pytest.__version__) >= Version("7.2")`)
+	// This process only checks installed versions. The real validation processes
+	// still exercise telemetry and all feature controls against the local intake.
+	probe.Env = append(os.Environ(), "DD_INSTRUMENTATION_TELEMETRY_ENABLED=false", "DD_TRACE_ENABLED=false", "DD_CIVISIBILITY_ENABLED=false")
+	if output, err := probe.CombinedOutput(); err != nil {
 		if os.Getenv("DDTEST_REQUIRE_PROJECT_RUNTIMES") == "1" || os.Getenv("DDTEST_PYTEST_PYTHON") != "" {
 			t.Fatalf("pytest and ddtrace required: %s: %v", output, err)
 		}

@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/DataDog/ddtest/internal/testutil"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -26,8 +27,7 @@ func TestPublicVitestRunnerTestdrive(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
-	binary := filepath.Join(t.TempDir(), "ddtest-under-test")
-	integrationCommand(t, ctx, "../..", nil, "go", "build", "-o", binary, ".")
+	binary := testutil.DDTest(t)
 	root := t.TempDir()
 	integrationCommand(t, ctx, root, nil, "git", "init", "-q")
 	vitest, tracer := os.Getenv("DDTEST_VITEST_VERSION"), os.Getenv("DDTEST_VITEST_TRACER_VERSION")

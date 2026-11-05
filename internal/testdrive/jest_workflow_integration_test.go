@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/DataDog/ddtest/internal/testdrive"
+	"github.com/DataDog/ddtest/internal/testutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -25,11 +26,8 @@ func TestPublicJestTestdrive(t *testing.T) {
 	require.NoError(t, err)
 	ctx, cancel := context.WithTimeout(t.Context(), 12*time.Minute)
 	defer cancel()
-	binary := filepath.Join(t.TempDir(), "ddtest")
-	build := exec.CommandContext(ctx, "go", "build", "-o", binary, ".")
-	build.Dir = "../.."
-	output, err := build.CombinedOutput()
-	require.NoError(t, err, string(output))
+	binary := testutil.DDTest(t)
+	var output []byte
 	_, tsErr := os.Stat(filepath.Join(modules, "ts-jest"))
 	for _, mode := range testdrive.JestWorkflowScenarios(t) {
 		if strings.HasPrefix(mode, "TypeScript") && tsErr != nil {

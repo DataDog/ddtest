@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/DataDog/ddtest/internal/onboard"
+	"github.com/DataDog/ddtest/internal/testutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -28,8 +29,7 @@ func TestPublicPythonRubyTestdrives(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 18*time.Minute)
 	defer cancel()
-	binary := filepath.Join(t.TempDir(), "ddtest")
-	integrationCommand(t, ctx, "../..", nil, "go", "build", "-o", binary, ".")
+	binary := testutil.DDTest(t)
 	for _, fixture := range []struct {
 		name, command string
 		files         map[string]string
