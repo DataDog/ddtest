@@ -17,6 +17,7 @@ type exclusionDeclaration struct {
 	receiver         string
 	valueReceiver    bool
 	genericReceiver  bool
+	genericFunction  bool
 	name             string
 	prevent, noRetry bool
 }
@@ -52,7 +53,7 @@ func exclusionDeclarations(p goPackage, files []string, replacements map[string]
 			if !ok || fn.Doc == nil || fn.Body == nil {
 				continue
 			}
-			d := exclusionDeclaration{name: fn.Name.Name, expression: fn.Name.Name}
+			d := exclusionDeclaration{name: fn.Name.Name, expression: fn.Name.Name, genericFunction: fn.Type.TypeParams != nil && len(fn.Type.TypeParams.List) > 0}
 			for _, comment := range fn.Doc.List {
 				switch strings.TrimSpace(comment.Text) {
 				case "//ddtest:prevent_failure_suppression":
@@ -137,7 +138,7 @@ func exclusionRegistrationSourcesForBoundary(p goPackage, replacements map[strin
 				d = resolveExclusionReceiver(d, aliases[pkg])
 				d.expression = "(*" + d.receiver + ")." + d.name
 			}
-			if external && pkg == p.Name || d.genericReceiver {
+			if external && pkg == p.Name || d.genericReceiver || d.genericFunction {
 				declarationPath := p.ImportPath
 				if pkg != p.Name {
 					declarationPath += "_test"
@@ -179,6 +180,9 @@ func exclusionRuntimeNames(path string, d exclusionDeclaration) []string {
 		d.receiver += "[...]"
 	}
 	if d.receiver == "" {
+		if d.genericFunction {
+			d.name += "[...]"
+		}
 		return []string{prefix + "." + d.name}
 	}
 	names := []string{prefix + ".(*" + d.receiver + ")." + d.name}

@@ -291,6 +291,7 @@ func TestAnnotatedRuntimeDependency(t *testing.T){
 }
 
 func checkMiniGenericDeclarations(t *testing.T) {
+	t.Run("functions", checkMiniGenericFunctionDeclarations)
 	dir, driver := prepareMiniFixture(t)
 	helper := installExternalTestifyHelper(t, dir)
 	writeBuildFixture(t, helper, map[string]string{"generic.go": `package testkit
@@ -423,6 +424,217 @@ func TestImportedGenericString(t *testing.T){recordGeneric(t);suite.Run(t,testki
 				}
 				if counts["TestCritical"] != 1 || counts["TestValue"] != 1 || counts["TestOrdinary"] != ordinaryEvents {
 					t.Fatalf("%s event counts=%v", root, counts)
+				}
+			}
+		})
+	}
+}
+
+// Generic callback declarations retain one policy across type instantiations,
+// while each named child keeps its own retry history.
+func checkMiniGenericFunctionDeclarations(t *testing.T) {
+	for _, context := range []string{"internal", "external", "imported"} {
+		t.Run(context, func(t *testing.T) {
+			dir, driver := prepareMiniFixture(t)
+			callbackDir, callbackPackage, rootPackage, prefix, rootImport := dir, "fixture", "fixture", "", ""
+			if context == "external" {
+				rootPackage = "fixture_test"
+				prefix = "subject."
+				rootImport = `subject "example.com/dd-ci-testing-fixture"`
+			}
+			if context == "imported" {
+				callbackDir = t.TempDir()
+				if err := os.WriteFile(filepath.Join(callbackDir, "go.mod"), []byte("module example.com/external-testkit\ngo 1.25.0\n"), 0600); err != nil {
+					t.Fatal(err)
+				}
+				out, stderr, code := command(t, dir, testEnv(), "go", "mod", "edit", "-require=example.com/external-testkit@v0.0.0", "-replace=example.com/external-testkit="+callbackDir)
+				if code != 0 {
+					t.Fatalf("generic helper dependency setup%d %s %s", code, out, stderr)
+				}
+				callbackPackage = "testkit"
+				rootPackage = "fixture_test"
+				prefix = "testkit."
+				rootImport = `"example.com/external-testkit"`
+			}
+			callback := `package PACKAGE
+import("testing";"os";"path/filepath";"strings")
+func genericFunctionRecord(t *testing.T)int{path:=filepath.Join(os.Getenv("GENERIC_FUNCTION_COUNTER"),strings.ReplaceAll(t.Name(),"/","_"));f,e:=os.OpenFile(path,os.O_CREATE|os.O_APPEND|os.O_WRONLY,0600);if e!=nil{t.Fatal(e)};if _,e=f.WriteString("x");e!=nil{t.Fatal(e)};if e=f.Close();e!=nil{t.Fatal(e)};d,e:=os.ReadFile(path);if e!=nil{t.Fatal(e)};return len(d)}
+//ddtest:prevent_failure_suppression
+func TestGenericPFS[T any](t *testing.T){genericFunctionRecord(t);t.Error("generic callback failure")}
+//ddtest:no_auto_retry
+func TestGenericNR[T any](t *testing.T){genericFunctionRecord(t);t.Error("generic callback failure")}
+//ddtest:prevent_failure_suppression
+//ddtest:no_auto_retry
+func TestGenericBoth[A,B any](t *testing.T){genericFunctionRecord(t);t.Error("generic callback failure")}
+//ddtest:prevent_failure_suppression
+//ddtest:no_auto_retry
+func TestGenericUnused[T any](t *testing.T){t.Fatal("unused generic declaration executed")}
+func TestGenericOrdinary[T any](t *testing.T){if genericFunctionRecord(t)==1{t.Error("first ordinary generic callback failure")}}
+//ddtest:prevent_failure_suppression
+func TestDirectPFS(t *testing.T){genericFunctionRecord(t);t.Error("generic callback failure")}
+func TestDirectOrdinary(t *testing.T){if genericFunctionRecord(t)==1{t.Error("first ordinary direct callback failure")}}
+`
+			root := `package PACKAGE
+import("testing";"os";"path/filepath";IMPORT)
+func TestGenericFunctionRoot(t *testing.T){path:=filepath.Join(os.Getenv("GENERIC_FUNCTION_COUNTER"),"root");f,e:=os.OpenFile(path,os.O_CREATE|os.O_APPEND|os.O_WRONLY,0600);if e!=nil{t.Fatal(e)};f.WriteString("x");f.Close()
+ switch os.Getenv("GENERIC_FUNCTION_KIND"){
+ case "pfs":t.Run("int",PREFIXTestGenericPFS[int]);t.Run("string",PREFIXTestGenericPFS[string])
+ case "direct-pfs":t.Run("int",PREFIXTestDirectPFS);t.Run("string",PREFIXTestDirectPFS)
+ case "nr":t.Run("int",PREFIXTestGenericNR[int]);t.Run("string",PREFIXTestGenericNR[string])
+ case "both":t.Run("int",PREFIXTestGenericBoth[int,string]);t.Run("string",PREFIXTestGenericBoth[string,int])
+ case "ordinary-generic":t.Run("int",PREFIXTestGenericOrdinary[int]);t.Run("string",PREFIXTestGenericOrdinary[string])
+ case "ordinary-direct":t.Run("int",PREFIXTestDirectOrdinary);t.Run("string",PREFIXTestDirectOrdinary)
+ default:t.Fatal("invalid generic function kind")
+ }}
+`
+			writeBuildFixture(t, callbackDir, map[string]string{"generic_function.go": strings.ReplaceAll(callback, "PACKAGE", callbackPackage)})
+			root = strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(root, "PACKAGE", rootPackage), "IMPORT", rootImport), "PREFIX", prefix)
+			writeBuildFixture(t, dir, map[string]string{"generic_function_test.go": root})
+			for _, native := range []bool{false, true} {
+				bin := filepath.Join(t.TempDir(), executableName("generic-functions.test"))
+				build := driver
+				args := exclusionBuildArgs(bin, false)
+				if native {
+					build = "go"
+				}
+				out, stderr, code := command(t, dir, testEnv("DD_CIVISIBILITY_ENABLED=false"), build, args...)
+				if code != 0 {
+					t.Fatalf("compile generic function native%t exit%d %s %s", native, code, out, stderr)
+				}
+				pfsFinalShapes := map[string]string{}
+				kinds := []string{"pfs", "direct-pfs", "nr", "both", "ordinary-generic", "ordinary-direct"}
+				if native {
+					kinds = []string{"both"}
+				}
+				for _, kind := range kinds {
+					t.Run(kind+map[bool]string{true: "-native"}[native], func(t *testing.T) {
+						counters := t.TempDir()
+						managed := !native && kind == "both" && context != "internal"
+						receiver, got := runParityCase(t, dir, bin, parityCase{Args: []string{"-test.run=^TestGenericFunctionRoot$"}, Policy: policySettings{Retry: !native, Disabled: managed, Quarantined: managed, AttemptToFix: managed, ManagementTarget: "TestGenericFunctionRoot/int", ManagementSuite: "generic_function.go"}, Env: []string{"GENERIC_FUNCTION_COUNTER=" + counters, "GENERIC_FUNCTION_KIND=" + kind, "DD_CIVISIBILITY_RETRY_EXECUTION_MODE=in_process", "DD_CIVISIBILITY_FLAKY_RETRY_ENABLED=true", "DD_CIVISIBILITY_FLAKY_RETRY_COUNT=2", "DD_CIVISIBILITY_EARLY_FLAKE_DETECTION_ENABLED=false"}})
+						rootCalls, childCalls, wantCode := 3, 1, 1
+						if kind == "pfs" || kind == "direct-pfs" {
+							childCalls = 3
+						}
+						if strings.HasPrefix(kind, "ordinary-") {
+							rootCalls, childCalls, wantCode = 2, 2, 0
+						}
+						if native {
+							rootCalls = 1
+						}
+						if got.code != wantCode {
+							t.Fatalf("generic function exit%d want%d %s %s", got.code, wantCode, got.out, got.stderr)
+						}
+						requireEarlyMarker(t, filepath.Join(counters, "root"), strings.Repeat("x", rootCalls))
+						for _, name := range []string{"int", "string"} {
+							requireEarlyMarker(t, filepath.Join(counters, "TestGenericFunctionRoot_"+name), strings.Repeat("x", childCalls))
+						}
+						if native {
+							if len(receiver.events) != 0 {
+								t.Fatal("native generic callback emitted telemetry")
+							}
+							return
+						}
+						parents := reviewTestEvents(receiver, "TestGenericFunctionRoot")
+						if len(parents) != rootCalls {
+							t.Fatalf("generic root events%d want%d: %v", len(parents), rootCalls, receiver.events)
+						}
+						parentFinals, parentRetries := 0, 0
+						for _, m := range parents {
+							if m["test.is_retry"] == "true" {
+								parentRetries++
+							}
+							wantFinal := "fail"
+							if wantCode == 0 {
+								wantFinal = "pass"
+							}
+							if m["test.final_status"] == wantFinal {
+								parentFinals++
+							} else if m["test.final_status"] != nil {
+								t.Fatalf("root final outcome lost: %v", m)
+							}
+							for _, flag := range []string{"prevent_failure_suppression", "no_auto_retry", "is_test_disabled", "is_quarantined", "is_attempt_to_fix"} {
+								if m["test.test_management."+flag] != nil {
+									t.Fatalf("generic child policy leaked to root: %v", m)
+								}
+							}
+						}
+						if parentFinals != 1 || parentRetries != rootCalls-1 {
+							t.Fatalf("root finals%d retries%d want1/%d", parentFinals, parentRetries, rootCalls-1)
+						}
+						total := 0
+						for _, event := range receiver.events {
+							if event["type"] == "test" {
+								total++
+							}
+						}
+						if total != rootCalls+2*childCalls {
+							t.Fatalf("generic exact test count%d want%d", total, rootCalls+2*childCalls)
+						}
+						for _, name := range []string{"int", "string"} {
+							children := reviewTestEvents(receiver, "TestGenericFunctionRoot/"+name)
+							if len(children) != childCalls {
+								t.Fatalf("generic %s event count%d want%d", name, len(children), childCalls)
+							}
+							failed, passed, finals, retries := 0, 0, 0, 0
+							finalShape := []any{}
+							for _, m := range children {
+								pfs, nr := kind == "pfs" || kind == "direct-pfs" || kind == "both", kind == "nr" || kind == "both"
+								if (m["test.test_management.prevent_failure_suppression"] == "true") != pfs || (m["test.test_management.no_auto_retry"] == "true") != nr {
+									t.Fatalf("generic declaration flags lost or shared: %v", m)
+								}
+								if nr {
+									requireReviewNoRetryOwnership(t, m)
+								}
+								for _, assignment := range []string{"is_test_disabled", "is_quarantined", "is_attempt_to_fix"} {
+									if (m["test.test_management."+assignment] == "true") != (managed && name == "int") {
+										t.Fatalf("generic assignment or sibling isolation lost: %v", m)
+									}
+								}
+								switch m["test.status"] {
+								case "fail":
+									failed++
+								case "pass":
+									passed++
+								default:
+									t.Fatalf("generic unexpected status: %v", m)
+								}
+								if !strings.HasPrefix(kind, "ordinary-") {
+									finalShape = append(finalShape, m["test.final_status"])
+									if m["test.final_status"] == "fail" {
+										finals++
+									} else if m["test.final_status"] != nil {
+										t.Fatalf("unexpected generic final status: %v", m)
+									}
+									if m["test.is_retry"] == "true" {
+										retries++
+									}
+									if m["error.message"] != "generic callback failure" {
+										t.Fatalf("generic protected/NR failure lost: %v", m)
+									}
+								}
+							}
+							if kind == "pfs" || kind == "direct-pfs" {
+								encoded, err := json.Marshal(finalShape)
+								if err != nil {
+									t.Fatal(err)
+								}
+								if kind == "pfs" {
+									pfsFinalShapes[name] = string(encoded)
+								} else if string(encoded) != pfsFinalShapes[name] {
+									t.Fatalf("generic final-status presence differs from ordinary callback %s: generic%s ordinary%s", name, pfsFinalShapes[name], encoded)
+								}
+							}
+							if strings.HasPrefix(kind, "ordinary-") {
+								if failed != 1 || passed != 1 {
+									t.Fatalf("ordinary generic recovery failed%d passed%d", failed, passed)
+								}
+							} else {
+								if failed != childCalls || passed != 0 || finals < 1 || (childCalls == 1 && finals != 1) || retries != childCalls-1 {
+									t.Fatalf("generic failures%d passes%d finals%d retries%d want%d/0/1/%d", failed, passed, finals, retries, childCalls, childCalls-1)
+								}
+							}
+						}
+					})
 				}
 			}
 		})
