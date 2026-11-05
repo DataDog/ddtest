@@ -78,6 +78,60 @@ func TestExclusionRegistrationsKeepPackagesAndDeclarationsSeparate(t *testing.T)
 			t.Fatalf("generic runtime dependency boundary: %v %v", boundary, err)
 		}
 	})
+	t.Run("generic-functions", func(t *testing.T) {
+		gd := t.TempDir()
+		source := `package fixture
+import "testing"
+//ddtest:no_auto_retry
+func TestSingle[T any](t *testing.T){}
+//ddtest:prevent_failure_suppression
+func TestPair[A,B any](t *testing.T){}
+//ddtest:prevent_failure_suppression
+//ddtest:no_auto_retry
+func TestUnused[T any](t *testing.T){}
+//ddtest:no_auto_retry
+func TestOrdinary(t *testing.T){}
+`
+		if err := os.WriteFile(filepath.Join(gd, "generic.go"), []byte(source), 0600); err != nil {
+			t.Fatal(err)
+		}
+		gp := goPackage{Dir: gd, Name: "fixture", ImportPath: "example.com/functions.v1", GoFiles: []string{"generic.go"}}
+		generated, err := exclusionRegistrationSources(gp, nil, miniPackage)
+		if err != nil {
+			t.Fatal(err)
+		}
+		src := generated["fixture"]
+		for _, name := range []string{"TestSingle", "TestPair", "TestUnused"} {
+			if !strings.Contains(src, `RegisterTestExclusionsByName("example.com/functions%2ev1.`+name+`[...]"`) || strings.Contains(src, "RegisterTestExclusions("+name) {
+				t.Fatalf("generic declaration requires type inference or misses runtime name: %s", src)
+			}
+		}
+		if !strings.Contains(src, "RegisterTestExclusions(TestOrdinary") {
+			t.Fatalf("ordinary declaration registration changed: %s", src)
+		}
+		if _, err := parser.ParseFile(token.NewFileSet(), "generated.go", src, 0); err != nil {
+			t.Fatal(err)
+		}
+		gp.Module = &struct {
+			Path, Version, Dir string
+			Main               bool
+			Replace            *struct{ Path, Dir, Version string }
+		}{Path: gp.ImportPath}
+		imported, err := exclusionDependencyRegistrations(goPackage{Imports: []string{gp.ImportPath}}, packageGraph{gp.ImportPath: &gp}, nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		boundary, err := exclusionRegistrationSourcesForBoundary(gp, nil, miniPackage, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, name := range []string{"TestSingle", "TestPair", "TestUnused"} {
+			needle := `RegisterTestExclusionsByName("example.com/functions%2ev1.` + name + `[...]"`
+			if !strings.Contains(imported, needle) || !strings.Contains(boundary["fixture_test"], needle) {
+				t.Fatalf("import/boundary generic declaration missing %s: %s %v", name, imported, boundary)
+			}
+		}
+	})
 	// An edited overlay and annotation removal replace rather than retain policy.
 	overlay := filepath.Join(dir, "replacement.go")
 	if err := os.WriteFile(overlay, []byte("package fixture\nfunc TestInternal() {}\n"), 0600); err != nil {
