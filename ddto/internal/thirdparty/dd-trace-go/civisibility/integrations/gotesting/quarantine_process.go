@@ -78,6 +78,11 @@ type processRetrySubtreeConfig struct {
 }
 
 type processRetrySubtreeDirective struct {
+	Exclusions           TestExclusions `json:"exclusions,omitempty"`
+	AssignedDisabled     bool           `json:"assigned_disabled,omitempty"`
+	AssignedQuarantined  bool           `json:"assigned_quarantined,omitempty"`
+	AssignedAttemptToFix bool           `json:"assigned_attempt_to_fix,omitempty"`
+
 	TestName     string `json:"test_name"`
 	ModuleName   string `json:"module_name,omitempty"`
 	SuiteName    string `json:"suite_name,omitempty"`
@@ -112,6 +117,11 @@ type processRetryTestSource struct {
 // descendant of the selected root. The envelope fields in processRetryResult
 // use the same status contract for the root itself.
 type processRetrySubtreeResult struct {
+	Exclusions           TestExclusions `json:"exclusions,omitempty"`
+	AssignedDisabled     bool           `json:"assigned_disabled,omitempty"`
+	AssignedQuarantined  bool           `json:"assigned_quarantined,omitempty"`
+	AssignedAttemptToFix bool           `json:"assigned_attempt_to_fix,omitempty"`
+
 	TestName        string                             `json:"test_name"`
 	ModuleName      string                             `json:"module_name"`
 	SuiteName       string                             `json:"suite_name"`
@@ -260,6 +270,7 @@ func processRetryDirectiveFromMetadata(identity *testIdentity, meta *testExecuti
 		return processRetrySubtreeDirective{TestName: identity.FullName, ModuleName: identity.ModuleName, SuiteName: identity.SuiteName}
 	}
 	return processRetrySubtreeDirective{
+		Exclusions: meta.exclusions, AssignedDisabled: meta.assignment.disabled, AssignedQuarantined: meta.assignment.quarantined, AssignedAttemptToFix: meta.assignment.attemptToFix,
 		TestName:     identity.FullName,
 		ModuleName:   identity.ModuleName,
 		SuiteName:    identity.SuiteName,
@@ -403,6 +414,34 @@ func (cfg *processRetrySubtreeConfig) resolvedRootDirective() processRetryResolv
 	return resolved
 }
 
+// resolveChildMetadata keeps cached management resolution continuous through
+// ordinary worker carriers as well as reported managed descendants.
+func (cfg *processRetrySubtreeConfig) resolveChildMetadata(parent *testExecutionMetadata, moduleName, suiteName, name string) processRetryResolvedDirective {
+	if name == cfg.SelectedRoot {
+		return cfg.resolvedRootDirective()
+	}
+	resolved := processRetryResolvedDirective{}
+	if parent != nil && parent.identity != nil {
+		resolved.directive = processRetryDirectiveFromMetadata(parent.identity, parent)
+		resolved.attemptOwner = parent.processRetryAttemptOwner
+		resolved.managed = parent.processRetryManagedDescendant
+	} else if processRetryNameWithinRoot(name, cfg.SelectedRoot) {
+		resolved = cfg.resolvedRootDirective()
+	}
+	return cfg.resolveChildDirective(resolved, moduleName, suiteName, name)
+}
+
+func applyProcessRetryChildManagement(meta *testExecutionMetadata, resolved processRetryResolvedDirective) {
+	directive := resolved.directive
+	meta.assignment = testManagementAssignment{disabled: directive.AssignedDisabled, quarantined: directive.AssignedQuarantined, attemptToFix: directive.AssignedAttemptToFix}
+	meta.isDisabled, meta.isQuarantined, meta.isAttemptToFix = directive.Disabled, directive.Quarantined, directive.AttemptToFix
+	meta.hasExplicitDisabled, meta.hasExplicitQuarantined, meta.hasExplicitAttemptToFix = true, true, true
+	meta.isAModifiedTest = directive.Modified
+	meta.shouldOrchestrateAttemptToFix = resolved.attemptOwner == directive.TestName
+	meta.processRetryAttemptOwner = resolved.attemptOwner
+	meta.processRetryManagedDescendant = resolved.managed
+}
+
 // resolveChildDirective preserves the effective state already resolved for the
 // immediate parent. Callback source files can change at every t.Run boundary,
 // so re-resolving all path components with the child's suite would lose an
@@ -419,6 +458,7 @@ func (cfg *processRetrySubtreeConfig) resolveChildDirective(parent processRetryR
 	resolved.managed = resolved.managed || exact.Disabled || exact.Quarantined || exact.AttemptToFix
 	resolved.directive.Disabled = resolved.directive.Disabled || exact.Disabled
 	resolved.directive.Quarantined = resolved.directive.Quarantined || exact.Quarantined
+	resolved.directive.AssignedAttemptToFix = exact.AssignedAttemptToFix || exact.AttemptToFix
 	if exact.AttemptToFix {
 		if !parent.directive.AttemptToFix {
 			resolved.attemptOwner = name
@@ -447,6 +487,13 @@ func (cfg *processRetrySubtreeConfig) resolveSubtreeResults(results []processRet
 			return nil, fmt.Errorf("%w: subtree parent result missing", errProcessRetryResultInvalid)
 		}
 		resolved[idx] = cfg.resolveChildDirective(parent, result.ModuleName, result.SuiteName, result.TestName)
+		applyProcessDirectiveExclusions(&resolved[idx].directive, result.Exclusions)
+		if result.Exclusions.PreventFailureSuppression || result.Exclusions.NoAutoRetry && !resolved[idx].directive.Disabled && !resolved[idx].directive.Quarantined {
+			resolved[idx].managed = false
+		}
+		if result.Exclusions.NoAutoRetry {
+			resolved[idx].attemptOwner = ""
+		}
 		seen[result.TestName] = resolved[idx]
 	}
 	return resolved, nil
@@ -855,8 +902,7 @@ func applyProcessRetryControlledSubtreeStatus(result *processRetryResult, contro
 	result.SkipReason = ""
 }
 
-func runQuarantinedRaceChildSubtest(t *testing.T, original func(*testing.T), parent *testExecutionMetadata) {
-	state := parent.quarantinedRaceChild
+func runQuarantinedRaceChildSubtest(t *testing.T, original func(*testing.T), parent *testExecutionMetadata, state *quarantinedRaceChildState) {
 	if state == nil || state.cfg == nil {
 		original(t)
 		return
@@ -865,6 +911,7 @@ func runQuarantinedRaceChildSubtest(t *testing.T, original func(*testing.T), par
 	callbackPC := reflect.ValueOf(original).Pointer()
 	moduleName, suiteName := utils.GetModuleAndSuiteName(callbackPC)
 	sourceFunc := runtime.FuncForPC(callbackPC)
+	policySource := sourceFunc
 	// Testify's suite keeps its module, suite and method source; another
 	// subtest keeps its parent's module, as a helper package can create it
 	// (dd-trace-go #5401): see quarantinedSubtestIdentity.
@@ -872,6 +919,7 @@ func runQuarantinedRaceChildSubtest(t *testing.T, original func(*testing.T), par
 
 	execMeta := createTestMetadata(t, nil)
 	execMeta.test = parent.test
+	execMeta.exclusionResults = parent.exclusionResults
 	execMeta.processRetryOwner = parent
 	execMeta.quarantinedRaceChild = state
 	if !processRetryNameWithinRoot(name, state.cfg.SelectedRoot) {
@@ -881,27 +929,21 @@ func runQuarantinedRaceChildSubtest(t *testing.T, original func(*testing.T), par
 	}
 	state.beginAggregateCoverage(name)
 
-	resolved := state.cfg.resolvedRootDirective()
-	if name != state.cfg.SelectedRoot {
-		resolved = state.cfg.resolveChildDirective(processRetryResolvedDirective{
-			directive:    processRetryDirectiveFromMetadata(parent.identity, parent),
-			attemptOwner: parent.processRetryAttemptOwner,
-			managed:      parent.processRetryManagedDescendant,
-		}, moduleName, suiteName, name)
+	resolved := state.cfg.resolveChildMetadata(parent, moduleName, suiteName, name)
+	exclusions := exclusionsForChild(t, policySource, parent)
+	applyProcessDirectiveExclusions(&resolved.directive, exclusions)
+	if exclusions.PreventFailureSuppression || exclusions.NoAutoRetry && !resolved.directive.Disabled && !resolved.directive.Quarantined {
+		resolved.managed = false
+	}
+	if exclusions.NoAutoRetry {
+		resolved.attemptOwner = ""
 	}
 	directive, attemptOwner := resolved.directive, resolved.attemptOwner
+	setExecutionExclusions(t, execMeta, policySource, parent, exclusions)
+	applyProcessRetryChildManagement(execMeta, resolved)
 	failureSnapshot := captureQuarantinedRaceManagedFailure(t, state.cfg, resolved.managed)
 	maskedByManagedDescendant := resolved.managed
-	execMeta.isDisabled = directive.Disabled
-	execMeta.isQuarantined = directive.Quarantined
-	execMeta.isAttemptToFix = directive.AttemptToFix
 	execMeta.isItrForcedRun = false
-	execMeta.hasExplicitDisabled = true
-	execMeta.hasExplicitQuarantined = true
-	execMeta.hasExplicitAttemptToFix = true
-	execMeta.shouldOrchestrateAttemptToFix = attemptOwner == name
-	execMeta.processRetryAttemptOwner = attemptOwner
-	execMeta.processRetryManagedDescendant = resolved.managed
 
 	execMeta.identity = newTestIdentity(moduleName, suiteName, name)
 	source := processRetrySourceFromFunc(sourceFunc)
@@ -958,23 +1000,33 @@ func runQuarantinedRaceChildSubtest(t *testing.T, original func(*testing.T), par
 	bodyReturned := false
 	defer func() {
 		panicData := recover()
+		bodyTerminal := panicData
+		bodyStack := ""
+		cleanup := &testCleanupResult{observePanics: exclusions.any()}
+		cleanup.captureShape(t)
+		execMeta.cleanupResult = cleanup
 		unexpected := panicData == nil && processRetryUnexpectedTestTermination(t, bodyReturned)
+		var bodyPanicInfo *processRetryErrorInfo
 		if panicData != nil || unexpected {
 			if panicData == nil {
 				panicData = unexpectedTestTerminationMessage
 			}
-			t.Fail()
-			execMeta.processRetryPanic.CompareAndSwap(nil, &processRetryErrorInfo{
-				Type:    "panic",
-				Message: truncateProcessRetryErrorMessage(toString(panicData)),
-				Stack:   truncateProcessRetryErrorStack(utils.GetStacktrace(1)),
-			})
+			bodyStack = utils.GetStacktrace(1)
+			// Native cleanup precedes failing a direct body panic unless
+			// queued children require the recovered-body doPanic path.
+			if !cleanup.observePanics || cleanup.hadQueuedSubtests {
+				t.Fail()
+			}
+			bodyPanicInfo = &processRetryErrorInfo{
+				Type: "panic", Message: truncateProcessRetryErrorMessage(toString(panicData)),
+				Stack: truncateProcessRetryErrorStack(bodyStack),
+			}
+			execMeta.processRetryPanic.CompareAndSwap(nil, bodyPanicInfo)
 		}
 
 		// Drain queued parallel descendants before user cleanups so the selected
 		// root includes their failures and coverage. Native testing excludes this
 		// scheduler wait from the parent's duration, but cleanup remains active time.
-		cleanup := &testCleanupResult{}
 		if !activeStart.IsZero() {
 			activeDuration += time.Since(activeStart)
 			activeStart = time.Time{}
@@ -986,21 +1038,44 @@ func runQuarantinedRaceChildSubtest(t *testing.T, original func(*testing.T), par
 			// belongs to this unmanaged branch.
 			state.markUnmaskedFailure(moduleName, suiteName, name)
 		}
-		completeParallelSubtests(t, getTestPrivateFields(t), true)
+		fieldsBeforeCleanup := getTestPrivateFields(t)
+		if cleanup.observePanics && (bodyTerminal != nil || unexpected) && cleanup.hadQueuedSubtests &&
+			!directive.Disabled && !directive.Quarantined && fieldsBeforeCleanup != nil && fieldsBeforeCleanup.sub != nil {
+			// Native doPanic never opens the barrier for these queued children.
+			// This worker consumes the panic to commit its subtree result, so
+			// detach the still-paused queue before native tRunner can admit it
+			// on normal return. Keep the barrier closed: no child has acquired
+			// its parallel slot or resumed its body. The captured original
+			// shape still selects native queued-child cleanup precedence.
+			*fieldsBeforeCleanup.sub = nil
+		}
+		finishParallel := completeParallelSubtests(t, fieldsBeforeCleanup, true)
 		activeStart = time.Now()
-		runTestCleanupCallbacks(t, cleanup)
+		runTestCleanupCallbacksWithParallelRelease(t, cleanup, finishParallel)
 		activeDuration += time.Since(activeStart)
 		activeStart = time.Time{}
-		if cleanup.panicData != nil {
-			t.Fail()
-			execMeta.processRetryPanic.CompareAndSwap(nil, &processRetryErrorInfo{
-				Type:    "panic",
-				Message: truncateProcessRetryErrorMessage(toString(cleanup.panicData)),
-				Stack:   truncateProcessRetryErrorStack(cleanup.panicStacktrace),
-			})
-			// The parent replays this recorded panic. Re-panicking here would let
-			// testing terminate the child before it can write the subtree result.
+		terminal, terminalStack := panicData, bodyStack
+		if cleanup.observePanics {
+			terminal = resolveTestBodyTerminalAfterCleanup(t, execMeta, bodyTerminal, unexpected)
+			terminal, terminalStack = resolveTestCleanupDiagnostics(t, execMeta, bodyTerminal, bodyStack, terminal, terminalStack)
 		}
+		if terminal == nil && cleanup.panicData != nil {
+			terminal, terminalStack = cleanup.panicData, cleanup.panicStacktrace
+		}
+		var terminalInfo *processRetryErrorInfo
+		if terminal != nil {
+			t.Fail()
+			terminalInfo = &processRetryErrorInfo{Type: "panic", Message: truncateProcessRetryErrorMessage(toString(terminal)), Stack: truncateProcessRetryErrorStack(terminalStack)}
+		}
+		if bodyPanicInfo != nil {
+			// Update only the body terminal owned by this invocation. A
+			// separately recorded descendant panic must not be overwritten.
+			execMeta.processRetryPanic.CompareAndSwap(bodyPanicInfo, terminalInfo)
+		} else if terminalInfo != nil {
+			execMeta.processRetryPanic.CompareAndSwap(nil, terminalInfo)
+		}
+		// The parent replays this recorded panic. Re-panicking here would let
+		// testing terminate the child before it can write the subtree result.
 		state.finishAggregateCoverage(name)
 		files := collector.Finish()
 		coverageValid = state.coverage.finish(coverageInterval) && coverageValid
@@ -1011,6 +1086,7 @@ func runQuarantinedRaceChildSubtest(t *testing.T, original func(*testing.T), par
 		finish := start.Add(activeDuration)
 		fields := getTestPrivateFields(t)
 		result := processRetrySubtreeResult{
+			Exclusions: exclusions, AssignedDisabled: directive.AssignedDisabled, AssignedQuarantined: directive.AssignedQuarantined, AssignedAttemptToFix: directive.AssignedAttemptToFix,
 			TestName:        name,
 			ModuleName:      execMeta.identity.ModuleName,
 			SuiteName:       execMeta.identity.SuiteName,
@@ -1061,6 +1137,12 @@ func runQuarantinedRaceChildSubtest(t *testing.T, original func(*testing.T), par
 			result.Status = processRetryStatusSkip
 		default:
 			result.Status = processRetryStatusPass
+		}
+		if result.Failed && exclusions.PreventFailureSuppression {
+			markProtectedFailureAncestors(t)
+		}
+		if result.Failed && !directive.Disabled && !directive.Quarantined && exclusions.any() {
+			state.markUnsuppressedFailure(name)
 		}
 		if state.append(result) {
 			// A managed sibling may concurrently restore its own propagated failure.
@@ -1347,6 +1429,9 @@ func runQuarantinedRaceProcessIsolation(
 	applyAdditionalFeatureMetadataToExecution(execMeta, featureMeta)
 	propagateTestExecutionMetadataFlags(execMeta, parentExecMeta)
 	execMeta.quarantinedRaceProcess = processCtx
+	if execMeta.exclusionResults == nil {
+		execMeta.exclusionResults = &excludedTestResults{}
+	}
 	execMeta.hasAdditionalFeatureWrapper = true
 
 	cfg, err := buildProcessRetrySubtreeConfig(processCtx, testInfo, execMeta, parentExecMeta)
@@ -1390,7 +1475,7 @@ func runQuarantinedRaceProcessIsolation(
 	invocations := make([]quarantinedRaceInvocation, 0, rootTotal)
 
 	for idx := 0; idx < rootTotal; idx++ {
-		attempt := runQuarantinedRaceInvocation(t, processCtx, lease, cfg, cfg.SelectedRoot, idx, parallelBridge)
+		attempt := runQuarantinedRaceInvocation(t, processCtx, lease, cfg, cfg.SelectedRoot, idx, parallelBridge, execMeta.exclusionResults)
 		if processRetryInfrastructureFailure(attempt) {
 			failQuarantinedRaceIsolation(t, testInfo, execMeta, attempt)
 			return
@@ -1406,7 +1491,7 @@ func runQuarantinedRaceProcessIsolation(
 		}
 		stop, failure := continueQuarantinedRaceDescendantFamilies(
 			cfg, attempt, &invocations, func(continuationCfg *processRetrySubtreeConfig, runRoot string, idx int) processRetryAttemptResult {
-				return runQuarantinedRaceInvocation(t, processCtx, lease, continuationCfg, runRoot, idx, parallelBridge)
+				return runQuarantinedRaceInvocation(t, processCtx, lease, continuationCfg, runRoot, idx, parallelBridge, execMeta.exclusionResults)
 			},
 		)
 		if failure != nil {
@@ -1418,11 +1503,35 @@ func runQuarantinedRaceProcessIsolation(
 		}
 	}
 
+	if cfg.OwnsAttemptToFix {
+		protectedFamilyFailure := false
+		lastRoot := -1
+		for idx, invocation := range invocations {
+			protectedFamilyFailure = protectedFamilyFailure || invocation.attempt.Result.ProtectedDescendantFailure
+			if invocation.cfg.SelectedRoot == cfg.SelectedRoot {
+				lastRoot = idx
+			}
+		}
+		if protectedFamilyFailure && lastRoot >= 0 {
+			// The last root event reports the strict ATF family's final result,
+			// even if its own native callback recovered an earlier failure.
+			invocations[lastRoot].attempt.Result.ProtectedDescendantFailure = true
+		}
+	}
 	var deferred *quarantinedRaceReplayState
 	if cfg.AncestorAttemptToFix {
 		deferred = quarantinedRaceReplayStateFor(parentExecMeta)
 	}
 	replayQuarantinedRaceResults(testInfo, processCtx, invocations, true, deferred)
+	if slices.ContainsFunc(invocations, func(invocation quarantinedRaceInvocation) bool {
+		return invocation.attempt.Result.ProtectedDescendantFailure
+	}) {
+		// An executed protected descendant is outside the ancestor's quarantine.
+		// This path owns only quarantine/ATF, whose failure aggregation is strict.
+		markProtectedFailureAncestors(t)
+		t.Fail()
+		return
+	}
 	// A valid quarantined failure, panic, or race remains visible in CI
 	// Visibility but is intentionally masked from the package result. An
 	// infrastructure error returns above through Fail and is never quarantined.
@@ -1541,16 +1650,18 @@ func runQuarantinedRaceInvocation(
 	runRoot string,
 	attemptIndex int,
 	parallelBridge func() error,
+	exclusionResults *excludedTestResults,
 ) processRetryAttemptResult {
 	deadline, deadlineOK := t.Deadline()
 	baseline := captureProcessRetryLaunchBaselineFromTemplate(processCtx.launchTemplate)
-	// Initial roots use their exact selector. Descendant-owned ATF continuations
+	// Initial roots keep their native descendant filter. Descendant-owned ATF continuations
 	// re-enter their enclosing root so parallel scheduling siblings exist, while
 	// cfg.SelectedRoot still limits recording to the managed descendant subtree.
-	baseline.argsSnapshot.runSelector = processRetryExactRunPattern(runRoot)
+	baseline.argsSnapshot.runSelector = processRetrySubtreeRunPattern(baseline.argsSnapshot.runSelector, runRoot)
 	attempt := runProcessRetryAttemptWithBaselineAndShutdown(
 		context.Background(),
 		processRetryChildConfig{
+			ExclusionResults:  exclusionResults.snapshotForRoot(cfg.SelectedRoot),
 			TestName:          cfg.SelectedRoot,
 			Attempt:           attemptIndex + 1,
 			RetryReason:       processRetrySubtreeReason,
@@ -1564,7 +1675,9 @@ func runQuarantinedRaceInvocation(
 		lease.shutdown,
 		parallelBridge,
 	)
-	return finalizeQuarantinedRaceInvocation(cfg, attempt)
+	attempt = finalizeQuarantinedRaceInvocation(cfg, attempt)
+	exclusionResults.merge(attempt.Result.ExclusionResults)
+	return attempt
 }
 
 func finalizeQuarantinedRaceInvocation(cfg *processRetrySubtreeConfig, attempt processRetryAttemptResult) processRetryAttemptResult {
@@ -1637,6 +1750,7 @@ func processRetryCommonInfoFromSubtreeResult(result processRetrySubtreeResult) *
 
 func (cfg *processRetrySubtreeConfig) forSelectedRoot(result processRetrySubtreeResult) (*processRetrySubtreeConfig, error) {
 	directive := processRetrySubtreeDirective{
+		Exclusions: result.Exclusions, AssignedDisabled: result.AssignedDisabled, AssignedQuarantined: result.AssignedQuarantined, AssignedAttemptToFix: result.AssignedAttemptToFix,
 		TestName: result.TestName, ModuleName: result.ModuleName, SuiteName: result.SuiteName,
 		Disabled: result.Disabled, Quarantined: result.Quarantined, AttemptToFix: result.AttemptToFix, Modified: result.Modified,
 	}
@@ -1861,6 +1975,8 @@ func replayQuarantinedRaceEvent(
 		attemptIndex = 0
 	}
 	execMeta := &testExecutionMetadata{
+		exclusions:                    result.Exclusions,
+		assignment:                    testManagementAssignment{disabled: result.AssignedDisabled, quarantined: result.AssignedQuarantined, attemptToFix: result.AssignedAttemptToFix},
 		identity:                      identity,
 		isQuarantined:                 result.Quarantined,
 		isDisabled:                    result.Disabled,
@@ -1906,7 +2022,11 @@ func replayQuarantinedRaceEvent(
 func processRetrySubtreeResultFromEnvelope(result processRetryResult, cfg *processRetrySubtreeConfig) processRetrySubtreeResult {
 	resolved := cfg.resolvedRootDirective()
 	directive, owner := resolved.directive, resolved.attemptOwner
+	if result.ProtectedDescendantFailure {
+		directive.Disabled, directive.Quarantined = false, false
+	}
 	return processRetrySubtreeResult{
+		Exclusions: directive.Exclusions, AssignedDisabled: directive.AssignedDisabled, AssignedQuarantined: directive.AssignedQuarantined, AssignedAttemptToFix: directive.AssignedAttemptToFix,
 		TestName:        result.TestName,
 		ModuleName:      result.ModuleName,
 		SuiteName:       result.SuiteName,
@@ -2013,4 +2133,21 @@ func quarantinedSubtestIdentity(t *testing.T, state *quarantinedRaceChildState, 
 		fallbackModule = moduleName
 	}
 	return subtestModuleName(fallbackModule, parent), suiteName, sourceFunc
+}
+
+func (s *quarantinedRaceChildState) markUnsuppressedFailure(name string) {
+	if s == nil || s.cfg == nil || !processRetryNameWithinRoot(name, s.cfg.SelectedRoot) {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.unmasked == nil {
+		s.unmasked = map[string]struct{}{}
+	}
+	for candidate := name; ; candidate = candidate[:strings.LastIndexByte(candidate, '/')] {
+		s.unmasked[candidate] = struct{}{}
+		if candidate == s.cfg.SelectedRoot {
+			break
+		}
+	}
 }

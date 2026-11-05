@@ -33,6 +33,13 @@ type (
 
 	// testExecutionMetadata contains metadata regarding an unique *testing.T or *testing.B execution
 	testExecutionMetadata struct {
+		protectedDescendantFailure   atomic.Bool
+		protectedFailureEvent        atomic.Pointer[integrations.Test]
+		exclusionResults             *excludedTestResults
+		exclusionDeclaration         string
+		exclusionPolicy              *quarantinedRaceChildState
+		exclusions                   TestExclusions
+		assignment                   testManagementAssignment
 		test                         integrations.Test // internal CI Visibility test event
 		originalTest                 *testing.T        // original test that was executed
 		error                        atomic.Int32      // flag to check if the test event has error data already
@@ -182,10 +189,19 @@ type (
 
 	// testCleanupResult captures how testing cleanup execution completed for a retry attempt.
 	testCleanupResult struct {
-		panicData       any    // panic value returned by testing.common.runCleanup.
-		panicStacktrace string // stacktrace captured when cleanup returned a panic value.
-		goexit          bool   // true when cleanup called runtime.Goexit before runCleanup returned.
-		ran             bool   // true after this attempt has executed its testing cleanups.
+		panicData         any    // panic value returned by testing.common.runCleanup.
+		panicStacktrace   string // stacktrace captured when cleanup returned a panic value.
+		goexit            bool   // true when cleanup called runtime.Goexit before runCleanup returned.
+		ran               bool   // true after this attempt has executed its testing cleanups.
+		observePanics     bool
+		shapeCaptured     bool
+		hadQueuedSubtests bool
+		terminals         []testCleanupTerminal
+	}
+	testCleanupTerminal struct {
+		value  any
+		stack  string
+		goexit bool
 	}
 
 	retryGroupPolicyResult struct {
@@ -196,6 +212,8 @@ type (
 
 	// additionalFeatureMetadata is the effective per-test state used to select and apply CI Visibility additional features.
 	additionalFeatureMetadata struct {
+		exclusions                    TestExclusions
+		assignment                    testManagementAssignment
 		identity                      *testIdentity           // fully-qualified test or subtest identity
 		isTestManagementEnabled       bool                    // whether Test Management is enabled for the session
 		isEarlyFlakeDetectionEnabled  bool                    // whether EFD remains effective for this test after suppression
@@ -528,6 +546,14 @@ func applyAdditionalFeatureMetadataToExecution(execMeta *testExecutionMetadata, 
 	if execMeta == nil || meta == nil {
 		return
 	}
+	execMeta.exclusions = meta.exclusions
+	execMeta.assignment.quarantined = execMeta.assignment.quarantined || meta.assignment.quarantined
+	execMeta.assignment.disabled = execMeta.assignment.disabled || meta.assignment.disabled
+	if meta.hasExplicitAttemptToFix {
+		execMeta.assignment.attemptToFix = meta.assignment.attemptToFix
+	} else {
+		execMeta.assignment.attemptToFix = execMeta.assignment.attemptToFix || meta.assignment.attemptToFix
+	}
 	execMeta.identity = meta.identity
 	if meta.hasExplicitQuarantined {
 		// Exact Test Management data is applied before parent propagation, which still OR-inherits quarantine today.
@@ -559,6 +585,7 @@ func applyAdditionalFeatureMetadataToExecution(execMeta *testExecutionMetadata, 
 	execMeta.isAModifiedTest = execMeta.isAModifiedTest || meta.isModified
 	execMeta.efdFellBackToFlakyRetries = meta.efdFellBackToFlakyRetries
 	execMeta.shouldOrchestrateAttemptToFix = meta.shouldOrchestrateAttemptToFix
+	applyExecutionExclusions(execMeta)
 }
 
 // syncFeatureMetadataFromExecution keeps wrapper-level metadata aligned with the latest concrete execution.
@@ -587,6 +614,7 @@ func syncFeatureMetadataFromExecution(meta *additionalFeatureMetadata, execMeta 
 	meta.isNew = execMeta.isANewTest
 	meta.isModified = execMeta.isAModifiedTest
 	meta.efdFellBackToFlakyRetries = execMeta.efdFellBackToFlakyRetries
+	applyFeatureExclusions(meta)
 }
 
 // wrapWithAdditionalFeatureMetadata preloads metadata without entering retry isolation.
@@ -645,7 +673,11 @@ func applyAdditionalFeaturesToTestFunc(
 	_ = integrations.GetKnownTests()
 
 	// If none of the additional features are enabled, return the original function.
-	if !settings.TestManagement.Enabled && !settings.EarlyFlakeDetection.Enabled && !settings.FlakyTestRetriesEnabled {
+	exclusions := testInfo.exclusions
+	if !exclusions.any() {
+		exclusions = exclusionsForFunc(testInfo.sourceFunc)
+	}
+	if !exclusions.any() && !settings.TestManagement.Enabled && !settings.EarlyFlakeDetection.Enabled && !settings.FlakyTestRetriesEnabled {
 		return f
 	}
 
@@ -664,8 +696,18 @@ func applyAdditionalFeaturesToTestFunc(
 		managementMatchKind:          testManagementMatchNone,
 	}
 
-	// Test Management feature
+	// Keep the backend assignment separate from effective annotation policy.
 	populateTestManagementMetadata(&meta)
+	meta.exclusions = exclusions
+	meta.assignment.quarantined, meta.assignment.disabled, meta.assignment.attemptToFix = meta.isQuarantined, meta.isDisabled, meta.isAttemptToFix
+	if isSubtest && !settings.SubtestFeaturesEnabled {
+		// Retain known assignments as descriptive tags without activating
+		// backend subtest actions while their feature gate is disabled.
+		meta.isDisabled, meta.isQuarantined, meta.isAttemptToFix = false, false, false
+		meta.hasExplicitDisabled, meta.hasExplicitQuarantined, meta.hasExplicitAttemptToFix = false, false, false
+		meta.managementMatchKind = testManagementMatchNone
+	}
+	applyFeatureExclusions(&meta)
 
 	// determine whether attempt-to-fix retries should be orchestrated at this level
 	meta.shouldOrchestrateAttemptToFix = meta.isAttemptToFix
@@ -682,12 +724,12 @@ func applyAdditionalFeaturesToTestFunc(
 	}
 
 	if isSubtest {
-		if !settings.SubtestFeaturesEnabled {
+		if !settings.SubtestFeaturesEnabled && !exclusions.any() {
 			// Feature gate keeps legacy behaviour when subtests support is disabled.
 			return f
 		}
 		// Require an exact match before applying subtest-specific directives; fallbacks remain parent-scoped.
-		if meta.managementMatchKind != testManagementMatchExact {
+		if meta.managementMatchKind != testManagementMatchExact && !exclusions.any() {
 			return f
 		}
 		// Subtests currently inherit parent EFD/flaky retry behaviour; disable here to avoid double wrapping.
@@ -754,6 +796,9 @@ func applyAdditionalFeaturesToTestFunc(
 
 	switch selection.path {
 	case additionalFeaturePathNone:
+		if exclusions.any() {
+			return wrapWithAdditionalFeatureMetadata(f, ptrMeta, false, false)
+		}
 		return f
 	case additionalFeaturePathMetadataOnly:
 		return wrapWithAdditionalFeatureMetadata(f, ptrMeta, needsMetadataOnly, false)
@@ -771,6 +816,11 @@ func applyAdditionalFeaturesToTestFunc(
 		}
 
 		var outcomes retryOutcomeAccumulator
+		var lastProtectedFailure, protectedFailureSeen bool
+		exclusionResults := &excludedTestResults{}
+		if isSubtest && parentExecMeta != nil && parentExecMeta.exclusionResults != nil {
+			exclusionResults = parentExecMeta.exclusionResults
+		}
 
 		runTestWithRetry(&runTestWithRetryOptions{
 			targetFunc:                    f,
@@ -789,6 +839,10 @@ func applyAdditionalFeaturesToTestFunc(
 			retryAttemptMaskingFallback:   ptrMeta.isDisabled || ptrMeta.isQuarantined,
 			preExecMetaAdjust: func(execMeta *testExecutionMetadata, _ int) {
 				// Synchronize the test execution metadata with the original test execution metadata.
+				execMeta.exclusionResults = exclusionResults
+				if ptrMeta.isAttemptToFix && protectedFailureSeen {
+					markProtectedFailure(execMeta)
+				}
 
 				applyAdditionalFeatureMetadataToExecution(execMeta, ptrMeta)
 				// An exact subtest wrapper owns its retry tags independently from the
@@ -830,6 +884,9 @@ func applyAdditionalFeaturesToTestFunc(
 				return retryCount
 			},
 			postPerExecution: func(ptrToLocalT *testing.T, execMeta *testExecutionMetadata, executionIndex int, _ time.Duration) {
+				applyRetainedExcludedFailure(ptrToLocalT, execMeta)
+				lastProtectedFailure = execMeta.protectedDescendantFailure.Load()
+				protectedFailureSeen = protectedFailureSeen || lastProtectedFailure
 				failed := ptrToLocalT.Failed()
 				skipped := ptrToLocalT.Skipped()
 				log.Debug("applyAdditionalFeaturesToTestFunc: postPerExecution called for execution %d, failed: %t, skipped: %t", executionIndex, failed, skipped)
@@ -897,8 +954,12 @@ func applyAdditionalFeaturesToTestFunc(
 				return false
 			},
 			postOnRetryEnd: func(t *testing.T, executionIndex int, lastPtrToLocalT *testing.T, result retryGroupPolicyResult) {
+				retainedFailure, retainedProtected := false, false
+				if !isSubtest {
+					retainedFailure, retainedProtected = exclusionResults.failedDescendants(t.Name())
+				}
 				// if the test is disabled or quarantined, skip the test result to the testing framework
-				if ptrMeta.isDisabled || ptrMeta.isQuarantined {
+				if (ptrMeta.isDisabled || ptrMeta.isQuarantined) && !(retainedProtected || lastProtectedFailure || ptrMeta.isAttemptToFix && protectedFailureSeen) {
 					log.Debug("applyAdditionalFeaturesToTestFunc: Skipping test result for disabled or quarantined test")
 					t.SkipNow()
 					return
@@ -913,7 +974,7 @@ func applyAdditionalFeaturesToTestFunc(
 				// Attempt-to-fix owns result propagation when it is active, even if EFD or FTR
 				// metadata is also present for tag compatibility.
 				attemptToFixActive := ptrMeta.isAttemptToFix
-				if result.failfastRawFailure || result.lateFailure || attemptToFixActive && outcomes.anyFailed() {
+				if retainedFailure || result.failfastRawFailure || result.lateFailure || attemptToFixActive && outcomes.anyFailed() {
 					tCommonPrivates.SetFailed(true)
 					tParentCommonPrivates := getTestParentPrivateFields(t)
 					if tParentCommonPrivates == nil {
@@ -1169,7 +1230,10 @@ func shouldUseParallelEFD(options *runTestWithRetryOptions, execMeta *testExecut
 	if options == nil || execMeta == nil {
 		return false
 	}
-	if !options.parallelEFDAllowed {
+	// A declaration first discovered during a retry must publish its one-shot
+	// result before another attempt can reuse it. Keep EFD retries serial in
+	// packages that contain no-auto-retry declarations.
+	if hasNoAutoRetryDeclarations.Load() || !options.parallelEFDAllowed {
 		return false
 	}
 	if remainingAttempts <= 1 || maxConcurrency <= 1 {
@@ -1340,43 +1404,251 @@ func runTestCleanup(t *testing.T, result *testCleanupResult) {
 }
 
 func runTestCleanupWithOptions(t *testing.T, result *testCleanupResult, neutralizeNativeParallelRelease bool) {
-	completeParallelSubtests(t, getTestPrivateFields(t), neutralizeNativeParallelRelease)
+	result.captureShape(t)
+	finishParallel := completeParallelSubtests(t, getTestPrivateFields(t), neutralizeNativeParallelRelease)
+	runTestCleanupCallbacksWithParallelRelease(t, result, finishParallel)
+}
+
+// Preserve native parallel guards until all user cleanups have finished.
+func runTestCleanupCallbacksWithParallelRelease(t *testing.T, result *testCleanupResult, finishParallel func(*testCleanupResult)) {
+	if finishParallel != nil {
+		defer finishParallel(result)
+	}
 	runTestCleanupCallbacks(t, result)
 }
 
+func (result *testCleanupResult) captureShape(t *testing.T) {
+	if !result.shapeCaptured {
+		result.hadQueuedSubtests = hasPendingParallelSubtests(t)
+		result.shapeCaptured = true
+	}
+}
+
+// A factory with one stable code pointer lets an observer wrap only newly
+// appended callbacks. Each callback is wrapped once, including one registered
+// by an earlier cleanup, without rescanning the already wrapped prefix.
+//
+//go:noinline
+func observeTestCleanupCallback(t *testing.T, result *testCleanupResult, callback func()) func() {
+	return func() {
+		returned := false
+		defer func() {
+			value := recover()
+			if value != nil {
+				result.terminals = append(result.terminals, testCleanupTerminal{value: value, stack: observedTestCleanupStack()})
+			} else if !returned {
+				result.terminals = append(result.terminals, testCleanupTerminal{goexit: true})
+			}
+			// Native runCleanup recursively drains remaining callbacks while
+			// unwinding panic/Goexit, so newly registered callbacks must be
+			// observed before control returns to that native defer.
+			observePendingTestCleanups(t, result)
+			if value != nil {
+				panic(value)
+			}
+		}()
+		callback()
+		returned = true
+	}
+}
+
+var testCleanupObserverPC uintptr
+var testCleanupObserverName string
+
+func init() {
+	testCleanupObserverPC = reflect.ValueOf(observeTestCleanupCallback(nil, nil, nil)).Pointer()
+	testCleanupObserverName = runtime.FuncForPC(testCleanupObserverPC).Name()
+}
+
+func observePendingTestCleanups(t *testing.T, result *testCleanupResult) {
+	layout := getTestingInternalsLayout()
+	if layout == nil || layout.disabled || !layout.common.cleanups.available {
+		return
+	}
+	base := commonBaseForTest(t, layout)
+	callbacks := fieldPtr[[]func()](base, layout.common.cleanups)
+	mu := fieldPtr[sync.RWMutex](base, layout.common.mu)
+	if callbacks == nil || mu == nil {
+		return
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	for i := len(*callbacks) - 1; i >= 0; i-- {
+		callback := (*callbacks)[i]
+		if callback == nil {
+			continue
+		}
+		if reflect.ValueOf(callback).Pointer() == testCleanupObserverPC {
+			break
+		}
+		(*callbacks)[i] = observeTestCleanupCallback(t, result, callback)
+	}
+}
+
+func observedTestCleanupStack() string {
+	// Exclude only the observer's own added frames. The original cleanup,
+	// native runCleanup and caller frames keep their original identities.
+	lines := strings.SplitAfter(utils.GetStacktrace(2), "\n")
+	var stack strings.Builder
+	for i := 0; i+1 < len(lines); i += 2 {
+		name := strings.TrimSuffix(lines[i], "\n")
+		if name == testCleanupObserverName || strings.HasPrefix(name, testCleanupObserverName+".") {
+			continue
+		}
+		stack.WriteString(lines[i])
+		stack.WriteString(lines[i+1])
+	}
+	return stack.String()
+}
+
 func runTestCleanupCallbacks(t *testing.T, result *testCleanupResult) {
+	result.captureShape(t)
 	result.ran = true
 	done := make(chan struct{})
 	go func() {
 		completed := false
 		defer func() {
-			result.panicData = recover()
-			if result.panicData != nil {
+			if value := recover(); value != nil {
+				result.panicData = value
 				result.panicStacktrace = utils.GetStacktrace(1)
 			} else if !completed {
 				result.goexit = true
 			}
+			if result.observePanics && result.panicData != nil {
+				for i := len(result.terminals) - 1; i >= 0; i-- {
+					if !result.terminals[i].goexit {
+						result.panicStacktrace = result.terminals[i].stack
+						break
+					}
+				}
+			}
 			close(done)
 		}()
-		// Recover here rather than inside testing so the panic's cleanup frames
-		// are still available. Native runCleanup still drains remaining callbacks.
-		testingTRunCleanup(t, 0)
+		if result.observePanics {
+			observePendingTestCleanups(t, result)
+		}
+		if result.observePanics && result.hadQueuedSubtests {
+			// Native tRunner recovers cleanup panics for the queued-child
+			// shape. In particular, Goexit resumes after a later cleanup
+			// panic is recovered; normalPanic would spuriously fail it.
+			result.panicData = testingTRunCleanup(t, 1)
+		} else {
+			testingTRunCleanup(t, 0)
+		}
 		completed = true
 	}()
 	<-done
 }
 
+// resolveTestCleanupDiagnostics retains only the terminals native Go exposes.
+// The original body value is separate from the effective body terminal because
+// cleanup Goexit can cancel it or synthesize an unexpected-termination result.
+func resolveTestCleanupDiagnostics(t *testing.T, meta *testExecutionMetadata, body any, bodyStack string, terminal any, terminalStack string) (any, string) {
+	if meta == nil || meta.cleanupResult == nil || !meta.cleanupResult.observePanics {
+		return terminal, terminalStack
+	}
+	result := meta.cleanupResult
+	panics := make([]testCleanupTerminal, 0, len(result.terminals))
+	lastGoexit := false
+	for _, observed := range result.terminals {
+		lastGoexit = observed.goexit
+		if !observed.goexit {
+			panics = append(panics, observed)
+		}
+	}
+	if len(panics) == 0 {
+		return terminal, terminalStack
+	}
+	visibleBody := body != nil
+	primaryBody := body != nil
+	primaryCleanup := -1
+	if result.hadQueuedSubtests {
+		if result.goexit {
+			// The outer tRunner defer rethrows a recovered body terminal.
+			// A returning cleanup panic exposes only its final value; a
+			// Goexit unwind instead retains its active preceding panic chain.
+			if terminal == nil || !lastGoexit {
+				panics = nil
+			}
+			if terminal == nil {
+				visibleBody = false
+				primaryBody = false
+			}
+		} else {
+			panics = panics[len(panics)-1:]
+			if terminal == nil {
+				terminal, terminalStack = panics[0].value, panics[0].stack
+				primaryBody = false
+				primaryCleanup = 0
+			}
+		}
+	} else if result.goexit {
+		if terminal == nil {
+			panics = nil
+			visibleBody = false
+			primaryBody = false
+		} else {
+			primaryBody = false
+		}
+	} else {
+		primaryCleanup = len(panics) - 1
+		terminal, terminalStack = panics[primaryCleanup].value, panics[primaryCleanup].stack
+		primaryBody = false
+	}
+	// Keep the primary panic's origin first, then retain every secondary
+	// diagnostic that native testing exposes. Logs can be disabled, so the
+	// existing error stack must carry these values and their original stacks
+	// through both local finalization and bounded worker serialization.
+	appendDiagnostic := func(message, stack string) {
+		t.Logf("%s\n%s", message, stack)
+		terminalStack += "\n" + message + "\n" + stack
+	}
+	if visibleBody && !primaryBody {
+		appendDiagnostic(fmt.Sprintf("panic: %v", body), bodyStack)
+	}
+	for i, observed := range panics {
+		if i != primaryCleanup {
+			appendDiagnostic(fmt.Sprintf("cleanup panicked with %v", observed.value), observed.stack)
+		}
+	}
+	return terminal, terminalStack
+}
+
 // completeParallelSubtests releases and waits for parallel subtests owned by a
 // Datadog-managed clone. It mirrors testing.tRunner's scheduler accounting:
-// release the parent slot before unblocking children, then reacquire it for
-// sequential parents before running cleanup.
-func completeParallelSubtests(t *testing.T, localTPrivateFields *commonPrivateFields, neutralizeNativeParallelRelease bool) {
-	completeParallelSubtestsWithState(
-		localTPrivateFields,
-		getTestState(t),
-		!isParallelTest(t, localTPrivateFields),
-		neutralizeNativeParallelRelease,
-	)
+// release the parent slot before unblocking children. The returned function
+// runs after user cleanups, then reacquires the slot for sequential parents
+// or neutralizes the already-released slot for native parallel parents.
+func completeParallelSubtests(t *testing.T, localTPrivateFields *commonPrivateFields, neutralizeNativeParallelRelease bool) func(*testCleanupResult) {
+	hasSubtests := localTPrivateFields != nil && localTPrivateFields.sub != nil && len(*localTPrivateFields.sub) > 0
+	reacquireParent := !isParallelTest(t, localTPrivateFields)
+	testState := getTestState(t)
+	completeParallelSubtestsWithState(localTPrivateFields, testState)
+	if !hasSubtests {
+		return nil
+	}
+	if reacquireParent && testState != nil {
+		return func(cleanup *testCleanupResult) {
+			// Goexit unwinds native tRunner before its slot reacquire, including
+			// cleanup SkipNow/FailNow. Preserve that return path for the caller.
+			if cleanup != nil && cleanup.goexit {
+				return
+			}
+			// Native tRunner propagates terminal cleanup panics before reacquiring.
+			if meta := getTestMetadata(t); meta != nil && !meta.hasAdditionalFeatureWrapper &&
+				!meta.isDisabled && !meta.isQuarantined &&
+				meta.cleanupResult != nil && meta.cleanupResult.panicData != nil {
+				return
+			}
+			testingTestStateWaitParallel(testState)
+		}
+	}
+	if neutralizeNativeParallelRelease && !reacquireParent && localTPrivateFields.isParallel != nil {
+		// Draining t.sub already released this slot. After user cleanup, keep
+		// native tRunner from releasing it a second time when t.sub is empty.
+		return func(_ *testCleanupResult) { *localTPrivateFields.isParallel = false }
+	}
+	return nil
 }
 
 // startParallelWaitClock measures the wait for parallel subtests; tests
@@ -1386,8 +1658,6 @@ var startParallelWaitClock = startNativeClock
 func completeParallelSubtestsWithState(
 	localTPrivateFields *commonPrivateFields,
 	testState *testingTestState,
-	reacquireParent bool,
-	neutralizeNativeParallelRelease bool,
 ) time.Duration {
 	if localTPrivateFields == nil || localTPrivateFields.sub == nil || len(*localTPrivateFields.sub) == 0 {
 		return 0
@@ -1409,16 +1679,6 @@ func completeParallelSubtestsWithState(
 		if pvSub != nil && pvSub.signal != nil {
 			<-*pvSub.signal
 		}
-	}
-	if testState != nil && reacquireParent {
-		testingTestStateWaitParallel(testState)
-	}
-	if neutralizeNativeParallelRelease && !reacquireParent && localTPrivateFields.isParallel != nil {
-		// A process-retry child drains native tRunner subtests before writing
-		// JSON. After we clear t.sub, Go's native tRunner would otherwise take
-		// its len(t.sub)==0 && t.isParallel release path and release the same
-		// scheduler slot twice.
-		*localTPrivateFields.isParallel = false
 	}
 	return elapsed()
 }
@@ -1451,7 +1711,7 @@ func runAndApplyTestCleanup(t *testing.T, execMeta *testExecutionMetadata) {
 // runAndApplyTestCleanupWithDuration adds user cleanup time to the test body
 // duration without counting CI Visibility work performed between them.
 func runAndApplyTestCleanupWithDuration(t *testing.T, execMeta *testExecutionMetadata, bodyDuration time.Duration) time.Duration {
-	return runAndApplyTestCleanupWithDurationOptions(t, execMeta, bodyDuration, false)
+	return runAndApplyTestCleanupWithDurationOptions(t, execMeta, bodyDuration, false, false)
 }
 
 func runAndApplyTestCleanupWithDurationOptions(
@@ -1459,13 +1719,48 @@ func runAndApplyTestCleanupWithDurationOptions(
 	execMeta *testExecutionMetadata,
 	bodyDuration time.Duration,
 	neutralizeNativeParallelRelease bool,
+	terminalBody bool,
 ) time.Duration {
 	cleanupStart := time.Now()
 	if execMeta != nil && execMeta.cleanupResult != nil && !execMeta.cleanupResult.ran {
-		runTestCleanupWithOptions(t, execMeta.cleanupResult, neutralizeNativeParallelRelease)
+		execMeta.cleanupResult.observePanics = execMeta.exclusions.any() && execMeta.fuzzEvents == nil
+		if terminalBody && execMeta.fuzzEvents == nil && !execMeta.hasAdditionalFeatureWrapper && !execMeta.isDisabled && !execMeta.isQuarantined {
+			// With queued children, native doPanic fails before cleanup and does
+			// not admit them. Without children, cleanup precedes panic recovery
+			// and its Goexit may replace the body terminal. Fuzz owns its lifecycle.
+			if hasPendingParallelSubtests(t) {
+				t.Fail()
+			}
+			runTestCleanupCallbacks(t, execMeta.cleanupResult)
+		} else {
+			runTestCleanupWithOptions(t, execMeta.cleanupResult, neutralizeNativeParallelRelease)
+		}
 		applyTestCleanupResult(t, execMeta, execMeta.cleanupResult)
 	}
 	return bodyDuration + time.Since(cleanupStart)
+}
+
+func hasPendingParallelSubtests(t *testing.T) bool {
+	fields := getTestPrivateFields(t)
+	return fields != nil && fields.sub != nil && len(*fields.sub) > 0
+}
+
+// Native cleanup runs before panic recovery when no parallel children are queued.
+// Its Goexit can replace the body panic; a bare Goexit still needs native failure.
+func resolveTestBodyTerminalAfterCleanup(t *testing.T, meta *testExecutionMetadata, bodyTerminal any, unexpectedTermination bool) any {
+	if (bodyTerminal != nil || unexpectedTermination) && meta != nil && meta.fuzzEvents == nil && !meta.hasAdditionalFeatureWrapper &&
+		!meta.isDisabled && !meta.isQuarantined && meta.cleanupResult != nil &&
+		meta.cleanupResult.goexit && !(meta.cleanupResult.shapeCaptured && meta.cleanupResult.hadQueuedSubtests) && !hasPendingParallelSubtests(t) {
+		fields := getTestPrivateFields(t)
+		if t.Skipped() || fields != nil && fields.GetFinished() {
+			return nil
+		}
+		return unexpectedTestTerminationMessage
+	}
+	if unexpectedTermination {
+		return unexpectedTestTerminationMessage
+	}
+	return bodyTerminal
 }
 
 // applyTestCleanupResult applies cleanup panics to the test attempt so retry
@@ -1488,6 +1783,9 @@ func propagateTestExecutionMetadataFlags(execMeta *testExecutionMetadata, origin
 	}
 
 	// Propagate the test execution metadata
+	if execMeta.exclusionResults == nil {
+		execMeta.exclusionResults = originalExecMeta.exclusionResults
+	}
 	execMeta.isANewTest = execMeta.isANewTest || originalExecMeta.isANewTest
 	execMeta.isAModifiedTest = execMeta.isAModifiedTest || originalExecMeta.isAModifiedTest
 	execMeta.isEarlyFlakeDetectionEnabled = execMeta.isEarlyFlakeDetectionEnabled || originalExecMeta.isEarlyFlakeDetectionEnabled
@@ -1497,6 +1795,11 @@ func propagateTestExecutionMetadataFlags(execMeta *testExecutionMetadata, origin
 	}
 	if execMeta.quarantinedRaceProcess == nil {
 		execMeta.quarantinedRaceProcess = originalExecMeta.quarantinedRaceProcess
+	}
+	execMeta.assignment.quarantined = execMeta.assignment.quarantined || originalExecMeta.assignment.quarantined || originalExecMeta.isQuarantined
+	execMeta.assignment.disabled = execMeta.assignment.disabled || originalExecMeta.assignment.disabled || originalExecMeta.isDisabled
+	if !execMeta.hasExplicitAttemptToFix {
+		execMeta.assignment.attemptToFix = execMeta.assignment.attemptToFix || originalExecMeta.assignment.attemptToFix || originalExecMeta.isAttemptToFix
 	}
 	execMeta.isQuarantined = execMeta.isQuarantined || originalExecMeta.isQuarantined
 	execMeta.isDisabled = execMeta.isDisabled || originalExecMeta.isDisabled
@@ -1509,6 +1812,7 @@ func propagateTestExecutionMetadataFlags(execMeta *testExecutionMetadata, origin
 		// Preserve attempt-to-fix inheritance only when the child didn't explicitly override it.
 		execMeta.isAttemptToFix = true
 	}
+	applyExecutionExclusions(execMeta)
 }
 
 // isAnEfdExecution checks if the current test execution is an Early Flake Detection execution.

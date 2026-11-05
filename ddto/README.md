@@ -275,6 +275,49 @@ runs native Go without instrumentation and prints a warning. The
 [validation contract](docs/validation.md) distinguishes loopback protocol
 checks from live intake, UI and downstream-project validation.
 
+## Test automation exclusions
+
+With the default Mini runtime, add either of these comments directly above an
+individual Go test function or Testify test method:
+
+```go
+//ddtest:prevent_failure_suppression
+//ddtest:no_auto_retry
+func TestCritical(t *testing.T) {
+    // A terminal failure must fail the command, without Datadog retries.
+}
+```
+
+`prevent_failure_suppression` prevents Datadog quarantine and disabling from
+hiding this test's failure. `no_auto_retry` excludes Datadog automatic retries,
+early flake detection and attempt-to-fix. Each can be used independently. Neither
+changes native skips, name filters, Test Impact Analysis selection or native
+repetitions such as `-count`. An excluded Testify method retains its first result
+when Datadog retries its parent suite; ordinary sibling methods can still retry.
+
+The comments are compiled into the binary before execution policy is selected,
+including separate test packages. Source files need not be present at runtime.
+Native `t.Run` cases inherit their executing parent declaration, including
+shared callbacks and parallel rows. The same callback used by an ordinary parent
+keeps ordinary policy. Individual Testify methods use their own declarations. A method annotation applies
+when its parent is selected and runs; it does not schedule a method whose whole
+parent test is skipped or disabled before the method is discovered. A selected
+protected method can override its own disabled assignment, and a quarantined
+parent cannot hide its protected terminal failure. Annotations on a suite type or
+`TestMain` are not supported. The reference `--runtime=sdk` is unchanged.
+
+For manual Mini instrumentation, register declarations during package
+initialization with `testopt.RegisterTestExclusions(TestCritical,
+testopt.TestExclusions{PreventFailureSuppression: true, NoAutoRetry: true})`.
+For a Testify method, pass its method expression, such as `(*MySuite).TestCritical`.
+Do not register or change declarations while tests are running.
+
+Emitted test events include `test.test_management.prevent_failure_suppression`
+and/or `test.test_management.no_auto_retry` set to `true`, including known skipped
+executions. Absent annotations omit these tags. Backend-assigned quarantine,
+disabled and attempt-to-fix properties remain reported even when annotations
+change execution policy. Setting a span tag alone does not activate an exclusion.
+
 ## Environment variables
 
 Set these variables before invoking `ddtest instrument` or a compiled test

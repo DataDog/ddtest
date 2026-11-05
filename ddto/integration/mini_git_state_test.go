@@ -156,7 +156,7 @@ func TestMiniGitStateHandoff(t *testing.T) {
 
 	// A state from another checkout is ignored.
 	other := t.TempDir()
-	for _, gitArgs := range [][]string{{"init", "--initial-branch=main"}, {"-c", "user.name=Other", "-c", "user.email=other@example.invalid", "commit", "--allow-empty", "-m", "Other"}} {
+	for _, gitArgs := range [][]string{{"init", "--initial-branch=main"}, {"-c", "user.name=Other", "-c", "user.email=other@example.invalid", "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "Other"}} {
 		if out, stderr, code := command(t, other, testEnv(), "git", gitArgs...); code != 0 {
 			t.Fatalf("other repository: %s %s", out, stderr)
 		}

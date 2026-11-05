@@ -2,6 +2,7 @@ package gotesting
 
 import (
 	"reflect"
+	"runtime"
 	"testing"
 	"unsafe"
 )
@@ -127,4 +128,30 @@ func TestTestifyMethodBindingOutlivesSuiteRun(t *testing.T) {
 		}
 	})
 	end()
+}
+
+// An interface method shadows a deeper concrete method even though reflection
+// exposes no Func for the interface declaration.
+type exclusionShadowInterface interface{ TestCritical() }
+type exclusionShadowBase struct{}
+
+func (*exclusionShadowBase) TestCritical() {}
+
+type exclusionShadowMiddle struct{ exclusionShadowBase }
+type exclusionShadowSuite struct {
+	exclusionShadowInterface
+	exclusionShadowMiddle
+}
+
+func TestTestifyInterfaceShadowDeclaration(t *testing.T) {
+	typ := reflect.TypeOf(new(exclusionShadowSuite))
+	method, ok := typ.MethodByName("TestCritical")
+	if !ok {
+		t.Fatal("missing interface wrapper")
+	}
+	got := testifyMethodDeclaration(typ, method)
+	want := runtime.FuncForPC(method.Func.Pointer())
+	if got == nil || got.Name() != want.Name() {
+		t.Fatalf("resolved shadowed concrete declaration: %v want %v", got, want)
+	}
 }
