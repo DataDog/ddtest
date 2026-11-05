@@ -43,7 +43,7 @@ type featureResult struct {
 	Project string `json:"project,omitempty"`
 	Name    string `json:"name"`
 	Status  string `json:"status"`
-	// Code marks failures no customer change is expected to fix.
+	// Code identifies tracer limitations and unsupported capabilities.
 	Code string `json:"code,omitempty"`
 	// ObservedCode keeps the evaluated failure code when Code reports a
 	// known limitation instead, such as tracer_control_not_applied.
@@ -56,6 +56,8 @@ const (
 	tracerControlNotApplied = "tracer_control_not_applied"
 	// A required feature the tracer is known not to apply for this setup.
 	tracerLimitation = "tracer_limitation"
+	// Validated probe controls advertised capabilities but omitted this feature.
+	tracerFeatureUnsupported = "tracer_feature_not_supported"
 )
 
 // tracerOnly reports whether the feature failed in a way only a tracer change
