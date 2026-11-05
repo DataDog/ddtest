@@ -168,6 +168,10 @@ type runtimeStep struct {
 	// impactedWorkaround reports Cucumber's impacted-tests workaround right
 	// after that prefix (see readScopedPrefix).
 	impactedWorkaround bool
+	// afterTests are the commands a status-preserving subshell runs after
+	// Run's tests whatever their result, before it exits with their status
+	// (see readStatusSubshell).
+	afterTests []string
 	// inline names the variables assigned inline before Run's command, which
 	// the provider's reader moved into Env (see foldInlineEnvironment).
 	inline []string

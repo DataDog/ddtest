@@ -43,8 +43,10 @@ func scopedEnvironment(framework string) string {
 // sets them for that command alone, so the rest is the step's command, and
 // its leaf consumes the variable as a scoped package script's does (see
 // markScopedLeaf). Only a command whose first
-// call carries the prefix, alone or piped into others, qualifies.
+// call carries the prefix, alone or piped into others, qualifies. The tests
+// of a status-preserving subshell qualify too (see readStatusSubshell).
 func (s *runtimeStep) readScopedPrefix() {
+	s.readStatusSubshell()
 	command := strings.TrimSpace(s.Run)
 	variable := ""
 	for _, candidate := range []string{"DD_CUCUMBER_NODE_OPTIONS", "DD_WDIO_NODE_OPTIONS"} {
@@ -78,6 +80,98 @@ func (s *runtimeStep) readScopedPrefix() {
 		return
 	}
 	s.Run, s.scopedVariable = rest, variable
+}
+
+// readStatusSubshell reads a CI command that runs the tests, then commands
+// that must run whatever the tests' result, and exits with the tests' status,
+// as onboarding prescribes for a report conversion (see ReportPipeSplit):
+//
+//	(status=0; cucumber-js --format json:report.json || status=$?; cat report.json | cucumber-junit > junit.xml; exit "$status")
+//
+// The || keeps errexit from stopping at failing tests, and the subshell
+// keeps the exit to this command, so a passing run continues with the
+// script's later commands, as a script stopping at errors does, and a failing
+// one fails the step after the conversion. Run becomes the tests and
+// afterTests the commands between them and the exit, which resolution checks
+// can't start tests. Any other command stays as written.
+func (s *runtimeStep) readStatusSubshell() {
+	run := strings.TrimSpace(s.Run)
+	file, ok := parseCIShell(run)
+	if !ok || len(file.Stmts) != 1 {
+		return
+	}
+	outer := file.Stmts[0]
+	subshell, isSubshell := outer.Cmd.(*syntax.Subshell)
+	if !isSubshell || outer.Background || outer.Negated || outer.Coprocess || outer.Disown || len(outer.Redirs) > 0 || len(subshell.Stmts) < 4 {
+		return
+	}
+	stmts := subshell.Stmts
+	plain := func(stmt *syntax.Stmt) bool {
+		return !stmt.Background && !stmt.Negated && !stmt.Coprocess && !stmt.Disown && len(stmt.Redirs) == 0
+	}
+	// assignment is the variable a statement that only assigns one sets, and
+	// the value it assigns.
+	assignment := func(stmt *syntax.Stmt) (name string, value *syntax.Word) {
+		call, isCall := stmt.Cmd.(*syntax.CallExpr)
+		if !plain(stmt) || !isCall || len(call.Args) > 0 || len(call.Assigns) != 1 {
+			return "", nil
+		}
+		assign := call.Assigns[0]
+		if assign.Name == nil || assign.Index != nil || assign.Array != nil || assign.Append || assign.Naked || assign.Value == nil {
+			return "", nil
+		}
+		return assign.Name.Value, assign.Value
+	}
+	variable, initial := assignment(stmts[0])
+	if variable == "" || initial.Lit() != "0" {
+		return
+	}
+	record, isBinary := stmts[1].Cmd.(*syntax.BinaryCmd)
+	if !plain(stmts[1]) || !isBinary || record.Op != syntax.OrStmt {
+		return
+	}
+	tests, isCall := record.X.Cmd.(*syntax.CallExpr)
+	if !plain(record.X) || !isCall || len(tests.Args) == 0 {
+		return
+	}
+	if name, value := assignment(record.Y); name != variable || len(value.Parts) != 1 {
+		return
+	} else if expansion, isExpansion := value.Parts[0].(*syntax.ParamExp); !isExpansion || !expansion.Short || expansion.Param == nil || expansion.Param.Value != "?" {
+		return
+	}
+	exit, isExit := stmts[len(stmts)-1].Cmd.(*syntax.CallExpr)
+	if !plain(stmts[len(stmts)-1]) || !isExit || len(exit.Assigns) > 0 || len(exit.Args) != 2 || exit.Args[0].Lit() != "exit" || !readsOnly(exit.Args[1], variable) {
+		return
+	}
+	// text is a statement as written, without the ; that ends it.
+	text := func(stmt *syntax.Stmt) string {
+		end := stmt.End()
+		if stmt.Semicolon.IsValid() {
+			end = stmt.Semicolon
+		}
+		return strings.TrimSpace(run[stmt.Pos().Offset():end.Offset()])
+	}
+	var after []string
+	for _, stmt := range stmts[2 : len(stmts)-1] {
+		after = append(after, text(stmt))
+	}
+	s.Run, s.afterTests = text(record.X), after
+}
+
+// readsOnly reports a word that is only the variable's value, as $status or
+// "$status".
+func readsOnly(word *syntax.Word, variable string) bool {
+	parts := word.Parts
+	if len(parts) == 1 {
+		if quoted, ok := parts[0].(*syntax.DblQuoted); ok {
+			parts = quoted.Parts
+		}
+	}
+	if len(parts) != 1 {
+		return false
+	}
+	expansion, ok := parts[0].(*syntax.ParamExp)
+	return ok && expansion.Param != nil && expansion.Param.Value == variable && expansion.Exp == nil && expansion.Repl == nil && expansion.Slice == nil && expansion.Index == nil && !expansion.Length && !expansion.Width && !expansion.Excl
 }
 
 // foldInlineEnvironment moves the variables a single command assigns inline
@@ -149,7 +243,7 @@ func directScopedCommand(step runtimeStep, test TestCommand, framework string) (
 		if err != nil {
 			return "", err
 		}
-		return "", &ReportPipeSplit{Original: step.Run, Tests: scoped, Conversion: conversion}
+		return "", &ReportPipeSplit{Original: step.Run, Command: statusSubshell(scoped, conversion)}
 	}
 	if !test.usesNYC {
 		start, end, insertion, err := cucumberCoverageEdit(command)
@@ -173,23 +267,32 @@ func compoundCommandError(command string) error {
 			return nil
 		}
 	}
-	return fmt.Errorf("CI runs %s as part of a compound shell command, which ddtest does not rewrite into the scoped command: the variables its prefix assigns would reach only the first command. Run the test command as a CI command of its own, then rerun onboard --apply. When CI pipes the tests' output into a report converter, the tests write that report to a file instead and a later CI command converts the file: ddtest reads that conversion as outside the tests", command)
+	return fmt.Errorf("CI runs %s as part of a compound shell command, which ddtest does not rewrite into the scoped command: the variables its prefix assigns would reach only the first command. Run the test command as a CI command of its own, then rerun onboard --apply. When CI pipes the tests' output into a report converter, the tests write that report to a file instead, and the conversion of the file runs after them whatever their result: ddtest reads that conversion as outside the tests", command)
 }
 
 // ReportPipeSplit is the rewrite of a direct Cucumber invocation that CI
 // pipes into a report converter, as
 // cucumber-js --format json | cucumber-junit > junit.xml: the scoped prefix
 // and NYC, which prints its coverage summary to standard output, can't share
-// the converter's input. The tests write the same report to a file in one CI
-// command, and a later one converts that file, a step ddtest reads as outside
-// the tests (see reportTools).
+// the converter's input. The tests write the same report to a file, and the
+// same CI command then converts that file whatever their result and exits
+// with their status (see statusSubshell): failing tests still fail CI, and
+// the report is still written, on providers whose scripts stop at the first
+// failing command too. ddtest reads the conversion as outside the tests (see
+// readStatusSubshell and reportTools).
 type ReportPipeSplit struct {
-	// Original is the CI command; Tests and Conversion replace it, in order.
-	Original, Tests, Conversion string
+	// Original is the CI command; Command replaces it.
+	Original, Command string
 }
 
 func (s *ReportPipeSplit) Error() string {
-	return "CI pipes the report of " + s.Original + " into a converter in one command, which ddtest does not rewrite into the scoped command. Replace this CI command with exactly these two CI commands, in this order and each as a command of its own: 1) " + s.Tests + " 2) " + s.Conversion + ". Then rerun onboard --apply"
+	return "CI pipes the report of " + s.Original + " into a converter in one command, which ddtest does not rewrite into the scoped command. Replace this CI command with exactly this one, which writes the report to a file, converts it whether the tests pass or fail, and exits with the tests' status: " + s.Command + ". Then rerun onboard --apply"
+}
+
+// statusSubshell is the CI command that runs tests, then conversion whatever
+// their result, and exits with the tests' status (see readStatusSubshell).
+func statusSubshell(tests, conversion string) string {
+	return `(status=0; ` + tests + ` || status=$?; ` + conversion + `; exit "$status")`
 }
 
 // Cucumber's formatters by the extension of the file their output is

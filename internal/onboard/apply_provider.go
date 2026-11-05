@@ -712,8 +712,8 @@ func directCucumberCoverageGap(provider ciProvider, location string, workflow ci
 }
 
 // directScopedGap is the gap of a direct invocation whose scoped command
-// directScopedCommand could not write: the exact two commands of a report
-// pipe it splits (see ReportPipeSplit), or the reason it writes none.
+// directScopedCommand could not write: the exact command that replaces a
+// report pipe it splits (see ReportPipeSplit), or the reason it writes none.
 func directScopedGap(provider ciProvider, location string, step runtimeStep, err error) error {
 	var split *ReportPipeSplit
 	if !errors.As(err, &split) {
@@ -721,7 +721,7 @@ func directScopedGap(provider ciProvider, location string, step runtimeStep, err
 	}
 	if _, ok := provider.(buildkite); ok {
 		escaped := *split // pipeline upload would replace each $.
-		escaped.Tests, escaped.Conversion = buildkiteEscape(split.Tests), buildkiteEscape(split.Conversion)
+		escaped.Command = buildkiteEscape(split.Command)
 		split = &escaped
 	}
 	return &EditThenApplyGap{SetupGap{directLeafLocation(location, step), split.Error() + ": it adds the " + provider.setupName() + " before the tests when the job has none, and reads the conversion as outside the tests."}}
