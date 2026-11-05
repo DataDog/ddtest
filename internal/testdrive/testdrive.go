@@ -188,6 +188,13 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 		return nil, err
 	}
 	language := detectedPlatform.Name()
+	if !configuration.DefaultTracerVersion {
+		// An explicit release is the one setup messages name, as onboarding's,
+		// and, for Java, latest the exact release they pin.
+		if version, err = onboard.SelectTracerRelease(language, version); err != nil {
+			return nil, err
+		}
+	}
 	selectedLanguage := languageNamed(language)
 	if selectedLanguage == nil {
 		selectedLanguage = unsupportedLanguage{}

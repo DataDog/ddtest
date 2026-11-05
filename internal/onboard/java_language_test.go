@@ -29,7 +29,7 @@ func TestJavaOnboardPrintsJavaInstructions(t *testing.T) {
 	require.True(t, strings.HasPrefix(text, "DDTest found java, junit5, and GitHub Actions.\n\nTest workflow(s):\n  - .github/workflows/ci.yml\n"), text)
 	require.Contains(t, text, "  - [.] ./mvnw -B verify\n", "the discovered CI command is listed for validation")
 	require.Contains(t, text, "lint.yml / lint: no junit5 invocation identified")
-	require.Contains(t, text, "an exact `java-tracer-version`", "local validation can validate only an exact release")
+	require.Contains(t, text, "`java-tracer-version: "+testJavaRelease+"`, the latest exact dd-java-agent release", "local validation can validate only an exact release")
 	require.NotContains(t, text, "java-tracer-version: ''", "a floating release cannot be validated")
 	require.Contains(t, text, "${{ env.MAVEN_OPTS }}")
 	require.Contains(t, text, "ddtest testdrive --framework junit5 --all --yes")

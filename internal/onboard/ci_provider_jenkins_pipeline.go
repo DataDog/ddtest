@@ -2331,10 +2331,13 @@ func (r *jenkinsReader) add(slot *jenkinsSlot, node groovyNode, step runtimeStep
 }
 
 // jenkinsShellStep is where a step of a Jenkinsfile sh script starts: the
-// sh call, and the statement's offset in its script.
+// sh call, and the statement's offset in its script, with the quote of the
+// string literal that holds the script, as the Groovy lexer read it (empty
+// when the script is not a string literal).
 type jenkinsShellStep struct {
 	call      int
 	statement int
+	quote     string
 }
 
 // Each sh step runs a shell of its own.
@@ -2354,6 +2357,10 @@ func (r *jenkinsReader) shell(call *groovyCall, scope jenkinsScope, slot *jenkin
 	if node == nil {
 		r.unresolved(slot, call, "sh has no script ddtest can read")
 		return
+	}
+	var quote string
+	if text, ok := node.(*groovyString); ok {
+		quote = text.Value.quote
 	}
 	var ciOnly []string
 	r.ciOnly = &ciOnly
@@ -2447,7 +2454,7 @@ func (r *jenkinsReader) shell(call *groovyCall, scope jenkinsScope, slot *jenkin
 		stmt := file.Stmts[i]
 		known := mergeEnvironment(mergeEnvironment(env, state.env), state.references)
 		statement := strings.TrimSpace(jenkinsStatementText(script, file.Stmts, i))
-		step := runtimeStep{WorkingDirectory: state.directory, origin: jenkinsShellStep{call: call.Start, statement: int(stmt.Pos().Offset())}, sameShell: i > 0}
+		step := runtimeStep{WorkingDirectory: state.directory, origin: jenkinsShellStep{call: call.Start, statement: int(stmt.Pos().Offset()), quote: quote}, sameShell: i > 0}
 		if len(state.env) > 0 {
 			step.Env = maps.Clone(state.env)
 		}

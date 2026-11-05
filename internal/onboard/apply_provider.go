@@ -213,12 +213,12 @@ func planProviderJavaScriptSetup(root string, provider ciProvider, workflows []c
 						continue // Explicit browser runner remains outside instrumentation.
 					}
 				}
-				command, err := directScopedCommand(leaf.step, leaf.test, framework)
+				command, err := directScopedCommand(root, leaf.step, leaf.test, framework)
 				if err != nil {
-					return nil, &SetupGap{location, err.Error()}
+					return nil, directScopedGap(provider, location, leaf.step, err)
 				}
 				if command != "" {
-					return nil, &EditThenApplyGap{SetupGap{directLeafLocation(location, leaf.step), directLeafReason(provider, framework, leaf.test.Command, command, setupIndex >= 0)}}
+					return nil, &EditThenApplyGap{SetupGap{directLeafLocation(location, leaf.step), directLeafReason(provider, leaf.step, framework, leaf.test.Command, command, setupIndex >= 0)}}
 				}
 			}
 			if handWritten != nil {
@@ -227,7 +227,7 @@ func planProviderJavaScriptSetup(root string, provider ciProvider, workflows []c
 				}
 				if framework == "cucumber" {
 					// A direct invocation needs NYC in the CI command itself.
-					if gap := directCucumberCoverageGap(provider, location, workflow, job, direct, "the job's hand-written setup stays."); gap != nil {
+					if gap := directCucumberCoverageGap(root, provider, location, workflow, job, direct, "the job's hand-written setup stays."); gap != nil {
 						return nil, gap
 					}
 				}
@@ -284,7 +284,7 @@ func planProviderJavaScriptSetup(root string, provider ciProvider, workflows []c
 								bare = append(bare, leaf)
 							}
 						}
-						if gap := directCucumberCoverageGap(provider, location, workflow, job, bare, "the job's "+provider.setupName()+" stays."); gap != nil {
+						if gap := directCucumberCoverageGap(root, provider, location, workflow, job, bare, "the job's "+provider.setupName()+" stays."); gap != nil {
 							return nil, gap
 						}
 					}
@@ -689,26 +689,108 @@ func cucumberLoaderReached(workflow ciWorkflow, job runtimeJob, steps []matchedT
 // without the scoped variable): no package script carries the wrapper
 // onboard --apply adds, so the CI command itself must. stays says what
 // happens to the job's setup. nil when every one has NYC.
-func directCucumberCoverageGap(provider ciProvider, location string, workflow ciWorkflow, job runtimeJob, direct []directLeaf, stays string) error {
+func directCucumberCoverageGap(root string, provider ciProvider, location string, workflow ciWorkflow, job runtimeJob, direct []directLeaf, stays string) error {
 	for _, leaf := range direct {
 		workaround := cucumberImpactedWorkaroundSet(workflow, job, leaf.step)
 		if leaf.test.usesNYC && workaround {
 			continue
 		}
-		command, err := directScopedCommand(leaf.step, leaf.test, "cucumber")
+		command, err := directScopedCommand(root, leaf.step, leaf.test, "cucumber")
 		if err != nil {
-			return &SetupGap{location, err.Error()}
+			return directScopedGap(provider, location, leaf.step, err)
 		}
-		if _, ok := provider.(buildkite); ok {
-			command = buildkiteEscape(command) // pipeline upload would replace each $.
-		}
+		command, written := providerCommand(provider, leaf.step, command)
 		reason := CucumberCoverageGap + " CI runs " + leaf.test.Command + " directly, not through a package script, so onboard --apply cannot wrap it with NYC."
 		if leaf.test.usesNYC {
 			reason = "CI runs " + leaf.test.Command + " directly, not through a package script, without " + cucumberImpactedWorkaround + ", which onboard --apply adds to the package scripts it scopes and dd-trace's Cucumber instrumentation needs, so onboard --apply cannot add it to this command."
 		}
-		return &EditThenApplyGap{SetupGap{directLeafLocation(location, leaf.step), reason + " Change this CI command to exactly: " + command + ". Then rerun onboard --apply; " + stays}}
+		return &EditThenApplyGap{SetupGap{directLeafLocation(location, leaf.step), reason + " Change this CI command to exactly: " + command + "." + written + " Then rerun onboard --apply; " + stays}}
 	}
 	return nil
+}
+
+// directScopedGap is the gap of a direct invocation whose scoped command
+// directScopedCommand could not write: the exact command that replaces a
+// report pipe it splits (see ReportPipeSplit), or the reason it writes none.
+func directScopedGap(provider ciProvider, location string, step runtimeStep, err error) error {
+	var split *ReportPipeSplit
+	if !errors.As(err, &split) {
+		return &SetupGap{location, err.Error()}
+	}
+	escaped := *split
+	var written string
+	escaped.Command, written = providerCommand(provider, step, split.Command)
+	return &EditThenApplyGap{SetupGap{directLeafLocation(location, step), escaped.Error() + ": it adds the " + provider.setupName() + " before the tests when the job has none, and reads the conversion as outside the tests." + written}}
+}
+
+// providerCommand is a shell command ddtest prescribes for step, written
+// as the provider's configuration holds it, and how to place it there when
+// that takes more than replacing the old command: Buildkite's pipeline
+// upload would replace each $, so each is doubled; a Jenkinsfile holds it
+// in the Groovy string literal of the step's sh script (see
+// jenkinsCommand).
+func providerCommand(provider ciProvider, step runtimeStep, command string) (string, string) {
+	switch provider.name() {
+	case buildkiteProvider:
+		return buildkiteEscape(command), ""
+	case jenkinsProvider:
+		origin, _ := step.origin.(jenkinsShellStep)
+		return jenkinsCommand(origin.quote, command)
+	}
+	return command, ""
+}
+
+// jenkinsCommand is command escaped for the Groovy string literal, opened
+// by quote, that holds an sh step's script, so that Groovy hands the shell
+// exactly command when it replaces the old one inside that literal, which
+// keeps its type: the script's other commands, and any ${…} a GString
+// interpolates in them, stay as they are. In a GString, in double quotes
+// or triple double quotes, each backslash and $ is escaped; in a string in
+// single quotes or triple single quotes, each backslash. A one-line
+// literal escapes each of its own quotes and each line break; a
+// triple-quoted one, a run of three of its quotes and one that ends the
+// command, which would close it. A script that is not a literal gets the
+// command as the shell runs it.
+func jenkinsCommand(quote, command string) (string, string) {
+	escapeQuotes := func(text string, quote byte) string {
+		var escaped strings.Builder
+		for i := 0; i < len(text); i++ {
+			run := i
+			for run < len(text) && text[run] == quote {
+				run++
+			}
+			if run == i {
+				escaped.WriteByte(text[i])
+				continue
+			}
+			for j := i; j < run; j++ {
+				if run-i >= 3 || run == len(text) {
+					escaped.WriteByte('\\')
+				}
+				escaped.WriteByte(quote)
+			}
+			i = run - 1
+		}
+		return escaped.String()
+	}
+	var escaped, kind string
+	switch quote {
+	case `"`:
+		escaped = strings.NewReplacer(`\`, `\\`, "$", `\$`, `"`, `\"`, "\n", `\n`).Replace(command)
+		kind = "the sh step's double-quoted Groovy string (\"…\") holds it, with each backslash, $, double quote and line break escaped"
+	case `"""`:
+		escaped = escapeQuotes(strings.NewReplacer(`\`, `\\`, "$", `\$`).Replace(command), '"')
+		kind = "the sh step's triple-double-quoted Groovy string (\"\"\"…\"\"\") holds it, with each backslash and $ escaped, and any run of three double quotes"
+	case "'":
+		escaped = strings.NewReplacer(`\`, `\\`, "'", `\'`, "\n", `\n`).Replace(command)
+		kind = "the sh step's single-quoted Groovy string ('…') holds it, with each backslash, single quote and line break escaped"
+	case "'''":
+		escaped = escapeQuotes(strings.ReplaceAll(command, `\`, `\\`), '\'')
+		kind = "the sh step's triple-single-quoted Groovy string ('''…''') holds it, with each backslash escaped, and any run of three single quotes"
+	default:
+		return command, " This is the command as the shell runs it: the sh step's script is not a Groovy string literal ddtest reads, so write it there escaped as that string needs, so that Groovy hands the shell exactly this command."
+	}
+	return escaped, " This is the command as " + kind + ", so Groovy hands the shell exactly the command while the script's other commands, and anything that string interpolates in them, stay as they are: replace only the old command inside that string."
 }
 
 // cucumberImpactedWorkaroundSet reports whether a direct Cucumber
@@ -732,15 +814,13 @@ func directLeafLocation(location string, step runtimeStep) string {
 // directLeafReason prescribes the CI command a direct Cucumber or
 // WebdriverIO invocation needs (see directScopedCommand), written as the
 // provider's configuration holds it, and what onboard --apply does next.
-func directLeafReason(provider ciProvider, framework, leaf, command string, configured bool) string {
-	if _, ok := provider.(buildkite); ok {
-		command = buildkiteEscape(command) // pipeline upload would replace each $.
-	}
+func directLeafReason(provider ciProvider, step runtimeStep, framework, leaf, command string, configured bool) string {
+	command, written := providerCommand(provider, step, command)
 	edit := "it adds the " + provider.setupName() + " before this command, with the command that exports " + scopedEnvironment(framework) + "."
 	if configured {
 		edit = "the job's " + provider.setupName() + " already exports " + scopedEnvironment(framework) + "."
 	}
-	return "CI runs " + leaf + " directly, not through a package script, so the command itself must read the tracer's preload from " + scopedEnvironment(framework) + ", as a scoped package script does. Change this CI command to exactly: " + command + ". Then rerun onboard --apply: " + edit
+	return "CI runs " + leaf + " directly, not through a package script, so the command itself must read the tracer's preload from " + scopedEnvironment(framework) + ", as a scoped package script does. Change this CI command to exactly: " + command + "." + written + " Then rerun onboard --apply: " + edit
 }
 
 // outsideTestJobs reports whether the language tells that job runs none of

@@ -1,12 +1,17 @@
 package testdrive
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"testing"
+
+	"github.com/DataDog/ddtest/internal/onboard"
 )
 
 func TestMain(m *testing.M) {
+	// Java setups name a fixed latest dd-java-agent release, read offline.
+	onboard.SetJavaReleaseResolver(func(context.Context) (string, error) { return "1.68.1", nil })
 	if os.Getenv("DDTEST_ISOLATED_TEST_TMP") == "1" {
 		os.Exit(m.Run())
 	}

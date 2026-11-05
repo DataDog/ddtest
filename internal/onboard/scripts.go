@@ -79,6 +79,37 @@ func unresolvedCommand(reason string) commandResolution {
 }
 
 func resolveTestStep(root string, workflow ciWorkflow, job runtimeJob, step runtimeStep, language, framework string) commandResolution {
+	if len(step.afterTests) > 0 {
+		// The commands a status-preserving subshell runs after its tests are
+		// outside them only when they can't start the tests themselves.
+		plain := step
+		plain.afterTests = nil
+		for _, command := range step.afterTests {
+			after := plain
+			after.Run, after.scopedVariable, after.impactedWorkaround = command, "", false
+			after.Env = maps.Clone(step.Env)
+			for _, name := range step.inline {
+				delete(after.Env, name) // The tests' own inline variables.
+			}
+			if stepMayStartTests(root, workflow, job, after, framework) {
+				return unresolvedCommand("CI runs " + command + " after the tests in the same command, and it may start " + framework + " itself; ddtest reads only commands that can't start tests there")
+			}
+		}
+		// They are read as the same commands after the tests in a plain
+		// sequence are: file changes stay setup for later tests, and those
+		// ddtest can't resolve are outside the tests unless a later test
+		// follows them.
+		sequence := plain
+		sequence.Run = strings.Join(append([]string{plain.Run}, step.afterTests...), "\n")
+		result := resolveTestStep(root, workflow, job, sequence, language, framework)
+		note := "This CI step runs " + strings.Join(step.afterTests, "; ") + " after its " + framework + " tests, whether they pass or fail, then exits with the tests' status, or with the status of a command after them that fails when they pass."
+		for i := range result.Tests {
+			if !slices.Contains(result.Tests[i].StepScopeNotes, note) {
+				result.Tests[i].StepScopeNotes = append(result.Tests[i].StepScopeNotes, note)
+			}
+		}
+		return result
+	}
 	if step.scopedVariable != "" {
 		plain := step
 		plain.scopedVariable = ""

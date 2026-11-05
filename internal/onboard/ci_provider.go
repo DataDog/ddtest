@@ -369,6 +369,16 @@ func CIProviderTracerSetting(language, version string) string {
 	return input + ": " + version
 }
 
+// CIProviderSiteSetting names site in place of the example Datadog site the
+// manual setup instructions show, which they render for the default site:
+// empty for that default, which needs no substitution.
+func CIProviderSiteSetting(site string) string {
+	if site == "" || site == defaultDatadogSite {
+		return ""
+	}
+	return "the Datadog site " + site + " in place of the example site " + defaultDatadogSite
+}
+
 // CIProviderAPIKeyAction is the person's step that stores the Datadog API key
 // for the selected CI provider.
 func CIProviderAPIKeyAction(skipped bool) string {

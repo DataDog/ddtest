@@ -211,8 +211,13 @@ func TestManualCITracerFitsUnresolvedStepsWithAKnownNode(t *testing.T) {
 // CI Node runs, which those edits pin.
 func TestScopeUnresolvedNeedsKeepTheManualTracer(t *testing.T) {
 	prior := "Facts can add prerequisites." + manualCITracerPrefix + `DD_SET_TRACER_VERSION_JS="5.133.0" (every detected CI Node runtime supports it) and pass --tracer-version 5.133.0 to validation.`
-	needs := scopeUnresolvedNeeds(prior)
+	needs := scopeUnresolvedNeeds(prior, "")
 	require.True(t, strings.HasPrefix(needs, "Run next_command for the unsupported CI integration"))
 	require.True(t, strings.HasSuffix(needs, `For manual CI edits use DD_SET_TRACER_VERSION_JS="5.133.0" (every detected CI Node runtime supports it) and pass --tracer-version 5.133.0 to validation.`))
-	require.NotContains(t, scopeUnresolvedNeeds("Facts can add prerequisites."), "manual CI edits")
+	require.NotContains(t, scopeUnresolvedNeeds("Facts can add prerequisites.", ""), "manual CI edits")
+	for _, site := range []string{"", "datadoghq.com"} {
+		require.NotContains(t, scopeUnresolvedNeeds(prior, site), "Datadog site", "the instructions already show the default site")
+	}
+	// The instructions show the default site: a selected one is named.
+	require.True(t, strings.HasSuffix(scopeUnresolvedNeeds(prior, "datadoghq.eu"), " In CI setup written by hand, use the Datadog site datadoghq.eu in place of the example site datadoghq.com that onboard --instructions shows."))
 }

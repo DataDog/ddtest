@@ -29,11 +29,16 @@ import (
 // javaDiscovery.validatesHandWrittenSetup), so it is never certified.
 
 // javaRecommendedTracer is the exact dd-java-agent release ddtest's setup
-// instructions and messages recommend.
+// names when it can't read the latest one from Maven Central (see
+// javaSetupRelease): a release ddtest has validated.
 const javaRecommendedTracer = "1.67.1"
 
-// javaHandWrittenDownload is an exact-release download URL for messages.
-const javaHandWrittenDownload = "https://repo1.maven.org/maven2/com/datadoghq/dd-java-agent/" + javaRecommendedTracer + "/dd-java-agent-" + javaRecommendedTracer + ".jar"
+// javaHandWrittenDownload is the download URL of the release ddtest selects
+// (see javaSetupRelease), for messages.
+func javaHandWrittenDownload() string {
+	release := javaSetupRelease()
+	return "https://repo1.maven.org/maven2/com/datadoghq/dd-java-agent/" + release + "/dd-java-agent-" + release + ".jar"
+}
 
 // javaHandWrittenCarrier is a JVM option list a hand-written setup attaches
 // dd-java-agent through: its name, such as MAVEN_OPTS, and value.
@@ -427,7 +432,7 @@ func javaHandWrittenTracer(setup *handWrittenSetup, jar string, workflow ciWorkf
 	}
 	switch len(named) {
 	case 0:
-		setup.missing("No command of the job downloads " + jar + " with an exact release, so ddtest cannot tell which dd-java-agent it attaches: download an exact release before the tests, such as curl -Lo " + jar + " " + javaHandWrittenDownload + ".")
+		setup.missing("No command of the job downloads " + jar + " with an exact release, so ddtest cannot tell which dd-java-agent it attaches: download an exact release before the tests, such as curl -Lo " + jar + " " + javaHandWrittenDownload() + ".")
 		return ""
 	case 1:
 	default:
@@ -450,14 +455,14 @@ func javaHandWrittenTracer(setup *handWrittenSetup, jar string, workflow ciWorkf
 	case stepDirectory(workflow, job, download) != stepDirectory(workflow, job, test):
 		javaSimpleFormGap(setup, "downloads it in another working directory than the tests'")
 	case strings.Contains(address, "dtdg.co/latest-java-tracer") || strings.Contains(address, "/latest/"):
-		setup.missing("The job downloads the latest dd-java-agent (" + address + "), so each build can attach another release: download an exact release instead, such as " + javaHandWrittenDownload + ".")
+		setup.missing("The job downloads the latest dd-java-agent (" + address + "), so each build can attach another release: download an exact release instead, such as " + javaHandWrittenDownload() + ".")
 	case strings.Contains(address, "$"):
 		setup.unresolved("the job downloads dd-java-agent from " + address + ", whose release only CI knows.")
 	default:
 		if release, ok := javaCanonicalRelease(address); ok {
 			return release
 		}
-		setup.missing("The job downloads dd-java-agent from " + address + ", which is not an exact release's artifact on Maven Central or the DataDog/dd-trace-java GitHub releases, so ddtest cannot tell which agent it attaches: download an exact release from one of them instead, such as " + javaHandWrittenDownload + ".")
+		setup.missing("The job downloads dd-java-agent from " + address + ", which is not an exact release's artifact on Maven Central or the DataDog/dd-trace-java GitHub releases, so ddtest cannot tell which agent it attaches: download an exact release from one of them instead, such as " + javaHandWrittenDownload() + ".")
 	}
 	return ""
 }
