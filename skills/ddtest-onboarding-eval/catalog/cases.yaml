@@ -54,14 +54,18 @@
 #                      have. Each is a blocker identifier (catalog_check.blocker_id of a
 #                      summary.blocking_checks entry, such as "feature skipping:
 #                      inconclusive", "compatibility: suspected regression",
-#                      "runtime fidelity: substitute Java" or a headline like "Cypress
-#                      real-suite coverage was not observed"); fnmatch patterns
-#                      ("feature *: inconclusive") are allowed. Any other blocker fails
+#                      "runtime fidelity: substitute Java", "unresolved CI scope:
+#                      <file> / <job> / step <n>: <cause class>" or a headline like
+#                      "Cypress real-suite coverage was not observed"); fnmatch patterns
+#                      ("feature *: inconclusive") are allowed, but prefer exact
+#                      identifiers, which a new blocker can't match (write a literal
+#                      "[" as "[[]"). Any other blocker fails
 #                      the case; "configuration: <status>" and "not every project has
 #                      every required feature result" only restate others and count
 #                      only alone. Without blockers only the verdict is checked.
-#     run, ddtest      provenance: the run (round 1, rerun, rerun4) and ddtest build
-#                      the expectation was observed on.
+#     run, ddtest      provenance: the run (an output folder or round, such as
+#                      eval-claude-2026-11-04) and the ddtest build (its commit, as
+#                      passed with --ddtest-label) the expectation was observed on.
 #     agents           optional per-agent overrides, {codex|claude: {verdict,
 #                      blockers, reason, run, ddtest}}, applied over the shared
 #                      fields for that agent only. ddtest decides the verdict, so
@@ -159,8 +163,8 @@ cases:
   - CI Node 18 vs local Node 24 (previous rounds still completed).
   expected:
     verdict: COMPLETE LOCALLY
-    run: round 1
-    ddtest: 8c1779df
+    run: eval-claude-2026-11-04
+    ddtest: b7a9d2ba
     reason: CircleCI orb; the agent adds jest-circus for Jest 24 as ddtest's preflight prescribes
 - id: E02-pipeline-schema
   framework: mocha
@@ -216,8 +220,8 @@ cases:
   risks: []
   expected:
     verdict: COMPLETE LOCALLY
-    run: rerun
-    ddtest: '8c1779df + eval-round fixes (landed in #302)'
+    run: eval-claude-2026-11-04
+    ddtest: b7a9d2ba
     reason: 'no nyc gate: the test/ package has no source to instrument'
 - id: E03-manuscripts
   framework: vitest
@@ -246,11 +250,7 @@ cases:
     python: null
     pnpm: null
     bundle_binstubs: []
-    answers:
-    - ci_runtime=node=18
-    - ci_confirm=jenkins-plugin
-    - ci_confirm=jenkins-plugin-mode=agentless:datadoghq.com
-    - ci_confirm=jenkins-agent-runtime-matches
+    answers: []
   trims:
     required: null
     optional_speed: null
@@ -277,12 +277,15 @@ cases:
   risks:
   - CI uses yarn while the repo only has pnpm-lock.yaml; Jenkins docker agent node:18 (container jobs in plugin
     scope are a known unsupported area).
-  - Answers include Jenkins confirms; ci_runtime=node=18 carried from driver.py.
+  - No answers. The earlier Jenkins confirms and ci_runtime=node=18 went unused in round 1 and eval-claude-2026-11-04;
+    ddtest reads Node 18 from the docker agent and installs the tracer in the test step (no plugin, so no
+    ci_setup_confirmation_required).
   expected:
     verdict: COMPLETE LOCALLY
-    run: round 1
-    ddtest: 8c1779df
-    reason: Node 18 read from the Jenkins docker agent; the scripted answers went unused
+    run: eval-claude-2026-11-04
+    ddtest: b7a9d2ba
+    reason: Node 18 read from the Jenkins docker agent and the tracer installed in the test step, so ddtest asks
+      nothing
 - id: E08-kitchensink
   framework: cypress
   language: javascript
@@ -315,7 +318,6 @@ cases:
     bundle_binstubs: []
     answers:
     - ci_provider=gitlab
-    - ci_runtime=node=24
   trims:
     required: null
     optional_speed:
@@ -357,12 +359,12 @@ cases:
   - Cypress TIA (skipping/coverage) is deferred in ddtest; expect those controls as deferred.
   expected:
     verdict: INCOMPLETE
-    blockers:  # verified: rerun4 testdrive.json (the configuration line is derived)
+    blockers:  # verified: rerun4 and eval-claude-2026-11-04 testdrive.json (the configuration line is derived)
     - Cypress real-suite coverage was not observed
-    run: rerun4
-    ddtest: '55fe85ad (PR #302)'
-    reason: 122/122 and features 6/6; the only blocker is application coverage, which needs approval for a test-only
-      babel-plugin-istanbul
+    run: eval-claude-2026-11-04
+    ddtest: b7a9d2ba
+    reason: 122/122 and features 6/6, Node 24 read from the cypress/base:24.19.0 tag (no ci_runtime question); the only
+      blocker is application coverage, which needs approval for a test-only babel-plugin-istanbul
 - id: E09-lux-design-system
   framework: playwright
   language: javascript
@@ -439,8 +441,8 @@ cases:
   - 'HEAD of an active repo: pin the SHA.'
   expected:
     verdict: COMPLETE LOCALLY
-    run: rerun
-    ddtest: '8c1779df + eval-round fixes (landed in #302)'
+    run: eval-claude-2026-11-04
+    ddtest: b7a9d2ba
     reason: with the WebKit trim; ci_runtime=node=24 answers the question the mcr Playwright image raises
 - id: E04-battleship
   framework: cucumber
@@ -563,8 +565,8 @@ cases:
   - WDIO >= 9.21 numbering was a past ddtest bug; regression canary.
   expected:
     verdict: COMPLETE LOCALLY
-    run: rerun
-    ddtest: '8c1779df + eval-round fixes (landed in #302)'
+    run: eval-claude-2026-11-04
+    ddtest: b7a9d2ba
     reason: 85/85, features 5/5 (skipping not supported for WebdriverIO)
 - id: E05-httparty
   framework: rspec
@@ -625,9 +627,10 @@ cases:
   - 'No committed lockfile: a fresh bundle install resolves the newest gems each time (drift); freeze via the blob.'
   expected:
     verdict: COMPLETE LOCALLY
-    run: round 1
-    ddtest: 8c1779df
-    reason: the agent first picks a wrong datadog gem version, then corrects it
+    run: eval-claude-2026-11-04
+    ddtest: b7a9d2ba
+    reason: ddtest names the datadog-ci release (such as 1.42.0) for ruby-tracer-version; round 1's wrong datadog gem
+      detour did not recur
 - id: E06-brakeman
   framework: minitest
   language: ruby
@@ -696,8 +699,8 @@ cases:
     noisier.
   expected:
     verdict: COMPLETE LOCALLY
-    run: round 1
-    ddtest: 8c1779df
+    run: eval-claude-2026-11-04
+    ddtest: b7a9d2ba
     reason: 2/2 configurations with the required TTY trim
 - id: E07-qwed-ucp
   framework: pytest
@@ -756,10 +759,10 @@ cases:
   risks: []
   expected:
     verdict: PASSED
-    run: round 1
-    ddtest: 8c1779df
+    run: eval-claude-2026-11-04
+    ddtest: b7a9d2ba
     reason: the Python CI path is a manual CI edit, so PASSED rather than COMPLETE LOCALLY by design; observed on
-      Debian Python 3.11.2
+      Debian Python 3.11.2 (round 1) and CPython 3.12.16 (eval-claude-2026-11-04)
 - id: E12-kalamar-export
   framework: junit4
   language: java
@@ -822,11 +825,11 @@ cases:
   - Dockerfile and docker:dind jobs are distractors.
   expected:
     verdict: INCOMPLETE
-    blockers:  # unverified: rerun grading notes (auto-retries failed, compatibility inconclusive); no testdrive.json survived
-    - 'feature auto-retries: *'
+    blockers:  # verified: eval-claude-2026-11-04 testdrive.json, as the rerun grading notes said
+    - 'feature auto-retries: failed'
     - 'compatibility: inconclusive'
-    run: rerun
-    ddtest: '8c1779df + eval-round fixes (landed in #302)'
+    run: eval-claude-2026-11-04
+    ddtest: b7a9d2ba
     reason: JUnit 4.13.2 with surefire 3.6.0 reports retried attempts as skipped
 - id: E11-cdoc2-auth
   framework: junit5
@@ -891,8 +894,8 @@ cases:
   - Untrimmed, the suite is a time bomb (expired certs) and fails 3 tests; trimmed, only 8 tests remain.
   expected:
     verdict: COMPLETE LOCALLY
-    run: rerun
-    ddtest: '8c1779df + eval-round fixes (landed in #302)'
+    run: eval-claude-2026-11-04
+    ddtest: b7a9d2ba
     reason: with the expired-certificate trim; 2/2 configurations
 - id: E13-jcommander
   framework: testng
@@ -951,12 +954,12 @@ cases:
   - 'setup-java@v1 without distribution: JDK version must still be read as 21.'
   expected:
     verdict: INCOMPLETE
-    blockers:  # unverified: rerun grading notes (EFD and attempt-to-fix tracer_control_not_applied, quarantine failed)
-    - 'feature early-flake-detection: *'
-    - 'feature attempt-to-fix: *'
-    - 'feature quarantine: *'
-    run: rerun
-    ddtest: '8c1779df + eval-round fixes (landed in #302)'
+    blockers:  # verified: eval-claude-2026-11-04 testdrive.json (all three failed)
+    - 'feature early-flake-detection: failed'
+    - 'feature attempt-to-fix: failed'
+    - 'feature quarantine: failed'
+    run: eval-claude-2026-11-04
+    ddtest: b7a9d2ba
     reason: 'TestNG 7.0.0 with dd-java-agent 1.67.1: early flake detection and attempt-to-fix not applied, quarantine
       fails'
 - id: E14-tradukisto
@@ -1015,10 +1018,10 @@ cases:
   - 21 and 24 matrix rows cannot be certified on the JDK 17 image (needs a 21 and 24 image to cover).
   expected:
     verdict: INCOMPLETE
-    blockers:  # unverified: rerun grading notes (substitute_runtime_unaccepted for CI Java 21 and 24)
+    blockers:  # verified: eval-claude-2026-11-04 testdrive.json (substitute_runtime_unaccepted for CI Java 21 and 24)
     - 'runtime fidelity: substitute Java'
-    run: rerun
-    ddtest: '8c1779df + eval-round fixes (landed in #302)'
+    run: eval-claude-2026-11-04
+    ddtest: b7a9d2ba
     reason: local validation passes; accepting JDK 17 for CI's 21 and 24 rows needs a user answer the harness can't
       script
 - id: E15-spring-boot-cucumber
@@ -1083,13 +1086,18 @@ cases:
   - '@SpringBootTest DEFINED_PORT needs a free port.'
   expected:
     verdict: FAILED
-    blockers:  # verified: rerun4 testdrive.json (6 features x 2 configurations, all inconclusive)
+    blockers:  # verified: rerun4 (codex) and eval-claude-2026-11-04 testdrive.json (6 features x 2 configurations, all inconclusive)
     - 'compatibility: suspected regression'
-    - 'feature *: inconclusive'
-    run: rerun4
-    ddtest: '55fe85ad (PR #302)'
-    reason: 'dd-java-agent 1.67.1 Cucumber issue (resourcePaths is null), fixed in dd-trace-java #13153, release
-      1.69.0'
+    - 'feature auto-retries: inconclusive'
+    - 'feature early-flake-detection: inconclusive'
+    - 'feature skipping: inconclusive'
+    - 'feature quarantine: inconclusive'
+    - 'feature disabled: inconclusive'
+    - 'feature attempt-to-fix: inconclusive'
+    run: eval-claude-2026-11-04
+    ddtest: b7a9d2ba
+    reason: 'dd-java-agent Cucumber issue (resourcePaths is null) on both 1.67.1 and 1.68.1 (on CircleCI the agent
+      picks the release), fixed in dd-trace-java #13153, release 1.69.0'
 - id: E16-spring-karate-demo
   framework: karate
   language: java
@@ -1147,12 +1155,12 @@ cases:
   - Very small Karate surface (1 scenario).
   expected:
     verdict: INCOMPLETE
-    blockers:  # unverified: rerun grading notes (coverage 0/2; skipping and disabled inconclusive)
+    blockers:  # verified: eval-claude-2026-11-04 testdrive.json, as the rerun grading notes said (coverage 0/2; skipping and disabled inconclusive)
     - Java application coverage was not observed
-    - 'feature skipping: *'
-    - 'feature disabled: *'
-    run: rerun
-    ddtest: '8c1779df + eval-round fixes (landed in #302)'
+    - 'feature skipping: inconclusive'
+    - 'feature disabled: inconclusive'
+    run: eval-claude-2026-11-04
+    ddtest: b7a9d2ba
     reason: Karate drives the app over HTTP, so application coverage is 0/2 (tracer limitation)
 - id: E17-feel-scala
   framework: scalatest
@@ -1219,12 +1227,14 @@ cases:
   - 11 and 21 rows uncertifiable on the 17 image.
   expected:
     verdict: INCOMPLETE
-    blockers:  # unverified: rerun grading notes (substitute Java 11/21; release.yml scope steps, whose cause texts did not survive)
+    blockers:  # verified: eval-claude-2026-11-04 testdrive.json; the same release.yml steps as the rerun grading notes
     - 'runtime fidelity: substitute Java'
-    - 'unresolved CI scope: *'
+    - 'unresolved CI scope: .github/workflows/release.yml / release / step 1: CI command expression was not resolved'
+    - 'unresolved CI scope: .github/workflows/release.yml / release / step 5: CI command expression was not resolved'
+    - 'unresolved CI scope: .github/workflows/release.yml / release / step 9: CI command expression was not resolved'
     - 'CI runtime: inconclusive'
-    run: rerun
-    ddtest: '8c1779df + eval-round fixes (landed in #302)'
+    run: eval-claude-2026-11-04
+    ddtest: b7a9d2ba
     reason: local validation passes; accepting JDK 17 for CI's 11 and 21 rows needs a user answer, and release.yml's
       echo, gpg and release:prepare steps stay unresolved CI scope
 - id: E18-mbari-commons
@@ -1292,7 +1302,7 @@ cases:
   - Only viable Maven/Gradle MUnit candidate found.
   expected:
     verdict: COMPLETE LOCALLY
-    run: rerun
-    ddtest: '8c1779df + eval-round fixes (landed in #302)'
+    run: eval-claude-2026-11-04
+    ddtest: b7a9d2ba
     reason: one testdrive of ./gradlew build from the gradle-build-action step
 

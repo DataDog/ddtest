@@ -113,8 +113,17 @@ docker build --target agents -t ddtest-eval \
   skills/ddtest-onboarding-eval/scripts
 IMAGE=$(docker image inspect --format '{{.Id}}' ddtest-eval)
 ARCH=$(docker image inspect --format '{{.Architecture}}' "$IMAGE")
-GOOS=linux GOARCH="$ARCH" go build -o /absolute/path/to/ddtest-linux .
+GOOS=linux GOARCH="$ARCH" go build -o /absolute/path/to/ddtest-linux \
+  -ldflags "-X github.com/DataDog/ddtest/internal/buildinfo.Version=$(git rev-parse --short HEAD)" .
 ```
+
+A plain `go build` reports version `dev`; the `-ldflags` value above, as the
+Makefile and release builds set it, makes `ddtest --version` (and so
+`ddtest_version` in `run.json`) name the commit. Add `-dirty` to it for an
+uncommitted tree. `--ddtest-label <text>` (run_eval.py and run_catalog.py)
+records free-text provenance, such as `b7a9d2ba` or `b7a9d2ba + local fix`, as
+`ddtest_label` in `run.json` and `results.json`; next steps and the catalog's
+`expected.ddtest` use it in place of a `dev` version.
 
 Use a separate test account when available. An explicitly authorized existing
 CLI account works with `--existing-login`; no manual JSON export or new login is
@@ -163,7 +172,10 @@ starts from HEAD after setup and readiness (`agent_baseline` in `run.json`;
 `commit` stays the fetched SHA). Optional `--node` selects an absolute
 **image** executable for Codex, not a host binary. The recorded final ddtest
 runtime must match it. Optional `--model` selects a model; otherwise the fresh
-CLI default applies. `run.json` records the CLI version and requested model.
+CLI default applies. `run.json` records the CLI version, the requested model and
+`resolved_model`, the model the CLI reports in its session events (Claude's
+init event; `null` for Codex, which reports none; `resolved_models` lists more
+than one if a resumed turn changed it).
 
 The tested prompt is exactly:
 
@@ -246,7 +258,8 @@ setup, readiness, harness flags and answers, trims, measured timings, test
 counts, prepared-image notes and risks. Its header documents each field.
 `scripts/run_catalog.py` turns cases into `run_eval.py` arguments, runs them one
 after another, copies each trial's `.testoptimization` reports and small
-untracked files to `<evidence>/retained/` (untracked paths come from
+untracked files to `<evidence>/retained/` (the reports in the hidden
+`<evidence>/retained/.testoptimization/`, such as `testdrive.json`; untracked paths come from
 `status.txt`, with Git's path quoting decoded; Git never runs on the host in the
 trial checkout, and symlinks and paths outside it are skipped), then runs
 `run_eval.py --cleanup`. Each trial's output goes to `<id>-<agent>.log`.
@@ -259,23 +272,25 @@ exit. A second Ctrl-C kills the trial; cleanup still runs, and the runner
 prints the `--cleanup` command to retry it.
 
 Build the images that the selected cases name (`images` in the catalog lists
-each key's target and build arguments), then map them:
+each key's target and build arguments), then map them. `--dry-run` needs no
+`--ddtest`, images or output: it prints the exact `docker build` command for
+each image key the selection needs (tagged `ddtest-eval-<key>`), a shell line
+that writes their IDs to `images.json`, an `--image-file` template, and every
+case's `run_eval.py` arguments, with `<ddtest>`, `<image:KEY>` and `<output>`
+placeholders for what was not given. It builds nothing.
 
 ```sh
 S=skills/ddtest-onboarding-eval/scripts
-docker build --target agents -t ddtest-eval -f $S/Dockerfile $S
-docker build --target java -t ddtest-eval-java17 -f $S/Dockerfile $S \
-  --build-arg JDK_IMAGE=eclipse-temurin:17-jdk@sha256:<digest from the catalog>
-python3 $S/run_catalog.py --dry-run --all            # print every case's arguments
-python3 $S/run_catalog.py E01 E02 \
-  --image-map agents="$(docker image inspect --format '{{.Id}}' ddtest-eval)" \
-  --ddtest /absolute/path/to/ddtest-linux --existing-login \
-  --output /absolute/path/to/new-evidence-folder
+python3 $S/run_catalog.py --dry-run E01 E02    # image builds and each case's arguments
+# run the printed docker build commands and the images.json line, then:
+python3 $S/run_catalog.py E01 E02 --image-file images.json \
+  --ddtest /absolute/path/to/ddtest-linux --ddtest-label "$(git rev-parse --short HEAD)" \
+  --existing-login --output /absolute/path/to/new-evidence-folder
 ```
 
 `--image-file` (or `DDTEST_EVAL_IMAGES`) takes a JSON or YAML mapping of image
 key to image instead. `--timeout` defaults to 5400 seconds. `--agent` is
-`codex` (default), `claude` or `both`. One agent is one lane: its cases run one
+`codex` (the default for trials), `claude` or `both`. One agent is one lane: its cases run one
 after another, because `--existing-login` locks that agent's login for a whole
 trial. `both` runs a Codex lane and a Claude lane at the same time, each in
 catalog order, so the same case can run in both lanes at once
@@ -285,8 +300,11 @@ lock when it uses a managed model helper. Trial folders, caches and containers
 are per trial. Two lanes double the Docker load: on a small VM (4 CPUs, 8 GB)
 timings get noisier, and heavy cases (browsers, JVM builds) may need more CPUs
 or memory. A case whose evidence folder exists is not run and fails the batch.
-Status lines start with `[codex]` or `[claude]`, and each lane also writes
-`<output>/lane-<agent>.log`. The first Ctrl-C reaches every running trial once;
+Status lines start with `[codex]` or `[claude]` and reach stdout as each case
+starts and ends, also when it is redirected; each lane also writes them to
+`<output>/lane-<agent>.log`. During a long run, follow that file
+(`tail -f <output>/lane-claude.log`) and the running case's
+`<output>/<id>-<agent>.log`. The first Ctrl-C reaches every running trial once;
 both finalize, retain and clean up, and no lane starts another case.
 
 Claude with `--existing-login` needs one of: a managed model helper
@@ -314,14 +332,18 @@ catalog header documents its fields. `verdict` is the `summary.status` a correct
 trial reaches. For INCOMPLETE and FAILED, optional `blockers` lists the
 blockers the verdict may have, as identifiers derived from
 `summary.blocking_checks`: `feature <name>: <status>`, `compatibility:
-<status>`, `runtime fidelity: substitute Java`, `unresolved CI scope: <cause>`,
+<status>`, `runtime fidelity: substitute Java`, `unresolved CI scope: <file> /
+<job> / step <n>: <cause class>` (one per step; the class is the cause's
+leading clause, such as `CI command expression was not resolved`, without the
+step's command or ddtest's "Runs before the job's ... tests" context),
 `configuration: <status>`, or a headline such as `Cypress real-suite coverage
-was not observed`; `fnmatch` patterns such as `feature *: inconclusive` are
-allowed. So INCOMPLETE for the known reason passes, and INCOMPLETE with a new
+was not observed`. `fnmatch` patterns such as `feature *: inconclusive` are
+allowed, but prefer exact identifiers: a broad pattern also matches a new real
+blocker. So INCOMPLETE for the known reason passes, and INCOMPLETE with a new
 blocker fails. `expected.agents.<codex|claude>` overrides verdict, blockers or
 reason for one agent; ddtest decides the verdict, so use it only for a known
-agent difference. The E12, E13, E14, E16 and E17 blockers come from grading
-notes, not retained reports; the first real run either confirms or corrects them.
+agent difference. Every case's blockers are confirmed by the retained reports
+of eval-claude-2026-11-04.
 
 Each trial gets one outcome:
 
@@ -342,24 +364,47 @@ expected, actual, outcome), `NOTE <id>: agents disagree` when both agents ran a
 case to different verdicts (agent behavior, not ddtest), and one block per case
 that did not pass, `ERROR` (or `IMPROVEMENT`), with what failed, expected and
 actual, ddtest's last result and blocking checks, the failing harness step
-and its output, the evidence paths, and the next step. It writes the same data
+and its output, the evidence paths, and the next step. For a regression or
+unexpected blocker the next step offers three choices: (1) a ddtest bug:
+investigate, starting from the `ddtest-results.jsonl` row where each new
+blocker first appears (often ddtest's own advice before the agent's edit); keep
+`expected` so the regression stays visible; (2) an intentional ddtest change:
+update the shared `expected`; (3) agent-specific: add `expected.agents.<agent>`.
+A trial whose last ddtest result asks the user a question no `--user-answer`
+form answers (such as `substitute_runtime_unaccepted` or
+`scope_decision_required`) gets the note `question not scriptable: <code>`,
+`question` in its record and an entry in `questions_not_scriptable`. It writes the same data
 to `<output>/results.json` (or `--results PATH`): `exit_code`, `outcomes`,
 `agents_disagree` and, per case and agent, `outcome`, `direction`, `expected`,
 `actual` (verdict, blocker identifiers, blocking-check excerpts, ddtest's final
-reason, run status, ddtest version), `problems`, `notes`, `evidence` paths and
-`next_step`. Exit status: 0 when every trial passed, 1 when any did not, 3 when
-the only differences are improvements, 128+N when interrupted.
+reason, run status, ddtest version and label), `problems`, `notes`, `evidence`
+paths and `next_step`, plus `ddtest_label`, `questions_not_scriptable` and
+`not_evaluated`. Exit status: 0 when every trial passed, 1 when any did not, 3
+when the only differences are improvements, 128+N when interrupted.
+
+An existing `results.json` for the same output folder is merged into, not
+replaced: each new record replaces the entry with the same case and agent,
+other entries stay, and `outcomes`, `agents_disagree` and `exit_code` are
+recomputed over all of them (`merged_entries_kept` counts the kept ones). With
+`--all`, the batch replaces every entry of the agents it covers. A
+`results.json` written for another output folder is refused; pass a new
+`--results`. The process exit status covers only the cases of this invocation.
 
 `--evaluate-only` checks existing evidence and runs nothing: `run_catalog.py
---evaluate-only E02 --output <folder holding E02-pipeline-schema-codex>`. With
-`--all` (or `--agent both`), cases without a folder are skipped; a named case
-without one is a `harness_failure`.
+--evaluate-only E02 --output <folder holding E02-pipeline-schema-codex>`.
+Without `--agent`, each case's agents are the `<id>-<agent>` folders that exist.
+A requested agent without a folder is listed as `no <agent> evidence (found:
+...)` and is not evaluated; for a named case with `--agent codex` or `claude`,
+or a named case with no evidence at all, the exit status is 1. With `--all` (or
+`--agent both`), cases without a folder are only listed.
 
 After an intentional ddtest change, rerun the affected cases, then copy what
 the block's next step names into the case: `verdict`, `blockers` (the
 identifiers listed under actual, without the `configuration:` lines), `reason`,
-`run` (the output folder or round) and `ddtest` (the version in `run.json`).
-Check it with `--evaluate-only` on the same evidence, which must now pass.
+`run` (the output folder or round, such as `eval-claude-2026-11-04`) and
+`ddtest` (the `--ddtest-label` you passed, such as the commit; a `dev` version
+names no build). Check it with `--evaluate-only` on the same evidence, which
+must now pass.
 
 To add or replace a case:
 
