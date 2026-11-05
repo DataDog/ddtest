@@ -699,14 +699,12 @@ func directCucumberCoverageGap(root string, provider ciProvider, location string
 		if err != nil {
 			return directScopedGap(provider, location, leaf.step, err)
 		}
-		if _, ok := provider.(buildkite); ok {
-			command = buildkiteEscape(command) // pipeline upload would replace each $.
-		}
+		command, written := providerCommand(provider, command)
 		reason := CucumberCoverageGap + " CI runs " + leaf.test.Command + " directly, not through a package script, so onboard --apply cannot wrap it with NYC."
 		if leaf.test.usesNYC {
 			reason = "CI runs " + leaf.test.Command + " directly, not through a package script, without " + cucumberImpactedWorkaround + ", which onboard --apply adds to the package scripts it scopes and dd-trace's Cucumber instrumentation needs, so onboard --apply cannot add it to this command."
 		}
-		return &EditThenApplyGap{SetupGap{directLeafLocation(location, leaf.step), reason + " Change this CI command to exactly: " + command + ". Then rerun onboard --apply; " + stays}}
+		return &EditThenApplyGap{SetupGap{directLeafLocation(location, leaf.step), reason + " Change this CI command to exactly: " + command + "." + written + " Then rerun onboard --apply; " + stays}}
 	}
 	return nil
 }
@@ -719,12 +717,31 @@ func directScopedGap(provider ciProvider, location string, step runtimeStep, err
 	if !errors.As(err, &split) {
 		return &SetupGap{location, err.Error()}
 	}
-	if _, ok := provider.(buildkite); ok {
-		escaped := *split // pipeline upload would replace each $.
-		escaped.Command = buildkiteEscape(split.Command)
-		split = &escaped
+	escaped := *split
+	var written string
+	escaped.Command, written = providerCommand(provider, split.Command)
+	return &EditThenApplyGap{SetupGap{directLeafLocation(location, step), escaped.Error() + ": it adds the " + provider.setupName() + " before the tests when the job has none, and reads the conversion as outside the tests." + written}}
+}
+
+// providerCommand is a shell command ddtest prescribes for a CI step,
+// written as the provider's configuration holds it, and how to place it
+// there when that takes more than replacing the old command: Buildkite's
+// pipeline upload would replace each $, so each is doubled; a Jenkinsfile
+// holds it in a Groovy string, which must be single-quoted, in triple
+// single quotes for a multi-line script, so Groovy leaves every $ to the
+// shell, as the setup snippet's instructions require too. In it, each
+// backslash is escaped, as is a run of three quotes that would end it;
+// other quotes stay as they are.
+func providerCommand(provider ciProvider, command string) (string, string) {
+	switch provider.name() {
+	case buildkiteProvider:
+		return buildkiteEscape(command), ""
+	case jenkinsProvider:
+		escaped := strings.ReplaceAll(command, `\`, `\\`)
+		escaped = strings.ReplaceAll(escaped, "'''", `\'\'\'`)
+		return escaped, " This is the command as a single-quoted Groovy string (sh '''…''') holds it, and Groovy leaves every $ to the shell only in a single-quoted one: when the sh step's script is double-quoted (\"…\" or \"\"\"…\"\"\"), or a one-line '…' string and this command has a single quote, replace that string with sh '''…''' holding the same script, keeping its other commands unchanged, with this command in place of the old one."
 	}
-	return &EditThenApplyGap{SetupGap{directLeafLocation(location, step), split.Error() + ": it adds the " + provider.setupName() + " before the tests when the job has none, and reads the conversion as outside the tests."}}
+	return command, ""
 }
 
 // cucumberImpactedWorkaroundSet reports whether a direct Cucumber
@@ -749,14 +766,12 @@ func directLeafLocation(location string, step runtimeStep) string {
 // WebdriverIO invocation needs (see directScopedCommand), written as the
 // provider's configuration holds it, and what onboard --apply does next.
 func directLeafReason(provider ciProvider, framework, leaf, command string, configured bool) string {
-	if _, ok := provider.(buildkite); ok {
-		command = buildkiteEscape(command) // pipeline upload would replace each $.
-	}
+	command, written := providerCommand(provider, command)
 	edit := "it adds the " + provider.setupName() + " before this command, with the command that exports " + scopedEnvironment(framework) + "."
 	if configured {
 		edit = "the job's " + provider.setupName() + " already exports " + scopedEnvironment(framework) + "."
 	}
-	return "CI runs " + leaf + " directly, not through a package script, so the command itself must read the tracer's preload from " + scopedEnvironment(framework) + ", as a scoped package script does. Change this CI command to exactly: " + command + ". Then rerun onboard --apply: " + edit
+	return "CI runs " + leaf + " directly, not through a package script, so the command itself must read the tracer's preload from " + scopedEnvironment(framework) + ", as a scoped package script does. Change this CI command to exactly: " + command + "." + written + " Then rerun onboard --apply: " + edit
 }
 
 // outsideTestJobs reports whether the language tells that job runs none of

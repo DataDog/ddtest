@@ -941,7 +941,7 @@ func TestHandWrittenJenkinsDirectCucumberRoundTrip(t *testing.T) {
 	require.ErrorAs(t, err, &gap)
 	_, after, ok := strings.Cut(gap.Reason, "Change this CI command to exactly: ")
 	require.True(t, ok, gap.Reason)
-	written, _, _ := strings.Cut(after, ". Then rerun onboard --apply")
+	written, _, _ := strings.Cut(after, ". This is the command as a single-quoted Groovy string")
 	require.True(t, strings.HasPrefix(written, scopedPrefix("DD_CUCUMBER_NODE_OPTIONS")+" "+cucumberImpactedWorkaround+" "), written)
 
 	writeFile(t, root, "Jenkinsfile", pipeline(written))

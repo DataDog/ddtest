@@ -1213,6 +1213,133 @@ func TestProviderEditsTheTestsInsideAStatusSubshell(t *testing.T) {
 	}
 }
 
+// jenkinsContainerTestStage is a Jenkinsfile whose Test stage runs in a
+// container, where onboard --apply sets the tracer up with the setup
+// snippet, with npm ci and then script, an sh step's argument as written.
+func jenkinsContainerTestStage(script string) string {
+	return "pipeline {\n  agent { docker { image 'node:22' } }\n  stages {\n    stage('Test') {\n      steps {\n        sh 'npm ci'\n        sh " + script + "\n      }\n    }\n  }\n}\n"
+}
+
+// jenkinsWritten is the shell text of the sh step a Jenkinsfile runs last,
+// as Groovy reads it without its surrounding blank space, which must
+// interpolate nothing.
+func jenkinsWritten(t *testing.T, jenkinsfile string) string {
+	t.Helper()
+	tokens, err := lexGroovy(jenkinsfile)
+	require.NoError(t, err)
+	var text string
+	for _, token := range tokens {
+		if token.str != nil {
+			literal, ok := token.str.literal()
+			require.True(t, ok, "Groovy interpolates %s", token.text)
+			text = strings.TrimSpace(literal)
+		}
+	}
+	return text
+}
+
+// In a container stage, the snippet's stage, a direct Cucumber invocation
+// piped into a report converter gets its replacement as a Groovy string in
+// triple single quotes holds it, whatever string the sh step uses:
+// pasted into a double-quoted one, Groovy would read $status and
+// ${NODE_OPTIONS} itself and reject $?. Quotes in the command are kept, and
+// ddtest reads the result as the tests and the conversion after them. A host
+// stage gets the plugin, which reaches the command without any change.
+func TestJenkinsReportPipePrescriptionIsASingleQuotedGroovyString(t *testing.T) {
+	framework := scopedFrameworks[0]
+	pipe := `./node_modules/.bin/cucumber-js ./features --format json | ./node_modules/.bin/cucumber-junit --name 'My suite' > junit.xml`
+	tests := cucumberScopedOptions + " " + cucumberImpactedWorkaround + " npx --no-install nyc -- ./node_modules/.bin/cucumber-js ./features --format json:cucumber-report.json"
+	want := statusSubshell("cucumber-report.json", tests, `cat cucumber-report.json | ./node_modules/.bin/cucumber-junit --name 'My suite' > junit.xml`)
+	for name, script := range map[string]string{
+		"double-quoted":        groovyQuote(pipe, `"`),
+		"single-quoted":        groovyQuote(pipe, "'"),
+		"triple-double-quoted": `"""` + strings.NewReplacer(`\`, `\\`, "$", `\$`).Replace(pipe) + `"""`,
+		"triple-single-quoted": "'''" + strings.ReplaceAll(pipe, `\`, `\\`) + "'''",
+	} {
+		t.Run(name, func(t *testing.T) {
+			jenkinsfile := jenkinsContainerTestStage(script)
+			require.Equal(t, pipe, jenkinsWritten(t, jenkinsfile))
+			root := scopedRepository(t, scopedProvider{name: jenkinsProvider, file: "Jenkinsfile"}, jenkinsfile, framework.pkg, nil)
+			_, err := PlanJavaScriptSetup(root, "cucumber", "5.133.0", "datadoghq.com", ">=18")
+			var gap *EditThenApplyGap
+			require.ErrorAs(t, err, &gap)
+			require.Contains(t, gap.Reason, "replace that string with sh '''…''' holding the same script")
+			_, after, ok := strings.Cut(gap.Reason, "or the conversion's when only the conversion fails: ")
+			require.True(t, ok, gap.Reason)
+			command, _, ok := strings.Cut(after, ". Then rerun onboard --apply")
+			require.True(t, ok, gap.Reason)
+
+			applied := jenkinsContainerTestStage("'''\n          " + command + "\n        '''")
+			require.Equal(t, want, jenkinsWritten(t, applied), "Groovy passes the shell the exact command")
+			writeFile(t, root, "Jenkinsfile", applied)
+			requireJenkinsReadsTheStatusSubshell(t, root, tests, `cat cucumber-report.json | ./node_modules/.bin/cucumber-junit --name 'My suite' > junit.xml`)
+		})
+	}
+
+	host := strings.Replace(jenkinsContainerTestStage(groovyQuote(pipe, "'")), "agent { docker { image 'node:22' } }", "agent any", 1)
+	root := scopedRepository(t, scopedProvider{name: jenkinsProvider, file: "Jenkinsfile"}, host, framework.pkg, nil)
+	_, err := PlanJavaScriptSetup(root, "cucumber", "5.133.0", "datadoghq.com", ">=18")
+	require.NoError(t, err, "the plugin needs no change to the command")
+}
+
+// The tests inside an existing status subshell in a container stage get
+// their scoped command as a single-quoted Groovy string holds it, which
+// ddtest reads back as the same tests and conversion.
+func TestJenkinsStatusSubshellEditIsASingleQuotedGroovyString(t *testing.T) {
+	framework := scopedFrameworks[0]
+	conversion := "cat cucumber-report.json | ./node_modules/.bin/cucumber-junit > junit.xml"
+	original := statusSubshell("cucumber-report.json", "./node_modules/.bin/cucumber-js ./features --format json:cucumber-report.json", conversion)
+	jenkinsfile := jenkinsContainerTestStage(groovyQuote(original, `"`))
+	require.Equal(t, original, jenkinsWritten(t, jenkinsfile))
+	root := scopedRepository(t, scopedProvider{name: jenkinsProvider, file: "Jenkinsfile"}, jenkinsfile, framework.pkg, nil)
+	_, err := PlanJavaScriptSetup(root, "cucumber", "5.133.0", "datadoghq.com", ">=18")
+	var gap *EditThenApplyGap
+	require.ErrorAs(t, err, &gap)
+	require.Contains(t, gap.Reason, "replace that string with sh '''…''' holding the same script")
+	_, after, ok := strings.Cut(gap.Reason, "Change this CI command to exactly: ")
+	require.True(t, ok, gap.Reason)
+	command, _, ok := strings.Cut(after, ". This is the command as a single-quoted Groovy string")
+	require.True(t, ok, gap.Reason)
+	want := statusSubshell("cucumber-report.json", cucumberScopedOptions+" "+cucumberImpactedWorkaround+" npx --no-install nyc -- ./node_modules/.bin/cucumber-js ./features --format json:cucumber-report.json", conversion)
+	require.Equal(t, want, command)
+
+	applied := jenkinsContainerTestStage("'''\n          " + command + "\n        '''")
+	require.Equal(t, want, jenkinsWritten(t, applied))
+	writeFile(t, root, "Jenkinsfile", applied)
+	requireJenkinsReadsTheStatusSubshell(t, root, cucumberScopedOptions+" "+cucumberImpactedWorkaround+" npx --no-install nyc -- ./node_modules/.bin/cucumber-js ./features --format json:cucumber-report.json", conversion)
+}
+
+// requireJenkinsReadsTheStatusSubshell checks that the Jenkinsfile's test
+// step is read as the status subshell of tests and conversion, and that
+// onboard --apply asks for no further change to its command.
+func requireJenkinsReadsTheStatusSubshell(t *testing.T, root, tests, conversion string) {
+	t.Helper()
+	scope, err := DiscoverValidationScope(root, "cucumber")
+	require.NoError(t, err)
+	require.Empty(t, scope.Unresolved)
+	require.Len(t, scope.Commands, 1)
+	_, configuration, _ := strings.Cut(tests, "npx --no-install ")
+	require.Equal(t, configuration, scope.Commands[0].Command, "the tests are the configuration")
+	require.Contains(t, scope.Commands[0].StepScopeNotes, "This CI step runs "+conversion+" after its cucumber tests, whether they pass or fail, then exits with the tests' status, or with the status of a command after them that fails when they pass.")
+	_, err = PlanJavaScriptSetup(root, "cucumber", "5.133.0", "datadoghq.com", ">=18")
+	if err != nil {
+		require.NotContains(t, err.Error(), "CI command", "the command needs no further change")
+	}
+}
+
+// A command Jenkins holds in triple single quotes keeps its backslashes and any run
+// of three quotes as Groovy reads them; other quotes stay as they are.
+func TestProviderCommandEscapesForASingleQuotedGroovyString(t *testing.T) {
+	for _, command := range []string{`echo "$a" 'b'`, `printf '%s\n' x`, `echo '''`, `echo ''''`, `echo \\`} {
+		written, note := providerCommand(jenkinsContainer{}, command)
+		require.NotEmpty(t, note)
+		require.Equal(t, command, jenkinsWritten(t, "sh '''\n"+written+"\n'''\n"), written)
+	}
+	written, note := providerCommand(gitLabCI{}, `echo "$a"`)
+	require.Equal(t, `echo "$a"`, written)
+	require.Empty(t, note)
+}
+
 // The intermediate report is a file the pipeline names nowhere, so the
 // conversion never writes to the file it reads; a quoted formatter option
 // is replaced by its decoded text, quoted only when it needs to be.
