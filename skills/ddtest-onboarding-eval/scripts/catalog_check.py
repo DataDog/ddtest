@@ -25,6 +25,8 @@ from pathlib import Path
 import re
 import shlex
 
+import user_answers
+
 EXPECTED_VERDICTS = ("COMPLETE LOCALLY", "PASSED", "INCOMPLETE", "FAILED")
 # STOPPED: the agent ended without a validation report (only actual, never expected).
 VERDICT_RANK = {"STOPPED": 0, "FAILED": 1, "INCOMPLETE": 2, "PASSED": 3, "COMPLETE LOCALLY": 4}
@@ -46,13 +48,50 @@ def one_line(text, limit=None):
     return text if limit is None or len(text) <= limit else text[:limit - 1] + "…"
 
 
-def blocker_id(check, features=()):
-    """Stable identifier of one summary.blocking_checks entry.
+# Context ddtest puts before an unresolved step's cause; the location already says where the step runs.
+SCOPE_CONTEXT = re.compile(r"Runs (?:before|after) .*?, which (?:ddtest can't replay|it may prepare): ")
+SCOPE_PLACE = re.compile(r"(?:^|; )([^;]+? / [^;]+? / step \d+) \(")
+CLASS_LIMIT = 120
+
+
+def without_context(cause):
+    match = SCOPE_CONTEXT.match(cause)
+    return cause[match.end():] if match else cause
+
+
+def scope_class(cause):
+    """The leading clause of an unresolved-scope cause, without its command or expression."""
+    cause = without_context(cause)
+    return one_line(re.split(r": |; |\. ", cause, maxsplit=1)[0].rstrip("."), CLASS_LIMIT)
+
+
+def scope_ids(text):
+    """unresolved CI scope: <file> / <job> / step <n>: <class>, one per step ddtest lists."""
+    grouped = re.match(r"unresolved CI scope \(\d+ steps: (.*?)\): (.*)$", text)
+    if grouped:
+        places, cause = SCOPE_PLACE.findall(grouped[1]), grouped[2]
+    else:
+        rest = text.removeprefix("unresolved CI scope").removeprefix(":").strip()
+        located = re.match(r"([^;]+? / [^;]+? / step \d+) \(", rest)
+        if located and "): " in rest:
+            places, cause = [located[1]], rest.split("): ", 1)[1]
+        else:
+            places, cause = [], rest
+    label = scope_class(cause)
+    return [f"unresolved CI scope: {place}: {label}" for place in places] or [f"unresolved CI scope: {label}"]
+
+
+def blocker_ids(check, features=()):
+    """Stable identifiers of one summary.blocking_checks entry.
 
     feature <name>: <status>      "<project>/<name>: <status>"
     configuration: <status>       "configuration <command>: <status>"
     runtime fidelity: substitute <runtime>
-    unresolved CI scope: <cause>  locations dropped
+    unresolved CI scope: <file> / <job> / step <n>: <class>
+                                  one per listed step; <class> is the cause's
+                                  leading clause, without its command, and
+                                  without ddtest's "Runs before the job's ..."
+                                  context
     workflow <name>: <status>, CI preservation: <status>   remedy dropped
     compatibility / CI runtime / CI tracer agreement: <status>
     anything else                 its headline, up to the first ": " or ". "
@@ -60,21 +99,58 @@ def blocker_id(check, features=()):
     text = one_line(check)
     head, dash, _ = text.partition(" — ")
     if dash and head.startswith(("workflow ", "CI preservation: ")):
-        return head
+        return [head]
     feature = re.search(r"/([a-z][a-z0-9-]*): ([a-z][a-z_ -]*)$", text)
     if feature and feature[1] in (*FEATURES, *features):
-        return f"feature {feature[1]}: {feature[2]}"
+        return [f"feature {feature[1]}: {feature[2]}"]
     if text.startswith("configuration ") and ": " in text:
-        return "configuration: " + text.rsplit(": ", 1)[1]
+        return ["configuration: " + text.rsplit(": ", 1)[1]]
     substitute = re.match(r"runtime fidelity: validated on substitute (\S+)", text)
     if substitute:
-        return "runtime fidelity: substitute " + substitute[1]
+        return ["runtime fidelity: substitute " + substitute[1]]
     if text.startswith("unresolved CI scope"):
-        cause = text.rsplit("): ", 1)[1] if "): " in text else text.partition(": ")[2]
-        return "unresolved CI scope: " + re.split(r"\. ", cause, maxsplit=1)[0].rstrip(".")
+        return scope_ids(text)
     if text.startswith(("compatibility: ", "CI runtime: ", "CI tracer agreement: ")):
-        return re.split(r"\. ", text, maxsplit=1)[0].rstrip(".")
-    return re.split(r": |\. ", text, maxsplit=1)[0].rstrip(".")
+        return [one_line(re.split(r"\. ", text, maxsplit=1)[0].rstrip("."), CLASS_LIMIT)]
+    return [one_line(re.split(r": |\. ", text, maxsplit=1)[0].rstrip("."), CLASS_LIMIT)]
+
+
+def blocker_id(check, features=()):
+    """The first identifier of a check (a grouped unresolved-scope line has one per step)."""
+    return blocker_ids(check, features)[0]
+
+
+def needle(check):
+    """Text that marks where a blocker first appears in ddtest's results."""
+    text = one_line(check)
+    if text.startswith("unresolved CI scope"):
+        cause = text.split("): ", 1)[1] if "): " in text else text.partition(": ")[2]
+        return without_context(cause)[:CLASS_LIMIT]
+    return text[:CLASS_LIMIT]
+
+
+def strings(value):
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for item in value.values():
+            yield from strings(item)
+    elif isinstance(value, list):
+        for item in value:
+            yield from strings(item)
+
+
+def first_rows(checks, identifiers, rows, features=()):
+    """{identifier: ddtest-results.jsonl row} where each blocker's text first appears."""
+    texts = [(number, one_line(" ".join(strings(row["result"])))) for number, row in rows
+             if isinstance(row.get("result"), dict)]
+    found = {}
+    for check in checks:
+        for identifier in blocker_ids(check, features):
+            if identifier in identifiers and identifier not in found:
+                marker = needle(check)
+                found[identifier] = next((number for number, text in texts if marker and marker in text), None)
+    return found
 
 
 def expected_for(case, agent=None):
@@ -218,7 +294,7 @@ def last_result(rows):
     return number, first, row["result"]
 
 
-def evaluate(case, evidence, log=None, rerun=None, agent=None):
+def evaluate(case, evidence, log=None, rerun=None, agent=None, ddtest_label=None):
     """Outcome record for one case's evidence folder (see the module docstring)."""
     evidence = Path(evidence)
     agent = agent or (evidence.name.rsplit("-", 1)[-1] if evidence.name.rsplit("-", 1)[-1] in AGENTS else None)
@@ -228,7 +304,7 @@ def evaluate(case, evidence, log=None, rerun=None, agent=None):
               "outcome": None, "direction": None,
               "expected": {key: expected.get(key) for key in ("verdict", "blockers", "reason", "run", "ddtest")},
               "actual": {"verdict": None, "blockers": [], "blocking_checks": [], "final_reason": None,
-                         "run_status": None, "ddtest_version": None},
+                         "run_status": None, "ddtest_version": None, "ddtest_label": ddtest_label},
               "problems": [], "notes": [], "evidence": evidence_paths(evidence, log), "next_step": None}
     record["expected"]["source"] = f"expected.agents.{agent}" if agent in ((case.get("expected") or {}).get("agents") or {}) \
         else "expected"
@@ -245,6 +321,7 @@ def evaluate(case, evidence, log=None, rerun=None, agent=None):
         return finish(record, "harness_failure", "run.json missing or unreadable", log_tail(log), rerun)
     actual["run_status"] = run.get("status")
     actual["ddtest_version"] = run.get("ddtest_version")
+    actual["ddtest_label"] = run.get("ddtest_label") or ddtest_label
     rows = read_rows(evidence / "ddtest-results.jsonl")
     row, first_row, result = last_result(rows)
     report = read_json(evidence / REPORT)
@@ -253,11 +330,16 @@ def evaluate(case, evidence, log=None, rerun=None, agent=None):
     features = [str(feature.get("name")) for feature in (report or {}).get("features") or [] if isinstance(feature, dict)]
     checks = [str(check) for check in summary.get("blocking_checks") or []]
     actual["blocking_checks"] = [one_line(check, 240) for check in checks]
-    actual["blockers"] = list(dict.fromkeys(blocker_id(check, features) for check in checks))
+    actual["blockers"] = list(dict.fromkeys(identifier for check in checks for identifier in blocker_ids(check, features)))
     if result:
         actual["final_reason"] = one_line(" ".join(str(result.get(key)) for key in ("status", "code") if result.get(key))
                                           + ": " + str(result.get("reason") or ""), 240)
         record["ddtest_rows"] = {"last": row, "last_turn_from": first_row}
+        code = user_answers.unscriptable(result)
+        if code:
+            # The trial ended on a decision only the user can make; no answer form covers it.
+            record["question"] = {"code": code, "scriptable": False, "row": row, "next_action": result.get("next_action")}
+            record["notes"].append(f"question not scriptable: {code} (ddtest-results.jsonl row {row})")
     actual["verdict"] = summary.get("status") or response_verdict(result.get("final_response")) or (
         "STOPPED" if result else None)
     problem = harness_problem(run, log)
@@ -268,6 +350,15 @@ def evaluate(case, evidence, log=None, rerun=None, agent=None):
     if problem:
         return finish(record, "agent_failure", problem, "", rerun)
     want, got = expected.get("verdict"), actual["verdict"]
+    new = [identifier for identifier in actual["blockers"]
+           if not matches(identifier, DERIVED) and not matches(identifier, allowed)]
+    if new and (VERDICT_RANK.get(got, -1) < VERDICT_RANK.get(want, -1) or got == want and allowed):
+        by_number = dict(rows)
+        record["introduced"] = {
+            identifier: {"row": number, "result": one_line(" ".join(
+                str(by_number[number]["result"].get(key)) for key in ("status", "code")
+                if by_number[number]["result"].get(key))) if number else None}
+            for identifier, number in first_rows(checks, new, rows, features).items()}
     if got != want:
         record["direction"] = "better" if VERDICT_RANK.get(got, -1) > VERDICT_RANK.get(want, -1) else "worse"
         return finish(record, "verdict_mismatch", f"verdict {got}, expected {want}", "", rerun)
@@ -311,13 +402,34 @@ HARNESS_HINTS = {
 }
 
 
+def ddtest_provenance(actual):
+    """The ddtest build to record in expected.ddtest: the label, else a real version."""
+    if actual.get("ddtest_label"):
+        return actual["ddtest_label"]
+    version = actual.get("ddtest_version")
+    if version and version != "dev":
+        return version
+    return f"<ddtest commit> (run.json says {version or 'no version'}; pass --ddtest-label)"
+
+
+def introduced_text(record, span):
+    introduced = record.get("introduced") or {}
+    if not introduced:
+        return f"investigate ddtest from {span}"
+    parts = []
+    for identifier, where in introduced.items():
+        parts.append(f"`{identifier}` first appears in ddtest-results.jsonl row {where['row']} ({where['result']})"
+                     if where["row"] else f"`{identifier}` appears only in the final report")
+    return "investigate ddtest: " + "; ".join(parts)
+
+
 def next_step(record, rerun):
     name, outcome = record["id"], record["outcome"]
     actual, expected = record["actual"], record["expected"]
     rows = record.get("ddtest_rows") or {}
     span = ("ddtest-results.jsonl " + (f"row {rows['last']}" if rows["last_turn_from"] == rows["last"] else
                                        f"rows {rows['last_turn_from']}-{rows['last']}")) if rows else "ddtest-results.jsonl"
-    provenance = f"run <this output folder>, ddtest {actual.get('ddtest_version') or '<version>'}"
+    provenance = f"run <this output folder>, ddtest {ddtest_provenance(actual)}"
     target = f"cases.yaml {name} {expected.get('source', 'expected')}"
     if outcome == "pass":
         return None
@@ -329,19 +441,23 @@ def next_step(record, rerun):
         return (f"agent ({record['agent'] or 'unknown'}): inspect final-response.md vs ddtest final_response (testdrive.json summary.final_response) and "
                 f"run.json agent_reporting; activity.jsonl shows what the agent did; rerun `{rerun}` if it was a one-off")
     suggested = "; ".join(i for i in actual["blockers"] if not matches(i, DERIVED)) or "; ".join(actual["blockers"])
+    blockers = suggested if actual["verdict"] in BLOCKER_VERDICTS and suggested else "none"
     if outcome == "verdict_mismatch" and record["direction"] == "better":
-        blockers = suggested if actual["verdict"] in BLOCKER_VERDICTS and suggested else "none"
         return (f"update expected: set {target}.verdict to {actual['verdict']}, blockers to {blockers}, "
                 f"reason to why, and {provenance}")
+    agent = record["agent"] or "<agent>"
     if outcome == "verdict_mismatch":
-        return (f"verdict regression: compare {span} and testdrive.json summary.blocking_checks with the expected reason "
-                f"({one_line(expected.get('reason') or '', 160)}); if ddtest changed intentionally, update "
-                f"{target} (verdict, blockers, reason, {provenance})")
-    if outcome == "unexpected_blockers":
-        return (f"blockers: read the listed checks in testdrive.json summary.blocking_checks and {span}; if intended, "
-                f"set {target}.blockers to {suggested or 'the reported ones'} "
-                f"and update {provenance}")
-    return None
+        head = (f"verdict regression (expected {expected['verdict']}: {one_line(expected.get('reason') or '', 160)}); "
+                f"compare {span} and testdrive.json summary.blocking_checks, then pick one")
+        change = f"verdict {actual['verdict']}, blockers {blockers}"
+    elif outcome == "unexpected_blockers":
+        head = f"blockers: read the listed checks in testdrive.json summary.blocking_checks and {span}, then pick one"
+        change = f"blockers {suggested or 'the reported ones'}"
+    else:
+        return None
+    return (f"{head}: (1) ddtest bug: {introduced_text(record, span)}; keep expected so the regression stays visible; "
+            f"(2) intentional ddtest change: update cases.yaml {name} expected ({change}, reason, {provenance}); "
+            f"(3) agent-specific: add cases.yaml {name} expected.agents.{agent} ({change}, its own reason, {provenance})")
 
 
 def label(record):
@@ -375,9 +491,10 @@ def disagreements(records):
         if len(by_agent) > 1 and len(set(by_agent.values())) > 1:
             text = "agents disagree: " + ", ".join(f"{agent} {verdict or 'no verdict'}" for agent, verdict in by_agent.items())
             notes.append(f"{identifier}: {text}")
+            note = text + " (agent behavior, not ddtest: compare their activity.jsonl)"
             for record in records:
-                if record["id"] == identifier and text not in record["notes"]:
-                    record["notes"].append(text + " (agent behavior, not ddtest: compare their activity.jsonl)")
+                if record["id"] == identifier and note not in record["notes"]:
+                    record["notes"].append(note)
     return notes
 
 
@@ -396,7 +513,8 @@ def error_block(record):
              "  what: " + "; ".join(record["problems"]),
              f"  expected: {expected['verdict']}" + (f", blockers {'; '.join(expected['blockers'])}" if expected["blockers"] else "")
              + f" ({one_line(expected.get('reason') or '', 160)})",
-             f"  actual: {actual['verdict'] or 'no verdict'}, run {actual['run_status'] or 'unknown'}"
+             f"  actual: {actual['verdict'] or 'no verdict'}, run {actual['run_status'] or 'unknown'}, "
+             f"ddtest {actual.get('ddtest_label') or actual.get('ddtest_version') or 'unknown'}"
              + (f", blockers {'; '.join(actual['blockers'])}" if actual["blockers"] else "")]
     if actual["final_reason"]:
         rows = record.get("ddtest_rows") or {}

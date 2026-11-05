@@ -152,11 +152,51 @@ class MainTests(unittest.TestCase):
         with patch.object(run_catalog.subprocess, "Popen", side_effect=AssertionError("ran")):
             code, output = self.main("--dry-run", "E02", "--speed-trims", "--image-map", "agents=img")
         self.assertEqual(code, 0)
-        lines = [line for line in output.splitlines() if line and not line.startswith("#")]
+        lines = [line for line in output.splitlines() if "run_eval.py" in line]
         trial = shlex.split(lines[0])
         self.assertEqual(trial[trial.index("--image") + 1], "img")
         self.assertEqual(trial[trial.index("--output") + 1], "<output>/E02-pipeline-schema-codex")
         self.assertEqual(shlex.split(lines[1])[-2:], ["--cleanup", "<output>/E02-pipeline-schema-codex"])
+        self.assertNotIn("--ddtest-label", trial)
+        code, output = self.main("--dry-run", "E02", "--ddtest-label", "b7a9d2ba")
+        trial = shlex.split(next(line for line in output.splitlines() if "run_eval.py" in line))
+        self.assertEqual(trial[trial.index("--ddtest-label") + 1], "b7a9d2ba")
+
+    def test_dry_run_prints_the_image_builds_the_selection_needs(self):
+        code, output = self.main("--dry-run", "E01", "E14")
+        self.assertEqual(code, 0)
+        self.assertIn("# Images the selected cases need: agents, java17.", output)
+        builds = [shlex.split(line) for line in output.splitlines() if line.startswith("docker build ")]
+        scripts = str(Path(run_catalog.__file__).resolve().parent)
+        self.assertEqual(builds, [
+            ["docker", "build", "--target", "agents", "-t", "ddtest-eval-agents", "-f", scripts + "/Dockerfile", scripts],
+            ["docker", "build", "--target", "java", "--build-arg",
+             "JDK_IMAGE=" + run_catalog.load_catalog()["images"]["java17"]["build_args"]["JDK_IMAGE"],
+             "-t", "ddtest-eval-java17", "-f", scripts + "/Dockerfile", scripts]])
+        template = json.loads(next(line for line in output.splitlines() if line.startswith("{\"")))
+        self.assertEqual(template, {"agents": "<image ID of ddtest-eval-agents>",
+                                    "java17": "<image ID of ddtest-eval-java17>"})
+        writer = next(line for line in output.splitlines() if line.endswith("> images.json"))
+        self.assertIn("for key in agents java17;", writer)
+        self.assertNotIn("docker build", output.split("# E01")[1])
+
+    def test_stdout_is_line_buffered_when_redirected(self):
+        stream = io.TextIOWrapper(io.BytesIO(), write_through=False)
+        with patch.object(run_catalog.sys, "stdout", stream), contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(run_catalog.main(["--dry-run", "E01"]), 0)
+        self.assertTrue(stream.line_buffering)
+
+    def test_image_file_writer_makes_valid_json(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            docker = root / "docker"
+            docker.write_text('#!/bin/sh\necho "sha256:id-of-$5"\n')
+            docker.chmod(0o755)
+            writer = run_catalog.image_builds(run_catalog.load_catalog()["images"], {"agents", "java17"})[-3]
+            subprocess.run(["sh", "-c", writer], cwd=root, check=True,
+                           env={**os.environ, "PATH": f"{root}{os.pathsep}{os.environ['PATH']}"})
+            self.assertEqual(json.loads((root / "images.json").read_text()),
+                             {"agents": "sha256:id-of-ddtest-eval-agents", "java17": "sha256:id-of-ddtest-eval-java17"})
 
     def test_dry_run_all_prints_every_case(self):
         code, output = self.main("--dry-run", "--all")
@@ -288,6 +328,8 @@ class MainTests(unittest.TestCase):
                 self.assertLess(lane.index(f"[{agent}] E01-nion: exit 0"), lane.index(f"[{agent}] E02-pipeline-schema: started"))
                 self.assertNotIn("[codex]" if agent == "claude" else "[claude]", lane)
             self.assertIn("--agent claude", (root / "out" / "E02-pipeline-schema-claude.log").read_text().splitlines()[0])
+            # Progress reaches stdout as each case starts, not only in the lane logs.
+            self.assertLess(output.index("[claude] E01-nion: started"), output.index("[claude] E01-nion: exit 0"))
             results = json.loads((root / "out" / "results.json").read_text())
             self.assertEqual([(case["id"], case["agent"], case["outcome"]) for case in results["cases"]],
                              [("E01-nion", "codex", "pass"), ("E01-nion", "claude", "pass"),

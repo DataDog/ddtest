@@ -84,11 +84,11 @@ class BlockerIdTests(unittest.TestCase):
         for check, identifier in (
                 ("runtime fidelity: validated on substitute Java 17.0.20.1; .github/workflows/ci.yml / build runs on Java 21. "
                  "Accept this evidence with --accept-substitute-runtime, or set JAVA_HOME and rerun", "runtime fidelity: substitute Java"),
-                ("unresolved CI scope (2 steps: a.yml / j / step 1 (echo x); a.yml / j / step 2 (gpg)): Runs before the "
-                 "job's scalatest tests and may change what they run. Review it.",
-                 "unresolved CI scope: Runs before the job's scalatest tests and may change what they run"),
-                ("unresolved CI scope: release.yml / r / step 4 (./mvnw release:prepare): May run scalatest tests",
-                 "unresolved CI scope: May run scalatest tests"),
+                ("unresolved CI scope: release.yml / r / step 4 (./mvnw release:prepare): Repository script may run "
+                 "scalatest tests; ddtest cannot tell which ones: ./mvnw release:prepare",
+                 "unresolved CI scope: release.yml / r / step 4: Repository script may run scalatest tests"),
+                ("unresolved CI scope: .github/ci.yml / test: matrix include is not a list",
+                 "unresolved CI scope: .github/ci.yml / test"),
                 ("workflow git_report_exclusions: failed — add /.testoptimization/ to .gitignore", "workflow git_report_exclusions: failed"),
                 ("CI preservation: failed — CI matrix entries were removed", "CI preservation: failed"),
                 ("CI runtime: inconclusive", "CI runtime: inconclusive"),
@@ -96,6 +96,26 @@ class BlockerIdTests(unittest.TestCase):
                 ("configuration: ./gradlew test (A=b: c)/quarantine: failed", "feature quarantine: failed"),
                 ("owned cleanup did not pass", "owned cleanup did not pass")):
             self.assertEqual(catalog_check.blocker_id(check), identifier)
+
+    def test_grouped_scope_line_has_one_identifier_per_step(self):
+        check = ("unresolved CI scope (2 steps: a.yml / j / step 1 (echo x; y); a.yml / j / step 2 (gpg --import)): Runs "
+                 "before the job's scalatest tests and may change what they run, which ddtest can't replay: Unsupported "
+                 "CI shell: pwsh")
+        self.assertEqual(catalog_check.blocker_ids(check),
+                         ["unresolved CI scope: a.yml / j / step 1: Unsupported CI shell",
+                          "unresolved CI scope: a.yml / j / step 2: Unsupported CI shell"])
+
+    def test_real_unresolved_scope_reduces_to_class_and_step(self):
+        e17 = real_report("E17")["summary"]["blocking_checks"]
+        identifiers = list(dict.fromkeys(i for check in e17 for i in catalog_check.blocker_ids(check)))
+        self.assertEqual(identifiers, [
+            "runtime fidelity: substitute Java", "CI runtime: inconclusive",
+            *(f"unresolved CI scope: .github/workflows/release.yml / release / step {step}: "
+              "CI command expression was not resolved" for step in (1, 5, 9))])
+        self.assertTrue(all(len(identifier) < 120 for identifier in identifiers))
+        e04 = real_report("E04")["summary"]["blocking_checks"]
+        self.assertIn("unresolved CI scope: .gitlab-ci.yml / acceptance test / step 4: Cannot statically resolve command",
+                      [catalog_check.blocker_id(check) for check in e04])
 
     def test_derived_lines_only_count_alone(self):
         allowed = ["Cypress real-suite coverage was not observed"]
@@ -134,8 +154,11 @@ class EvaluateTests(unittest.TestCase):
         record = self.evaluate(case(blockers=["Cypress real-suite coverage was not observed"]), testdrive=testdrive)
         self.assertEqual(record["outcome"], "unexpected_blockers")
         self.assertIn("CI runtime: inconclusive", record["problems"][0])
-        self.assertIn("set cases.yaml E08-kitchensink expected.blockers to Cypress real-suite coverage was not observed; "
-                      "CI runtime: inconclusive", record["next_step"])
+        self.assertIn("(2) intentional ddtest change: update cases.yaml E08-kitchensink expected (blockers Cypress "
+                      "real-suite coverage was not observed; CI runtime: inconclusive, reason", record["next_step"])
+        self.assertIn("(1) ddtest bug: investigate ddtest: `CI runtime: inconclusive` first appears in "
+                      "ddtest-results.jsonl row 3 (validation_failed validation_incomplete)", record["next_step"])
+        self.assertIn("(3) agent-specific: add cases.yaml E08-kitchensink expected.agents.codex", record["next_step"])
         self.assertTrue(catalog_check.is_failing(record))
 
     def test_none_of_the_expected_blockers(self):
@@ -153,8 +176,11 @@ class EvaluateTests(unittest.TestCase):
     def test_worse_verdict_is_a_regression(self):
         record = self.evaluate(case(verdict="COMPLETE LOCALLY"), testdrive=real_report("E08"))
         self.assertEqual((record["outcome"], record["direction"]), ("verdict_mismatch", "worse"))
-        self.assertIn("verdict regression: compare ddtest-results.jsonl row 3 ", record["next_step"])
-        self.assertIn("update cases.yaml E08-kitchensink expected (verdict, blockers, reason", record["next_step"])
+        self.assertIn("verdict regression (expected COMPLETE LOCALLY: the known reason); compare ddtest-results.jsonl "
+                      "row 3 ", record["next_step"])
+        self.assertIn("(2) intentional ddtest change: update cases.yaml E08-kitchensink expected (verdict INCOMPLETE, "
+                      "blockers Cypress real-suite coverage was not observed, reason, run <this output folder>, "
+                      "ddtest v1.0.0-test)", record["next_step"])
         self.assertEqual(catalog_check.exit_code([record]), catalog_check.EXIT_FAILED)
         block = catalog_check.error_block(record)
         for text in ("ERROR E08-kitchensink (codex): verdict_mismatch (worse)", "expected: COMPLETE LOCALLY",
@@ -162,6 +188,52 @@ class EvaluateTests(unittest.TestCase):
                      "blocking: Cypress real-suite coverage was not observed", "report: " + str(self.root),
                      "next: verdict regression"):
             self.assertIn(text, block)
+
+    def test_real_e04_regression_names_the_row_that_introduced_the_blocker(self):
+        rows = [json.loads(line) for line in (FIXTURES / "E04-ddtest-results.jsonl").read_text().splitlines()]
+        record = self.evaluate(case("E04-battleship", "COMPLETE LOCALLY"), name="E04-battleship-claude",
+                               testdrive=real_report("E04"), rows=rows, run={"ddtest_version": "dev"})
+        self.assertEqual((record["outcome"], record["direction"]), ("verdict_mismatch", "worse"))
+        scope = "unresolved CI scope: .gitlab-ci.yml / acceptance test / step 4: Cannot statically resolve command"
+        # ddtest's own ci_edit_required advice (row 6) first names the cat step the agent then added.
+        self.assertEqual(record["introduced"][scope], {"row": 6, "result": "needs_input ci_edit_required"})
+        step = record["next_step"]
+        for text in ("(1) ddtest bug: investigate ddtest: ",
+                     f"`{scope}` first appears in ddtest-results.jsonl row 6 (needs_input ci_edit_required)", "keep expected so the regression stays visible",
+                     "(2) intentional ddtest change: update cases.yaml E04-battleship expected (verdict INCOMPLETE",
+                     "(3) agent-specific: add cases.yaml E04-battleship expected.agents.claude (verdict INCOMPLETE",
+                     "ddtest <ddtest commit> (run.json says dev; pass --ddtest-label)"):
+            self.assertIn(text, step)
+        labelled = catalog_check.evaluate(case("E04-battleship", "COMPLETE LOCALLY"), self.root / "E04-battleship-claude",
+                                          ddtest_label="b7a9d2ba")
+        self.assertIn("ddtest b7a9d2ba)", labelled["next_step"])
+        self.assertNotIn("dev", labelled["next_step"])
+        self.assertIn("ddtest b7a9d2ba, blockers", catalog_check.error_block(labelled))
+
+    def test_ddtest_label_from_run_json_wins(self):
+        record = self.evaluate(case(verdict="FAILED"), testdrive=real_report("E08"),
+                               run={"ddtest_version": "dev", "ddtest_label": "b7a9d2ba (main)"})
+        self.assertEqual(record["actual"]["ddtest_label"], "b7a9d2ba (main)")
+        self.assertIn("ddtest b7a9d2ba (main)", record["next_step"])
+
+    def test_trial_ending_on_an_unscriptable_question_is_recorded(self):
+        rows = [json.loads(line) for line in (FIXTURES / "E14-ddtest-results.jsonl").read_text().splitlines()]
+        record = self.evaluate(case("E14-tradukisto", blockers=["runtime fidelity: substitute Java"]),
+                               name="E14-tradukisto-claude", testdrive=real_report("E14"), rows=rows)
+        self.assertEqual(record["outcome"], "pass")
+        self.assertEqual(record["question"]["code"], "substitute_runtime_unaccepted")
+        self.assertIn("question not scriptable: substitute_runtime_unaccepted (ddtest-results.jsonl row 4)", record["notes"])
+        stream = io.StringIO()
+        catalog_check.report([record], stream)
+        self.assertIn("NOTE E14-tradukisto (claude): question not scriptable: substitute_runtime_unaccepted", stream.getvalue())
+        # A scriptable question, or a result that is no question, is not flagged.
+        for result in ({"status": "needs_input", "code": "ci_runtime_required", "next_action": "ask_user"},
+                       {"status": "needs_input", "code": "setup_dependencies_missing", "next_action": "run_command"},
+                       {"status": "validation_failed", "code": "validation_incomplete", "next_action": "report_result"}):
+            self.assertIsNone(catalog_check.user_answers.unscriptable(result))
+        self.assertEqual(catalog_check.user_answers.unscriptable(
+            {"status": "needs_input", "code": "scope_decision_required", "next_action": "supply_input",
+             "required_input": ["User decision for the CI steps in location: approve ..."]}), "scope_decision_required")
 
     def test_better_verdict_is_an_improvement(self):
         record = self.evaluate(case(verdict="FAILED"), testdrive=real_report("E08"))
@@ -280,7 +352,7 @@ class EvaluateOnlyTests(unittest.TestCase):
         write_evidence(self.root / "out" / "E08-kitchensink-codex", testdrive=real_report("E08"))
         code, output, results = self.main("--all")
         self.assertEqual(code, 0, output)
-        self.assertIn("[codex] E01-nion: not evaluated", output)
+        self.assertIn("[-] E01-nion: not evaluated, no evidence (found: none)", output)
         self.assertEqual([(case["id"], case["outcome"]) for case in results["cases"]],
                          [("E02-pipeline-schema", "pass"), ("E08-kitchensink", "pass")])
         self.assertEqual((results["exit_code"], results["outcomes"]), (0, {"pass": 2}))
@@ -310,9 +382,69 @@ class EvaluateOnlyTests(unittest.TestCase):
         self.assertIn("IMPROVEMENT E08-kitchensink (codex)", output)
         self.assertEqual(results["outcomes"], {"verdict_mismatch (better: update expected)": 1})
 
-    def test_named_case_without_evidence_is_a_harness_failure(self):
-        code, _, results = self.main("E02", "--agent", "claude")
-        self.assertEqual((code, results["cases"][0]["outcome"], results["cases"][0]["agent"]), (1, "harness_failure", "claude"))
+    def test_requested_agent_without_evidence_is_reported_not_evaluated(self):
+        write_evidence(self.root / "out" / "E02-pipeline-schema-codex", testdrive=real_report("E02"))
+        code, output, results = self.main("E02", "--agent", "claude")
+        self.assertEqual((code, results["cases"], results["exit_code"]), (1, [], 1))
+        self.assertIn("[claude] E02-pipeline-schema: not evaluated, no claude evidence (found: codex)", output)
+        self.assertNotIn("harness_failure", output)
+        self.assertEqual(results["not_evaluated"], [{"id": "E02-pipeline-schema", "agent": "claude",
+                                                     "reason": "no claude evidence (found: codex)"}])
+        code, output, _ = self.main("E08")
+        self.assertEqual(code, 1)
+        self.assertIn("[-] E08-kitchensink: not evaluated, no evidence (found: none)", output)
+
+    def test_agents_are_inferred_from_evidence_folders(self):
+        write_evidence(self.root / "out" / "E08-kitchensink-claude", testdrive=real_report("E08"))
+        code, output, results = self.main("E08")
+        self.assertEqual(code, 0, output)
+        self.assertEqual([(case["id"], case["agent"], case["outcome"]) for case in results["cases"]],
+                         [("E08-kitchensink", "claude", "pass")])
+        write_evidence(self.root / "out" / "E08-kitchensink-codex", testdrive=real_report("E08"))
+        code, output, results = self.main("E08")
+        self.assertEqual([case["agent"] for case in results["cases"]], ["codex", "claude"])
+
+    def test_named_cases_merge_into_the_batch_results(self):
+        write_evidence(self.root / "out" / "E02-pipeline-schema-claude", testdrive=real_report("E02"))
+        write_evidence(self.root / "out" / "E08-kitchensink-claude", testdrive=real_report("E08"))
+        code, _, batch = self.main("--all", "--ddtest-label", "b7a9d2ba")
+        self.assertEqual((code, len(batch["cases"]), batch["ddtest_label"]), (0, 2, "b7a9d2ba"))
+        catalog = copy.deepcopy(self.catalog)
+        expected = next(case for case in catalog["cases"] if case["id"] == "E08-kitchensink")["expected"]
+        expected["verdict"] = "COMPLETE LOCALLY"
+        del expected["blockers"]
+        code, output, results = self.main("E08", catalog=catalog)
+        self.assertEqual(code, 1)
+        self.assertIn("(merged: 1 earlier entries kept)", output)
+        self.assertEqual([(case["id"], case["agent"], case["outcome"]) for case in results["cases"]],
+                         [("E02-pipeline-schema", "claude", "pass"), ("E08-kitchensink", "claude", "verdict_mismatch")])
+        self.assertEqual((results["outcomes"], results["exit_code"], results["merged_entries_kept"]),
+                         ({"pass": 1, "verdict_mismatch (worse)": 1}, 1, 1))
+        # Fixing the expectation and re-evaluating the case recomputes the counts and exit code.
+        code, _, results = self.main("E08")
+        self.assertEqual((code, results["outcomes"], results["exit_code"]), (0, {"pass": 2}, 0))
+        # A full batch again replaces every entry of the agents it covers.
+        (self.root / "out" / "E02-pipeline-schema-claude" / "run.json").unlink()
+        code, _, results = self.main("--all", "--agent", "claude")
+        self.assertEqual(len(results["cases"]), 2)
+        self.assertEqual(results["cases"][0]["outcome"], "harness_failure")
+
+    def test_results_of_another_output_are_not_merged(self):
+        target = self.root / "out" / "results.json"
+        target.parent.mkdir()
+        target.write_text(json.dumps({"output": "/elsewhere", "cases": []}))
+        with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
+            run_catalog.main(["--evaluate-only", "E02", "--output", str(self.root / "out")])
+        self.assertEqual(json.loads(target.read_text())["output"], "/elsewhere")
+
+    def test_unscriptable_questions_are_listed_in_results(self):
+        rows = [json.loads(line) for line in (FIXTURES / "E14-ddtest-results.jsonl").read_text().splitlines()]
+        write_evidence(self.root / "out" / "E14-tradukisto-claude", testdrive=real_report("E14"), rows=rows)
+        code, output, results = self.main("E14")
+        self.assertEqual(code, 0, output)
+        self.assertEqual(results["questions_not_scriptable"],
+                         ["E14-tradukisto (claude): question not scriptable: substitute_runtime_unaccepted"])
+        self.assertEqual(results["cases"][0]["question"]["code"], "substitute_runtime_unaccepted")
 
     def test_results_path_override(self):
         write_evidence(self.root / "out" / "E02-pipeline-schema-codex", testdrive=real_report("E02"))

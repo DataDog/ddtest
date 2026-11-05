@@ -180,9 +180,11 @@ def trim_commands(case, speed_trims=False):
 
 
 def build_argv(case, image, ddtest, output, agent="codex", existing_login=False, timeout=DEFAULT_TIMEOUT,
-               speed_trims=False, model=None):
+               speed_trims=False, model=None, ddtest_label=None):
     argv = [sys.executable, str(RUN_EVAL), "--image", image, "--repo", case["repo"], "--ref", case["commit"],
             "--ddtest", str(ddtest), "--agent", agent, "--timeout", str(timeout), "--output", str(output)]
+    if ddtest_label:
+        argv += ["--ddtest-label", ddtest_label]
     if existing_login:
         argv.append("--existing-login")
     if model:
@@ -202,6 +204,32 @@ def build_argv(case, image, ddtest, output, agent="codex", existing_login=False,
     for answer in harness.get("answers") or []:
         argv += ["--user-answer", answer]
     return argv
+
+
+IMAGE_TAG = "ddtest-eval-{key}"
+
+
+def image_builds(images, keys):
+    """The docker build commands for these image keys, and an --image-file for their tags.
+
+    Nothing is built: the commands are printed for the evaluator to run.
+    """
+    keys = sorted(keys)
+    lines = [f"# Images the selected cases need: {', '.join(keys)}. Build each (nothing is built automatically):"]
+    for key in keys:
+        image = images[key]
+        argv = ["docker", "build", "--target", image["target"]]
+        for name, value in (image.get("build_args") or {}).items():
+            argv += ["--build-arg", f"{name}={value}"]
+        argv += ["-t", IMAGE_TAG.format(key=key), "-f", str(SCRIPTS / "Dockerfile"), str(SCRIPTS)]
+        lines.append(shlex.join(argv))
+    lines.append("# Then write their image IDs to an --image-file (or pass --image-map KEY=IMAGE for each):")
+    lines.append("{ printf '{'; sep=; for key in " + " ".join(keys) + "; do printf '%s\"%s\": \"%s\"' \"$sep\" \"$key\" "
+                 "\"$(docker image inspect --format '{{.Id}}' " + IMAGE_TAG.format(key="$key") + ")\"; sep=', '; done; "
+                 "printf '}\\n'; } > images.json")
+    lines.append("# --image-file template:")
+    lines.append(json.dumps({key: f"<image ID of {IMAGE_TAG.format(key=key)}>" for key in keys}))
+    return lines
 
 
 def resolve_images(pairs, path=None):
@@ -390,7 +418,7 @@ class Supervisor:
                 self.processes.pop(process.pid, None)
 
 
-def run_case(case, argv, output, log, supervisor, rerun=None, agent="codex"):
+def run_case(case, argv, output, log, supervisor, rerun=None, agent="codex", ddtest_label=None):
     cleanup_argv = [sys.executable, str(RUN_EVAL), "--cleanup", str(output)]
     with open(log, "w") as stream:
         stream.write("argv: " + shlex.join(argv) + "\n")
@@ -411,7 +439,7 @@ def run_case(case, argv, output, log, supervisor, rerun=None, agent="codex"):
             cleanup = supervisor.run(cleanup_argv, stream, forward=False)
     with supervisor.lock:
         supervisor.cleanup_commands.pop(agent, None)
-    record = catalog_check.evaluate(case, output, log, rerun, agent)
+    record = catalog_check.evaluate(case, output, log, rerun, agent, ddtest_label)
     if retention_error and record["outcome"] != "harness_failure":
         record["harness_category"] = "retention"
         record = catalog_check.finish(record, "harness_failure", retention_error, "", rerun)
@@ -433,12 +461,47 @@ def run_case(case, argv, output, log, supervisor, rerun=None, agent="codex"):
     return record, lines
 
 
-def write_results(path, catalog, output, records, code):
+def load_previous(path, output):
+    """The case records of an existing results.json for this output folder, to merge into."""
+    if not path.exists():
+        return []
+    try:
+        document = json.loads(path.read_text())
+        cases = document["cases"]
+        if not isinstance(cases, list) or not all(isinstance(case, dict) and "id" in case for case in cases):
+            raise ValueError("cases is not a list of records")
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        raise ValueError(f"{path} exists but is not a results.json ({error}); pass a new --results") from None
+    if document.get("output") != str(output):
+        raise ValueError(f"{path} holds results for {document.get('output')}, not {output}; pass a new --results")
+    return cases
+
+
+def merge(previous, records, replaced_agents=(), order=None):
+    """records replace previous entries with the same (id, agent) and, for a full batch, every
+    entry of the agents it covers; other entries are kept. Sorted in catalog order."""
+    keys = {(record["id"], record["agent"]) for record in records}
+    kept = [record for record in previous
+            if (record["id"], record["agent"]) not in keys and record["agent"] not in replaced_agents]
+    order = order or {}
+    return sorted(kept + list(records), key=lambda r: (order.get(r["id"], len(order)), str(r["id"]),
+                                                       catalog_check.AGENTS.index(r["agent"])
+                                                       if r["agent"] in catalog_check.AGENTS else len(catalog_check.AGENTS)))
+
+
+def write_results(path, catalog, output, records, code, ddtest_label=None, not_evaluated=(), kept=0):
+    """Write results.json; exit_code covers every entry, merged ones included (None while running)."""
     counts = {}
     for record in records:
         counts[catalog_check.label(record)] = counts.get(catalog_check.label(record), 0) + 1
-    document = {"catalog": str(catalog), "output": str(output), "exit_code": code, "outcomes": counts,
-                "agents_disagree": catalog_check.disagreements(records), "cases": records}
+    if code is not None and code < 128 and code != catalog_check.EXIT_FAILED and records:
+        # Merged entries count too; a failure of this invocation (such as missing evidence) stays.
+        code = catalog_check.exit_code(records)
+    questions = [f"{record['id']} ({record['agent']}): question not scriptable: {record['question']['code']}"
+                 for record in records if record.get("question")]
+    document = {"catalog": str(catalog), "output": str(output), "ddtest_label": ddtest_label, "exit_code": code,
+                "outcomes": counts, "merged_entries_kept": kept, "agents_disagree": catalog_check.disagreements(records),
+                "questions_not_scriptable": questions, "not_evaluated": list(not_evaluated), "cases": records}
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(path.name + ".partial")
     temporary.write_text(json.dumps(document, indent=2) + "\n")
@@ -448,9 +511,10 @@ def write_results(path, catalog, output, records, code):
 class Lane(threading.Thread):
     """One agent's cases, in catalog order, one trial at a time."""
 
-    def __init__(self, agent, plans, supervisor, output, sink):
+    def __init__(self, agent, plans, supervisor, output, sink, ddtest_label=None):
         super().__init__(name=f"lane-{agent}", daemon=True)
         self.agent, self.plans, self.supervisor, self.output, self.sink = agent, plans, supervisor, output, sink
+        self.ddtest_label = ddtest_label
         self.records = []
         self.log = output / f"lane-{agent}.log"
 
@@ -468,21 +532,57 @@ class Lane(threading.Thread):
                     line = f"[{self.agent}] {case['id']}: skipped, {evidence} exists"
                     print(line, flush=True)
                     self.note(stream, [line])
-                    record = catalog_check.evaluate(case, Path("/nonexistent"), rerun=rerun, agent=self.agent)
+                    record = catalog_check.evaluate(case, Path("/nonexistent"), rerun=rerun, agent=self.agent,
+                                                    ddtest_label=self.ddtest_label)
                     record["evidence"] = {"folder": str(evidence)}
                     record["harness_category"] = "exists"
                     self.records.append(catalog_check.finish(
                         record, "harness_failure", f"not run: {evidence} already exists", "", rerun))
                     continue
-                self.note(stream, [f"[{self.agent}] {case['id']}: started, evidence {evidence}"])
+                started = f"[{self.agent}] {case['id']}: started, evidence {evidence}"
+                print(started, flush=True)
+                self.note(stream, [started])
                 record, lines = run_case(case, arguments, evidence, self.output / f"{evidence.name}.log",
-                                         self.supervisor, rerun, self.agent)
+                                         self.supervisor, rerun, self.agent, self.ddtest_label)
                 self.note(stream, lines)
                 self.records.append(record)
                 self.sink()
 
 
+def evaluate_only(cases, agents_option, output, ddtest_label, named):
+    """Records for existing evidence, and what had none.
+
+    Without --agent, each case's agents are the <id>-<agent> folders present.
+    A requested agent without a folder is listed as "no <agent> evidence
+    (found: ...)", not evaluated; for a named case with one agent requested,
+    or with no evidence at all, that fails the invocation.
+    """
+    records, missing, failed = [], [], False
+    for case in cases:
+        found = [agent for agent in catalog_check.AGENTS if (output / f"{case['id']}-{agent}").is_dir()]
+        wanted = found if agents_option is None else \
+            catalog_check.AGENTS if agents_option == "both" else (agents_option,)
+        for agent in wanted:
+            evidence = output / f"{case['id']}-{agent}"
+            if evidence.is_dir():
+                records.append(catalog_check.evaluate(case, evidence, rerun=rerun_hint(case, agent), agent=agent,
+                                                      ddtest_label=ddtest_label))
+                continue
+            missing.append({"id": case["id"], "agent": agent,
+                            "reason": f"no {agent} evidence (found: {', '.join(found) or 'none'})"})
+            failed = failed or (named and agents_option not in (None, "both"))
+        if not wanted:
+            missing.append({"id": case["id"], "agent": None, "reason": "no evidence (found: none)"})
+            failed = failed or named
+    for entry in missing:
+        print(f"[{entry['agent'] or '-'}] {entry['id']}: not evaluated, {entry['reason']}", flush=True)
+    return records, missing, failed
+
+
 def main(argv=None):
+    if hasattr(sys.stdout, "reconfigure"):
+        # Status lines reach a redirected stdout as they happen, not in blocks.
+        sys.stdout.reconfigure(line_buffering=True)
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("ids", nargs="*", help="Case ids (such as E02-pipeline-schema) or their E<nn> prefix")
     parser.add_argument("--all", action="store_true", help="Run every case in catalog order")
@@ -491,8 +591,12 @@ def main(argv=None):
                         help="Image for a catalog image key (repeatable); overrides --image-file")
     parser.add_argument("--image-file", help=f"JSON/YAML mapping of image key to image (default: ${IMAGES_VARIABLE})")
     parser.add_argument("--ddtest", type=Path, help="Linux ddtest executable for the images' architecture")
-    parser.add_argument("--agent", choices=(*catalog_check.AGENTS, "both"), default="codex",
-                        help="both: a Codex lane and a Claude lane run at the same time")
+    parser.add_argument("--ddtest-label",
+                        help="Free-text ddtest provenance, such as its commit; recorded in run.json and results.json "
+                             "and named in next steps instead of a `dev` version")
+    parser.add_argument("--agent", choices=(*catalog_check.AGENTS, "both"),
+                        help="both: a Codex lane and a Claude lane run at the same time. Trials default to codex; "
+                             "--evaluate-only defaults to the agents whose <id>-<agent> folders exist")
     parser.add_argument("--existing-login", action="store_true",
                         help="Reuse each agent's authorized CLI login; it is locked for a whole trial, so a lane runs "
                              "one case at a time")
@@ -500,16 +604,21 @@ def main(argv=None):
     parser.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT, help=f"Per-command timeout (default {DEFAULT_TIMEOUT})")
     parser.add_argument("--speed-trims", action="store_true", help="Also apply each case's optional speed trims")
     parser.add_argument("--output", type=Path, help="Directory for <id>-<agent> evidence and logs")
-    parser.add_argument("--dry-run", action="store_true", help="Print each case's run_eval.py arguments and exit")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="Print the image builds and each case's run_eval.py arguments and exit; works without "
+                             "--ddtest and images (placeholders are printed)")
     parser.add_argument("--evaluate-only", action="store_true",
                         help="Check existing <output>/<id>-<agent> evidence against expected; run nothing")
-    parser.add_argument("--results", type=Path, help="Where to write results.json (default: <output>/results.json)")
+    parser.add_argument("--results", type=Path,
+                        help="results.json to write (default: <output>/results.json); an existing one for the same "
+                             "output is merged into by case and agent")
     args = parser.parse_args(argv)
     catalog = load_catalog(args.catalog)
     problems = validate(catalog)
     if problems:
         parser.error("invalid catalog:\n  " + "\n  ".join(problems))
     cases = catalog["cases"]
+    order = {case["id"]: index for index, case in enumerate(cases)}
     if args.all == bool(args.ids):
         parser.error("name case ids or pass --all")
     if not args.all:
@@ -534,15 +643,16 @@ def main(argv=None):
             parser.error("trials require --ddtest and --output")
     output = Path(os.path.abspath(args.output)) if args.output else Path("<output>")
     ddtest = Path(os.path.abspath(args.ddtest)) if args.ddtest else "<ddtest>"
-    agents = catalog_check.AGENTS if args.agent == "both" else (args.agent,)
+    agents = catalog_check.AGENTS if args.agent == "both" else (args.agent or "codex",)
     lanes = {}
     for agent in agents:
         for case in cases:
             evidence = output / f"{case['id']}-{agent}"
             lanes.setdefault(agent, []).append((case, evidence, build_argv(
                 case, images.get(case["image"], f"<image:{case['image']}>"), ddtest, evidence, agent,
-                args.existing_login, args.timeout, args.speed_trims, args.model)))
+                args.existing_login, args.timeout, args.speed_trims, args.model, args.ddtest_label)))
     if args.dry_run:
+        print("\n".join(image_builds(catalog["images"], {case["image"] for case in cases})) + "\n")
         for agent, plans in lanes.items():
             if len(lanes) > 1:
                 print(f"## lane {agent} (runs at the same time as the other lane)\n")
@@ -552,21 +662,28 @@ def main(argv=None):
                 print(shlex.join([sys.executable, str(RUN_EVAL), "--cleanup", str(evidence)]) + "\n")
         return 0
     results = Path(os.path.abspath(args.results)) if args.results else output / "results.json"
+    try:
+        previous = load_previous(results, output)
+    except ValueError as error:
+        parser.error(str(error))
+    # A full batch replaces every earlier entry of the agents it covers.
+    replaced = (catalog_check.AGENTS if args.evaluate_only and args.agent is None else agents) if args.all else ()
+
+    def save(records, code, not_evaluated=()):
+        merged = merge(previous, records, replaced, order)
+        kept = len(merged) - len(records)
+        write_results(results, args.catalog, output, merged, code, args.ddtest_label, not_evaluated, kept)
+        return kept
+
     if args.evaluate_only:
-        records = []
-        for case in cases:
-            for agent in agents:
-                evidence = output / f"{case['id']}-{agent}"
-                if (args.all or args.agent == "both") and not evidence.exists():
-                    print(f"[{agent}] {case['id']}: not evaluated, no {evidence}", flush=True)
-                    continue
-                records.append(catalog_check.evaluate(case, evidence, rerun=rerun_hint(case, agent), agent=agent))
-        code = catalog_check.report(records, sys.stdout)
-        write_results(results, args.catalog, output, records, code)
-        print(f"Results: {results}", flush=True)
+        records, not_evaluated, failed = evaluate_only(cases, args.agent, output, args.ddtest_label, not args.all)
+        code = catalog_check.report(records, sys.stdout) if records else catalog_check.EXIT_PASS
+        if failed:
+            code = catalog_check.EXIT_FAILED
+        kept = save(records, code, not_evaluated)
+        print(f"Results: {results}" + (f" (merged: {kept} earlier entries kept)" if kept else ""), flush=True)
         return code
     output.mkdir(parents=True, exist_ok=True)
-    order = {case["id"]: index for index, case in enumerate(cases)}
     sink_lock = threading.Lock()
 
     def collected():
@@ -575,10 +692,10 @@ def main(argv=None):
 
     def sink():
         with sink_lock:
-            write_results(results, args.catalog, output, collected(), None)
+            save(collected(), None)
 
     with Supervisor() as supervisor:
-        workers = [Lane(agent, plans, supervisor, output, sink) for agent, plans in lanes.items()]
+        workers = [Lane(agent, plans, supervisor, output, sink, args.ddtest_label) for agent, plans in lanes.items()]
         for worker in workers:
             worker.start()
         # Join with a timeout so the main thread keeps handling signals.
@@ -592,8 +709,8 @@ def main(argv=None):
                      if not evidence.exists()]
         print(f"Interrupted by signal {supervisor.signal}; not run: {', '.join(remaining) or 'none'}", flush=True)
         code = 128 + supervisor.signal
-    write_results(results, args.catalog, output, records, code)
-    print(f"Results: {results}", flush=True)
+    kept = save(records, code)
+    print(f"Results: {results}" + (f" (merged: {kept} earlier entries kept)" if kept else ""), flush=True)
     return code
 
 
