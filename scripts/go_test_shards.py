@@ -19,8 +19,9 @@ def parse_shard(value):
 
 
 def discover_tests():
-    # Match CI's build selection, including tests guarded by the race build tag.
-    result = subprocess.run(["go", "test", "-race", "-list", ".", "./..."],
+    # Go selects race-enabled source files; the helper parses declarations
+    # without compiling every test executable or running package initializers.
+    result = subprocess.run(["go", "run", "./scripts/testnames"],
                             check=True, capture_output=True, text=True)
     names = sorted({line for line in result.stdout.splitlines()
                     if re.fullmatch(r"(?:Test|Example|Fuzz)\w*", line)})

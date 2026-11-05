@@ -5,6 +5,23 @@ testdrive scenarios. Both existing Go instrumentation paths and their coverage
 remain enabled. Datadog Test Impact Analysis owns test skipping; this workflow
 does not maintain a separate changed-file test selector.
 
+## Go test discovery and compiler caches
+
+The Go shard selector runs `go run ./scripts/testnames`. The helper asks
+`go list -race -json ./...` for the files selected by the current platform and
+build tags, then uses Go's parser and example discovery to list tests, examples
+and fuzz targets. Discovery builds only the small helper; it does not build
+every test executable or run their initializers and `TestMain` functions.
+
+The native Orchestrion and `ddtest instrument` jobs retain separate compiler
+caches. Keys include OS, architecture, Go version, dependencies and the source
+revision; the Orchestrion cache also includes its pinned version and executable.
+A new revision restores compatible previous output and saves updated compiler
+artifacts, rather than repeatedly restoring an immutable dependency-only cache.
+The Datadog action uses this cache instead of restoring another overlapping
+module cache. Its configuration script still runs to resolve compatible SDK
+versions and set up the current job's instrumentation and reporting.
+
 ## Shared CLI executable
 
 The `test-binary` job builds one static executable for the Linux public CLI journeys,
@@ -47,3 +64,11 @@ it only imports dependencies and checks their versions. The actual testdrive
 journeys keep their original reporting, local intake, configuration variants and
 six feature assertions. No validation scenario is removed or moved to a release
 only workflow.
+
+## Test helper isolation
+
+Crash-recovery helpers run with their own CI reporting disabled, while their
+parent tests keep reporting and checking process ownership and cleanup. Jenkins
+allocation budgets run in an isolated helper so background SDK allocations do
+not count against the parser. The original memory limits remain, and the parent
+also exercises every behavioral assertion to retain instrumentation coverage.

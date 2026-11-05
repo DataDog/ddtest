@@ -81,11 +81,13 @@ jobs:
         shard: [1, 2, 3]
     env:
       DATADOG_API_KEY_CONFIGURED: ${{ secrets.DATADOG_API_KEY != '' }}
+      ORCHESTRION_VERSION: 5df280060f05cbf2863d43748667fcf9cd18c448
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Go
+        id: go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
         with:
           go-version-file: go.mod
@@ -117,9 +119,13 @@ jobs:
           path: |
             ~/.cache/go-build
             ~/go/pkg/mod
-          key: ${{ runner.os }}-go-${{ hashFiles('go.mod') }}-${{ hashFiles('**/go.sum') }}
+            ~/go/bin/orchestrion
+          # Cache entries are immutable: a new revision must save fresh compiler
+          # output, including the SDK install and instrumented test builds.
+          key: ${{ runner.os }}-${{ runner.arch }}-go-orchestrion-v2-${{ steps.go.outputs.go-version }}-${{ env.ORCHESTRION_VERSION }}-${{ hashFiles('go.mod') }}-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
           restore-keys: |
-            ${{ runner.os }}-go-${{ hashFiles('go.mod') }}-
+            ${{ runner.os }}-${{ runner.arch }}-go-orchestrion-v2-${{ steps.go.outputs.go-version }}-${{ env.ORCHESTRION_VERSION }}-${{ hashFiles('go.mod') }}-${{ hashFiles('**/go.sum') }}-
+            ${{ runner.os }}-${{ runner.arch }}-go-orchestrion-v2-${{ steps.go.outputs.go-version }}-${{ env.ORCHESTRION_VERSION }}-${{ hashFiles('go.mod') }}-
 
       - name: Download dependencies
         run: go mod download
@@ -155,9 +161,12 @@ jobs:
         uses: datadog/test-visibility-github-action@7ce545f228901e4ac4ef0b45d946120f1c4124e0 # v3.3.0
         with:
           languages: go
+          # The compiler cache above already owns modules and Orchestrion.
+          # Avoid restoring the action's overlapping module cache a second time.
+          cache: false
           # Pin upstream Go 1.27 compatibility fixes until they reach a stable
           # Orchestrion release.
-          go-tracer-version: 5df280060f05cbf2863d43748667fcf9cd18c448
+          go-tracer-version: ${{ env.ORCHESTRION_VERSION }}
           api_key: ${{ secrets.DATADOG_API_KEY }}
           site: datadoghq.com
           service: ddtest
@@ -226,6 +235,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Go
+        id: go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
         with:
           go-version-file: go.mod
@@ -258,9 +268,10 @@ jobs:
           path: |
             ~/.cache/go-build
             ~/go/pkg/mod
-          key: ${{ runner.os }}-go-ddtest-instrument-${{ hashFiles('go.mod') }}-${{ hashFiles('**/go.sum') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-go-ddtest-instrument-v2-${{ steps.go.outputs.go-version }}-${{ hashFiles('go.mod') }}-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
           restore-keys: |
-            ${{ runner.os }}-go-ddtest-instrument-${{ hashFiles('go.mod') }}-
+            ${{ runner.os }}-${{ runner.arch }}-go-ddtest-instrument-v2-${{ steps.go.outputs.go-version }}-${{ hashFiles('go.mod') }}-${{ hashFiles('**/go.sum') }}-
+            ${{ runner.os }}-${{ runner.arch }}-go-ddtest-instrument-v2-${{ steps.go.outputs.go-version }}-${{ hashFiles('go.mod') }}-
 
       - name: Download dependencies
         run: go mod download

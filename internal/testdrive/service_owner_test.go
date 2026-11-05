@@ -18,6 +18,7 @@ import (
 	"github.com/DataDog/ddtest/internal/framework"
 	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/DataDog/ddtest/internal/testdrive/workspace"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -28,6 +29,7 @@ type crashedService struct {
 
 func TestDeclaredServiceStopsWhenCoordinatorIsKilled(t *testing.T) {
 	if root := os.Getenv("DDTEST_SERVICE_CRASH_ROOT"); root != "" {
+		require.Equal(t, "false", os.Getenv("DD_CIVISIBILITY_ENABLED"), "the helper must not start a CI test session")
 		for _, key := range []string{"TMPDIR", "TMP", "TEMP"} {
 			t.Setenv(key, os.Getenv("DDTEST_SERVICE_CRASH_TMP"))
 		}
@@ -69,15 +71,20 @@ func TestDeclaredServiceStopsWhenCoordinatorIsKilled(t *testing.T) {
 	defer func() { _ = canary.Close() }()
 	binary, err := os.Executable()
 	require.NoError(t, err)
+	t.Setenv("DD_CIVISIBILITY_ENABLED", "true") // Exercise helper isolation even in a plain local test run.
 	command := exec.Command(binary, "-test.run=^TestDeclaredServiceStopsWhenCoordinatorIsKilled$")
-	command.Env = append(os.Environ(), "DDTEST_SERVICE_CRASH_ROOT="+root, "DDTEST_SERVICE_CRASH_TMP="+temporary)
+	command.Env = append(os.Environ(), "DD_CIVISIBILITY_ENABLED=false", "DDTEST_SERVICE_CRASH_ROOT="+root, "DDTEST_SERVICE_CRASH_TMP="+temporary)
 	var diagnostic bytes.Buffer
 	command.Stdout = &diagnostic
 	command.Stderr = &diagnostic
 	require.NoError(t, command.Start())
 	t.Cleanup(func() { _ = command.Process.Kill() })
 	ready := filepath.Join(root, "ready.json")
-	require.Eventually(t, func() bool { _, err := os.Stat(ready); return err == nil }, 10*time.Second, 20*time.Millisecond)
+	if !assert.Eventually(t, func() bool { _, err := os.Stat(ready); return err == nil }, 10*time.Second, 20*time.Millisecond) {
+		_ = command.Process.Kill()
+		_ = command.Wait()
+		t.Fatalf("service helper did not become ready:\n%s", diagnostic.String())
+	}
 	data, err := os.ReadFile(ready)
 	require.NoError(t, err)
 	var state crashedService

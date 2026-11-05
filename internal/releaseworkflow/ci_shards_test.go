@@ -15,14 +15,48 @@ type ciTestJob struct {
 	If       string
 	Needs    any
 	Uses     string
+	Env      map[string]string
 	Strategy struct {
 		FailFast bool `yaml:"fail-fast"`
 		Matrix   struct{ Shard []any }
 	}
 	Steps []struct {
 		Name, Run, Uses string
+		ID              string `yaml:"id"`
 		Env             map[string]string
+		With            map[string]string
 	}
+}
+
+func TestCompilerCachesRefreshAndKeepInstrumentationSeparate(t *testing.T) {
+	jobs := ciTestJobs(t)
+	keys := make(map[string]string)
+	for _, name := range []string{"test-shards", "test-ddtest-instrument-shards"} {
+		job := jobs[name]
+		for _, step := range job.Steps {
+			if step.Name == "Set up Go" {
+				require.Equal(t, "go", step.ID)
+				require.Equal(t, "false", step.With["cache"])
+			}
+			if step.Name == "Cache Go modules" {
+				key := step.With["key"]
+				for _, input := range []string{"runner.os", "runner.arch", "steps.go.outputs.go-version", "github.sha"} {
+					require.Contains(t, key, "${{ "+input+" }}", name)
+				}
+				require.Contains(t, step.With["path"], "~/.cache/go-build")
+				require.NotEmpty(t, step.With["restore-keys"])
+				require.Equal(t, strings.TrimSuffix(key, "${{ github.sha }}"), strings.Split(strings.TrimSpace(step.With["restore-keys"]), "\n")[0])
+				keys[name] = key
+			}
+			if strings.HasPrefix(step.Uses, "datadog/test-visibility-github-action@") {
+				require.Equal(t, "false", step.With["cache"], "avoid a second overlapping module-cache restore")
+				require.Equal(t, "${{ env.ORCHESTRION_VERSION }}", step.With["go-tracer-version"])
+				require.NotEmpty(t, job.Env["ORCHESTRION_VERSION"])
+			}
+		}
+		require.NotEmpty(t, keys[name])
+	}
+	require.NotEqual(t, keys["test-shards"], keys["test-ddtest-instrument-shards"])
 }
 
 func TestReleaseUsesTheSameCIAndRetainsTheInstrumentationGate(t *testing.T) {

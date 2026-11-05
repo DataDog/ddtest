@@ -11,6 +11,7 @@ import (
 	"errors"
 	"maps"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -1388,6 +1389,18 @@ func TestJenkinsRubyVersionManagersKeepTheStatedRuntime(t *testing.T) {
 // cells of all of a Jenkinsfile's matrices, and a value that interpolates
 // others.
 func TestJenkinsExpansionsAreBounded(t *testing.T) {
+	isolated := os.Getenv("DDTEST_JENKINS_ALLOCATION_HELPER") == "1"
+	if isolated {
+		require.Equal(t, "false", os.Getenv("DD_CIVISIBILITY_ENABLED"))
+	} else {
+		// TotalAlloc is process-wide. Measure without background SDK work,
+		// then also run the behavioral assertions here to retain the
+		// instrumented parent's coverage of the parser's bounds.
+		command := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestJenkinsExpansionsAreBounded$")
+		command.Env = append(os.Environ(), "DD_CIVISIBILITY_ENABLED=false", "DDTEST_JENKINS_ALLOCATION_HELPER=1")
+		output, err := command.CombinedOutput()
+		require.NoError(t, err, "%s", output)
+	}
 	values := func(n int) string {
 		var items []string
 		for i := range n {
@@ -1400,13 +1413,17 @@ func TestJenkinsExpansionsAreBounded(t *testing.T) {
 	}
 	huge := "pipeline {\n  agent any\n  stages {\n" + matrix("M", "      axis { name 'A'; values "+values(200)+" }\n      axis { name 'B'; values "+values(1000)+" }\n", "stage('t') { steps { sh 'npm test' } }") + "  }\n}\n"
 	var before, after runtime.MemStats
-	runtime.GC()
-	runtime.ReadMemStats(&before)
+	if isolated {
+		runtime.GC()
+		runtime.ReadMemStats(&before)
+	}
 	workflow, err := readJenkinsfile(t.TempDir(), "Jenkinsfile", huge)
-	runtime.ReadMemStats(&after)
+	if isolated {
+		runtime.ReadMemStats(&after)
+		require.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(8<<20), "200,000 cells are never built")
+	}
 	require.NoError(t, err)
 	require.Equal(t, []string{"UNRESOLVED Jenkinsfile M: ddtest cannot expand its matrix (it has more than 200 cells), so it cannot tell which stages it runs"}, jenkinsRuns(workflow.Jobs["M"]))
-	require.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(8<<20), "200,000 cells are never built")
 
 	// Nested matrices multiply: past the Jenkinsfile's budget, each is
 	// unresolved.
@@ -1432,15 +1449,19 @@ func TestJenkinsExpansionsAreBounded(t *testing.T) {
 		doubling += "def v" + strconv.Itoa(i) + " = \"${v" + strconv.Itoa(i-1) + "}${v" + strconv.Itoa(i-1) + "}\"\n"
 	}
 	doubling += "node { stage('T') { sh \"echo ${v30}\"\nsh 'npm test' } }\n"
-	runtime.GC()
-	runtime.ReadMemStats(&before)
+	if isolated {
+		runtime.GC()
+		runtime.ReadMemStats(&before)
+	}
 	jobs := jenkinsJobs(t, doubling)
-	runtime.ReadMemStats(&after)
+	if isolated {
+		runtime.ReadMemStats(&after)
+		require.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(16<<20), "a 16 GiB string is never built")
+	}
 	runs := jenkinsRuns(jobs["T"])
 	require.Len(t, runs, 2)
 	require.Contains(t, runs[0], "UNRESOLVED Jenkinsfile T: its sh script reads ${v30}, which only the Jenkins build knows")
 	require.Equal(t, "npm test", runs[1])
-	require.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(16<<20), "a 16 GiB string is never built")
 
 	// Nested stages repeat their names in the jobs inside: a long one is
 	// named by its line.
