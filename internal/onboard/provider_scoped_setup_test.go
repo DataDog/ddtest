@@ -9,13 +9,16 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"mvdan.cc/sh/v3/syntax"
 )
@@ -52,6 +55,17 @@ var scopedProviders = []scopedProvider{
 		},
 		persisted: buildkiteEscape,
 	},
+}
+
+// scopedProvidersNamed is the scoped provider of name, for a test whose
+// behavior doesn't depend on the provider.
+func scopedProvidersNamed(name string) []scopedProvider {
+	for _, provider := range scopedProviders {
+		if provider.name == name {
+			return []scopedProvider{provider}
+		}
+	}
+	panic("no scoped provider " + name)
 }
 
 // scopedRepository is a repository whose only CI is provider's config,
@@ -718,24 +732,14 @@ func TestProviderSplitsACucumberReportPipe(t *testing.T) {
 // The status subshell converts the report whatever the tests' result, and
 // exits with the tests' status, or the conversion's when only the
 // conversion fails, as the original pipe did then: with errexit on, as CI
-// scripts run, and off, under sh, bash and dash, and with pipefail on and
-// off for the conversion's own pipe. Only a passing run continues with the
-// script's later commands under errexit.
+// scripts run, and off, and with pipefail for the conversion's own pipe.
+// Only a passing run continues with the script's later commands under
+// errexit. sh runs every combination; bash, also with pipefail, and dash run
+// those where the tests, the conversion or both fail, but for the
+// three-stage conversion, which only sh needs to show the last stage's
+// status counts.
 func TestStatusSubshellConvertsAndKeepsTheTestsStatus(t *testing.T) {
-	type shell struct{ name, options string }
-	var shells []shell
-	for _, name := range []string{"sh", "bash", "dash"} {
-		if _, err := exec.LookPath(name); err != nil {
-			continue
-		}
-		shells = append(shells, shell{name, "set -e"}, shell{name, "set +e"})
-		if name == "bash" {
-			shells = append(shells, shell{name, "set -e -o pipefail"}, shell{name, "set +e -o pipefail"})
-		}
-	}
-	if len(shells) == 0 {
-		t.Skip("no sh")
-	}
+	shells := realShells(t, "sh", "bash", "dash")
 	tests := map[string]int{"(echo report > report.json; exit 3)": 3, "echo report > report.json": 0}
 	conversions := map[string]int{
 		"cat report.json | tr a-z A-Z > junit.xml":                       0,
@@ -743,86 +747,140 @@ func TestStatusSubshellConvertsAndKeepsTheTestsStatus(t *testing.T) {
 		"cat report.json | tr a-z A-Z | sh -c 'cat > junit.xml; exit 6'": 6,
 	}
 	for _, shell := range shells {
-		for tests, testStatus := range tests {
-			for conversion, conversionStatus := range conversions {
-				t.Run(shell.name+" "+shell.options+" "+tests+" "+conversion, func(t *testing.T) {
+		options := []string{"set -e", "set +e"}
+		if shell == "bash" {
+			options = append(options, "set -e -o pipefail")
+		}
+		var cases []shellCase
+		var labels []string
+		var wants []int
+		var errexit []bool
+		for _, option := range options {
+			for tests, testStatus := range tests {
+				for conversion, conversionStatus := range conversions {
+					if shell != "sh" && (conversionStatus == 6 || testStatus == 0 && conversionStatus == 0) {
+						continue
+					}
 					want := testStatus
 					if want == 0 {
 						want = conversionStatus
 					}
-					directory := t.TempDir()
-					script := shell.options + "\n" + statusSubshell("report.json", tests, conversion) + "\nstatus=$?\necho later > later.txt\nexit \"$status\"\n"
-					command := exec.Command(shell.name, "-c", script)
-					command.Dir = directory
-					err := command.Run()
-					status := 0
-					var exit *exec.ExitError
-					if errors.As(err, &exit) {
-						status = exit.ExitCode()
-					} else {
-						require.NoError(t, err)
-					}
-					require.Equal(t, want, status, "the tests' status, or the conversion's when only it fails")
-					converted, readErr := os.ReadFile(filepath.Join(directory, "junit.xml"))
-					require.NoError(t, readErr, "the report is converted whatever the tests' result")
-					require.Equal(t, "REPORT\n", string(converted))
-					_, later := os.Stat(filepath.Join(directory, "later.txt"))
-					if strings.HasPrefix(shell.options, "set -e") {
-						require.Equal(t, want == 0, later == nil, "only a passing run continues with the script")
-					} else {
-						require.NoError(t, later, "without errexit, the script continues")
-					}
-				})
+					cases = append(cases, shellCase{script: option + "\n" + statusSubshell("report.json", tests, conversion) + "\nstatus=$?\necho later > later.txt\nexit \"$status\"\n"})
+					labels = append(labels, shell+" "+option+" "+tests+" "+conversion)
+					wants = append(wants, want)
+					errexit = append(errexit, strings.HasPrefix(option, "set -e"))
+				}
+			}
+		}
+		for i, result := range runShellCases(t, shell, cases) {
+			label, want := labels[i], wants[i]
+			assert.Equal(t, want, result.status, "the tests' status, or the conversion's when only it fails: %s", label)
+			converted, readErr := os.ReadFile(filepath.Join(result.dir, "junit.xml"))
+			if assert.NoError(t, readErr, "the report is converted whatever the tests' result: %s", label) {
+				assert.Equal(t, "REPORT\n", string(converted), label)
+			}
+			_, later := os.Stat(filepath.Join(result.dir, "later.txt"))
+			if errexit[i] {
+				assert.Equal(t, want == 0, later == nil, "only a passing run continues with the script: %s", label)
+			} else {
+				assert.NoError(t, later, "without errexit, the script continues: %s", label)
 			}
 		}
 	}
+}
+
+// realShells is those of names on PATH; the test skips without any.
+func realShells(t *testing.T, names ...string) []string {
+	t.Helper()
+	var shells []string
+	for _, name := range names {
+		if _, err := exec.LookPath(name); err == nil {
+			shells = append(shells, name)
+		}
+	}
+	if len(shells) == 0 {
+		t.Skip("no sh")
+	}
+	return shells
+}
+
+// shellCase is a script a real shell runs in a directory of its own, which
+// holds files first.
+type shellCase struct {
+	script string
+	files  map[string]string
+}
+
+// shellResult is the status a case's script exited with and the directory
+// it ran in.
+type shellResult struct {
+	status int
+	dir    string
+}
+
+// runShellCases runs each case's script in a fresh process of shell, in the
+// case's own directory, all from one process of shell that records every
+// status: a matrix of cases costs the test one process, not one per case.
+func runShellCases(t *testing.T, shell string, cases []shellCase) []shellResult {
+	t.Helper()
+	root := t.TempDir()
+	results := make([]shellResult, len(cases))
+	for i, c := range cases {
+		name := fmt.Sprintf("%03d", i)
+		results[i].dir = filepath.Join(root, name)
+		require.NoError(t, os.Mkdir(results[i].dir, 0o755))
+		for path, contents := range c.files {
+			require.NoError(t, os.WriteFile(filepath.Join(results[i].dir, path), []byte(contents), 0o644))
+		}
+		require.NoError(t, os.WriteFile(filepath.Join(root, name+".sh"), []byte(c.script), 0o644))
+	}
+	driver := `for script in *.sh; do name=${script%.sh}; (cd "$name" && exec "$1" "../$script"); echo "$?" > "$name.status"; done`
+	command := exec.Command(shell, "-c", driver, "_", shell)
+	command.Dir = root
+	output, err := command.CombinedOutput()
+	require.NoError(t, err, "%s", output)
+	for i := range results {
+		data, err := os.ReadFile(filepath.Join(root, fmt.Sprintf("%03d.status", i)))
+		require.NoError(t, err, "%s", output)
+		results[i].status, err = strconv.Atoi(strings.TrimSpace(string(data)))
+		require.NoError(t, err)
+	}
+	return results
 }
 
 // The status subshell removes the intermediate report before the tests, so
 // tests that fail before writing it, in a reused workspace or after another
 // command that wrote it, never get an earlier run's report converted: cat
 // finds no file, and the command exits with the tests' status whatever the
-// converter does with no input.
+// converter does with no input. sh runs it with errexit on and off, bash
+// with pipefail, where cat's failure is the conversion's status, and dash
+// with errexit.
 func TestStatusSubshellNeverConvertsAStaleReport(t *testing.T) {
-	type shell struct{ name, options string }
-	var shells []shell
-	for _, name := range []string{"sh", "bash", "dash"} {
-		if _, err := exec.LookPath(name); err != nil {
-			continue
-		}
-		shells = append(shells, shell{name, "set -e"}, shell{name, "set +e"})
-		if name == "bash" {
-			shells = append(shells, shell{name, "set -e -o pipefail"}, shell{name, "set +e -o pipefail"})
-		}
+	conversions := []string{
+		"cat report.json | tr a-z A-Z > junit.xml",
+		`cat report.json | sh -c 'input=$(cat); [ -n "$input" ] || exit 7; echo "$input" > junit.xml'`,
 	}
-	if len(shells) == 0 {
-		t.Skip("no sh")
-	}
-	for _, shell := range shells {
-		for _, conversion := range []string{
-			"cat report.json | tr a-z A-Z > junit.xml",
-			`cat report.json | sh -c 'input=$(cat); [ -n "$input" ] || exit 7; echo "$input" > junit.xml'`,
-		} {
-			t.Run(shell.name+" "+shell.options+" "+conversion, func(t *testing.T) {
-				directory := t.TempDir()
-				require.NoError(t, os.WriteFile(filepath.Join(directory, "report.json"), []byte("stale\n"), 0o644))
-				script := shell.options + "\n" + statusSubshell("report.json", "sh -c 'exit 4'", conversion) + "\n"
-				command := exec.Command(shell.name, "-c", script)
-				command.Dir = directory
-				err := command.Run()
-				var exit *exec.ExitError
-				require.ErrorAs(t, err, &exit)
-				require.Equal(t, 4, exit.ExitCode(), "the tests' status")
-				_, statErr := os.Stat(filepath.Join(directory, "report.json"))
-				require.ErrorIs(t, statErr, fs.ErrNotExist, "the stale report is removed")
-				converted, readErr := os.ReadFile(filepath.Join(directory, "junit.xml"))
-				if strings.Contains(conversion, "exit 7") {
-					require.ErrorIs(t, readErr, fs.ErrNotExist, "the converter got no input")
-				} else {
-					require.NoError(t, readErr, "the conversion ran after the failing tests")
-					require.Empty(t, string(converted), "no earlier run's report is converted")
-				}
-			})
+	for _, shell := range realShells(t, "sh", "bash", "dash") {
+		options := map[string][]string{"sh": {"set -e", "set +e"}, "bash": {"set -e -o pipefail", "set +e -o pipefail"}, "dash": {"set -e"}}[shell]
+		var cases []shellCase
+		var labels []string
+		for _, option := range options {
+			for _, conversion := range conversions {
+				cases = append(cases, shellCase{script: option + "\n" + statusSubshell("report.json", "sh -c 'exit 4'", conversion) + "\n", files: map[string]string{"report.json": "stale\n"}})
+				labels = append(labels, shell+" "+option+" "+conversion)
+			}
+		}
+		for i, result := range runShellCases(t, shell, cases) {
+			label := labels[i]
+			assert.Equal(t, 4, result.status, "the tests' status: %s", label)
+			_, statErr := os.Stat(filepath.Join(result.dir, "report.json"))
+			assert.ErrorIs(t, statErr, fs.ErrNotExist, "the stale report is removed: %s", label)
+			converted, readErr := os.ReadFile(filepath.Join(result.dir, "junit.xml"))
+			if strings.Contains(label, "exit 7") {
+				assert.ErrorIs(t, readErr, fs.ErrNotExist, "the converter got no input: %s", label)
+			} else if assert.NoError(t, readErr, "the conversion ran after the failing tests: %s", label) {
+				assert.Empty(t, string(converted), "no earlier run's report is converted: %s", label)
+			}
 		}
 	}
 }
@@ -847,7 +905,10 @@ func TestEveryProviderReadsOnlyThePrescribedRemoval(t *testing.T) {
 			require.Len(t, scope.Commands, 1)
 			require.Equal(t, "cucumber-js ./features --format json:cucumber-report.json", scope.Commands[0].Command)
 
-			for _, removal := range []string{"rm -f other.json", "rm -rf .", "rm -f $REPORT", "rm -f cucumber-report.json other.json"} {
+			// TestStatusSubshellReadsOnlyThePrescribedForm rejects every other
+			// removal at the reader; each provider reaches it with one of
+			// another file and one that Buildkite escapes.
+			for _, removal := range []string{"rm -f other.json", "rm -f $REPORT"} {
 				write(t, root, "npm ci", `(status=0; `+removal+`; `+tests+` || status=$?; `+conversion+guard)
 				scope, err := DiscoverValidationScope(root, "cucumber")
 				require.NoError(t, err)
@@ -865,12 +926,8 @@ func TestEveryProviderReadsOnlyThePrescribedRemoval(t *testing.T) {
 // variable, keeps the general advice instead, and a ; or comment after the
 // pipe stays out of the prescription.
 func TestEveryReportPipePrescriptionReadsBack(t *testing.T) {
-	var shells []string
-	for _, name := range []string{"bash", "dash"} {
-		if _, err := exec.LookPath(name); err == nil {
-			shells = append(shells, name)
-		}
-	}
+	root := t.TempDir()
+	var prescriptions []string
 	for pipe, prescribed := range map[string]bool{
 		"cucumber-js --format json | cucumber-junit > junit.xml":                                                        true,
 		"cucumber-js --format json | cucumber-junit > junit.xml;":                                                       true,
@@ -898,7 +955,7 @@ func TestEveryReportPipePrescriptionReadsBack(t *testing.T) {
 		"cucumber-js --format json | cucumber-junit > junit.xml && echo done":                   false,
 	} {
 		t.Run(pipe, func(t *testing.T) {
-			_, err := directScopedCommand(t.TempDir(), runtimeStep{Run: pipe}, TestCommand{}, "cucumber")
+			_, err := directScopedCommand(root, runtimeStep{Run: pipe}, TestCommand{}, "cucumber")
 			require.Error(t, err)
 			var split *ReportPipeSplit
 			if !prescribed {
@@ -921,11 +978,30 @@ func TestEveryReportPipePrescriptionReadsBack(t *testing.T) {
 			require.False(t, referencesVariable(original, converted), "the pipe's $%s is not the subshell's", converted)
 			require.NotContains(t, split.Command, "#")
 			require.NotContains(t, split.Command, ";;")
-			for _, shell := range shells {
-				output, err := exec.Command(shell, "-n", "-c", split.Command).CombinedOutput()
-				require.NoError(t, err, "%s -n: %s\n%s", shell, split.Command, output)
-			}
+			prescriptions = append(prescriptions, split.Command)
 		})
+	}
+	requireShellsParse(t, prescriptions, "bash", "dash")
+}
+
+// requireShellsParse checks that each shell of names on PATH parses every
+// command, with one shell -n over a script holding each command as the
+// body of a function of its own, where an unclosed quote or group fails the
+// script.
+func requireShellsParse(t *testing.T, commands []string, names ...string) {
+	t.Helper()
+	var script strings.Builder
+	for i, command := range commands {
+		fmt.Fprintf(&script, "prescription_%d() {\n%s\n}\n", i, command)
+	}
+	path := filepath.Join(t.TempDir(), "prescriptions.sh")
+	require.NoError(t, os.WriteFile(path, []byte(script.String()), 0o644))
+	for _, shell := range names {
+		if _, err := exec.LookPath(shell); err != nil {
+			continue
+		}
+		output, err := exec.Command(shell, "-n", path).CombinedOutput()
+		require.NoError(t, err, "%s -n:\n%s\n%s", shell, script.String(), output)
 	}
 }
 
@@ -948,6 +1024,7 @@ func TestStatusSubshellReadsOnlyThePrescribedForm(t *testing.T) {
 		`(status=0; rm -f r.json; npx cucumber-js --format json:r.json || status=$?; cat r.json` + guard + `; exit "$status")`:                                {},
 		`(status=0; rm -f r.json; npx cucumber-js --format json:r.json || status=$?; exit "$status")`:                                                         {},
 		`(status=0; rm -rf r.json; npx cucumber-js --format json:r.json || status=$?; cat r.json | cucumber-junit` + guard + `; exit "$status")`:              {},
+		`(status=0; rm -rf .; npx cucumber-js --format json:r.json || status=$?; cat r.json | cucumber-junit` + guard + `; exit "$status")`:                   {},
 		`(status=0; rm r.json; npx cucumber-js --format json:r.json || status=$?; cat r.json | cucumber-junit` + guard + `; exit "$status")`:                  {},
 		`(status=0; rm -f r.json x; npx cucumber-js --format json:r.json || status=$?; cat r.json | cucumber-junit` + guard + `; exit "$status")`:             {},
 		`(status=0; rm -f -- r.json; npx cucumber-js --format json:r.json || status=$?; cat r.json | cucumber-junit` + guard + `; exit "$status")`:            {},
@@ -1133,7 +1210,10 @@ func TestStatusSubshellRejectsCommandsThatSkipTheExit(t *testing.T) {
 			require.Empty(t, scope.Commands, "an exit 0 before the saved status masks failing tests")
 			require.NotEmpty(t, scope.Unresolved)
 
-			for _, middle := range statusUnsafeBuiltins {
+			// The reader rejects every unsafe builtin above; each provider
+			// reaches it with one that quotes, and one that Buildkite escapes.
+			for _, middle := range []string{"printf '%n' status", "[[ -n $((status=0)) ]]"} {
+				require.Contains(t, statusUnsafeBuiltins, middle)
 				write(t, root, "npm ci", `(status=0; ./node_modules/.bin/cucumber-js || status=$?; `+middle+` || { converted=$?; [ "$status" -ne 0 ] || status=$converted; }; exit "$status")`)
 				scope, err := DiscoverValidationScope(root, "cucumber")
 				require.NoError(t, err)
@@ -1362,7 +1442,10 @@ func TestCucumberReportPipeChoosesAFreshReportAndDecodesTheOption(t *testing.T) 
 			require.True(t, parsed)
 		})
 	}
-	for _, provider := range scopedProviders {
+	// The report's name is the same on every provider; Buildkite's is the
+	// pipeline that holds the command escaped (see
+	// TestProviderSplitsACucumberReportPipe for the others).
+	for _, provider := range scopedProvidersNamed(buildkiteProvider) {
 		t.Run(provider.name, func(t *testing.T) {
 			framework := scopedFrameworks[0]
 			pipe := "./node_modules/.bin/cucumber-js ./features '--format=json' | ./node_modules/.bin/cucumber-junit > cucumber-report.json"
@@ -1395,7 +1478,10 @@ func noFile(string) bool { return false }
 // as a tracked fixture the tests would overwrite, and onboard --apply accepts
 // the prescription that skips it.
 func TestCucumberReportPipeSkipsTheStepDirectorysFiles(t *testing.T) {
-	for _, provider := range scopedProviders {
+	// Every provider reads the step directory the same way, here the
+	// repository root (see TestReportNameTakenReadsTheStepDirectory for
+	// another).
+	for _, provider := range scopedProvidersNamed(circleCIProvider) {
 		t.Run(provider.name, func(t *testing.T) {
 			framework := scopedFrameworks[0]
 			pipe := "./node_modules/.bin/cucumber-js ./features --format json | ./node_modules/.bin/cucumber-junit > junit.xml"
@@ -1517,39 +1603,34 @@ func TestEveryProviderReadsTheJobsStatusVariableInsideTheSubshell(t *testing.T) 
 // In a real shell, the tests and the conversion get the values CI gave
 // status and converted, whatever the subshell records, and the command
 // still exits with the tests' status, or the conversion's when only it
-// fails.
+// fails: in sh with errexit on and off, and in bash and dash with errexit.
 func TestStatusSubshellKeepsTheShellsStatusVariable(t *testing.T) {
-	var shells []string
-	for _, name := range []string{"sh", "bash", "dash"} {
-		if _, err := exec.LookPath(name); err == nil {
-			shells = append(shells, name)
+	conversion := `cat report.json | sh -c 'cat > junit.xml; echo "conversion $1" >> junit.xml; exit 5' _ "$converted"`
+	for _, shell := range realShells(t, "sh", "bash", "dash") {
+		var cases []shellCase
+		var labels []string
+		var wants []int
+		options := []string{"set -e"}
+		if shell == "sh" {
+			options = append(options, "set +e")
 		}
-	}
-	if len(shells) == 0 {
-		t.Skip("no sh")
-	}
-	for _, shell := range shells {
-		for _, options := range []string{"set -e", "set +e"} {
+		for _, options := range options {
 			for tests, want := range map[string]int{
 				`sh -c 'echo "tests $1" > report.json' _ "$status"`:         5,
 				`sh -c 'echo "tests $1" > report.json; exit 3' _ "$status"`: 3,
 			} {
-				t.Run(shell+" "+options+" "+tests, func(t *testing.T) {
-					conversion := `cat report.json | sh -c 'cat > junit.xml; echo "conversion $1" >> junit.xml; exit 5' _ "$converted"`
-					command := statusSubshell("report.json", tests, conversion)
-					require.True(t, strings.HasPrefix(command, "(datadog_status=0; "), command)
-					directory := t.TempDir()
-					script := options + "\nstatus=ci-status\nconverted=ci-converted\n" + command + "\n"
-					run := exec.Command(shell, "-c", script)
-					run.Dir = directory
-					err := run.Run()
-					var exit *exec.ExitError
-					require.ErrorAs(t, err, &exit)
-					require.Equal(t, want, exit.ExitCode())
-					junit, err := os.ReadFile(filepath.Join(directory, "junit.xml"))
-					require.NoError(t, err)
-					require.Equal(t, "tests ci-status\nconversion ci-converted\n", string(junit))
-				})
+				command := statusSubshell("report.json", tests, conversion)
+				require.True(t, strings.HasPrefix(command, "(datadog_status=0; "), command)
+				cases = append(cases, shellCase{script: options + "\nstatus=ci-status\nconverted=ci-converted\n" + command + "\n"})
+				labels = append(labels, shell+" "+options+" "+tests)
+				wants = append(wants, want)
+			}
+		}
+		for i, result := range runShellCases(t, shell, cases) {
+			assert.Equal(t, wants[i], result.status, labels[i])
+			junit, err := os.ReadFile(filepath.Join(result.dir, "junit.xml"))
+			if assert.NoError(t, err, labels[i]) {
+				assert.Equal(t, "tests ci-status\nconversion ci-converted\n", string(junit), labels[i])
 			}
 		}
 	}
