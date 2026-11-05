@@ -322,7 +322,7 @@ func TestMiniTestSessionSpansTheCommand(t *testing.T) {
 		// ddto runs in another repository and moves go test with -C: the
 		// session's Git metadata is the test processes'.
 		other := t.TempDir()
-		for _, args := range [][]string{{"init", "-q"}, {"remote", "add", "origin", "https://example.com/other.git"}, {"-c", "user.name=fixture", "-c", "user.email=fixture@example.com", "commit", "-q", "--allow-empty", "-m", "other"}} {
+		for _, args := range [][]string{{"init", "-q"}, {"remote", "add", "origin", "https://example.com/other.git"}, {"-c", "user.name=fixture", "-c", "user.email=fixture@example.com", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "other"}} {
 			if out, stderr, code := command(t, other, testEnv(), "git", args...); code != 0 {
 				t.Fatalf("git %v: %s %s", args, out, stderr)
 			}

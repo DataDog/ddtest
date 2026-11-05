@@ -1214,3 +1214,26 @@ func getBenchmarkPrivateFieldsReflect(b *testing.B) *benchmarkPrivateFields {
 
 	return benchFields
 }
+
+// getFailureHookPrivateFields accepts native Fail's *testing.common receiver
+// without treating the common allocation as a whole testing.T.
+func getFailureHookPrivateFields(tb testing.TB) *commonPrivateFields {
+	if t, ok := tb.(*testing.T); ok {
+		return getTestPrivateFields(t)
+	}
+	value := reflect.ValueOf(tb)
+	if !value.IsValid() || value.Kind() != reflect.Pointer || value.IsNil() {
+		return nil
+	}
+	typ := value.Type().Elem()
+	if typ.PkgPath() != "testing" || typ.Name() != "common" {
+		return nil
+	}
+	layout := getTestingInternalsLayout()
+	if layout == nil || layout.disabled || !allAvailable(layout.common.parent.unsafeField) {
+		return nil
+	}
+	return &commonPrivateFields{
+		parent: (*unsafe.Pointer)(fieldRawPtr(value.UnsafePointer(), layout.common.parent.unsafeField)),
+	}
+}

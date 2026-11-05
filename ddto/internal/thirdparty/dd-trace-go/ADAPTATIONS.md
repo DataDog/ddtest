@@ -3049,3 +3049,202 @@ best-effort behavior. OS-release parsing skips malformed lines without a value.
 `TestContainerReadersHandleReadErrors`, `TestContainerReaderStopsAtFirstID` and
 `TestOSReleaseHandlesMalformedLinesAndReadErrors` cover these paths; tip's
 scanner analyzer checks the error handling with `go vet`.
+
+## Test automation exclusion declarations
+
+Mini's `gotesting/exclusions.go` owns compiled per-function declarations and
+per-native-parent-invocation result caches. `testopt.RegisterTestExclusions`
+registers the declaration API. The CLI reads only Go-selected sources and embeds
+comment declarations in package initialization, preserving overlays, build tags,
+external test packages and method identity without runtime source reads.
+
+Feature metadata projects quarantine/disabled and retry policy after retaining
+backend assignments separately. Execution metadata reapplies exclusions after
+parent management propagation; span setters do not provide declaration policy.
+Process-retry snapshots carry both declarations and assignments. Excluded Testify
+methods replay their native result without executing their callback or emitting
+an additional event when their parent retries. The cache is scoped to one native
+parent invocation, is synchronized for parallel descendants, and its bounded
+identity map crosses the existing private process-control transport. Ordinary
+siblings and native repetitions keep their normal execution.
+
+Checks: `TestMiniDeclarationExclusions` verifies independent/together/absent
+annotations, original assignments, disabling, quarantine, EFD, ATR, ATF, native
+command outcomes and annotation survival without sources. The Testify regression
+`TestMiniTestifyExclusionsKeepSiblingRetries` checks both retry modes and retains
+an excluded failure while a sibling recovers. The runner tests cover distinct
+internal/external packages, method declarations, overlays and annotation removal.
+
+- Plain Go table rows inherit the resolved parent declaration's exclusion policy,
+  including shared callbacks and parallel rows, while Testify methods retain
+  their own declarations. Value-receiver methods register the pointer method
+  expression Testify actually invokes. Protected terminal descendant failures
+  remain blocking through a quarantined ancestor; the marker is per attempt and
+  does not retain a failure after an otherwise permitted retry recovers it.
+
+- Isolated retries carry resolved declaration/assignment metadata and protected
+  descendant outcomes in their bounded control/result protocol. Newly discovered
+  excluded declarations return their first native result and one test event to
+  the parent; later retries replay the cached native result without executing or
+  reporting the declaration again. Their first execution never inherits the
+  parent's retry marker. EFD remains serial when a package has no-auto-retry
+  declarations, so a newly discovered declaration publishes its result before
+  another attempt is scheduled. Protected outcome markers bypass ancestor
+  masking without changing ATR/EFD recovery or ATF aggregation.
+
+- Excluded-result keys include both the native test path and compiled declaring
+  function identity, so a parent switching suites cannot replay another method's
+  outcome. In-process ATF keeps protected failure history for its strict family;
+  ATR/EFD still use their existing recovery rules. Ordinary nested declarations
+  stay outside the excluded-only worker event payload. Exclusion handoffs use
+  the existing bounded extended wire budget in both directions; ordinary
+  payloads keep their smaller limit.
+
+- Managed subtree launches retain the caller's native descendant run filters.
+  `retry_process_selection.go` reuses the existing testing matcher grammar to
+  narrow only the managed root prefix, including native alternative patterns.
+  Descendant ATF continuations exchange the same exclusion history on each
+  launch; their protected terminal failures participate in strict ATF package
+  and final-status aggregation without changing ordinary ATR/EFD recovery.
+  Selected isolation-root cache identities use the same native-path validation
+  as descendant identities. Replayed excluded worker events retain actual TIA
+  skip/forced-run flags and session skip accounting.
+
+- A promoted Testify method keeps its reflected source/suite identity while a
+  separate declaring-function identity keys exclusion replay across derived
+  wrappers. Late-discovered excluded execution events use the existing 16 MiB
+  byte-bounded result envelope without inheriting the unrelated subtree-node
+  count limit; all execution identities/statuses and cache limits stay checked.
+- Native lifecycle draining preserves the parallel flag until user cleanup has
+  finished, then neutralizes only a slot already released. Sequential parents
+  reacquire their scheduler slot after cleanup, matching native ordering.
+  Direct unsuppressed body terminals run cleanup before admitting queued
+  parallel children; managed retry/quarantine attempts retain their lifecycle.
+
+- Public method-expression registration resolves exact reflected value/pointer
+  counterparts and their canonical declaring function; ordinary package
+  functions with matching signatures cannot register unrelated methods.
+  Ordinary process-worker wrappers share the invocation exclusion cache, so
+  independently declared descendants retain their first result across a later
+  ancestor switch.
+  Inherited native-row cache keys include their owning declaration as well as
+  the row callback, preventing a later declaration from reusing another owner's
+  passing row at the same native path.
+
+- Native cleanup Goexit retains its scheduler unwind and body-terminal
+  replacement behavior. Fuzz callbacks retain the fuzz lifecycle rather than
+  entering direct testing.T panic handling.
+
+- Parent retry verdicts retain excluded descendants' first failed native result
+  when a later attempt omits their declaration. Effective quarantined/disabled
+  outcomes remain suppressed without failure protection, including replay and
+  transport; native invocations keep separate caches.
+  Earlier passing EFD parent samples cannot redeem a newly discovered excluded
+  failure; aggregate verdicts and final status retain that failure without
+  rewriting the actual sample history.
+- Extended result envelopes budget optional diagnostics across both subtree
+  and excluded execution records. Trimming preserves every required record and
+  the existing wire limits; mandatory overflow fails explicitly.
+
+- Testify reporting attribution remains attached to native descendants, but a
+  separate method-boundary check resolves exclusion ownership. Explicit native
+  callbacks keep their own policy, and their unannotated native rows inherit
+  that callback's policy rather than the surrounding method's. Actual nested
+  Testify methods remain independent. Cache declaration keys use the same
+  distinction, retaining canonical promoted-method identities and explicit
+  callback history when a parent switches suite declarations.
+  Promoted-method lookup stops at an interface shadowing boundary instead of
+  borrowing a deeper concrete declaration's annotations. Explicit callback
+  entries remain independent during cache compaction, including callbacks
+  beneath excluded methods.
+
+- Ordinary process-worker carriers now retain their native identity and resolved
+  cached management context. Descendants inherit the immediate carrier's
+  effective policy, original assignments and attempt ownership, including an
+  exact intermediate Attempt-to-Fix override. NoRetry can therefore remove
+  Attempt to Fix while retaining an inherited disabled assignment and skip.
+  This adds neither an ordinary carrier event nor a backend request or retry.
+
+- Eager annotation cleanup observes native cleanup terminals without replacing
+  `testing.common.runCleanup`. Each callback is observed once, including
+  callbacks registered by a cleanup, while native cancellation, LIFO order,
+  recursive drain and Goexit retain control. Original queued-child shape selects
+  native cleanup panic handling before the scheduler drain clears that shape.
+  Body and cleanup panic values and their origin stacks remain separate until
+  native precedence determines which diagnostics survive; cleanup Goexit does
+  not blindly resurrect or erase a prior panic. Top-level, native-child and
+  isolated-worker finalization retain the surviving secondary diagnostics in
+  existing bounded output/error fields. Worker updates replace only their own
+  body-panic record, preserving independently owned descendant failures.
+  Only the observer's own added frames are omitted from captured cleanup
+  stacks; source-frame comparisons and unrelated function frames stay strict.
+  Ordinary annotation-off events retain the pinned SDK's body-return lifetime,
+  and fuzz retains its existing terminal precedence.
+
+- In an isolated worker, an annotated unsuppressed body terminal leaves queued
+  parallel descendants behind their unopened native barrier. The worker detaches
+  only that terminal queue so consuming the panic for subtree-result publication
+  cannot admit children that native `doPanic` would never run. Original queued
+  shape still determines cleanup precedence; managed quarantine and nonterminal
+  child draining retain their existing behavior.
+
+- Crash and timeout finalization reads an immutable per-test suppression policy
+  registered from effective Go execution metadata before assignment tags are set.
+  Compiled failure-suppression exclusions therefore remain effective when
+  quarantined/disabled assignment tags are retained for attribution. No-retry
+  alone keeps effective suppression. Registration and crash/normal close share
+  the existing test mutex; only the first registration on an open test is kept,
+  and finished or delayed-close events are never reopened. Manual API tests
+  without a registered policy retain legacy quarantined/disabled tag behavior;
+  mutable annotation tags cannot override registered execution policy.
+
+- Early controlled worker-panic results carry the same recorded no-retry cache,
+  completed excluded execution rows, and protected-descendant failure flag as
+  normal worker results. A shared snapshot helper reads the resolved root owner
+  without draining parallel work, finalizing coverage, or treating in-flight
+  tests as completed. Existing writer arbitration, control acknowledgement,
+  payload budgets, and validation limits remain unchanged.
+
+- No-retry callback admission and terminal publication share the completed-cache
+  mutex. Publication freezes new admission without waiting; an entered callback
+  remains active until its existing deferred completion record is stored. Both
+  controlled-terminal publishers retain completed facts but withhold recovery
+  acknowledgement when callbacks are still active, using the existing
+  uncommitted-terminal failure path instead of retrying unfinished declarations.
+  A callback rejected after the freeze has no execution or fabricated completion
+  record. No-retry alone does not acquire failure-suppression protection.
+
+- Ordinary process-worker children with compiled failure-suppression protection
+  resolve body and cleanup outcomes before publishing terminal results. Existing
+  cleanup helpers preserve native queued-child ordering and cancellation by
+  cleanup SkipNow/FailNow; surviving terminal or failed state marks ancestors
+  before publication. The child preserves original panic diagnostics and the
+  existing bounded owner record, without creating an additional child event.
+  Unprotected ordinary-worker lifecycle and terminal admission/history protocols
+  retain their existing behavior.
+
+- An original native Fail on a compiled protected worker child marks its resolved
+  result owner immediately, before another concurrent child can publish a
+  terminal envelope. Recursive native failure propagation cannot infer protection
+  from a protected ancestor; existing managed/unmasked-failure handling remains
+  unchanged. Resolved terminal finalization also marks its captured owner directly
+  before ancestry propagation, without eagerly failing a cancellable body panic.
+
+- Crash finalization preserves trusted protected-descendant failures separately
+  from the immutable base suppression policy. Each concrete open event keeps a
+  durable protected-failure fact under its existing close mutex; mutable tags
+  cannot establish or clear it. Execution metadata forwards trusted marks through
+  an atomic event binding, including marks received before binding, without
+  racing ordinary event-interface assignments. Fresh-attempt aliases copy only
+  the current binding, not historical failure state, and fresh false snapshot
+  resets remain intact. Closed, finished, and delayed-close events keep their
+  existing outcome; manual API suppression behavior remains unchanged when no
+  trusted protected failure was recorded.
+
+- Normal native Fail hooks immediately forward compiled protected-failure facts
+  to the active event and its native ancestors, before a blocked child can miss
+  crash finalization. Only an original native Fail qualifies; recursive parent
+  propagation and logging helpers cannot infer protection from ancestor tags.
+  The native `*testing.common` receiver uses a validated common-parent accessor,
+  while typed tests retain the existing accessor. Worker failure handling, native
+  cleanup cancellation, and fresh-attempt retry state remain unchanged.

@@ -1,0 +1,144 @@
+package integration
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+// Promoted wrappers keep their reporting identities, while automatic retry
+// replay is keyed by the declaring method and its native test path.
+func checkMiniPromotedDeclarationCache(t *testing.T) {
+	dir, driver := prepareMiniFixture(t)
+	installExternalTestifyHelper(t, dir)
+	writeBuildFixture(t, dir, map[string]string{"promoted_cache_test.go": `package fixture_test
+import("os";"testing";"github.com/stretchr/testify/suite")
+func recordPromoted(t *testing.T,path,letter string)bool{
+ previous,err:=os.ReadFile(path);if err!=nil&&!os.IsNotExist(err){t.Fatal(err)}
+ f,err:=os.OpenFile(path,os.O_CREATE|os.O_APPEND|os.O_WRONLY,0600);if err!=nil{t.Fatal(err)}
+ _,err=f.WriteString(letter);f.Close();if err!=nil{t.Fatal(err)}
+ return len(previous)==0
+}
+func runPromoted(t *testing.T){if recordPromoted(t,os.Getenv("METHOD_COUNTER"),"x"){t.Error("initial excluded failure must remain cached")}}
+type PointerBase struct{suite.Suite}
+//ddtest:no_auto_retry
+func(s *PointerBase) TestOnce(){runPromoted(s.T())}
+type PointerA struct{PointerBase}
+type PointerB struct{PointerBase}
+type ValueBase struct{suite.Suite}
+//ddtest:no_auto_retry
+func(s ValueBase) TestOnce(){runPromoted(s.T())}
+type ValueA struct{ValueBase}
+type ValueB struct{ValueBase}
+type GenericBase[T any] struct{suite.Suite}
+//ddtest:no_auto_retry
+func(s *GenericBase[T]) TestOnce(){runPromoted(s.T())}
+type GenericA struct{GenericBase[int]}
+type GenericB struct{GenericBase[string]}
+type Override struct{PointerBase}
+//ddtest:no_auto_retry
+func(s *Override) TestOnce(){recordPromoted(s.T(),os.Getenv("METHOD_COUNTER"),"o");s.T().Error("independent explicit override")}
+type Unrelated struct{suite.Suite}
+//ddtest:no_auto_retry
+func(s *Unrelated) TestOnce(){recordPromoted(s.T(),os.Getenv("METHOD_COUNTER"),"o");s.T().Error("independent unrelated declaration")}
+type Ordinary struct{PointerBase}
+func(s *Ordinary) TestOnce(){recordPromoted(s.T(),os.Getenv("METHOD_COUNTER"),"o");s.T().Error("independent ordinary override")}
+func TestSwitchPromoted(t *testing.T){
+ first:=recordPromoted(t,os.Getenv("PARENT_COUNTER"),"p")
+ switch os.Getenv("PROMOTED_KIND"){
+ case "pointer":if first{suite.Run(t,new(PointerA))}else{suite.Run(t,new(PointerB))}
+ case "value":if first{suite.Run(t,new(ValueA))}else{suite.Run(t,new(ValueB))}
+ case "generic":if first{suite.Run(t,new(GenericA))}else{suite.Run(t,new(GenericB))}
+ case "override":if first{suite.Run(t,new(PointerA))}else{suite.Run(t,new(Override))}
+ case "unrelated":if first{suite.Run(t,new(PointerA))}else{suite.Run(t,new(Unrelated))}
+ case "ordinary":if first{suite.Run(t,new(PointerA))}else{suite.Run(t,new(Ordinary))}
+ default:t.Fatal("unknown suite kind")
+ }
+}
+`})
+	bin := filepath.Join(t.TempDir(), executableName("promoted-cache.test"))
+	out, stderr, code := command(t, dir, testEnv("DD_CIVISIBILITY_ENABLED=false"), driver, exclusionBuildArgs(bin, true)...)
+	if code != 0 {
+		t.Fatalf("compile %d: %s %s", code, out, stderr)
+	}
+	for _, mode := range []string{"in_process", "process"} {
+		for _, kind := range []string{"pointer", "value", "generic", "override", "unrelated", "ordinary"} {
+			t.Run(mode+"-"+kind, func(t *testing.T) {
+				counters := t.TempDir()
+				methods := filepath.Join(counters, "methods")
+				parents := filepath.Join(counters, "parents")
+				receiver, got := runParityCase(t, dir, bin, parityCase{Args: []string{"-test.run=^TestSwitchPromoted$"}, Policy: policySettings{Retry: true}, Env: []string{"METHOD_COUNTER=" + methods, "PARENT_COUNTER=" + parents, "PROMOTED_KIND=" + kind, "DD_CIVISIBILITY_RETRY_EXECUTION_MODE=" + mode, "DD_CIVISIBILITY_FLAKY_RETRY_ENABLED=true", "DD_CIVISIBILITY_FLAKY_RETRY_COUNT=2"}})
+				if got.code != 1 {
+					t.Fatalf("cached declaration failure recovered: exit%d %s %s", got.code, got.out, got.stderr)
+				}
+				want := "x"
+				if kind == "override" || kind == "unrelated" {
+					want = "xo"
+				}
+				if kind == "ordinary" {
+					want = "xoo"
+				}
+				data, err := os.ReadFile(methods)
+				if err != nil || string(data) != want {
+					t.Fatalf("method calls=%q want=%q err=%v", data, want, err)
+				}
+				data, err = os.ReadFile(parents)
+				if err != nil || string(data) != "ppp" {
+					t.Fatalf("parent calls=%q want=ppp err=%v", data, err)
+				}
+				excluded, ordinary := 0, 0
+				suites := map[string]int{}
+				for _, event := range receiver.events {
+					if event["type"] != "test" {
+						continue
+					}
+					meta := event["content"].(map[string]any)["meta"].(map[string]any)
+					if meta["test.name"] != "TestSwitchPromoted/TestOnce" {
+						continue
+					}
+					if meta["test.test_management.no_auto_retry"] == "true" {
+						excluded++
+						suiteName, _ := meta["test.suite"].(string)
+						suites[suiteName]++
+						if meta["test.status"] != "fail" {
+							t.Fatalf("excluded result changed: %v", meta)
+						}
+						for _, key := range []string{"test.is_retry", "test.retry_reason", "test.retry.execution_mode"} {
+							if meta[key] != nil {
+								t.Fatalf("excluded actual execution inherited retry: %v", meta)
+							}
+						}
+					} else {
+						ordinary++
+					}
+				}
+				wantExcluded := 1
+				if kind == "override" || kind == "unrelated" {
+					wantExcluded = 2
+				}
+				firstSuite := "<autogenerated>/PointerA"
+				if kind == "value" {
+					firstSuite = "<autogenerated>/ValueA"
+				}
+				if kind == "generic" {
+					firstSuite = "<autogenerated>/GenericA"
+				}
+				if suites[firstSuite] != 1 {
+					t.Fatalf("reflected wrapper reporting changed: suites=%v want %s once", suites, firstSuite)
+				}
+				if kind == "override" && suites["promoted_cache_test.go/Override"] != 1 {
+					t.Fatalf("override reporting changed: %v", suites)
+				}
+				if kind == "unrelated" && suites["promoted_cache_test.go/Unrelated"] != 1 {
+					t.Fatalf("unrelated reporting changed: %v", suites)
+				}
+				if excluded != wantExcluded {
+					t.Fatalf("excluded events=%d want=%d", excluded, wantExcluded)
+				}
+				if kind != "ordinary" && ordinary != 0 {
+					t.Fatalf("unexpected ordinary events=%d", ordinary)
+				}
+			})
+		}
+	}
+}

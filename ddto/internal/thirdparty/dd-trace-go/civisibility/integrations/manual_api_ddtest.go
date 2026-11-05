@@ -29,6 +29,14 @@ import (
 // Ensures that tslvTest implements the Test interface.
 var _ Test = (*tslvTest)(nil)
 
+type crashFailurePolicy uint8
+
+const (
+	crashFailurePolicyUnset crashFailurePolicy = iota
+	crashFailurePolicyFail
+	crashFailurePolicySuppress
+)
+
 type (
 	// tslvTest implements the DdTest interface and represents an individual test within a suite.
 	tslvTest struct {
@@ -39,6 +47,11 @@ type (
 		// ended is set by the first Close, which a delayed close finishes
 		// later: another Close does nothing.
 		ended bool
+		// crashPolicy is immutable once registered from effective execution
+		// metadata. Assignment tags remain mutable attribution, not policy.
+		crashPolicy crashFailurePolicy
+		// protectedFailure is a trusted, durable fact for this event lifetime.
+		protectedFailure bool
 	}
 
 	// tslvTestDelayed is a struct that represents a delayed test close operation.
@@ -131,6 +144,40 @@ func MarkTestFinished(test Test) {
 	}
 }
 
+// SetTestCrashFailureSuppression records effective execution policy separately
+// from mutable assignment tags. The first registration wins for an open test;
+// tests without a registration retain the manual API's tag-based behavior.
+func SetTestCrashFailureSuppression(test Test, suppress bool) {
+	t, ok := test.(*tslvTest)
+	if !ok || t == nil {
+		return
+	}
+	t.mutex.Lock()
+	defer t.mutex.Unlock()
+	if _, open := openTests.Load(t); !open || t.ended || t.closed || t.crashPolicy != crashFailurePolicyUnset {
+		return
+	}
+	t.crashPolicy = crashFailurePolicyFail
+	if suppress {
+		t.crashPolicy = crashFailurePolicySuppress
+	}
+}
+
+// MarkTestProtectedFailure records a trusted failure that must remain blocking
+// if a crash closes this event. It does not change the registered base policy.
+func MarkTestProtectedFailure(test Test) {
+	t, ok := test.(*tslvTest)
+	if !ok || t == nil {
+		return
+	}
+	t.mutex.Lock()
+	defer t.mutex.Unlock()
+	if _, open := openTests.Load(t); !open || t.ended || t.closed {
+		return
+	}
+	t.protectedFailure = true
+}
+
 // TestID returns the ID of the test.
 func (t *tslvTest) TestID() uint64 {
 	return t.testID
@@ -160,7 +207,8 @@ func (t *tslvTest) failForCrash(errType, message, stack string) bool {
 			return false, ""
 		}
 		final := constants.TestStatusFail
-		if t.getContextValue(constants.TestIsQuarantined) == "true" || t.getContextValue(constants.TestIsDisabled) == "true" {
+		if !t.protectedFailure && (t.crashPolicy == crashFailurePolicySuppress || t.crashPolicy == crashFailurePolicyUnset &&
+			(t.getContextValue(constants.TestIsQuarantined) == "true" || t.getContextValue(constants.TestIsDisabled) == "true")) {
 			final = constants.TestStatusSkip
 		}
 		// The test's own SetTag and SetError do not take t.mutex: the span sets

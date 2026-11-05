@@ -254,12 +254,28 @@ func instrumentTestingTFuncWithSourceOptions(
 			}
 		}
 
+		declaration := exclusionPolicySource(t, originalFunc, testifyData)
+		exclusions := exclusionsForChild(t, originalFunc, parentExecMeta)
+		if parentExecMeta != nil && parentExecMeta.exclusionResults != nil {
+			if exclusions.NoAutoRetry && parentExecMeta.exclusionResults.replay(t, exclusionResultDeclaration(t, declaration, parentExecMeta)) {
+				return
+			}
+			if exclusions.NoAutoRetry {
+				registerExcludedResultCleanup(t, parentExecMeta, exclusions, exclusionResultDeclaration(t, declaration, parentExecMeta))
+			}
+		}
+
 		subtestInfo := &commonInfo{
+			exclusions: exclusions,
 			moduleName: subtestIdentity.ModuleName,
 			suiteName:  suiteName,
 			testName:   subtestIdentity.FullName,
 			identity:   subtestIdentity,
 			sourceFunc: originalFunc,
+		}
+
+		if testifyData != nil {
+			subtestInfo.sourceFunc = testifyData.methodFunc
 		}
 
 		runSubtest := func(currentT *testing.T) {
@@ -293,11 +309,12 @@ func instrumentTestingTFuncWithSourceOptions(
 				execMeta = createTestMetadata(currentT, nil)
 				defer deleteTestMetadata(currentT)
 			}
+			setExecutionExclusions(currentT, execMeta, declaration, parentExecMeta, exclusions)
 			execMeta.identity = localIdentity
 			if drainNativeLifecycle && parentExecMeta != nil {
 				execMeta.fuzzEvents = parentExecMeta.fuzzEvents
 			}
-			if drainNativeLifecycle && execMeta.cleanupResult == nil {
+			if (drainNativeLifecycle || exclusions.any()) && execMeta.cleanupResult == nil {
 				execMeta.cleanupResult = &testCleanupResult{}
 			}
 
@@ -365,11 +382,14 @@ func instrumentTestingTFuncWithSourceOptions(
 					return
 				}
 
-				unexpectedTermination := r == nil && processRetryUnexpectedTestTermination(currentT, bodyReturned)
-				duration := runAndApplyTestCleanupWithDurationOptions(currentT, execMeta, bodyDuration, drainNativeLifecycle)
-				if unexpectedTermination {
-					r = unexpectedTestTerminationMessage
+				bodyTerminal := r
+				bodyStack := terminalStack
+				if r != nil && bodyStack == "" && execMeta.cleanupResult != nil && execMeta.exclusions.any() {
+					bodyStack = utils.GetStacktrace(1)
 				}
+				unexpectedTermination := r == nil && processRetryUnexpectedTestTermination(currentT, bodyReturned)
+				duration := runAndApplyTestCleanupWithDurationOptions(currentT, execMeta, bodyDuration, drainNativeLifecycle || exclusions.any(), r != nil || unexpectedTermination)
+				r = resolveTestBodyTerminalAfterCleanup(currentT, execMeta, r, unexpectedTermination)
 				nativeTerminal := r
 				if execMeta.fuzzEvents != nil && execMeta.cleanupResult != nil && execMeta.cleanupResult.goexit {
 					// Cleanup Goexit replaces the body panic. Fatal/SkipNow keep
@@ -384,6 +404,10 @@ func instrumentTestingTFuncWithSourceOptions(
 				}
 				if r != nil && terminalStack == "" {
 					terminalStack = utils.GetStacktrace(1)
+				}
+				if execMeta.fuzzEvents == nil {
+					r, terminalStack = resolveTestCleanupDiagnostics(currentT, execMeta, bodyTerminal, bodyStack, r, terminalStack)
+					nativeTerminal = r
 				}
 				if execMeta.fuzzEvents != nil {
 					collectAndWriteLogs(currentT, test, nil)
@@ -455,6 +479,10 @@ func instrumentSetErrorInfo(tb testing.TB, errType string, errMessage string, sk
 	// Check if CI Visibility was disabled using the kill switch before
 	if !isCiVisibilityEnabled() {
 		return
+	}
+
+	if errType == "Fail" {
+		markNativeProtectedFailure(tb)
 	}
 
 	// Get the CI Visibility span and check if we can set the error type, message and stack
@@ -755,11 +783,11 @@ func instrumentTestifySuiteRun(t *testing.T, suite any) {
 	defer release()
 	if isProcessRetryChild() {
 		execMeta := getTestMetadata(t)
-		if execMeta == nil || execMeta.quarantinedRaceChild == nil {
+		if execMeta == nil {
 			return
 		}
-		// The isolated subtree still needs the real Testify method for source,
-		// CODEOWNERS, impacted-test, and ITR metadata; it creates no child span.
+		// Retry children need the real Testify declaration for exclusions as well
+		// as subtree source, CODEOWNERS, impacted-test and TIA metadata.
 	}
 
 	log.Debug("instrumentTestifySuiteRun: instrumenting testify suite run")
@@ -778,7 +806,7 @@ func instrumentTestifySuiteRunScoped(t *testing.T, suite any) func() {
 	defer release()
 	if isProcessRetryChild() {
 		metadata := getTestMetadata(t)
-		if metadata == nil || metadata.quarantinedRaceChild == nil {
+		if metadata == nil {
 			return func() {}
 		}
 	}

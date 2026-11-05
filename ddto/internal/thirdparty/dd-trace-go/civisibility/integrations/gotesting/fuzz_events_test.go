@@ -173,7 +173,7 @@ func TestFuzzEventsPreserveCleanupPanicDetails(t *testing.T) {
 				native.Cleanup(func() { remainingCleanupRan = true })
 				native.Cleanup(func() { panic("cleanup panic sentinel") })
 				meta := &testExecutionMetadata{cleanupResult: &testCleanupResult{}, isQuarantined: quarantined}
-				runAndApplyTestCleanupWithDurationOptions(native, meta, time.Millisecond, true)
+				runAndApplyTestCleanupWithDurationOptions(native, meta, time.Millisecond, true, false)
 				require.Equal(t, "cleanup panic sentinel", meta.panicData)
 				require.True(t, remainingCleanupRan)
 				require.False(t, meta.cleanupResult.goexit, "panic is not Goexit")

@@ -76,40 +76,41 @@ const (
 )
 
 type deferredProcessRetryGroup struct {
-	id                    uint64
-	identity              testIdentity
-	testInfo              commonInfo
-	metadata              processRetryMetadataSnapshot
-	launchBaseline        *processRetryLaunchBaseline
-	lease                 *processRetryGroupLease
-	parentDeadline        time.Time
-	parentDeadlineOK      bool
-	mRunEpoch             uint64
-	phaseID               uint64
-	invocationOrdinal     uint64
-	executionIndex        int
-	retryCount            int64
-	initialDuration       time.Duration
-	reservation           *flakyRetryBudgetReservation
-	latest                retryAttemptObservation
-	outcomes              retryOutcomeAccumulator
-	module                integrations.TestModule
-	suite                 integrations.TestSuite
-	terminalFailure       bool
-	terminalFailureReason string
-	truncated             bool
-	tailEvent             *deferredProcessRetryEvent
-	panicPresent          bool
-	panicMessage          string
-	panicStack            string
-	parallelEFD           bool
-	rootParallel          bool
-	nativeMaxParallel     int
-	efdFaultySessionGuard earlyFlakeDetectionFaultySession
-	raceProcess           *quarantinedRaceProcessContext
-	raceSubtree           *processRetrySubtreeConfig
-	raceDescendantFailed  bool
-	raceReplay            *quarantinedRaceReplayState
+	id                        uint64
+	identity                  testIdentity
+	testInfo                  commonInfo
+	metadata                  processRetryMetadataSnapshot
+	launchBaseline            *processRetryLaunchBaseline
+	lease                     *processRetryGroupLease
+	parentDeadline            time.Time
+	parentDeadlineOK          bool
+	mRunEpoch                 uint64
+	phaseID                   uint64
+	invocationOrdinal         uint64
+	executionIndex            int
+	retryCount                int64
+	initialDuration           time.Duration
+	reservation               *flakyRetryBudgetReservation
+	latest                    retryAttemptObservation
+	outcomes                  retryOutcomeAccumulator
+	module                    integrations.TestModule
+	suite                     integrations.TestSuite
+	terminalFailure           bool
+	terminalFailureReason     string
+	truncated                 bool
+	tailEvent                 *deferredProcessRetryEvent
+	panicPresent              bool
+	panicMessage              string
+	panicStack                string
+	parallelEFD               bool
+	rootParallel              bool
+	nativeMaxParallel         int
+	efdFaultySessionGuard     earlyFlakeDetectionFaultySession
+	raceProcess               *quarantinedRaceProcessContext
+	raceSubtree               *processRetrySubtreeConfig
+	raceDescendantFailed      bool
+	protectedDescendantFailed bool
+	raceReplay                *quarantinedRaceReplayState
 }
 
 type deferredProcessRetryEvent struct {
@@ -1036,6 +1037,8 @@ func runDeferredProcessRetryAttempt(ctx context.Context, group *deferredProcessR
 	attempt := runProcessRetryAttemptWithBaselineAndShutdown(
 		ctx,
 		processRetryChildConfig{
+			ExclusionPolicy:   processRetryExclusionPolicy(prepared.execMeta),
+			ExclusionResults:  prepared.execMeta.exclusionResults.snapshotForRoot(group.identity.FullName),
 			TestName:          group.identity.FullName,
 			Attempt:           prepared.index,
 			RetryReason:       prepared.retryReason,
@@ -1052,6 +1055,9 @@ func runDeferredProcessRetryAttempt(ctx context.Context, group *deferredProcessR
 	if subtree != nil {
 		attempt = finalizeQuarantinedRaceInvocation(subtree, attempt)
 	}
+	if !processRetryInfrastructureFailure(attempt) {
+		prepared.execMeta.exclusionResults.merge(attempt.Result.ExclusionResults)
+	}
 	if subtree == nil || processRetryInfrastructureFailure(attempt) || subtree.AttemptToFixRetries <= 0 || quarantinedRaceFailfastStopsContinuation(attempt) {
 		return attempt
 	}
@@ -1059,10 +1065,11 @@ func runDeferredProcessRetryAttempt(ctx context.Context, group *deferredProcessR
 	_, failure := continueQuarantinedRaceDescendantFamilies(
 		subtree, attempt, &invocations, func(continuationCfg *processRetrySubtreeConfig, runRoot string, idx int) processRetryAttemptResult {
 			baseline := captureProcessRetryLaunchBaselineFromTemplate(group.launchBaseline)
-			baseline.argsSnapshot.runSelector = processRetryExactRunPattern(runRoot)
-			return finalizeQuarantinedRaceInvocation(continuationCfg, runProcessRetryAttemptWithBaselineAndShutdown(
+			baseline.argsSnapshot.runSelector = processRetrySubtreeRunPattern(baseline.argsSnapshot.runSelector, runRoot)
+			next := finalizeQuarantinedRaceInvocation(continuationCfg, runProcessRetryAttemptWithBaselineAndShutdown(
 				ctx,
 				processRetryChildConfig{
+					ExclusionResults:  prepared.execMeta.exclusionResults.snapshotForRoot(continuationCfg.SelectedRoot),
 					TestName:          continuationCfg.SelectedRoot,
 					Attempt:           idx + 1,
 					RetryReason:       processRetrySubtreeReason,
@@ -1076,6 +1083,10 @@ func runDeferredProcessRetryAttempt(ctx context.Context, group *deferredProcessR
 				group.shutdown(),
 				nil,
 			))
+			if !processRetryInfrastructureFailure(next) {
+				prepared.execMeta.exclusionResults.merge(next.Result.ExclusionResults)
+			}
+			return next
 		},
 	)
 	attempt.quarantinedRaceInvocations = invocations
@@ -1093,6 +1104,7 @@ func runDeferredProcessRetryAttempt(ctx context.Context, group *deferredProcessR
 
 func (g *deferredProcessRetryGroup) applyCompletedAttempt(completed deferredProcessRetryCompletedAttempt, decideContinuation, continuationAdmitted bool) bool {
 	attempt := completed.result
+	g.protectedDescendantFailed = g.protectedDescendantFailed || attempt.Result.ProtectedDescendantFailure
 	execMeta := completed.prepared.execMeta
 	// Queue admission commits this continuation to the process backend. By the
 	// time a late setup failure is observable, native M.Run and the original
@@ -1109,6 +1121,7 @@ func (g *deferredProcessRetryGroup) applyCompletedAttempt(completed deferredProc
 			}}
 		}
 		for _, invocation := range raceInvocations {
+			g.protectedDescendantFailed = g.protectedDescendantFailed || invocation.attempt.Result.ProtectedDescendantFailure
 			g.observeQuarantinedRaceSubtree(invocation.attempt.Result.Subtests)
 		}
 	}
@@ -1259,18 +1272,29 @@ func consumeDeferredFlakyRetryReservation(group *deferredProcessRetryGroup) {
 	group.reservation = nil
 }
 
+func (g *deferredProcessRetryGroup) retainedExcludedFailures() (bool, bool) {
+	if g == nil || g.identity.FullName == "" {
+		return false, false
+	}
+	return g.metadata.exclusionResults.failedDescendants(g.identity.FullName)
+}
+
 func (g *deferredProcessRetryGroup) packageFailed() bool {
-	if g == nil || g.metadata.isDisabled || g.metadata.isQuarantined {
+	if g == nil {
 		return false
 	}
-	if g.terminalFailure {
+	retainedFailure, retainedProtected := g.retainedExcludedFailures()
+	if (g.metadata.isDisabled || g.metadata.isQuarantined) && !(retainedProtected || g.protectedDescendantFailed || g.metadata.protectedDescendantFailure) {
+		return false
+	}
+	if retainedFailure || g.terminalFailure {
 		return true
 	}
 	if g.raceDescendantFailed {
 		return true
 	}
 	if g.metadata.isAttemptToFix {
-		return g.outcomes.anyFailed()
+		return g.outcomes.anyFailed() || g.protectedDescendantFailed || g.metadata.protectedDescendantFailure
 	}
 	if usesEfdRetrySemanticsSnapshot(&g.metadata) {
 		return !g.outcomes.anyPassed() && g.outcomes.anyFailed()
@@ -1328,17 +1352,20 @@ func (g *deferredProcessRetryGroup) closeTailEvent(final bool) {
 		return
 	}
 	if final {
+		retainedFailure, retainedProtected := g.retainedExcludedFailures()
+		familyFailed := retainedFailure || g.terminalFailure || g.raceDescendantFailed ||
+			g.metadata.isAttemptToFix && (g.protectedDescendantFailed || g.metadata.protectedDescendantFailure)
 		finalStatus := calculateFinalStatus(
-			g.outcomes.anyPassed() && !g.terminalFailure,
-			g.outcomes.anyFailed() || g.terminalFailure,
+			g.outcomes.anyPassed() && !familyFailed,
+			g.outcomes.anyFailed() || familyFailed,
 			g.latest.skipped,
-			g.metadata.isQuarantined,
-			g.metadata.isDisabled,
+			g.metadata.isQuarantined && !(retainedProtected || g.protectedDescendantFailed || g.metadata.protectedDescendantFailure),
+			g.metadata.isDisabled && !(retainedProtected || g.protectedDescendantFailed || g.metadata.protectedDescendantFailure),
 			g.metadata.isAttemptToFix,
 		)
 		g.tailEvent.event.SetTag(constants.TestFinalStatus, finalStatus)
 		if g.metadata.isAttemptToFix {
-			attemptToFixPassed := g.outcomes.allAttemptsPassed() && !g.truncated && !g.terminalFailure
+			attemptToFixPassed := g.outcomes.allAttemptsPassed() && !g.truncated && !familyFailed
 			g.tailEvent.event.SetTag(constants.TestAttemptToFixPassed, strconv.FormatBool(attemptToFixPassed))
 		}
 		if g.tailEvent.failed && g.outcomes.allRetriesFailed() {

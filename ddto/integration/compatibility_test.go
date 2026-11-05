@@ -114,7 +114,7 @@ func (c *capture) fail(err error) {
 func testEnv(extra ...string) []string {
 	// Deliberately avoid inheriting API keys or CI configuration into fixtures.
 	// GORACE reaches race-enabled fixtures; CI uses it to skip their exit delay.
-	names := []string{"PATH", "HOME", "USER", "GOCACHE", "GOMODCACHE", "GOTMPDIR", "TMPDIR", "GOTOOLCHAIN", "CGO_ENABLED", "GOOS", "GOARCH", "GOMAXPROCS", "GORACE", "GOPROXY", "GOSUMDB", "SYSTEMROOT", "SystemRoot", "USERPROFILE", "LOCALAPPDATA", "APPDATA", "TEMP", "TMP", "COMSPEC", "PATHEXT"}
+	names := []string{"PATH", "HOME", "USER", "GOCACHE", "GOMODCACHE", "GOTMPDIR", "TMPDIR", "GOTOOLCHAIN", "SDKROOT", "CC", "CXX", "CGO_CFLAGS", "CGO_CPPFLAGS", "CGO_CXXFLAGS", "CGO_LDFLAGS", "MACOSX_DEPLOYMENT_TARGET", "CGO_ENABLED", "GOOS", "GOARCH", "GOMAXPROCS", "GORACE", "GOPROXY", "GOSUMDB", "SYSTEMROOT", "SystemRoot", "USERPROFILE", "LOCALAPPDATA", "APPDATA", "TEMP", "TMP", "COMSPEC", "PATHEXT"}
 	var env []string
 	for _, name := range names {
 		if v, ok := os.LookupEnv(name); ok {

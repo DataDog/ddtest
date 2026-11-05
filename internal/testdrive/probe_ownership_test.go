@@ -36,42 +36,75 @@ func TestProbeRecoveryAfterKilledProcess(t *testing.T) {
 		requireWriteFile(t, filepath.Join(root, "abandoned-configuration"), configuration)
 		probe, err := createProbe(root, validationRun{Tests: []jestTest{{File: filepath.Join(root, "real.test.js"), Status: "passed"}}}, "owned test")
 		require.NoError(t, err)
-		fmt.Println(probe)
+		if output := os.Getenv("DDTEST_PROBE_STARTUP_OUTPUT"); output != "" {
+			fmt.Println(output)
+		}
+		fmt.Printf("DDTEST_PROBE_READY=%s\n", probe)
 		time.Sleep(time.Minute) // Parent kills us; no deferred cleanup can run.
 		return
 	}
-	root := t.TempDir()
-	requireWriteFile(t, filepath.Join(root, "real.test.js"), "customer test")
-	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
-	defer cancel()
-	child := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestProbeRecoveryAfterKilledProcess$")
-	// This helper's stdout is a protocol, so it must not start a CI test session.
-	child.Env = append(os.Environ(), "DD_CIVISIBILITY_ENABLED=false", "DDTEST_PROBE_CRASH_HELPER="+root)
-	stdout, err := child.StdoutPipe()
-	require.NoError(t, err)
-	require.NoError(t, child.Start())
-	line, err := bufio.NewReader(stdout).ReadString('\n')
-	require.NoError(t, err)
-	probe := strings.TrimSpace(line)
-	require.FileExists(t, probe)
-	_, err = workspace.AcquireLock(root)
-	require.ErrorIs(t, err, workspace.ErrBusy, "an active owner must prevent startup recovery")
-	require.NoError(t, child.Process.Kill())
-	require.Error(t, child.Wait())
-	lock, err := workspace.AcquireLock(root)
-	require.NoError(t, err, "the OS releases the killed owner's lock")
-	defer func() { require.NoError(t, lock.Close()) }()
-	session, err := os.ReadFile(filepath.Join(root, "abandoned-session"))
-	require.NoError(t, err)
-	require.DirExists(t, string(session))
-	require.NoError(t, workspace.RecoverSessions(root, &bytes.Buffer{}))
-	require.NoDirExists(t, string(session))
-	configuration, err := os.ReadFile(filepath.Join(root, "abandoned-configuration"))
-	require.NoError(t, err)
-	require.NoDirExists(t, string(configuration), "startup recovery reclaims the killed owner’s marked configuration copy")
-	require.NoError(t, recoverProbes(root))
-	require.NoFileExists(t, probe)
-	require.FileExists(t, filepath.Join(root, "real.test.js"))
+	for _, startup := range []struct{ name, output string }{
+		{name: "quiet"},
+		{name: "coverage output", output: "coverage: 0.5% of statements in ./..."},
+		{name: "startup output", output: "unrelated helper startup output"},
+	} {
+		t.Run(startup.name, func(t *testing.T) {
+			t.Setenv("DDTEST_PROBE_STARTUP_OUTPUT", startup.output)
+			root := t.TempDir()
+			requireWriteFile(t, filepath.Join(root, "real.test.js"), "customer test")
+			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+			defer cancel()
+			child := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestProbeRecoveryAfterKilledProcess$")
+			// This helper's stdout is a protocol, so it must not start a CI test session.
+			child.Env = append(os.Environ(), "DD_CIVISIBILITY_ENABLED=false", "DDTEST_PROBE_CRASH_HELPER="+root)
+			stdout, err := child.StdoutPipe()
+			require.NoError(t, err)
+			require.NoError(t, child.Start())
+			waited := false
+			t.Cleanup(func() {
+				if !waited {
+					_ = child.Process.Kill()
+					_ = child.Wait()
+				}
+			})
+			// Instrumented test binaries may print coverage before the helper runs.
+			// Only the explicit readiness record carries a probe path.
+			scanner := bufio.NewScanner(stdout)
+			var startupOutput strings.Builder
+			var probe string
+			for scanner.Scan() {
+				line := scanner.Text()
+				if strings.HasPrefix(line, "DDTEST_PROBE_READY=") {
+					probe = strings.TrimPrefix(line, "DDTEST_PROBE_READY=")
+					break
+				}
+				fmt.Fprintln(&startupOutput, line)
+			}
+			require.NoError(t, scanner.Err(), "helper stdout before readiness: %s", startupOutput.String())
+			require.NotEmpty(t, probe, "helper ended without a readiness record; stdout: %s", startupOutput.String())
+			require.FileExists(t, probe)
+			_, err = workspace.AcquireLock(root)
+			require.ErrorIs(t, err, workspace.ErrBusy, "an active owner must prevent startup recovery")
+			require.NoError(t, child.Process.Kill())
+			waitErr := child.Wait()
+			waited = true
+			require.Error(t, waitErr)
+			lock, err := workspace.AcquireLock(root)
+			require.NoError(t, err, "the OS releases the killed owner's lock")
+			defer func() { require.NoError(t, lock.Close()) }()
+			session, err := os.ReadFile(filepath.Join(root, "abandoned-session"))
+			require.NoError(t, err)
+			require.DirExists(t, string(session))
+			require.NoError(t, workspace.RecoverSessions(root, &bytes.Buffer{}))
+			require.NoDirExists(t, string(session))
+			configuration, err := os.ReadFile(filepath.Join(root, "abandoned-configuration"))
+			require.NoError(t, err)
+			require.NoDirExists(t, string(configuration), "startup recovery reclaims the killed owner’s marked configuration copy")
+			require.NoError(t, recoverProbes(root))
+			require.NoFileExists(t, probe)
+			require.FileExists(t, filepath.Join(root, "real.test.js"))
+		})
+	}
 }
 
 func TestProbeRecoveryRequiresExactOwnershipAndUnchangedContents(t *testing.T) {

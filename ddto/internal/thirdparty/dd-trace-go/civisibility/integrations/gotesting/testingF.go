@@ -259,7 +259,7 @@ func completeFuzzParallelSeeds(f *testing.F) {
 	fields := getTestPrivateFields(t)
 	state := getFuzzTestState(f)
 	// Unlike tRunner, fRunner releases its slot without reacquiring it.
-	wait := completeParallelSubtestsWithState(fields, state, false, false)
+	wait := completeParallelSubtestsWithState(fields, state)
 	if wait == 0 {
 		return
 	}
