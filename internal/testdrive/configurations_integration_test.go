@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/DataDog/ddtest/internal/testdrive/workspace"
+	"github.com/DataDog/ddtest/internal/testutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -40,9 +41,8 @@ func TestPublicJestConfigurations(t *testing.T) {
 		cmd.Env = environment
 		return cmd.CombinedOutput()
 	}
-	binary := filepath.Join(t.TempDir(), "ddtest")
-	data, err := command("../..", "go", "build", "-o", binary, ".")
-	require.NoError(t, err, string(data))
+	binary := testutil.DDTest(t)
+	var data []byte
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)
 	require.NoError(t, workspace.Copy(ctx, filepath.Dir(modules), root, skipIgnoredOutput))

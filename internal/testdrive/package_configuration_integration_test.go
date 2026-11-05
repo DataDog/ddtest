@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/DataDog/ddtest/internal/testdrive/workspace"
+	"github.com/DataDog/ddtest/internal/testutil"
 	"github.com/kballard/go-shellquote"
 	"github.com/stretchr/testify/require"
 	"os"
@@ -82,9 +83,7 @@ func TestPublicJestPackageConfiguration(t *testing.T) {
 		cmd.Env = append(cmd.Env, "NODE_OPTIONS=--conditions=development")
 		return cmd.CombinedOutput()
 	}
-	binary := filepath.Join(t.TempDir(), "ddtest")
-	data, err = command("../..", "go", "build", "-o", binary, ".")
-	require.NoError(t, err, string(data))
+	binary := testutil.DDTest(t)
 	data, err = command(root, "git", "init", "-q")
 	require.NoError(t, err, string(data))
 	for _, args := range [][]string{{"--all", "--check-only"}, {"--all"}} {
@@ -256,9 +255,7 @@ func TestPublicJestTwoPackageConfiguration(t *testing.T) {
 	}
 	data, err := command(root, "git", "init", "-q")
 	require.NoError(t, err, string(data))
-	binary := filepath.Join(t.TempDir(), "ddtest")
-	data, err = command("../..", "go", "build", "-o", binary, ".")
-	require.NoError(t, err, string(data))
+	binary := testutil.DDTest(t)
 	for _, args := range [][]string{{"--all", "--check-only"}, {"--all"}} {
 		data, err = command(root, binary, append([]string{"testdrive", "--framework", "jest", "--yes"}, args...)...)
 		require.NoError(t, err, string(data))

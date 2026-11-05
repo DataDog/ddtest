@@ -1,14 +1,19 @@
 name: Go instrumentation
 # The Go instrumentation that ddtest instrument runs is its own module in ddto/.
-# Its complete matrix runs for releases, nightly upstream checks and manual
-# dispatch. Pull requests use the native unit checks in ci.yml instead.
+# Its suite runs from there, with ddtest's executable as the driver. Every pull
+# request and push to main runs this workflow, so that its result can be a
+# required check: when a run already verified the files that the suite depends
+# on (see the plan job's inputs), the groups do not run again.
 #
-# Manual runs use the dd-trace-go and Orchestrion versions in
-# ddto/scripts/supported_versions.json by default. The nightly run tests the
-# versions that the module proxy has then, and fails when that file is out of
-# date. The release workflow calls this one with compatibility: full: those
+# Pull requests and pushes test the dd-trace-go and Orchestrion versions in
+# ddto/scripts/supported_versions.json. The nightly run tests the versions that
+# the module proxy has then, and fails when that file is out of date. The
+# release workflow calls this one with compatibility: full first: those
 # versions, each one run even when another has the same edited SDK packages.
 on:
+  push:
+    branches: [main]
+  pull_request:
   schedule:
     - cron: '17 3 * * *'
   workflow_call:
@@ -26,7 +31,8 @@ on:
         default: recorded
 permissions:
   contents: read
-# Independent release, nightly and manual runs never share a group.
+# A new push to a pull request replaces its running matrix. Other events never
+# share a group, so main and scheduled runs always finish.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
   cancel-in-progress: true

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/DataDog/ddtest/internal/testdrive/workspace"
+	"github.com/DataDog/ddtest/internal/testutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -44,7 +45,8 @@ func TestPublicWebdriverIOTestdrive(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 24*time.Minute)
 	defer cancel()
-	binary := filepath.Join(t.TempDir(), "ddtest")
+	binary := testutil.DDTest(t)
+	var output []byte
 	newCommand := func(root, name string, args ...string) *exec.Cmd {
 		cmd := exec.CommandContext(ctx, name, args...)
 		cmd.Dir = root
@@ -58,8 +60,6 @@ func TestPublicWebdriverIOTestdrive(t *testing.T) {
 	command := func(root, name string, args ...string) ([]byte, error) {
 		return newCommand(root, name, args...).CombinedOutput()
 	}
-	output, err := command("../..", "go", "build", "-o", binary, ".")
-	require.NoError(t, err, string(output))
 	// Process sockets live under /tmp, not TMPDIR; collect the folders that exist
 	// before a run so later checks only judge the ones the run created.
 	processFolders := func() map[string]bool {

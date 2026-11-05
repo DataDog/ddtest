@@ -208,7 +208,7 @@ func TestVitestRejectedCommandPublishesCurrentFailure(t *testing.T) {
 }
 
 func TestVitestCIMatrixUsesCompatibleTracerFloors(t *testing.T) {
-	data, err := os.ReadFile("../../.github/workflows/ci-full.yml")
+	data, err := os.ReadFile("../../.github/workflows/ci.yml")
 	require.NoError(t, err)
 	var ci struct {
 		Jobs map[string]struct {

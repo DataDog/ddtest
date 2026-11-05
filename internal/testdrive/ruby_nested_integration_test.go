@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/DataDog/ddtest/internal/testutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -23,8 +24,7 @@ func TestRubyNestedWorkingDirectoryIntegration(t *testing.T) {
 	metadata := integrationCommand(t, ctx, ".", nil, "ruby", "-rjson", "-e", `puts JSON.generate(ruby:RUBY_VERSION,minitest:Gem::Specification.find_by_name("minitest").version.to_s,rake:Gem::Specification.find_by_name("rake").version.to_s,tracer:Gem::Specification.find_by_name("datadog-ci").version.to_s)`)
 	var gems struct{ Ruby, Minitest, Rake, Tracer string }
 	require.NoError(t, json.Unmarshal([]byte(metadata), &gems))
-	binary := filepath.Join(t.TempDir(), "ddtest")
-	integrationCommand(t, ctx, "../..", nil, "go", "build", "-o", binary, ".")
+	binary := testutil.DDTest(t)
 	root := t.TempDir()
 	retainIntegrationReports(t, root, "minitest-nested-review")
 	integrationCommand(t, ctx, root, nil, "git", "init", "-q")

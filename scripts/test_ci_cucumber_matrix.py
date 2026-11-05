@@ -138,13 +138,15 @@ class MatrixTests(unittest.TestCase):
 
 class WorkflowTests(unittest.TestCase):
     def test_workers_use_the_planned_runtime_and_lockfile_without_resolving_again(self):
-        workflow = (Path(__file__).resolve().parents[1] / ".github/workflows/ci-full.yml").read_text()
+        workflow = (Path(__file__).resolve().parents[1] / ".github/workflows/ci.yml").read_text()
         worker = workflow.split("  testdrive-cucumber-workflow:\n", 1)[1].split("\n  testdrive-webdriverio-workflow:", 1)[0]
         self.assertIn("configuration: ${{ fromJSON(needs.cucumber-matrix.outputs.matrix).include }}", worker)
         self.assertIn("node-version: ${{ matrix.configuration.node }}", worker)
         self.assertIn('test "$(npm --version)" =', worker)
         self.assertIn("name: ci-cucumber-fixtures", worker)
-        self.assertIn('npm ci --prefix "$RUNNER_TEMP/cucumber-testdrive"', worker)
+        self.assertIn("uses: ./.github/actions/node-test-fixture", worker)
+        self.assertIn("directory: ${{ runner.temp }}/cucumber-testdrive", worker)
+        self.assertNotIn("dependencies:", worker)  # Consume the supplied lockfile.
         self.assertNotIn("npm install", worker)
         self.assertNotIn("npm view", worker)
         self.assertIn("-run '${{ matrix.configuration.tests }}'", worker)

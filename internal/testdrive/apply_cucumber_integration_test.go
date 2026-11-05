@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/DataDog/ddtest/internal/testdrive/workspace"
+	"github.com/DataDog/ddtest/internal/testutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -22,7 +23,8 @@ func TestPublicCucumberApply(t *testing.T) {
 	require.NoError(t, err)
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Minute)
 	defer cancel()
-	binary := filepath.Join(t.TempDir(), "ddtest")
+	binary := testutil.DDTest(t)
+	var output []byte
 	command := func(root, name string, args ...string) ([]byte, error) {
 		cmd := exec.CommandContext(ctx, name, args...)
 		cmd.Dir = root
@@ -33,8 +35,6 @@ func TestPublicCucumberApply(t *testing.T) {
 		}
 		return cmd.CombinedOutput()
 	}
-	output, err := command("../..", "go", "build", "-o", binary, ".")
-	require.NoError(t, err, string(output))
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)
 	require.NoError(t, workspace.Copy(ctx, filepath.Dir(modules), root, skipIgnoredOutput))

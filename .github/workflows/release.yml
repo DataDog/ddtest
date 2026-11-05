@@ -43,18 +43,29 @@ jobs:
           GH_TOKEN: ${{ steps.octo-sts.outputs.token }}
         run: bash .github/scripts/release.sh validate
 
-  # Every release waits for the complete framework, platform and Go instrumentation
-  # matrices, including every currently supported SDK and Orchestrion version.
+  ci:
+    needs: authorize
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+      actions: read
+    secrets: inherit
+
+  # Before a release, the Go instrumentation suite runs every dd-trace-go and
+  # Orchestrion version that ddtest instrument supports, as the module proxy
+  # has them now, so that no release ships without them passing.
   compatibility:
     needs: authorize
-    uses: ./.github/workflows/ci-full.yml
+    uses: ./.github/workflows/go-instrumentation.yml
+    with:
+      compatibility: full
     permissions:
       contents: read
       actions: read
     secrets: inherit
 
   release:
-    needs: compatibility
+    needs: [ci, compatibility]
     if: github.repository == 'DataDog/ddtest' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:

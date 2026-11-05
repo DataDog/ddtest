@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/DataDog/ddtest/internal/testdrive/workspace"
+	"github.com/DataDog/ddtest/internal/testutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -32,7 +33,8 @@ func TestPublicCucumberTestdrive(t *testing.T) {
 	require.NoError(t, json.Unmarshal(manifest, &installed))
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Minute)
 	defer cancel()
-	binary := filepath.Join(t.TempDir(), "ddtest")
+	binary := testutil.DDTest(t)
+	var output []byte
 	var hookFile string
 	newCommand := func(root, name string, args ...string) *exec.Cmd {
 		cmd := exec.CommandContext(ctx, name, args...)
@@ -48,8 +50,6 @@ func TestPublicCucumberTestdrive(t *testing.T) {
 	command := func(root, name string, args ...string) ([]byte, error) {
 		return newCommand(root, name, args...).CombinedOutput()
 	}
-	output, err := command("../..", "go", "build", "-o", binary, ".")
-	require.NoError(t, err, string(output))
 	for _, mode := range cucumberWorkflowScenarios.selected(t) {
 		t.Run(mode, func(t *testing.T) {
 			if _, err := os.Stat(filepath.Join(modules, "tsx")); mode == "source loader" && err != nil {

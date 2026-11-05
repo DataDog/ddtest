@@ -152,7 +152,7 @@ func TestRecommendationsUseRegistryTagsAndFlagUnknownMajors(t *testing.T) {
 }
 
 func TestJestSupportRulesCoverCICompatibilityMatrix(t *testing.T) {
-	data, err := os.ReadFile("../../.github/workflows/ci-full.yml")
+	data, err := os.ReadFile("../../.github/workflows/ci.yml")
 	require.NoError(t, err)
 	var workflow struct {
 		Jobs map[string]struct {
