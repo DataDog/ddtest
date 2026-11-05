@@ -84,19 +84,23 @@ func (s *runtimeStep) readScopedPrefix() {
 }
 
 // readStatusSubshell reads a CI command that runs the tests, then commands
-// that must run whatever the tests' result, and exits with the tests' status,
-// as onboarding prescribes for a report conversion (see ReportPipeSplit):
+// that must run whatever the tests' result, and exits with the tests'
+// status, or with a later command's when only that command fails, as
+// onboarding prescribes for a report conversion (see ReportPipeSplit and
+// statusSubshell):
 //
-//	(status=0; cucumber-js --format json:report.json || status=$?; cat report.json | cucumber-junit > junit.xml; exit "$status")
+//	(status=0; cucumber-js --format json:report.json || status=$?; cat report.json | cucumber-junit > junit.xml || { converted=$?; [ "$status" -ne 0 ] || status=$converted; }; exit "$status")
 //
-// The || keeps errexit from stopping at failing tests, and the subshell
-// keeps the exit to this command, so a passing run continues with the
-// script's later commands, as a script stopping at errors does, and a failing
-// one fails the step after the conversion. Run becomes the tests, afterTests
-// the commands between them and the exit, which resolution checks can't
-// start tests and reads as a plain sequence after them, and statusWrapper
-// the text around the tests. Each of those commands must fall through to the
-// exit (see fallsThrough); any other command stays as written.
+// The || keeps errexit from stopping at failing tests or a failing
+// conversion, and the subshell keeps the exit to this command, so a passing
+// run continues with the script's later commands, as a script stopping at
+// errors does, and a failing one fails the step after the conversion. Run
+// becomes the tests, afterTests the commands between them and the exit,
+// which resolution checks can't start tests and reads as a plain sequence
+// after them, and statusWrapper the text around the tests. Each of those
+// commands must fall through to the exit (see fallsThrough) and record its
+// failure as the prescription does (see guardedCommand); any other command
+// stays as written.
 func (s *runtimeStep) readStatusSubshell() {
 	run := strings.TrimSpace(s.Run)
 	file, ok := parseCIShell(run)
@@ -105,64 +109,119 @@ func (s *runtimeStep) readStatusSubshell() {
 	}
 	outer := file.Stmts[0]
 	subshell, isSubshell := outer.Cmd.(*syntax.Subshell)
-	if !isSubshell || outer.Background || outer.Negated || outer.Coprocess || outer.Disown || len(outer.Redirs) > 0 || len(subshell.Stmts) < 4 {
+	if !isSubshell || !plainStmt(outer) || len(subshell.Stmts) < 4 {
 		return
 	}
 	stmts := subshell.Stmts
-	plain := func(stmt *syntax.Stmt) bool {
-		return !stmt.Background && !stmt.Negated && !stmt.Coprocess && !stmt.Disown && len(stmt.Redirs) == 0
-	}
-	// assignment is the variable a statement that only assigns one sets, and
-	// the value it assigns.
-	assignment := func(stmt *syntax.Stmt) (name string, value *syntax.Word) {
-		call, isCall := stmt.Cmd.(*syntax.CallExpr)
-		if !plain(stmt) || !isCall || len(call.Args) > 0 || len(call.Assigns) != 1 {
-			return "", nil
-		}
-		assign := call.Assigns[0]
-		if assign.Name == nil || assign.Index != nil || assign.Array != nil || assign.Append || assign.Naked || assign.Value == nil {
-			return "", nil
-		}
-		return assign.Name.Value, assign.Value
-	}
-	variable, initial := assignment(stmts[0])
+	variable, initial := onlyAssignment(stmts[0])
 	if variable == "" || initial.Lit() != "0" {
 		return
 	}
 	record, isBinary := stmts[1].Cmd.(*syntax.BinaryCmd)
-	if !plain(stmts[1]) || !isBinary || record.Op != syntax.OrStmt {
+	if !plainStmt(stmts[1]) || !isBinary || record.Op != syntax.OrStmt {
 		return
 	}
 	tests, isCall := record.X.Cmd.(*syntax.CallExpr)
-	if !plain(record.X) || !isCall || len(tests.Args) == 0 {
+	if !plainStmt(record.X) || !isCall || len(tests.Args) == 0 {
 		return
 	}
-	if name, value := assignment(record.Y); name != variable || len(value.Parts) != 1 {
-		return
-	} else if expansion, isExpansion := value.Parts[0].(*syntax.ParamExp); !isExpansion || !expansion.Short || expansion.Param == nil || expansion.Param.Value != "?" {
+	if name, value := onlyAssignment(record.Y); name != variable || !lastStatus(value) {
 		return
 	}
 	exit, isExit := stmts[len(stmts)-1].Cmd.(*syntax.CallExpr)
-	if !plain(stmts[len(stmts)-1]) || !isExit || len(exit.Assigns) > 0 || len(exit.Args) != 2 || exit.Args[0].Lit() != "exit" || !readsOnly(exit.Args[1], variable) {
+	if !plainStmt(stmts[len(stmts)-1]) || !isExit || len(exit.Assigns) > 0 || len(exit.Args) != 2 || exit.Args[0].Lit() != "exit" || !readsOnly(exit.Args[1], variable) {
 		return
-	}
-	// text is a statement as written, without the ; that ends it.
-	text := func(stmt *syntax.Stmt) string {
-		end := stmt.End()
-		if stmt.Semicolon.IsValid() {
-			end = stmt.Semicolon
-		}
-		return strings.TrimSpace(run[stmt.Pos().Offset():end.Offset()])
 	}
 	var after []string
 	for _, stmt := range stmts[2 : len(stmts)-1] {
-		if !fallsThrough(stmt, variable) {
+		command := guardedCommand(stmt, variable)
+		if command == nil {
 			return
 		}
-		after = append(after, text(stmt))
+		after = append(after, stmtText(run, command))
 	}
 	start, end := record.X.Pos().Offset(), record.X.End().Offset()
-	s.Run, s.afterTests, s.statusWrapper = text(record.X), after, [2]string{run[:start], run[end:]}
+	s.Run, s.afterTests, s.statusWrapper = stmtText(run, record.X), after, [2]string{run[:start], run[end:]}
+}
+
+// guardedCommand is the command of a statement between a status subshell's
+// tests and its exit that records its own failure while the tests' status
+// is still 0, and keeps the tests' status otherwise, as statusSubshell
+// writes it:
+//
+//	cat report.json | cucumber-junit > junit.xml || { converted=$?; [ "$status" -ne 0 ] || status=$converted; }
+//
+// The command must fall through to the exit (see fallsThrough) without
+// touching either variable. It is nil for any other statement, such as the
+// command alone, which would let a passing run with a failing conversion
+// pass when errexit is off.
+func guardedCommand(stmt *syntax.Stmt, variable string) *syntax.Stmt {
+	guard, isBinary := stmt.Cmd.(*syntax.BinaryCmd)
+	if !plainStmt(stmt) || !isBinary || guard.Op != syntax.OrStmt {
+		return nil
+	}
+	block, isBlock := guard.Y.Cmd.(*syntax.Block)
+	if !plainStmt(guard.Y) || !isBlock || len(block.Stmts) != 2 {
+		return nil
+	}
+	saved, value := onlyAssignment(block.Stmts[0])
+	if saved == "" || saved == variable || !lastStatus(value) {
+		return nil
+	}
+	if !fallsThrough(guard.X, variable) || !fallsThrough(guard.X, saved) {
+		return nil
+	}
+	keep, isBinary := block.Stmts[1].Cmd.(*syntax.BinaryCmd)
+	if !plainStmt(block.Stmts[1]) || !isBinary || keep.Op != syntax.OrStmt {
+		return nil
+	}
+	check, isCall := keep.X.Cmd.(*syntax.CallExpr)
+	if !plainStmt(keep.X) || !isCall || len(check.Assigns) > 0 || len(check.Args) != 5 || check.Args[0].Lit() != "[" || !readsOnly(check.Args[1], variable) || check.Args[2].Lit() != "-ne" || check.Args[3].Lit() != "0" || check.Args[4].Lit() != "]" {
+		return nil
+	}
+	if name, value := onlyAssignment(keep.Y); name != variable || !readsOnly(value, saved) {
+		return nil
+	}
+	return guard.X
+}
+
+// plainStmt reports a statement that runs in the foreground, as written,
+// without redirections.
+func plainStmt(stmt *syntax.Stmt) bool {
+	return !stmt.Background && !stmt.Negated && !stmt.Coprocess && !stmt.Disown && len(stmt.Redirs) == 0
+}
+
+// onlyAssignment is the variable a plain statement that only assigns one
+// sets, and the value it assigns; name is "" for any other statement.
+func onlyAssignment(stmt *syntax.Stmt) (name string, value *syntax.Word) {
+	call, isCall := stmt.Cmd.(*syntax.CallExpr)
+	if !plainStmt(stmt) || !isCall || len(call.Args) > 0 || len(call.Assigns) != 1 {
+		return "", nil
+	}
+	assign := call.Assigns[0]
+	if assign.Name == nil || assign.Index != nil || assign.Array != nil || assign.Append || assign.Naked || assign.Value == nil {
+		return "", nil
+	}
+	return assign.Name.Value, assign.Value
+}
+
+// lastStatus reports a word that is only $?.
+func lastStatus(word *syntax.Word) bool {
+	if word == nil || len(word.Parts) != 1 {
+		return false
+	}
+	expansion, isExpansion := word.Parts[0].(*syntax.ParamExp)
+	return isExpansion && expansion.Short && expansion.Param != nil && expansion.Param.Value == "?"
+}
+
+// stmtText is a statement of src as written, without the ; that ends it
+// or the comments after it.
+func stmtText(src string, stmt *syntax.Stmt) string {
+	end := stmt.End()
+	if stmt.Semicolon.IsValid() {
+		end = stmt.Semicolon
+	}
+	return strings.TrimSpace(src[stmt.Pos().Offset():end.Offset()])
 }
 
 // Builtins that change the shell's control flow or state, which a command
@@ -305,11 +364,20 @@ func directScopedCommand(step runtimeStep, test TestCommand, framework string) (
 		// with the scoped setup; the conversion follows as its own command.
 		split := step
 		split.Run, split.scopedVariable, split.impactedWorkaround = tests, "", false
-		scoped, err := directScopedCommand(split, test, framework)
-		if err != nil {
+		scoped, scopedErr := directScopedCommand(split, test, framework)
+		if scopedErr != nil {
+			return "", scopedErr
+		}
+		// ddtest prescribes only a command it reads back as these tests and
+		// this conversion on the next onboard --apply; for any other, such as
+		// a conversion through a { ...; } group, the general advice stands.
+		prescribed := statusSubshell(scoped, conversion)
+		read := runtimeStep{Run: prescribed}
+		read.readStatusSubshell()
+		if read.Run != scoped || !slices.Equal(read.afterTests, []string{conversion}) {
 			return "", err
 		}
-		return "", &ReportPipeSplit{Original: step.Run, Command: statusSubshell(scoped, conversion)}
+		return "", &ReportPipeSplit{Original: step.Run, Command: prescribed}
 	}
 	if !test.usesNYC {
 		start, end, insertion, err := cucumberCoverageEdit(command)
@@ -342,9 +410,9 @@ func compoundCommandError(command string) error {
 // and NYC, which prints its coverage summary to standard output, can't share
 // the converter's input. The tests write the same report to a file, and the
 // same CI command then converts that file whatever their result and exits
-// with their status (see statusSubshell): failing tests still fail CI, and
-// the report is still written, on providers whose scripts stop at the first
-// failing command too. ddtest reads the conversion as outside the tests (see
+// with their status, or the conversion's when only it fails (see
+// statusSubshell): failing tests still fail CI, and the report is still
+// written, on providers whose scripts stop at the first failing command too. ddtest reads the conversion as outside the tests (see
 // readStatusSubshell and reportTools).
 type ReportPipeSplit struct {
 	// Original is the CI command; Command replaces it.
@@ -352,13 +420,21 @@ type ReportPipeSplit struct {
 }
 
 func (s *ReportPipeSplit) Error() string {
-	return "CI pipes the report of " + s.Original + " into a converter in one command, which ddtest does not rewrite into the scoped command. Replace this CI command with exactly this one, which writes the report to a file, converts it whether the tests pass or fail, and exits with the tests' status: " + s.Command + ". Then rerun onboard --apply"
+	return "CI pipes the report of " + s.Original + " into a converter in one command, which ddtest does not rewrite into the scoped command. Replace this CI command with exactly this one, which writes the report to a file, converts it whether the tests pass or fail, and exits with the tests' status, or the conversion's when only the conversion fails: " + s.Command + ". Then rerun onboard --apply"
 }
 
 // statusSubshell is the CI command that runs tests, then conversion whatever
-// their result, and exits with the tests' status (see readStatusSubshell).
+// their result, and exits with the tests' status, or the conversion's when
+// the tests pass and it fails, as the original pipe failed then too (see
+// readStatusSubshell). Each status is recorded through ||, so the command
+// behaves the same with errexit on or off. The conversion's own status is
+// its pipe's, under whatever pipefail setting the CI shell has, as the
+// original pipe's was (GitLab and CircleCI enable pipefail, Buildkite and
+// Jenkins don't): without it, that is the converter's status, and the only
+// earlier stage, cat, fails only on a missing report, which tests that pass
+// have written. ddtest adds no set -o pipefail, which not every sh supports.
 func statusSubshell(tests, conversion string) string {
-	return `(status=0; ` + tests + ` || status=$?; ` + conversion + `; exit "$status")`
+	return `(status=0; ` + tests + ` || status=$?; ` + conversion + ` || { converted=$?; [ "$status" -ne 0 ] || status=$converted; }; exit "$status")`
 }
 
 // Cucumber's formatters by the extension of the file their output is
@@ -437,7 +513,10 @@ func cucumberReportPipe(command string) (tests, conversion string, ok bool) {
 	}
 	// The word as the shell reads it, quoted only when it needs to be.
 	tests = command[start:wordStart] + shellquote.Join(replacement) + command[wordEnd:end]
-	rest := strings.TrimSpace(command[stages[1].Pos().Offset():])
+	// The rest of the pipeline as written, without the ; or comment after
+	// it, which would end the prescription early.
+	last := stages[len(stages)-1]
+	rest := strings.TrimSpace(command[stages[1].Pos().Offset():last.End().Offset()])
 	if mayStartTests(runtimeStep{Run: rest}, "cucumber") {
 		return "", "", false
 	}

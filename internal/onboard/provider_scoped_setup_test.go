@@ -676,8 +676,9 @@ func TestProviderDirectWebdriverIOReadsItsDirectorysConfig(t *testing.T) {
 // A direct Cucumber invocation that CI pipes into a report converter gets
 // the exact replacement: the tests write the same report to a file with the
 // scoped setup, and the same command converts the file whatever their result
-// and exits with their status. onboard --apply then accepts it, reading the
-// conversion as outside the tests.
+// and exits with their status, or the conversion's when only it fails.
+// onboard --apply then accepts it, reading the conversion as outside the
+// tests.
 func TestProviderSplitsACucumberReportPipe(t *testing.T) {
 	for _, provider := range scopedProviders {
 		t.Run(provider.name, func(t *testing.T) {
@@ -687,13 +688,13 @@ func TestProviderSplitsACucumberReportPipe(t *testing.T) {
 			_, err := PlanJavaScriptSetup(root, "cucumber", "5.133.0", "datadoghq.com", ">=18")
 			var gap *EditThenApplyGap
 			require.ErrorAs(t, err, &gap)
-			_, after, ok := strings.Cut(gap.Reason, "and exits with the tests' status: ")
+			_, after, ok := strings.Cut(gap.Reason, "or the conversion's when only the conversion fails: ")
 			require.True(t, ok, gap.Reason)
 			command, _, ok := strings.Cut(after, ". Then rerun onboard --apply")
 			require.True(t, ok, gap.Reason)
 			tests := cucumberScopedOptions + " " + cucumberImpactedWorkaround + " npx --no-install nyc -- ./node_modules/.bin/cucumber-js ./features --format json:cucumber-report.json"
 			conversion := "cat cucumber-report.json | ./node_modules/.bin/cucumber-junit > junit.xml"
-			want := `(status=0; ` + tests + ` || status=$?; ` + conversion + `; exit "$status")`
+			want := `(status=0; ` + tests + ` || status=$?; ` + conversion + ` || { converted=$?; [ "$status" -ne 0 ] || status=$converted; }; exit "$status")`
 			if provider.name == buildkiteProvider {
 				want = buildkiteEscape(want) // As the pipeline holds it.
 			}
@@ -708,37 +709,131 @@ func TestProviderSplitsACucumberReportPipe(t *testing.T) {
 			require.Empty(t, scope.Unresolved)
 			require.Len(t, scope.Commands, 1)
 			require.Equal(t, "nyc -- ./node_modules/.bin/cucumber-js ./features --format json:cucumber-report.json", scope.Commands[0].Command, "the tests are the configuration")
-			require.Contains(t, scope.Commands[0].StepScopeNotes, "This CI step runs "+conversion+" after its cucumber tests, whether they pass or fail, then exits with the tests' status.")
+			require.Contains(t, scope.Commands[0].StepScopeNotes, "This CI step runs "+conversion+" after its cucumber tests, whether they pass or fail, then exits with the tests' status, or with the status of a command after them that fails when they pass.")
 		})
 	}
 }
 
-// A failing test run still writes the converted report, and the command
-// still fails with the tests' status, under errexit as CI scripts run; a
-// passing one continues with the script's later commands.
+// The status subshell converts the report whatever the tests' result, and
+// exits with the tests' status, or the conversion's when only the
+// conversion fails, as the original pipe did then: with errexit on, as CI
+// scripts run, and off, under sh, bash and dash, and with pipefail on and
+// off for the conversion's own pipe. Only a passing run continues with the
+// script's later commands under errexit.
 func TestStatusSubshellConvertsAndKeepsTheTestsStatus(t *testing.T) {
-	if _, err := exec.LookPath("sh"); err != nil {
+	type shell struct{ name, options string }
+	var shells []shell
+	for _, name := range []string{"sh", "bash", "dash"} {
+		if _, err := exec.LookPath(name); err != nil {
+			continue
+		}
+		shells = append(shells, shell{name, "set -e"}, shell{name, "set +e"})
+		if name == "bash" {
+			shells = append(shells, shell{name, "set -e -o pipefail"}, shell{name, "set +e -o pipefail"})
+		}
+	}
+	if len(shells) == 0 {
 		t.Skip("no sh")
 	}
-	for tests, want := range map[string]int{"(echo report > report.json; exit 3)": 3, "echo report > report.json": 0} {
-		directory := t.TempDir()
-		script := "set -e\n" + statusSubshell(tests, "cat report.json | tr a-z A-Z > junit.xml") + "\necho later > later.txt\n"
-		command := exec.Command("sh", "-c", script)
-		command.Dir = directory
-		err := command.Run()
-		status := 0
-		var exit *exec.ExitError
-		if errors.As(err, &exit) {
-			status = exit.ExitCode()
-		} else {
-			require.NoError(t, err)
+	tests := map[string]int{"(echo report > report.json; exit 3)": 3, "echo report > report.json": 0}
+	conversions := map[string]int{
+		"cat report.json | tr a-z A-Z > junit.xml":                       0,
+		"cat report.json | sh -c 'tr a-z A-Z > junit.xml; exit 5'":       5,
+		"cat report.json | tr a-z A-Z | sh -c 'cat > junit.xml; exit 6'": 6,
+	}
+	for _, shell := range shells {
+		for tests, testStatus := range tests {
+			for conversion, conversionStatus := range conversions {
+				t.Run(shell.name+" "+shell.options+" "+tests+" "+conversion, func(t *testing.T) {
+					want := testStatus
+					if want == 0 {
+						want = conversionStatus
+					}
+					directory := t.TempDir()
+					script := shell.options + "\n" + statusSubshell(tests, conversion) + "\nstatus=$?\necho later > later.txt\nexit \"$status\"\n"
+					command := exec.Command(shell.name, "-c", script)
+					command.Dir = directory
+					err := command.Run()
+					status := 0
+					var exit *exec.ExitError
+					if errors.As(err, &exit) {
+						status = exit.ExitCode()
+					} else {
+						require.NoError(t, err)
+					}
+					require.Equal(t, want, status, "the tests' status, or the conversion's when only it fails")
+					converted, readErr := os.ReadFile(filepath.Join(directory, "junit.xml"))
+					require.NoError(t, readErr, "the report is converted whatever the tests' result")
+					require.Equal(t, "REPORT\n", string(converted))
+					_, later := os.Stat(filepath.Join(directory, "later.txt"))
+					if strings.HasPrefix(shell.options, "set -e") {
+						require.Equal(t, want == 0, later == nil, "only a passing run continues with the script")
+					} else {
+						require.NoError(t, later, "without errexit, the script continues")
+					}
+				})
+			}
 		}
-		require.Equal(t, want, status, tests)
-		converted, readErr := os.ReadFile(filepath.Join(directory, "junit.xml"))
-		require.NoError(t, readErr, "the report is converted whatever the tests' result")
-		require.Equal(t, "REPORT\n", string(converted))
-		_, later := os.Stat(filepath.Join(directory, "later.txt"))
-		require.Equal(t, want == 0, later == nil, "only a passing run continues with the script")
+	}
+}
+
+// Every status subshell ddtest prescribes for a report pipe is one ddtest
+// reads back as the same tests and conversion on the next onboard --apply,
+// and one the shell parses: a pipe whose conversion the reader can't read,
+// such as one through a { ...; } group or one that reads the status
+// variable, keeps the general advice instead, and a ; or comment after the
+// pipe stays out of the prescription.
+func TestEveryReportPipePrescriptionReadsBack(t *testing.T) {
+	var shells []string
+	for _, name := range []string{"bash", "dash"} {
+		if _, err := exec.LookPath(name); err == nil {
+			shells = append(shells, name)
+		}
+	}
+	for pipe, prescribed := range map[string]bool{
+		"cucumber-js --format json | cucumber-junit > junit.xml":                                                        true,
+		"cucumber-js --format json | cucumber-junit > junit.xml;":                                                       true,
+		"cucumber-js --format json | cucumber-junit > junit.xml ;  ":                                                    true,
+		"cucumber-js --format json | cucumber-junit > junit.xml # convert":                                              true,
+		"cucumber-js --format json | cucumber-junit > junit.xml; # convert":                                             true,
+		"cucumber-js --format json |\n  cucumber-junit > junit.xml":                                                     true,
+		"npx cucumber-js './features/a b' --format \"json\" | cucumber-junit --name 'My suite' > \"out dir/junit.xml\"": true,
+		"cucumber-js --format json | tee raw.json | cucumber-junit > junit.xml":                                         true,
+		"cucumber-js --format json | cucumber-junit 2>&1 > junit.xml":                                                   true,
+		"cucumber-js --format json | FORCE_COLOR=0 cucumber-junit > junit.xml":                                          true,
+		"cucumber-js --format=message | npx @cucumber/junit-xml-formatter > junit.xml":                                  false,
+		"cucumber-js --format json | { cucumber-junit; }":                                                               false,
+		"cucumber-js --format json | { cucumber-junit > junit.xml; } # convert":                                         false,
+		"cucumber-js --format json | (cucumber-junit > junit.xml)":                                                      false,
+		"cucumber-js --format json | cucumber-junit > \"$status.xml\"":                                                  false,
+		"cucumber-js --format json | cucumber-junit --name \"$converted\"":                                              false,
+		"cucumber-js --format json | cucumber-junit | exit 0":                                                           false,
+		"CI=1 cucumber-js --format json | cucumber-junit":                                                               false,
+		"cucumber-js --format json | cucumber-junit > junit.xml; echo done":                                             false,
+		"cucumber-js --format json | cucumber-junit > junit.xml && echo done":                                           false,
+	} {
+		t.Run(pipe, func(t *testing.T) {
+			_, err := directScopedCommand(runtimeStep{Run: pipe}, TestCommand{}, "cucumber")
+			require.Error(t, err)
+			var split *ReportPipeSplit
+			if !prescribed {
+				require.False(t, errors.As(err, &split), "%v", err)
+				require.Contains(t, err.Error(), "as part of a compound shell command")
+				return
+			}
+			require.ErrorAs(t, err, &split)
+			read := runtimeStep{Run: split.Command}
+			read.readStatusSubshell()
+			require.Len(t, read.afterTests, 1, split.Command)
+			require.Contains(t, read.Run, "cucumber-js", split.Command)
+			require.Equal(t, split.Command, read.statusWrapper[0]+read.Run+read.statusWrapper[1])
+			require.NotContains(t, split.Command, "#")
+			require.NotContains(t, split.Command, ";;")
+			for _, shell := range shells {
+				output, err := exec.Command(shell, "-n", "-c", split.Command).CombinedOutput()
+				require.NoError(t, err, "%s -n: %s\n%s", shell, split.Command, output)
+			}
+		})
 	}
 }
 
@@ -746,17 +841,32 @@ func TestStatusSubshellConvertsAndKeepsTheTestsStatus(t *testing.T) {
 // commands outside them; a command after the tests that may start them, a
 // missing status or another exit stays unresolved.
 func TestStatusSubshellReadsOnlyThePrescribedForm(t *testing.T) {
+	guard := ` || { converted=$?; [ "$status" -ne 0 ] || status=$converted; }`
 	for run, want := range map[string][2]any{
-		`(status=0; npx cucumber-js --format json:r.json || status=$?; cat r.json | cucumber-junit > j.xml; exit "$status")`: {"npx cucumber-js --format json:r.json", []string{"cat r.json | cucumber-junit > j.xml"}},
-		"(\n  rc=0\n  npx cucumber-js || rc=$?\n  npx junit-merge -d r -o j.xml\n  allure generate r\n  exit $rc\n)":         {"npx cucumber-js", []string{"npx junit-merge -d r -o j.xml", "allure generate r"}},
-		`(status=0; npx cucumber-js || status=$?; cat r.json | cucumber-junit; exit 0)`:                                      {},
-		`(status=1; npx cucumber-js || status=$?; cat r.json | cucumber-junit; exit "$status")`:                              {},
-		`(status=0; npx cucumber-js || other=$?; cat r.json | cucumber-junit; exit "$status")`:                               {},
-		`(status=0; npx cucumber-js && status=$?; cat r.json | cucumber-junit; exit "$status")`:                              {},
-		`(status=0; npx cucumber-js || status=$?; exit "$status")`:                                                           {},
-		`(status=0; npx cucumber-js || status=$?; cat r.json | cucumber-junit; exit "${status:-1}")`:                         {},
-		`(status=0; npx cucumber-js || status=$?; cat r.json | cucumber-junit; exit "$status") > log`:                        {},
-		`status=0; npx cucumber-js || status=$?; cat r.json | cucumber-junit; exit "$status"`:                                {},
+		`(status=0; npx cucumber-js --format json:r.json || status=$?; cat r.json | cucumber-junit > j.xml` + guard + `; exit "$status")`:                                                                              {"npx cucumber-js --format json:r.json", []string{"cat r.json | cucumber-junit > j.xml"}},
+		"(\n  rc=0\n  npx cucumber-js || rc=$?\n  npx junit-merge -d r -o j.xml || { saved=$?; [ \"$rc\" -ne 0 ] || rc=$saved; }\n  allure generate r || { saved=$?; [ $rc -ne 0 ] || rc=\"$saved\"; }\n  exit $rc\n)": {"npx cucumber-js", []string{"npx junit-merge -d r -o j.xml", "allure generate r"}},
+		// The round-2 form, without the guard, would let a failing conversion pass without errexit.
+		`(status=0; npx cucumber-js || status=$?; cat r.json | cucumber-junit > j.xml; exit "$status")`:            {},
+		`(status=0; npx cucumber-js || status=$?; cat r.json | cucumber-junit` + guard + `; exit 0)`:               {},
+		`(status=1; npx cucumber-js || status=$?; cat r.json | cucumber-junit` + guard + `; exit "$status")`:       {},
+		`(status=0; npx cucumber-js || other=$?; cat r.json | cucumber-junit` + guard + `; exit "$status")`:        {},
+		`(status=0; npx cucumber-js && status=$?; cat r.json | cucumber-junit` + guard + `; exit "$status")`:       {},
+		`(status=0; npx cucumber-js || status=$?; exit "$status")`:                                                 {},
+		`(status=0; npx cucumber-js || status=$?; cat r.json | cucumber-junit` + guard + `; exit "${status:-1}")`:  {},
+		`(status=0; npx cucumber-js || status=$?; cat r.json | cucumber-junit` + guard + `; exit "$status") > log`: {},
+		`status=0; npx cucumber-js || status=$?; cat r.json | cucumber-junit` + guard + `; exit "$status"`:         {},
+		// Guards that lose the tests' status, or the conversion's.
+		`(status=0; npx cucumber-js || status=$?; cucumber-junit || { converted=$?; status=$converted; }; exit "$status")`:                                   {},
+		`(status=0; npx cucumber-js || status=$?; cucumber-junit || { converted=$?; [ "$status" -eq 0 ] && status=$converted; }; exit "$status")`:            {},
+		`(status=0; npx cucumber-js || status=$?; cucumber-junit || { converted=$?; [ "$status" -ne 1 ] || status=$converted; }; exit "$status")`:            {},
+		`(status=0; npx cucumber-js || status=$?; cucumber-junit || { converted=$?; [ "$other" -ne 0 ] || status=$converted; }; exit "$status")`:             {},
+		`(status=0; npx cucumber-js || status=$?; cucumber-junit || { converted=$?; [ "$status" -ne 0 ] || status=$other; }; exit "$status")`:                {},
+		`(status=0; npx cucumber-js || status=$?; cucumber-junit || { converted=1; [ "$status" -ne 0 ] || status=$converted; }; exit "$status")`:             {},
+		`(status=0; npx cucumber-js || status=$?; cucumber-junit || { status=$?; [ "$status" -ne 0 ] || status=$status; }; exit "$status")`:                  {},
+		`(status=0; npx cucumber-js || status=$?; cucumber-junit || { converted=$?; [ "$status" -ne 0 ] || status=$converted; exit 0; }; exit "$status")`:    {},
+		`(status=0; npx cucumber-js || status=$?; cucumber-junit || ( converted=$?; [ "$status" -ne 0 ] || status=$converted ); exit "$status")`:             {},
+		`(status=0; npx cucumber-js || status=$?; cucumber-junit $converted || { converted=$?; [ "$status" -ne 0 ] || status=$converted; }; exit "$status")`: {},
+		`(status=0; npx cucumber-js || status=$?; exit 0` + guard + `; exit "$status")`:                                                                      {},
 	} {
 		step := runtimeStep{Run: run}
 		step.readStatusSubshell()
@@ -770,7 +880,7 @@ func TestStatusSubshellReadsOnlyThePrescribedForm(t *testing.T) {
 	}
 	root := t.TempDir()
 	writeFile(t, root, "package.json", `{"devDependencies":{"@cucumber/cucumber":"11.0.1"},"scripts":{"report":"cucumber-js"}}`)
-	writeFile(t, root, gitLabCIFile, "acceptance:\n  image: node:24\n  script:\n    - npm install\n    - (status=0; npx cucumber-js || status=$?; npm run report; exit \"$status\")\n")
+	writeFile(t, root, gitLabCIFile, "acceptance:\n  image: node:24\n  script:\n    - npm install\n    - (status=0; npx cucumber-js || status=$?; npm run report || { converted=$?; [ \"$status\" -ne 0 ] || status=$converted; }; exit \"$status\")\n")
 	useCIProvider(t, gitLabCIProvider)
 	scope, err := DiscoverValidationScope(root, "cucumber")
 	require.NoError(t, err)
@@ -832,7 +942,7 @@ func TestEveryProviderReadsTheStatusSubshell(t *testing.T) {
 			require.Empty(t, scope.Unresolved)
 			require.Len(t, scope.Commands, 1)
 			require.Equal(t, "cucumber-js ./features --format json:cucumber-report.json", scope.Commands[0].Command, "the tests are the configuration")
-			require.Contains(t, scope.Commands[0].StepScopeNotes, "This CI step runs "+conversion+" after its cucumber tests, whether they pass or fail, then exits with the tests' status.")
+			require.Contains(t, scope.Commands[0].StepScopeNotes, "This CI step runs "+conversion+" after its cucumber tests, whether they pass or fail, then exits with the tests' status, or with the status of a command after them that fails when they pass.")
 		})
 	}
 }
@@ -871,7 +981,7 @@ func TestStatusSubshellRejectsCommandsThatSkipTheExit(t *testing.T) {
 		"(exit 0)", "{ exit 0; }", "if true; then exit 0; fi", "f() { exit 0; }", "! cucumber-junit", "$CONVERT r.json",
 	} {
 		t.Run(middle, func(t *testing.T) {
-			run := `(status=0; npx cucumber-js || status=$?; ` + middle + `; exit "$status")`
+			run := `(status=0; npx cucumber-js || status=$?; ` + middle + ` || { converted=$?; [ "$status" -ne 0 ] || status=$converted; }; exit "$status")`
 			step := runtimeStep{Run: run}
 			step.readStatusSubshell()
 			require.Equal(t, run, step.Run)
@@ -879,7 +989,7 @@ func TestStatusSubshellRejectsCommandsThatSkipTheExit(t *testing.T) {
 		})
 	}
 	for _, middle := range []string{"cat r.json | cucumber-junit > j.xml", "cucumber-junit < r.json > j.xml 2>&1", "status-report r.json", "echo $other", ": done"} {
-		step := runtimeStep{Run: `(status=0; npx cucumber-js || status=$?; ` + middle + `; exit "$status")`}
+		step := runtimeStep{Run: `(status=0; npx cucumber-js || status=$?; ` + middle + ` || { converted=$?; [ "$status" -ne 0 ] || status=$converted; }; exit "$status")`}
 		step.readStatusSubshell()
 		require.Equal(t, []string{middle}, step.afterTests, middle)
 	}
@@ -907,14 +1017,14 @@ func TestStatusSubshellTailsPrepareLaterTests(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			root := t.TempDir()
 			writeFile(t, root, "package.json", `{"devDependencies":{"@cucumber/cucumber":"11.0.1","cucumber-junit":"1.7.1"}}`)
-			write(t, root, "npm ci", `(status=0; ./node_modules/.bin/cucumber-js features/a || status=$?; cp ci.env .env; exit "$status")`, "./node_modules/.bin/cucumber-js features/b")
+			write(t, root, "npm ci", `(status=0; ./node_modules/.bin/cucumber-js features/a || status=$?; cp ci.env .env || { converted=$?; [ "$status" -ne 0 ] || status=$converted; }; exit "$status")`, "./node_modules/.bin/cucumber-js features/b")
 			t.Chdir(root)
 			useCIProvider(t, name)
 			scope, err := DiscoverValidationScope(root, "cucumber")
 			require.NoError(t, err)
 			require.Contains(t, strings.Join(scope.Unresolved, "\n"), "CI file or dependency changes require separate validation: cp ci.env .env", "the later tests read the file it changes")
 
-			write(t, root, "npm ci", `(status=0; ./node_modules/.bin/cucumber-js features/a || status=$?; ./node_modules/.bin/cucumber-junit < r.json > j.xml; exit "$status")`, "./node_modules/.bin/cucumber-js features/b")
+			write(t, root, "npm ci", `(status=0; ./node_modules/.bin/cucumber-js features/a || status=$?; ./node_modules/.bin/cucumber-junit < r.json > j.xml || { converted=$?; [ "$status" -ne 0 ] || status=$converted; }; exit "$status")`, "./node_modules/.bin/cucumber-js features/b")
 			scope, err = DiscoverValidationScope(root, "cucumber")
 			require.NoError(t, err)
 			require.Contains(t, strings.Join(scope.Unresolved, "\n"), "but before a later cucumber test step, which it may prepare")
@@ -985,7 +1095,7 @@ func TestCucumberReportPipeChoosesAFreshReportAndDecodesTheOption(t *testing.T) 
 			_, err := PlanJavaScriptSetup(root, "cucumber", "5.133.0", "datadoghq.com", ">=18")
 			var gap *EditThenApplyGap
 			require.ErrorAs(t, err, &gap)
-			_, after, ok := strings.Cut(gap.Reason, "and exits with the tests' status: ")
+			_, after, ok := strings.Cut(gap.Reason, "or the conversion's when only the conversion fails: ")
 			require.True(t, ok, gap.Reason)
 			command, _, ok := strings.Cut(after, ". Then rerun onboard --apply")
 			require.True(t, ok, gap.Reason)

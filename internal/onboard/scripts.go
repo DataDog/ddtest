@@ -102,7 +102,7 @@ func resolveTestStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 		sequence := plain
 		sequence.Run = strings.Join(append([]string{plain.Run}, step.afterTests...), "\n")
 		result := resolveTestStep(root, workflow, job, sequence, language, framework)
-		note := "This CI step runs " + strings.Join(step.afterTests, "; ") + " after its " + framework + " tests, whether they pass or fail, then exits with the tests' status."
+		note := "This CI step runs " + strings.Join(step.afterTests, "; ") + " after its " + framework + " tests, whether they pass or fail, then exits with the tests' status, or with the status of a command after them that fails when they pass."
 		for i := range result.Tests {
 			if !slices.Contains(result.Tests[i].StepScopeNotes, note) {
 				result.Tests[i].StepScopeNotes = append(result.Tests[i].StepScopeNotes, note)
