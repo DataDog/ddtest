@@ -93,8 +93,11 @@ func (s *runtimeStep) readScopedPrefix() {
 // onboarding prescribes for a report conversion (see ReportPipeSplit and
 // statusSubshell):
 //
-//	(status=0; cucumber-js --format json:report.json || status=$?; cat report.json | cucumber-junit > junit.xml || { converted=$?; [ "$status" -ne 0 ] || status=$converted; }; exit "$status")
+//	(status=0; rm -f report.json; cucumber-js --format json:report.json || status=$?; cat report.json | cucumber-junit > junit.xml || { converted=$?; [ "$status" -ne 0 ] || status=$converted; }; exit "$status")
 //
+// The rm -f before the tests is optional, and only that command qualifies
+// there: it removes the report the tests write and the first command after
+// them reads (see removedReport).
 // The || keeps errexit from stopping at failing tests or a failing
 // conversion, and the subshell keeps the exit to this command, so a passing
 // run continues with the script's later commands, as a script stopping at
@@ -121,6 +124,13 @@ func (s *runtimeStep) readStatusSubshell() {
 	if variable == "" || initial.Lit() != "0" {
 		return
 	}
+	report := removedReport(stmts[1])
+	if report != "" {
+		if len(stmts) < 5 {
+			return
+		}
+		stmts = append(stmts[:1:1], stmts[2:]...)
+	}
 	record, isBinary := stmts[1].Cmd.(*syntax.BinaryCmd)
 	if !plainStmt(stmts[1]) || !isBinary || record.Op != syntax.OrStmt {
 		return
@@ -136,6 +146,9 @@ func (s *runtimeStep) readStatusSubshell() {
 	if !plainStmt(stmts[len(stmts)-1]) || !isExit || len(exit.Assigns) > 0 || len(exit.Args) != 2 || exit.Args[0].Lit() != "exit" || !readsOnly(exit.Args[1], variable) {
 		return
 	}
+	if report != "" && (!writesReport(tests, report) || !readsReport(stmts[2], report)) {
+		return
+	}
 	var after []string
 	for _, stmt := range stmts[2 : len(stmts)-1] {
 		command := guardedCommand(stmt, variable)
@@ -146,6 +159,53 @@ func (s *runtimeStep) readStatusSubshell() {
 	}
 	start, end := record.X.Pos().Offset(), record.X.End().Offset()
 	s.Run, s.afterTests, s.statusWrapper = stmtText(run, record.X), after, [2]string{run[:start], run[end:]}
+}
+
+// removedReport is the file a plain rm -f <file> statement removes, as
+// statusSubshell writes it before the tests: one literal relative name with
+// no glob or option, so the command removes only that file. It is "" for any
+// other statement.
+func removedReport(stmt *syntax.Stmt) string {
+	call, isCall := stmt.Cmd.(*syntax.CallExpr)
+	if !plainStmt(stmt) || !isCall || len(call.Assigns) > 0 || len(call.Args) != 3 || call.Args[0].Lit() != "rm" || call.Args[1].Lit() != "-f" {
+		return ""
+	}
+	report := call.Args[2].Lit()
+	if report == "" || strings.HasPrefix(report, "-") || strings.HasPrefix(report, "/") || strings.ContainsAny(report, "*?[]{}~\\") || slices.Contains(strings.Split(report, "/"), "..") {
+		return ""
+	}
+	return report
+}
+
+// writesReport reports tests that name report as a formatter's output, as
+// --format json:report does.
+func writesReport(tests *syntax.CallExpr, report string) bool {
+	return slices.ContainsFunc(tests.Args[1:], func(arg *syntax.Word) bool {
+		word, literal := shellLiteralWord(arg)
+		return literal && strings.HasSuffix(word, ":"+report)
+	})
+}
+
+// readsReport reports a guarded conversion (see guardedCommand) whose pipe
+// starts with cat report, as statusSubshell writes it.
+func readsReport(stmt *syntax.Stmt, report string) bool {
+	guard, isBinary := stmt.Cmd.(*syntax.BinaryCmd)
+	if !isBinary || guard.Op != syntax.OrStmt {
+		return false
+	}
+	first := guard.X
+	for {
+		pipe, isPipe := first.Cmd.(*syntax.BinaryCmd)
+		if !isPipe || pipe.Op != syntax.Pipe {
+			break
+		}
+		first = pipe.X
+	}
+	if first == guard.X {
+		return false
+	}
+	cat, isCall := first.Cmd.(*syntax.CallExpr)
+	return plainStmt(first) && isCall && len(cat.Assigns) == 0 && len(cat.Args) == 2 && cat.Args[0].Lit() == "cat" && cat.Args[1].Lit() == report
 }
 
 // guardedCommand is the command of a statement between a status subshell's
@@ -236,9 +296,9 @@ func stmtText(src string, stmt *syntax.Stmt) string {
 // instead, which can't, or one of statusSafeBuiltins.
 var shellBuiltins = []string{".", ":", "[", "alias", "bg", "bind", "break", "builtin", "caller", "cd", "command", "compgen", "complete", "compopt", "continue", "declare", "dirs", "disown", "echo", "enable", "eval", "exec", "exit", "export", "false", "fc", "fg", "getopts", "hash", "help", "history", "jobs", "kill", "let", "local", "logout", "mapfile", "popd", "printf", "pushd", "pwd", "read", "readarray", "readonly", "return", "set", "shift", "shopt", "source", "suspend", "test", "times", "trap", "true", "type", "typeset", "ulimit", "umask", "unalias", "unset", "wait"}
 
-// The builtins that only print or test, and set no variable: printf only
-// without options, as printf -v sets one.
-var statusSafeBuiltins = []string{":", "[", "echo", "false", "printf", "pwd", "test", "true"}
+// The builtins that only print or test, and set no variable. printf is not
+// one: bash's printf -v sets a variable, and so does a %n in its format.
+var statusSafeBuiltins = []string{":", "[", "echo", "false", "pwd", "test", "true"}
 
 // fallsThrough reports a command between a status subshell's tests and its
 // exit that always continues to that exit with the tests' status, as a
@@ -268,11 +328,6 @@ func fallsThrough(stmt *syntax.Stmt, variable string) bool {
 		}
 		if slices.Contains(shellBuiltins, program) && !slices.Contains(statusSafeBuiltins, program) {
 			return false
-		}
-		if program == "printf" && len(command.Args) > 1 {
-			if format, literal := shellLiteralWord(command.Args[1]); !literal || strings.HasPrefix(format, "-") {
-				return false
-			}
 		}
 	default:
 		return false
@@ -378,7 +433,7 @@ func directScopedCommand(root string, step runtimeStep, test TestCommand, framew
 	}
 	command = strings.TrimSpace(strings.TrimPrefix(command, cucumberImpactedWorkaround+" "))
 	if err := compoundCommandError(command); err != nil {
-		tests, conversion, ok := cucumberReportPipe(command, reportNameTaken(root, test.Directory))
+		tests, conversion, report, ok := cucumberReportPipe(command, reportNameTaken(root, test.Directory))
 		if !ok {
 			return "", err
 		}
@@ -393,7 +448,7 @@ func directScopedCommand(root string, step runtimeStep, test TestCommand, framew
 		// ddtest prescribes only a command it reads back as these tests and
 		// this conversion on the next onboard --apply; for any other, such as
 		// a conversion through a { ...; } group, the general advice stands.
-		prescribed := statusSubshell(scoped, conversion)
+		prescribed := statusSubshell(report, scoped, conversion)
 		read := runtimeStep{Run: prescribed}
 		read.readStatusSubshell()
 		if read.Run != scoped || !slices.Equal(read.afterTests, []string{conversion}) {
@@ -442,7 +497,7 @@ type ReportPipeSplit struct {
 }
 
 func (s *ReportPipeSplit) Error() string {
-	return "CI pipes the report of " + s.Original + " into a converter in one command, which ddtest does not rewrite into the scoped command. Replace this CI command with exactly this one, which writes the report to a file, converts it whether the tests pass or fail, and exits with the tests' status, or the conversion's when only the conversion fails: " + s.Command + ". Then rerun onboard --apply"
+	return "CI pipes the report of " + s.Original + " into a converter in one command, which ddtest does not rewrite into the scoped command. Replace this CI command with exactly this one, which removes any earlier intermediate report, writes the report to a file, converts it whether the tests pass or fail, and exits with the tests' status, or the conversion's when only the conversion fails: " + s.Command + ". Then rerun onboard --apply"
 }
 
 // statusSubshell is the CI command that runs tests, then conversion whatever
@@ -455,8 +510,12 @@ func (s *ReportPipeSplit) Error() string {
 // Jenkins don't): without it, that is the converter's status, and the only
 // earlier stage, cat, fails only on a missing report, which tests that pass
 // have written. ddtest adds no set -o pipefail, which not every sh supports.
-func statusSubshell(tests, conversion string) string {
-	return `(status=0; ` + tests + ` || status=$?; ` + conversion + ` || { converted=$?; [ "$status" -ne 0 ] || status=$converted; }; exit "$status")`
+// The command first removes report, the intermediate file the tests write
+// and conversion reads, so tests that fail before writing it, in a reused
+// workspace or after another command that wrote it, leave cat a missing
+// file, never an earlier run's report.
+func statusSubshell(report, tests, conversion string) string {
+	return `(status=0; rm -f ` + report + `; ` + tests + ` || status=$?; ` + conversion + ` || { converted=$?; [ "$status" -ne 0 ] || status=$converted; }; exit "$status")`
 }
 
 // Cucumber's formatters by the extension of the file their output is
@@ -467,14 +526,14 @@ var cucumberReportExtensions = map[string]string{"json": "json", "message": "ndj
 // with one formatter writing to standard output, such as
 // cucumber-js ./features --format json | cucumber-junit > junit.xml, into
 // that command writing the formatter's output to a file and a later command
-// that pipes the file into the rest of the pipeline. taken reports an
+// that pipes the file, report, into the rest of the pipeline. taken reports an
 // intermediate report name that is already a file where the command runs.
 // ok is false for any other command, or when the rest of the pipeline may
 // start tests.
-func cucumberReportPipe(command string, taken func(name string) bool) (tests, conversion string, ok bool) {
+func cucumberReportPipe(command string, taken func(name string) bool) (tests, conversion, report string, ok bool) {
 	file, parsed := parseCIShell(command)
 	if !parsed || len(file.Stmts) != 1 || file.Stmts[0].Background || file.Stmts[0].Negated || file.Stmts[0].Coprocess || len(file.Stmts[0].Redirs) > 0 {
-		return "", "", false
+		return "", "", "", false
 	}
 	var stages []*syntax.Stmt
 	var flatten func(*syntax.Stmt) bool
@@ -486,12 +545,12 @@ func cucumberReportPipe(command string, taken func(name string) bool) (tests, co
 		return true
 	}
 	if !flatten(file.Stmts[0]) || len(stages) < 2 || len(stages[0].Redirs) > 0 || stages[0].Negated {
-		return "", "", false
+		return "", "", "", false
 	}
 	call, isCall := stages[0].Cmd.(*syntax.CallExpr)
 	start, end := int(stages[0].Pos().Offset()), int(stages[0].End().Offset())
 	if !isCall || len(call.Assigns) > 0 || len(call.Args) == 0 || !namesFramework(command[start:end], "cucumber", true) {
-		return "", "", false
+		return "", "", "", false
 	}
 	var target *syntax.Word
 	value := ""
@@ -504,31 +563,31 @@ func cucumberReportPipe(command string, taken func(name string) bool) (tests, co
 		next := arg
 		if !assigned {
 			if i+2 >= len(call.Args) {
-				return "", "", false
+				return "", "", "", false
 			}
 			next = call.Args[i+2]
 			if inline, literal = shellLiteralWord(next); !literal {
-				return "", "", false
+				return "", "", "", false
 			}
 		}
 		if strings.Contains(inline, ":") {
 			continue // Already written to a file.
 		}
 		if target != nil {
-			return "", "", false // Two formatters share standard output.
+			return "", "", "", false // Two formatters share standard output.
 		}
 		target, value = next, inline
 	}
 	extension, known := cucumberReportExtensions[value]
 	if target == nil || !known {
-		return "", "", false
+		return "", "", "", false
 	}
 	// The intermediate report is a file the pipeline names nowhere, so the
 	// conversion never writes to the file it reads, as
 	// cucumber-js --format junit | tee cucumber-report.xml would, and that
 	// is no file of the step's directory, such as a tracked fixture, which
 	// the tests would overwrite.
-	report := "cucumber-report." + extension
+	report = "cucumber-report." + extension
 	for suffix := 1; strings.Contains(command, report) || taken(report); suffix++ {
 		report = fmt.Sprintf("cucumber-report-%d.%s", suffix, extension)
 	}
@@ -544,9 +603,9 @@ func cucumberReportPipe(command string, taken func(name string) bool) (tests, co
 	last := stages[len(stages)-1]
 	rest := strings.TrimSpace(command[stages[1].Pos().Offset():last.End().Offset()])
 	if mayStartTests(runtimeStep{Run: rest}, "cucumber") {
-		return "", "", false
+		return "", "", "", false
 	}
-	return tests, "cat " + report + " | " + rest, true
+	return tests, "cat " + report + " | " + rest, report, true
 }
 
 // reportNameTaken reports a name that is a file, or a path git tracks, in
