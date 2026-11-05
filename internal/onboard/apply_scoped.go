@@ -362,12 +362,61 @@ var shellBuiltins = []string{".", ":", "[", "alias", "bg", "bind", "break", "bui
 // one: bash's printf -v sets a variable, and so does a %n in its format.
 var statusSafeBuiltins = []string{":", "[", "echo", "false", "pwd", "test", "true"}
 
+// Unary file tests, which read their operand as a path only.
+var fileTestOperators = []string{"-e", "-f", "-s", "-d", "-r", "-w", "-x", "-L", "-h", "-p", "-S", "-b", "-c"}
+
+// Comparisons of integers, which bash evaluates as arithmetic, so each
+// operand must be a literal integer.
+var integerTestOperators = []string{"-eq", "-ne", "-lt", "-le", "-gt", "-ge"}
+
+// literalInteger matches a literal integer operand of test.
+var literalInteger = regexp.MustCompile(`^-?[0-9]+$`)
+
+// plainTest reports a test or [ command, with args its arguments after the
+// program, that only tests and sets nothing: a file test (see
+// fileTestOperators), -n or -z on a literal, = or != between literals, or
+// a comparison of literal integers (see integerTestOperators), each
+// operand a literal without $, a backslash, [ or a glob character. bash
+// evaluates an array subscript in other operands, as test -v
+// 'a[status=0]' or test 1 -eq 'a[status=0]' do, which can assign the
+// status variable; -o, -a and ! combinations aren't needed and don't
+// qualify.
+func plainTest(program string, args []*syntax.Word) bool {
+	if program == "[" {
+		if len(args) == 0 || shellLiteral(args[len(args)-1]) != "]" {
+			return false
+		}
+		args = args[:len(args)-1]
+	}
+	operands := make([]string, len(args))
+	for i, arg := range args {
+		text, literal := shellLiteralWord(arg)
+		if !literal || strings.ContainsAny(text, `$\[*?`) {
+			return false
+		}
+		operands[i] = text
+	}
+	switch len(operands) {
+	case 2:
+		return slices.Contains(fileTestOperators, operands[0]) || operands[0] == "-n" || operands[0] == "-z"
+	case 3:
+		switch {
+		case operands[1] == "=" || operands[1] == "!=":
+			return true
+		case slices.Contains(integerTestOperators, operands[1]):
+			return literalInteger.MatchString(operands[0]) && literalInteger.MatchString(operands[2])
+		}
+	}
+	return false
+}
+
 // fallsThrough reports a command between a status subshell's tests and its
 // exit that always continues to that exit with the tests' status, as a
 // report conversion does: one plain command, or a pipeline of them, that
 // runs in the foreground, starts with a literal program that is an
-// external program or a builtin that sets nothing (see shellBuiltins), and
-// neither reads nor assigns the status variable. Lists such as a || b,
+// external program or a builtin that sets nothing (see shellBuiltins; test
+// and [ only with operands that set nothing, see plainTest), and neither
+// reads nor assigns the status variable. Lists such as a || b,
 // compound commands, functions, arithmetic and bare assignments don't
 // qualify.
 func fallsThrough(stmt *syntax.Stmt, variable string) bool {
@@ -389,6 +438,9 @@ func fallsThrough(stmt *syntax.Stmt, variable string) bool {
 			return false
 		}
 		if slices.Contains(shellBuiltins, program) && !slices.Contains(statusSafeBuiltins, program) {
+			return false
+		}
+		if (program == "test" || program == "[") && !plainTest(program, command.Args[1:]) {
 			return false
 		}
 	default:

@@ -1236,6 +1236,101 @@ var statusUnsafeBuiltins = []string{
 	"hash -p /bin/true cucumber-junit", "[[ -n $((status=0)) ]]",
 }
 
+// statusSubshellAfter is a status subshell whose tests are followed by
+// middle, with the guard that keeps their status.
+func statusSubshellAfter(tests, middle string) string {
+	return `(status=0; ` + tests + ` || status=$?; ` + middle + ` || { converted=$?; [ "$status" -ne 0 ] || status=$converted; }; exit "$status")`
+}
+
+// test and [ after the tests qualify only with operands bash never
+// evaluates as arithmetic: a file test, -n or -z on a literal, = or !=
+// between literals, or a comparison of literal integers. Any other operand
+// set can assign the saved status through an array subscript, as test -v
+// 'BASH_VERSINFO[status=0]' does, or is a combination the reader doesn't
+// need, so the subshell stays unresolved. The guard's own [ "$status" -ne
+// 0 ] is a separate shape that keeps being read.
+var (
+	statusUnsafeTests = []string{
+		"test -v 'BASH_VERSINFO[status=0]'", "[ -v 'a[status=0]' ]", "test -f 'x[status=0]'", `[ -n "$x" ]`,
+		"test 1 -eq 'a[status=0]'", "[ 'a[status=0]' -ne 0 ]", "test -v status", "test -f j.xml -o -v 'a[status=0]'", "[ -f j.xml -a -s j.xml ]",
+		"[ ! -f j.xml ]", "test j.xml", "test", "[ ]", "[ -f j.xml", "test -f j.xml ]", "test -f '$x'", `test -f x\[1\]`, "test -f j*.xml", "test -t 1",
+		"test a == b", "test 1x -eq 1", "[[ -f j.xml ]]",
+	}
+	statusSafeTests = []string{
+		"test -f junit.xml", "[ -s report.xml ]", "test -e j.xml", "[ -d reports ]", "test -L j.xml", "test -n x", "[ -z '' ]",
+		"test a = b", `[ "a b" != c ]`, "test 1 -eq 1", "[ -1 -lt 2 ]", "test 0 -ge 0",
+	}
+)
+
+func TestStatusSubshellAcceptsOnlyPlainTests(t *testing.T) {
+	for _, middle := range statusUnsafeTests {
+		run := statusSubshellAfter("npx cucumber-js", middle)
+		step := runtimeStep{Run: run}
+		step.readStatusSubshell()
+		require.Equal(t, run, step.Run, middle)
+		require.Empty(t, step.afterTests, middle)
+	}
+	for _, middle := range statusSafeTests {
+		step := runtimeStep{Run: statusSubshellAfter("npx cucumber-js", middle)}
+		step.readStatusSubshell()
+		require.Equal(t, "npx cucumber-js", step.Run, middle)
+		require.Equal(t, []string{middle}, step.afterTests, middle)
+	}
+	// The guard's own test still reads, after a file test.
+	step := runtimeStep{Run: `(status=0; npx cucumber-js || status=$?; [ -s j.xml ] || { converted=$?; [ "$status" -ne 0 ] || status=$converted; }; cat j.xml || { converted=$?; [ $status -ne 0 ] || status="$converted"; }; exit "$status")`}
+	step.readStatusSubshell()
+	require.Equal(t, []string{"[ -s j.xml ]", "cat j.xml"}, step.afterTests)
+
+	// Every provider reaches the reader's operand check: two rejected
+	// forms, one per program, and one accepted.
+	for name, write := range statusSubshellProviders {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			writeFile(t, root, "package.json", `{"devDependencies":{"@cucumber/cucumber":"11.0.1"}}`)
+			t.Chdir(root)
+			useCIProvider(t, name)
+			for _, middle := range []string{"test -v 'BASH_VERSINFO[status=0]'", "[ -v 'a[status=0]' ]"} {
+				require.Contains(t, statusUnsafeTests, middle)
+				write(t, root, "npm ci", statusSubshellAfter("./node_modules/.bin/cucumber-js", middle))
+				scope, err := DiscoverValidationScope(root, "cucumber")
+				require.NoError(t, err)
+				require.Empty(t, scope.Commands, "%s overwrites the saved status", middle)
+				require.NotEmpty(t, scope.Unresolved, middle)
+			}
+			write(t, root, "npm ci", statusSubshellAfter("./node_modules/.bin/cucumber-js", "test -f junit.xml"))
+			scope, err := DiscoverValidationScope(root, "cucumber")
+			require.NoError(t, err)
+			require.Empty(t, scope.Unresolved)
+			require.Len(t, scope.Commands, 1)
+			require.Contains(t, scope.Commands[0].StepScopeNotes, "This CI step runs test -f junit.xml after its cucumber tests, whether they pass or fail, then exits with the tests' status, or with the status of a command after them that fails when they pass.")
+		})
+	}
+}
+
+// In a real bash, test -v 'BASH_VERSINFO[status=0]' after failing tests
+// resets the saved status through its subscript, so the subshell exits 0,
+// with errexit and pipefail on, which is why the reader rejects it; a file
+// test, which it accepts, keeps the tests' status.
+func TestStatusSubshellTestVariableMasksFailingTestsInBash(t *testing.T) {
+	realShells(t, "bash")
+	if exec.Command("bash", "-c", "x=1; test -v x").Run() != nil {
+		t.Skip("this bash has no test -v")
+	}
+	masking := statusSubshellAfter("(exit 3)", "test -v 'BASH_VERSINFO[status=0]'")
+	plain := statusSubshellAfter("(exit 3)", "test -f junit.xml")
+	results := runShellCases(t, "bash", []shellCase{
+		{script: "set -e -o pipefail\n" + masking + "\n"},
+		{script: "set -e -o pipefail\n" + plain + "\n", files: map[string]string{"junit.xml": "<testsuite/>"}},
+	})
+	require.Equal(t, 0, results[0].status, "the failing tests' status is masked")
+	require.Equal(t, 3, results[1].status, "a file test keeps the tests' status")
+	for middle, read := range map[string]bool{"test -v 'BASH_VERSINFO[status=0]'": false, "test -f junit.xml": true} {
+		step := runtimeStep{Run: statusSubshellAfter("npx cucumber-js", middle)}
+		step.readStatusSubshell()
+		require.Equal(t, read, len(step.afterTests) > 0, middle)
+	}
+}
+
 // The commands after a status subshell's tests are read as the same
 // commands after the tests in a plain sequence: a file change stays setup
 // for a later test step, and a command ddtest can't resolve is outside the
