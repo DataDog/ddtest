@@ -277,6 +277,31 @@ class EvaluateTests(unittest.TestCase):
         missing = catalog_check.evaluate(case(), self.root / "absent-codex")
         self.assertEqual((missing["outcome"], missing["harness_category"]), ("harness_failure", "evidence"))
 
+    def test_malformed_reports_are_harness_failures_not_crashes(self):
+        for name, testdrive, text in (
+                ("features", {"features": 42}, "features is int, not a list"),
+                ("top", [1, 2], "top level is list, not an object"),
+                ("summary", {"summary": "COMPLETE LOCALLY"}, "summary is str, not an object"),
+                ("checks", {"summary": {"status": "INCOMPLETE", "blocking_checks": 5}},
+                 "summary.blocking_checks is int, not a list"),
+                ("status", {"summary": {"status": 3}}, "summary.status is int, not a string")):
+            with self.subTest(name):
+                record = self.evaluate(case(), name=name + "-codex", testdrive=testdrive, final=False,
+                                       rows=[{"turn": 1, "result": {"status": "complete", "code": "done"}}])
+                self.assertEqual((record["outcome"], record["harness_category"]), ("harness_failure", "report"))
+                self.assertEqual(record["problems"], ["malformed retained/.testoptimization/testdrive.json: " + text])
+                self.assertIn("is not a ddtest report", record["next_step"])
+                self.assertTrue(catalog_check.is_failing(record))
+                catalog_check.error_block(record)
+
+    def test_unreadable_evidence_is_an_evaluation_failure_with_its_traceback(self):
+        record = self.evaluate(case(), testdrive=real_report("E08"), run={"agent_reporting": "pass"})
+        self.assertEqual((record["outcome"], record["harness_category"]), ("harness_failure", "evaluation"))
+        self.assertIn("evaluating the evidence failed: AttributeError: ", record["problems"][0])
+        self.assertIn("in agent_problem", record["excerpt"])
+        self.assertIn("log", record["evidence"])
+        self.assertIn("could not read", record["next_step"])
+
     def test_agent_failures(self):
         for name, evidence, text in (
                 ("silent", {"rows": []}, "without any ddtest result or report"),

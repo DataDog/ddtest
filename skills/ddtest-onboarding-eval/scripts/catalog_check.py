@@ -9,8 +9,8 @@ final-response.md, retained/.testoptimization/testdrive.json) and classifies it:
   unexpected_blockers  the expected verdict, but a blocker `expected.blockers`
                        does not allow, or none of the expected ones.
   harness_failure      container, clone, setup, readiness, authentication,
-                       timeout, interruption, retention, cleanup or missing
-                       evidence.
+                       timeout, interruption, retention, cleanup, a runner
+                       error, or missing or malformed evidence.
   agent_failure        no ddtest result or report, no final answer, or the
                        answer fails run.json's agent_reporting check.
 
@@ -24,6 +24,7 @@ import json
 from pathlib import Path
 import re
 import shlex
+import traceback
 
 import user_answers
 
@@ -294,8 +295,8 @@ def last_result(rows):
     return number, first, row["result"]
 
 
-def evaluate(case, evidence, log=None, rerun=None, agent=None, ddtest_label=None):
-    """Outcome record for one case's evidence folder (see the module docstring)."""
+def base_record(case, evidence, log=None, agent=None, ddtest_label=None):
+    """A record with no outcome yet: the case's expected outcome and the evidence paths."""
     evidence = Path(evidence)
     agent = agent or (evidence.name.rsplit("-", 1)[-1] if evidence.name.rsplit("-", 1)[-1] in AGENTS else None)
     expected = expected_for(case, agent)
@@ -308,8 +309,61 @@ def evaluate(case, evidence, log=None, rerun=None, agent=None, ddtest_label=None
               "problems": [], "notes": [], "evidence": evidence_paths(evidence, log), "next_step": None}
     record["expected"]["source"] = f"expected.agents.{agent}" if agent in ((case.get("expected") or {}).get("agents") or {}) \
         else "expected"
-    rerun = rerun or f"run_catalog.py {case['id'].split('-')[0]} <same options> --output <new folder>"
     record["expected"]["blockers"] = allowed
+    return record, expected, allowed
+
+
+def default_rerun(case):
+    return f"run_catalog.py {case['id'].split('-')[0]} <same options> --output <new folder>"
+
+
+def failure(case, evidence, category, problem, excerpt="", log=None, rerun=None, agent=None, ddtest_label=None):
+    """A harness_failure record for a case whose evidence was not (or could not be) evaluated."""
+    record, _, _ = base_record(case, evidence, log, agent, ddtest_label)
+    record["harness_category"] = category
+    return finish(record, "harness_failure", problem, excerpt, rerun or default_rerun(case))
+
+
+def error_text(error):
+    """A one-line summary and a traceback excerpt of an exception."""
+    trace = "".join(traceback.format_exception(type(error), error, error.__traceback__))
+    return one_line(f"{type(error).__name__}: {error}", 300), trace[-EXCERPT:].strip()
+
+
+def report_shape(report):
+    """Why a parsed testdrive.json can't be read as a report, or None."""
+    if not isinstance(report, dict):
+        return f"top level is {type(report).__name__}, not an object"
+    for key, kind in (("summary", dict), ("features", list)):
+        if report.get(key) is not None and not isinstance(report[key], kind):
+            return f"{key} is {type(report[key]).__name__}, not {'an object' if kind is dict else 'a list'}"
+    summary = report.get("summary") or {}
+    if summary.get("blocking_checks") is not None and not isinstance(summary["blocking_checks"], list):
+        return f"summary.blocking_checks is {type(summary['blocking_checks']).__name__}, not a list"
+    if summary.get("status") is not None and not isinstance(summary["status"], str):
+        return f"summary.status is {type(summary['status']).__name__}, not a string"
+    return None
+
+
+def evaluate(case, evidence, log=None, rerun=None, agent=None, ddtest_label=None):
+    """Outcome record for one case's evidence folder (see the module docstring).
+
+    Malformed evidence never raises: a report of the wrong shape is a
+    harness_failure (`report`), and any other error while reading the evidence
+    is a harness_failure (`evaluation`) with the exception and a traceback excerpt.
+    """
+    rerun = rerun or default_rerun(case)
+    try:
+        return classify(case, Path(evidence), log, rerun, agent, ddtest_label)
+    except Exception as error:  # noqa: BLE001 - malformed evidence must not stop the batch
+        summary, trace = error_text(error)
+        return failure(case, evidence, "evaluation", f"evaluating the evidence failed: {summary}", trace,
+                       log, rerun, agent, ddtest_label)
+
+
+def classify(case, evidence, log, rerun, agent, ddtest_label):
+    record, expected, allowed = base_record(case, evidence, log, agent, ddtest_label)
+    agent = record["agent"]
     actual = record["actual"]
     log = record["evidence"]["log"]
     if not evidence.is_dir():
@@ -325,8 +379,10 @@ def evaluate(case, evidence, log=None, rerun=None, agent=None, ddtest_label=None
     rows = read_rows(evidence / "ddtest-results.jsonl")
     row, first_row, result = last_result(rows)
     report = read_json(evidence / REPORT)
-    summary = (report or {}).get("summary") if isinstance(report, dict) else None
-    summary = summary if isinstance(summary, dict) else {}
+    malformed = report_shape(report) if report is not None else None
+    if malformed:
+        report = {}
+    summary = (report or {}).get("summary") or {}
     features = [str(feature.get("name")) for feature in (report or {}).get("features") or [] if isinstance(feature, dict)]
     checks = [str(check) for check in summary.get("blocking_checks") or []]
     actual["blocking_checks"] = [one_line(check, 240) for check in checks]
@@ -345,7 +401,12 @@ def evaluate(case, evidence, log=None, rerun=None, agent=None, ddtest_label=None
     problem = harness_problem(run, log)
     if problem:
         record["harness_category"] = problem[0]
+        if malformed:
+            record["problems"].append(f"malformed {REPORT.as_posix()}: {malformed}")
         return finish(record, "harness_failure", *problem[1:], rerun)
+    if malformed:
+        record["harness_category"] = "report"
+        return finish(record, "harness_failure", f"malformed {REPORT.as_posix()}: {malformed}", "", rerun)
     problem = agent_problem(run, rows, report, evidence)
     if problem:
         return finish(record, "agent_failure", problem, "", rerun)
@@ -399,6 +460,12 @@ HARNESS_HINTS = {
     "infrastructure": "the agent CLI lost its model connection; check network or service status",
     "trial": "check Docker, network and {log}",
     "exists": "{evidence} is from an earlier run; check it with --evaluate-only or pick a new --output",
+    "report": "the retained testdrive.json is not a ddtest report (see problems); inspect it in {evidence}/retained",
+    "evaluation": "catalog_check.py could not read {evidence} (see problems and output); fix the evidence or the "
+                  "checker and check it with --evaluate-only",
+    "runner": "run_catalog.py failed on this case (see problems and output); its cleanup ran (see {log}); "
+              "fix the cause",
+    "not_run": "the case never ran because its lane stopped (see problems); fix the cause",
 }
 
 

@@ -264,7 +264,12 @@ untracked files to `<evidence>/retained/` (the reports in the hidden
 trial checkout, and symlinks and paths outside it are skipped), then runs
 `run_eval.py --cleanup`. Each trial's output goes to `<id>-<agent>.log`.
 If copying fails (such as a full disk), cleanup still runs, the case is a
-`harness_failure` (`retention`) and the batch goes on.
+`harness_failure` (`retention`) and the batch goes on. A failed write to the
+log is listed under the case's `notes` and never skips cleanup. An error in the
+runner itself on one case makes it a `harness_failure` (`runner`, with the
+exception and a traceback excerpt) after its cleanup, and the lane goes on; if a
+lane stops anyway, each case it did not finish is a `harness_failure`
+(`not_run`), so the batch can't exit 0.
 Each trial runs in its own session: the first Ctrl-C (or SIGTERM/SIGHUP) is
 forwarded once, and the runner waits for the trial to finalize `run.json` and
 remove its container, retains, cleans up and stops the batch with a non-zero
@@ -299,7 +304,8 @@ catalog order, so the same case can run in both lanes at once
 lock when it uses a managed model helper. Trial folders, caches and containers
 are per trial. Two lanes double the Docker load: on a small VM (4 CPUs, 8 GB)
 timings get noisier, and heavy cases (browsers, JVM builds) may need more CPUs
-or memory. A case whose evidence folder exists is not run and fails the batch.
+or memory. A case whose evidence folder exists is not run and fails the batch
+(`harness_failure`, `exists`: check that folder with `--evaluate-only`).
 Status lines start with `[codex]` or `[claude]` and reach stdout as each case
 starts and ends, also when it is redirected; each lane also writes them to
 `<output>/lane-<agent>.log`. During a long run, follow that file
@@ -353,7 +359,7 @@ Each trial gets one outcome:
 | `verdict_mismatch (worse)` | a regression; `STOPPED` means no report | yes |
 | `verdict_mismatch (better: update expected)` | an improvement | no, exit 3 |
 | `unexpected_blockers` | the expected verdict with a blocker not allowed, or none of the expected ones | yes |
-| `harness_failure` | container, clone, setup, readiness, login, timeout, interruption, retention, cleanup or missing evidence | yes |
+| `harness_failure` | container, clone, setup, readiness, login, timeout, interruption, retention, cleanup, a runner error, or missing or malformed evidence (such as a `testdrive.json` that is not a report) | yes |
 | `agent_failure` | no ddtest result or report, no final answer, or `run.json` `agent_reporting` is not `pass` | yes |
 
 Expected blockers that are no longer reported only add a note. Whether the agent

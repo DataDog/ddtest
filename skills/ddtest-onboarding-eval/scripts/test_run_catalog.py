@@ -400,6 +400,157 @@ class MainTests(unittest.TestCase):
                     self.assertIn("/retained failed", failed["next_step"])
                     self.assertEqual(outcomes[("E02-pipeline-schema", name)]["outcome"], "pass")
 
+    def outcomes(self, root):
+        results = json.loads((root / "out" / "results.json").read_text())
+        return results, {(case["id"], case["agent"]): case for case in results["cases"]}
+
+    def test_malformed_report_is_a_harness_failure_and_the_batch_goes_on(self):
+        real_retain = run_catalog.retain
+
+        def retain(output):
+            result = real_retain(output)
+            if output.name.startswith("E01-"):
+                (output / "retained" / ".testoptimization" / "testdrive.json").write_text('{"features": 42}')
+            return result
+
+        for agent in ("codex", "both"):
+            with self.subTest(agent=agent), tempfile.TemporaryDirectory() as temporary, \
+                    patch.object(run_catalog, "retain", retain):
+                root = Path(temporary)
+                code, output, events = self.trials(root, "complete", "E01", "E02", agent=agent)
+                self.assertEqual(code, 1, output)
+                results, outcomes = self.outcomes(root)
+                self.assertEqual(results["exit_code"], 1)
+                for name in ("codex", "claude") if agent == "both" else ("codex",):
+                    failed = outcomes[("E01-nion", name)]
+                    self.assertEqual((failed["outcome"], failed["harness_category"]), ("harness_failure", "report"))
+                    self.assertIn("features is int, not a list", failed["problems"][0])
+                    self.assertEqual(outcomes[("E02-pipeline-schema", name)]["outcome"], "pass")
+                    for case in ("E01-nion", "E02-pipeline-schema"):
+                        self.assertIn(f"cleanup {root / 'out' / f'{case}-{name}'}", events)
+
+    def test_an_exception_on_one_case_is_recorded_and_later_cases_run(self):
+        real_evaluate = run_catalog.catalog_check.evaluate
+
+        def evaluate(case, output, *args, **kwargs):
+            if output.name.startswith("E01-"):
+                raise TypeError("'int' object is not iterable")
+            return real_evaluate(case, output, *args, **kwargs)
+
+        for agent in ("codex", "both"):
+            with self.subTest(agent=agent), tempfile.TemporaryDirectory() as temporary, \
+                    patch.object(run_catalog.catalog_check, "evaluate", evaluate):
+                root = Path(temporary)
+                code, output, events = self.trials(root, "complete", "E01", "E02", agent=agent)
+                self.assertEqual(code, 1, output)
+                results, outcomes = self.outcomes(root)
+                self.assertEqual(results["exit_code"], 1)
+                for name in ("codex", "claude") if agent == "both" else ("codex",):
+                    failed = outcomes[("E01-nion", name)]
+                    self.assertEqual((failed["outcome"], failed["harness_category"]), ("harness_failure", "runner"))
+                    self.assertEqual(failed["problems"], ["run_catalog.py failed: TypeError: 'int' object is not iterable"])
+                    self.assertIn("in evaluate", failed["excerpt"])
+                    self.assertIn("its cleanup ran", failed["next_step"])
+                    self.assertIn(f"[{name}] E01-nion: run_catalog.py failed: TypeError", output)
+                    self.assertEqual(outcomes[("E02-pipeline-schema", name)]["outcome"], "pass")
+                    for case in ("E01-nion", "E02-pipeline-schema"):
+                        self.assertIn(f"cleanup {root / 'out' / f'{case}-{name}'}", events)
+
+    def test_a_lane_that_dies_counts_its_unfinished_cases_as_not_run(self):
+        class Death(BaseException):
+            pass
+
+        real_run_case = run_catalog.run_case
+
+        def run_case(case, *args, **kwargs):
+            if case["id"].startswith("E02-"):
+                raise Death("lane killed")
+            return real_run_case(case, *args, **kwargs)
+
+        with tempfile.TemporaryDirectory() as temporary, patch.object(run_catalog, "run_case", run_case):
+            root = Path(temporary)
+            code, output, _ = self.trials(root, "complete", "E01", "E02", "E03")
+            self.assertEqual(code, 1, output)
+            results, outcomes = self.outcomes(root)
+            self.assertEqual(results["exit_code"], 1)
+            self.assertEqual(outcomes[("E01-nion", "codex")]["outcome"], "pass")
+            for case in ("E02-pipeline-schema", "E03-manuscripts"):
+                record = outcomes[(case, "codex")]
+                self.assertEqual((record["outcome"], record["harness_category"]), ("harness_failure", "not_run"))
+                self.assertEqual(record["problems"], ["not run: lane codex stopped: Death: lane killed"])
+            self.assertIn("[codex] lane stopped: Death: lane killed", output)
+            self.assertIn("Not run: E02-pipeline-schema-codex, E03-manuscripts-codex", output)
+
+    def test_a_worker_thread_that_crashes_cannot_exit_zero(self):
+        def crash(lane):
+            raise RuntimeError("worker crashed")
+
+        with tempfile.TemporaryDirectory() as temporary, patch.object(run_catalog.Lane, "run", crash), \
+                patch.object(threading, "excepthook", lambda _: None):
+            root = Path(temporary)
+            code, output, events = self.trials(root, "complete", "E01", "E02")
+            self.assertEqual(code, 1, output)
+            self.assertEqual(events, [])
+            results, outcomes = self.outcomes(root)
+            self.assertEqual((results["exit_code"], results["outcomes"]), (1, {"harness_failure": 2}))
+            for case in ("E01-nion", "E02-pipeline-schema"):
+                self.assertEqual(outcomes[(case, "codex")]["problems"],
+                                 ["not run: lane codex stopped without recording it"])
+
+    def test_existing_evidence_folder_fails_with_the_evaluate_only_hint(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "out" / "E01-nion-codex").mkdir(parents=True)
+            code, output, events = self.trials(root, "complete", "E01")
+            self.assertEqual(code, 1, output)
+            self.assertEqual(events, [])
+            results, outcomes = self.outcomes(root)
+            record = outcomes[("E01-nion", "codex")]
+            self.assertEqual((results["exit_code"], record["outcome"], record["harness_category"]),
+                             (1, "harness_failure", "exists"))
+            self.assertEqual(record["problems"], [f"not run: {root / 'out' / 'E01-nion-codex'} already exists"])
+            self.assertEqual(record["evidence"]["log"], str(root / "out" / "E01-nion-codex.log"))
+            self.assertIn("check it with --evaluate-only", record["next_step"])
+            self.assertIn("ERROR E01-nion (codex): harness_failure", output)
+
+    def test_log_write_failure_still_runs_cleanup(self):
+        real_open = open
+
+        class FullDisk:
+            def __init__(self, stream):
+                self.stream, self.name = stream, stream.name
+
+            def fileno(self):
+                return self.stream.fileno()
+
+            def write(self, text):
+                if text.startswith("\nexit="):
+                    raise OSError(28, "No space left on device")
+                return self.stream.write(text)
+
+            def flush(self):
+                self.stream.flush()
+
+            def close(self):
+                self.stream.close()
+                raise OSError(28, "No space left on device")
+
+        def fake_open(path, *args, **kwargs):
+            stream = real_open(path, *args, **kwargs)
+            return FullDisk(stream) if Path(path).name.startswith("E01-") else stream
+
+        with tempfile.TemporaryDirectory() as temporary, patch.object(run_catalog, "open", fake_open, create=True):
+            root = Path(temporary)
+            code, output, events = self.trials(root, "complete", "E01", "E02")
+            self.assertEqual(code, 0, output)
+            self.assertEqual(events[2], "cleanup " + str(root / "out" / "E01-nion-codex"))
+            self.assertIn("cleanup " + str(root / "out" / "E02-pipeline-schema-codex"), events)
+            log = root / "out" / "E01-nion-codex.log"
+            self.assertIn(f"[codex] E01-nion: writing {log} failed: [Errno 28] No space left on device", output)
+            record = self.outcomes(root)[1][("E01-nion", "codex")]
+            self.assertEqual(record["outcome"], "pass")
+            self.assertEqual(record["notes"], [f"writing {log} failed: [Errno 28] No space left on device"] * 2)
+
     def test_dry_run_both_prints_each_lane(self):
         code, output = self.main("--dry-run", "E02", "E07", "--agent", "both")
         self.assertEqual(code, 0)

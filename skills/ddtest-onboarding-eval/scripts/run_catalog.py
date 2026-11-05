@@ -332,16 +332,13 @@ def retain(output):
 
 
 def summary(output):
-    try:
-        run = json.loads((output / "run.json").read_text())
-    except (OSError, ValueError):
+    run = catalog_check.read_json(output / "run.json")
+    if not isinstance(run, dict):
         return "no run.json"
-    report = output / "retained" / ".testoptimization" / "testdrive.json"
-    try:
-        status = json.loads(report.read_text())["summary"]["status"]
-    except (OSError, ValueError, KeyError, TypeError):
-        status = "no report"
-    return f"run {run.get('status')}, report {status}"
+    report = catalog_check.read_json(output / "retained" / ".testoptimization" / "testdrive.json")
+    status = ((report.get("summary") if isinstance(report, dict) else None) or {})
+    status = status.get("status") if isinstance(status, dict) else None
+    return f"run {run.get('status')}, report {status if isinstance(status, str) else 'no report'}"
 
 
 class Supervisor:
@@ -418,42 +415,97 @@ class Supervisor:
                 self.processes.pop(process.pid, None)
 
 
+def log_write(state, stream, text):
+    """Write to a trial's log; a failure (such as a full disk) is recorded, never raised."""
+    try:
+        stream.write(text)
+        stream.flush()
+    except (OSError, ValueError) as error:
+        state["log_errors"].append(f"writing {stream.name} failed: {error}")
+
+
+def run_cleanup(supervisor, cleanup_argv, stream):
+    """run_eval.py --cleanup's exit status, or why it could not start."""
+    try:
+        return supervisor.run(cleanup_argv, stream, forward=False)
+    except Exception as error:  # noqa: BLE001 - reported as a cleanup failure
+        return "could not start: " + catalog_check.error_text(error)[0]
+
+
+def run_trial(state, argv, output, log, supervisor, agent, cleanup_argv):
+    """Run the harness, retain, then clean up. Cleanup runs once the harness was started, whatever
+    fails before it (retention, the log, the runner itself); `state` records each step."""
+    command = shlex.join(cleanup_argv)
+    stream = None
+    try:
+        stream = open(log, "w")
+        log_write(state, stream, "argv: " + shlex.join(argv) + "\n")
+        state["started"] = True
+        state["code"] = supervisor.run(argv, stream, cleanup=command)
+        with supervisor.lock:
+            supervisor.cleanup_commands[agent] = command
+        try:
+            state["result"] = retain(output)
+        except OSError as error:
+            # Cleanup still runs and the batch goes on; the case fails.
+            state["retention_error"] = f"retention failed: {error}"
+            state["result"] = state["retention_error"]
+        log_write(state, stream, f"\nexit={state['code']}\n{state['result']}\n")
+    finally:
+        try:
+            if state["started"]:
+                state["cleanup"] = run_cleanup(supervisor, cleanup_argv, stream or subprocess.DEVNULL)
+        finally:
+            with supervisor.lock:
+                supervisor.cleanup_commands.pop(agent, None)
+            if stream:
+                try:
+                    stream.close()
+                except OSError as error:
+                    state["log_errors"].append(f"writing {log} failed: {error}")
+
+
+def runner_failure(case, evidence, log, rerun, agent, ddtest_label, error):
+    """The harness_failure (`runner`) record of a case run_catalog.py itself failed on."""
+    text, trace = catalog_check.error_text(error)
+    return catalog_check.failure(case, evidence, "runner", f"run_catalog.py failed: {text}", trace, log, rerun, agent,
+                                 ddtest_label)
+
+
 def run_case(case, argv, output, log, supervisor, rerun=None, agent="codex", ddtest_label=None):
     cleanup_argv = [sys.executable, str(RUN_EVAL), "--cleanup", str(output)]
-    with open(log, "w") as stream:
-        stream.write("argv: " + shlex.join(argv) + "\n")
-        stream.flush()
-        code = supervisor.run(argv, stream, cleanup=shlex.join(cleanup_argv))
-        with supervisor.lock:
-            supervisor.cleanup_commands[agent] = shlex.join(cleanup_argv)
-        retention_error, result = None, "retention did not finish"
-        try:
-            result = retain(output)
-        except OSError as error:
-            # Cleanup still runs and the batch goes on; the case fails below.
-            retention_error = f"retention failed: {error}"
-            result = retention_error
-        finally:
-            stream.write(f"\nexit={code}\n{result}\n")
-            stream.flush()
-            cleanup = supervisor.run(cleanup_argv, stream, forward=False)
-    with supervisor.lock:
-        supervisor.cleanup_commands.pop(agent, None)
-    record = catalog_check.evaluate(case, output, log, rerun, agent, ddtest_label)
+    state = {"started": False, "code": None, "result": "retention did not finish", "retention_error": None,
+             "cleanup": None, "log_errors": []}
+    runner_error = None
+    try:
+        run_trial(state, argv, output, log, supervisor, agent, cleanup_argv)
+        record = catalog_check.evaluate(case, output, log, rerun, agent, ddtest_label)
+    except Exception as error:  # noqa: BLE001 - one case's failure must not stop its lane
+        runner_error = catalog_check.error_text(error)[0]
+        record = runner_failure(case, output, log, rerun, agent, ddtest_label, error)
+    retention_error, cleanup = state["retention_error"], state["cleanup"]
     if retention_error and record["outcome"] != "harness_failure":
         record["harness_category"] = "retention"
         record = catalog_check.finish(record, "harness_failure", retention_error, "", rerun)
     elif retention_error:
         record["problems"].append(retention_error)
+    cleanup_text = "not run" if not state["started"] else f"exit {cleanup}" if isinstance(cleanup, int) else cleanup
     if cleanup and record["outcome"] != "harness_failure":
         record["harness_category"] = "cleanup"
-        record = catalog_check.finish(record, "harness_failure", f"cleanup (run_eval.py --cleanup exit {cleanup})",
+        record = catalog_check.finish(record, "harness_failure", f"cleanup (run_eval.py --cleanup {cleanup_text})",
                                       "", rerun)
+    elif cleanup:
+        record["problems"].append(f"cleanup (run_eval.py --cleanup {cleanup_text})")
+    record["notes"] += state["log_errors"]
     expected = record["expected"]["verdict"] or "none"
-    lines = [f"[{agent}] {case['id']}: exit {code}, {summary(output)} (expected {expected}); cleanup exit {cleanup}; "
-             f"outcome {catalog_check.label(record)}; log {log}"]
+    lines = [f"[{agent}] {case['id']}: exit {state['code']}, {summary(output)} (expected {expected}); "
+             f"cleanup {cleanup_text}; outcome {catalog_check.label(record)}; log {log}"]
+    if runner_error:
+        lines.append(f"[{agent}] {case['id']}: run_catalog.py failed: {runner_error}")
     if retention_error:
-        lines.append(f"[{agent}] {case['id']}: {retention_error}")
+        lines.append(f"[{agent}] {case['id']}: retention failed: {retention_error.removeprefix('retention failed: ')}")
+    for problem in state["log_errors"]:
+        lines.append(f"[{agent}] {case['id']}: {problem}")
     if cleanup:
         lines.append(f"[{agent}] {case['id']}: cleanup failed; retry with: {shlex.join(cleanup_argv)}")
     for line in lines:
@@ -509,44 +561,79 @@ def write_results(path, catalog, output, records, code, ddtest_label=None, not_e
 
 
 class Lane(threading.Thread):
-    """One agent's cases, in catalog order, one trial at a time."""
+    """One agent's cases, in catalog order, one trial at a time.
+
+    An exception on one case makes that case a harness_failure (`runner`) and the
+    lane goes on; if the lane itself stops, `error` says why and the batch counts
+    its unfinished cases as not run.
+    """
 
     def __init__(self, agent, plans, supervisor, output, sink, ddtest_label=None):
         super().__init__(name=f"lane-{agent}", daemon=True)
         self.agent, self.plans, self.supervisor, self.output, self.sink = agent, plans, supervisor, output, sink
         self.ddtest_label = ddtest_label
         self.records = []
+        self.error = None
         self.log = output / f"lane-{agent}.log"
 
     def note(self, stream, lines):
-        stream.write("".join(line + "\n" for line in lines))
-        stream.flush()
+        try:
+            stream.write("".join(line + "\n" for line in lines))
+            stream.flush()
+        except (OSError, ValueError) as error:
+            print(f"[{self.agent}] writing {self.log} failed: {error}", file=sys.stderr, flush=True)
 
     def run(self):
-        with open(self.log, "a") as stream:
-            for case, evidence, arguments in self.plans:
-                if self.supervisor.signal:
-                    break
-                rerun = rerun_hint(case, self.agent)
-                if evidence.exists():
-                    line = f"[{self.agent}] {case['id']}: skipped, {evidence} exists"
-                    print(line, flush=True)
-                    self.note(stream, [line])
-                    record = catalog_check.evaluate(case, Path("/nonexistent"), rerun=rerun, agent=self.agent,
-                                                    ddtest_label=self.ddtest_label)
-                    record["evidence"] = {"folder": str(evidence)}
-                    record["harness_category"] = "exists"
-                    self.records.append(catalog_check.finish(
-                        record, "harness_failure", f"not run: {evidence} already exists", "", rerun))
-                    continue
-                started = f"[{self.agent}] {case['id']}: started, evidence {evidence}"
-                print(started, flush=True)
-                self.note(stream, [started])
-                record, lines = run_case(case, arguments, evidence, self.output / f"{evidence.name}.log",
-                                         self.supervisor, rerun, self.agent, self.ddtest_label)
-                self.note(stream, lines)
-                self.records.append(record)
-                self.sink()
+        try:
+            with open(self.log, "a") as stream:
+                for case, evidence, arguments in self.plans:
+                    if self.supervisor.signal:
+                        break
+                    rerun = rerun_hint(case, self.agent)
+                    log = self.output / f"{evidence.name}.log"
+                    try:
+                        record, lines = self.run_one(case, evidence, arguments, log, rerun, stream)
+                    except Exception as error:  # noqa: BLE001 - recorded; the lane goes on
+                        record = runner_failure(case, evidence, log, rerun, self.agent, self.ddtest_label, error)
+                        lines = [f"[{self.agent}] {case['id']}: {record['problems'][-1]}"]
+                        print(lines[0], flush=True)
+                    self.records.append(record)
+                    self.note(stream, lines)
+                    try:
+                        self.sink()
+                    except Exception as error:  # noqa: BLE001 - the final results.json is written by main
+                        print(f"[{self.agent}] writing partial results failed: {error}", file=sys.stderr, flush=True)
+        except BaseException as error:  # noqa: BLE001 - main counts the unfinished cases
+            self.error = catalog_check.error_text(error)
+            print(f"[{self.agent}] lane stopped: {self.error[0]}", file=sys.stderr, flush=True)
+
+    def run_one(self, case, evidence, arguments, log, rerun, stream):
+        if evidence.exists():
+            line = f"[{self.agent}] {case['id']}: skipped, {evidence} exists"
+            print(line, flush=True)
+            record = catalog_check.failure(case, evidence, "exists", f"not run: {evidence} already exists", "",
+                                           rerun=rerun, agent=self.agent, ddtest_label=self.ddtest_label)
+            return record, [line]
+        started = f"[{self.agent}] {case['id']}: started, evidence {evidence}"
+        print(started, flush=True)
+        self.note(stream, [started])
+        return run_case(case, arguments, evidence, log, self.supervisor, rerun, self.agent, self.ddtest_label)
+
+
+def unfinished(workers, interrupted):
+    """not_run records for the cases a stopped lane never finished (an interrupt's are only listed)."""
+    records = []
+    for lane in workers:
+        if interrupted and not lane.error:
+            continue
+        done = {record["id"] for record in lane.records}
+        reason = f"lane {lane.agent} stopped" + (f": {lane.error[0]}" if lane.error else " without recording it")
+        for case, evidence, _ in lane.plans:
+            if case["id"] not in done:
+                records.append(catalog_check.failure(
+                    case, evidence, "not_run", f"not run: {reason}", lane.error[1] if lane.error else "",
+                    rerun=rerun_hint(case, lane.agent), agent=lane.agent, ddtest_label=lane.ddtest_label))
+    return records
 
 
 def evaluate_only(cases, agents_option, output, ddtest_label, named):
@@ -702,8 +789,12 @@ def main(argv=None):
         while any(worker.is_alive() for worker in workers):
             for worker in workers:
                 worker.join(0.2)
-    records = collected()
+    lost = unfinished(workers, supervisor.signal)
+    records = sorted(collected() + lost, key=lambda r: (order[r["id"]], catalog_check.AGENTS.index(r["agent"])))
     code = catalog_check.report(records, sys.stdout) if records else 0
+    if lost:
+        print("Not run: " + ", ".join(f"{record['id']}-{record['agent']}" for record in lost), flush=True)
+        code = catalog_check.EXIT_FAILED
     if supervisor.signal:
         remaining = [f"{case['id']}-{agent}" for agent, plans in lanes.items() for case, evidence, _ in plans
                      if not evidence.exists()]
