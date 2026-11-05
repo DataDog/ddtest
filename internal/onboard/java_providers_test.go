@@ -113,8 +113,8 @@ func TestJavaGitLabInstructions(t *testing.T) {
 	text := providerSetupInstructions(root, gitLabCI{}, "java", "junit5", "", true)
 	for _, phrase := range []string{
 		`LANGUAGES="java"`,
-		`JAVA_TRACER_VERSION="<exact dd-java-agent release>"`,
-		"Replace <exact dd-java-agent release> with an exact dd-java-agent release",
+		`JAVA_TRACER_VERSION="` + testJavaRelease + `"`,
+		"The setup installs dd-java-agent " + testJavaRelease + ", the exact release ddtest selected",
 		"adds -javaagent for later commands of the job to MAVEN_OPTS and GRADLE_OPTS",
 		`export MAVEN_OPTS="$MAVEN_OPTS <options>"`,
 		"ddtest reads the JDK of each instrumented job from its image",

@@ -57,6 +57,9 @@ func ApplyPluginSetup(output io.Writer, options StartOptions, apply PluginApplyO
 	if err != nil {
 		return start()
 	}
+	if err := SelectTracerRelease(detected.Name(), options.Tracer); err != nil {
+		return start() // The handoff names the invalid selector.
+	}
 	framework, err := onboardingFramework(detected)
 	if err != nil || CheckCIProviderSupport(root, detected.Name(), framework) != nil || RequiredCIRuntimes(context.Background(), root, detected.Name(), framework) != nil {
 		return start()

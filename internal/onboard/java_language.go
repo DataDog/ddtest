@@ -78,7 +78,7 @@ func (javaDiscovery) agentInstructions(framework, site string) string {
 	if site != "" && site != defaultDatadogSite {
 		siteInput = ", `site: " + site + "` (the selected Datadog site)"
 	}
-	return strings.NewReplacer("__FRAMEWORK__", framework, "__SITE_INPUT__", siteInput).Replace(javaAgentInstructions)
+	return strings.NewReplacer("__FRAMEWORK__", framework, "__SITE_INPUT__", siteInput, "__JAVA_RELEASE__", javaSetupRelease()).Replace(javaAgentInstructions)
 }
 
 func (javaDiscovery) frameworks() []string { return maven.FrameworkNames }
@@ -197,7 +197,7 @@ func (javaDiscovery) skipsUnsupportedNode() bool { return false }
 var javaInstructions string
 
 func (javaDiscovery) instructions(framework string) string {
-	return strings.ReplaceAll(javaInstructions, "__FRAMEWORK__", framework)
+	return strings.NewReplacer("__FRAMEWORK__", framework, "__JAVA_RELEASE__", javaSetupRelease()).Replace(javaInstructions)
 }
 
 func (javaDiscovery) onboardingScope(string) (discover, instructionsWhenConfigured bool) {
@@ -252,9 +252,10 @@ func (javaDiscovery) ciSetupRequest(root, framework, site string, terms ciSetupT
 	if terms.Plugin {
 		return javaPluginSetupRequest(root, framework, site, terms)
 	}
-	request := ciSetupRequest{Language: "java", Site: site, TracerInput: "java-tracer-version", TracerVersion: "<exact dd-java-agent release>"}
+	release := javaSetupRelease()
+	request := ciSetupRequest{Language: "java", Site: site, TracerInput: "java-tracer-version", TracerVersion: release}
 	request.Notes = []string{
-		"Replace <exact dd-java-agent release> with an exact dd-java-agent release, such as " + javaRecommendedTracer + "; local validation runs that release, and a floating one cannot be validated. Keep the existing build files, Maven or Gradle wrapper, JDK images, Maven goals or Gradle tasks, profiles, modules or projects, plugins, JVM options, test arguments and matrices. One Maven or Gradle command runs every framework the build declares: do not split it or filter it by " + framework + ". Local validation runs only the Maven test lifecycle or Gradle test tasks and never installs or publishes.",
+		javaReleaseNote(release) + " Keep the existing build files, Maven or Gradle wrapper, JDK images, Maven goals or Gradle tasks, profiles, modules or projects, plugins, JVM options, test arguments and matrices. One Maven or Gradle command runs every framework the build declares: do not split it or filter it by " + framework + ". Local validation runs only the Maven test lifecycle or Gradle test tasks and never installs or publishes.",
 		javaCarriersNote(terms) + " A later command that sets one of these variables must keep the agent: extend it with " + terms.Persist(`export MAVEN_OPTS="$MAVEN_OPTS <options>"`) + ", never replace it. Do not add -javaagent options or set DD_CIVISIBILITY_ENABLED yourself.",
 		"ddtest reads the JDK of each instrumented job from its image, such as maven:3.9-eclipse-temurin-21, gradle:8.10-jdk17, eclipse-temurin:17-jdk or cimg/openjdk:17.0. A job that runs on the build agent's own JDK, or in an image whose name selects no JDK version, stays unverified: tell the user. Never change a job's image or JDK to make it verifiable.",
 		setupImageNote(root, "java", framework),
@@ -394,8 +395,9 @@ func (javaDiscovery) ciStepVariables(step string) map[string]string {
 	return nil
 }
 
-// dd-java-agent is no project dependency, so ddtest recommends its release.
-func (javaDiscovery) recommendedTracer() string { return javaRecommendedTracer }
+// dd-java-agent is no project dependency, so ddtest selects its release
+// (see javaSetupRelease).
+func (javaDiscovery) recommendedTracer() string { return javaSetupRelease() }
 
 // ciPluginReset removes the agent the Datadog Jenkins plugin puts before the
 // step's MAVEN_OPTS and GRADLE_OPTS, keeping the step's own options.

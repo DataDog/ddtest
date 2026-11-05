@@ -69,7 +69,7 @@ func TestJavaAgentOnboardingRequiresCISetupBeforeValidation(t *testing.T) {
 	require.Contains(t, state.ResumeCommand, "datadoghq.eu")
 	require.Contains(t, state.Reason, AgentScope)
 	require.Contains(t, state.Instruction, "[.] ./mvnw -B verify", "the CI install step validates as verify")
-	for _, text := range []string{"datadog/test-visibility-github-action@v3", "languages: java", "`site: datadoghq.eu`", "exact `java-tracer-version`", "${{ env.MAVEN_OPTS }}", "/.testoptimization/", "never installs or publishes"} {
+	for _, text := range []string{"datadog/test-visibility-github-action@v3", "languages: java", "`site: datadoghq.eu`", "`java-tracer-version: " + testJavaRelease + "`, the exact dd-java-agent release ddtest selected", "${{ env.MAVEN_OPTS }}", "/.testoptimization/", "never installs or publishes"} {
 		require.Contains(t, state.Instruction, text)
 	}
 	// The handoff runs validation once; the instructions must not add runs.

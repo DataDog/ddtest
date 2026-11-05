@@ -79,12 +79,12 @@ func TestJavaJenkinsPlugin(t *testing.T) {
 // additionalVariables pin dd-java-agent by replacing the plugin's download
 // with an exact release's.
 func TestJavaJenkinsPluginPinnedRelease(t *testing.T) {
-	root := javaJenkinsRepository(t, javaJenkinsfile(", additionalVariables: ["+javaPluginTracerURL+": '"+javaHandWrittenDownload+"']"))
+	root := javaJenkinsRepository(t, javaJenkinsfile(", additionalVariables: ["+javaPluginTracerURL+": '"+javaHandWrittenDownload()+"']"))
 	confirmJavaJenkins(t, "17")
 	ci := JavaCIConfiguration(root, "junit5", "")
 	require.Len(t, ci.Jobs, 1, ci.Reason)
 	require.Equal(t, "not checked", ci.Jobs[0].Status, ci.Jobs[0].Reason)
-	require.Equal(t, javaRecommendedTracer, ci.Jobs[0].TracerRequested)
+	require.Equal(t, javaSetupRelease(), ci.Jobs[0].TracerRequested)
 	require.False(t, ci.Jobs[0].TracerFloating)
 
 	for _, url := range []string{
@@ -121,7 +121,7 @@ func TestJavaJenkinsInstructions(t *testing.T) {
 	text := providerSetupInstructions(root, jenkins{}, "java", "junit5", "datadoghq.com", true)
 	for _, phrase := range []string{
 		"languages: ['JAVA']",
-		javaPluginTracerURL + ": '" + javaHandWrittenDownload + "'",
+		javaPluginTracerURL + ": '" + javaHandWrittenDownload() + "'",
 		"puts -javaagent before the MAVEN_OPTS and GRADLE_OPTS of every step",
 		"--ci-runtime java=<version>",
 	} {
@@ -180,7 +180,7 @@ func TestJavaJenkinsContainerStageApply(t *testing.T) {
 	require.NoError(t, err)
 	data, err := os.ReadFile(filepath.Join(root, "Jenkinsfile"))
 	require.NoError(t, err)
-	require.Contains(t, string(data), `DD_SET_TRACER_VERSION_JAVA="`+javaRecommendedTracer+`"`)
+	require.Contains(t, string(data), `DD_SET_TRACER_VERSION_JAVA="`+javaSetupRelease()+`"`)
 
 	instructions := providerSetupInstructions(root, jenkins{}, "java", "junit5", "", true)
 	require.Contains(t, instructions, "1. Bind DD_API_KEY in those stages from a Jenkins credential")
@@ -209,7 +209,7 @@ func TestJavaJenkinsShellSetupWithoutBash(t *testing.T) {
 	require.NoError(t, err, "the image's missing Bash does not block the setup")
 	data, err := os.ReadFile(filepath.Join(root, "Jenkinsfile"))
 	require.NoError(t, err)
-	require.Contains(t, string(data), `DD_TRACER_VERSION_JAVA="`+javaRecommendedTracer+`"`)
+	require.Contains(t, string(data), `DD_TRACER_VERSION_JAVA="`+javaSetupRelease()+`"`)
 	require.Contains(t, string(data), javaFallbackURL)
 	require.Contains(t, string(data), fallbackComment[0])
 	require.NotContains(t, string(data), "install_test_visibility")
@@ -223,7 +223,7 @@ func TestJavaJenkinsShellSetupWithoutBash(t *testing.T) {
 	job := ci.Jobs[0]
 	require.Empty(t, job.Code, job.Reason)
 	require.Equal(t, fallbackSetupName, job.Action)
-	require.Equal(t, javaRecommendedTracer, job.TracerRequested)
+	require.Equal(t, javaSetupRelease(), job.TracerRequested)
 	caveats := strings.Join(CISetupCaveats(&ci), "\n")
 	require.Contains(t, caveats, "Jenkinsfile / Test")
 	require.Contains(t, caveats, "With a Bash-capable image, the installer would set Test Optimization up instead, which is simpler and more reliable")
@@ -238,7 +238,7 @@ func TestJavaJenkinsShellSetupWithoutBash(t *testing.T) {
 // and checks its SHA256; ddtest recognizes it as written, with its release
 // and site, and never an edited copy.
 func TestJavaShellSetupIsRecognizedAsWritten(t *testing.T) {
-	for _, tc := range []struct{ site, release string }{{"datadoghq.com", javaRecommendedTracer}, {"datadoghq.eu", "1.68.0"}} {
+	for _, tc := range []struct{ site, release string }{{"datadoghq.com", javaSetupRelease()}, {"datadoghq.eu", "1.68.0"}} {
 		text := fallbackSnippet{form: jenkinsSnippetForm, language: "java", version: `"` + tc.release + `"`, site: `"` + tc.site + `"`}.shell()
 		file, parsed := parseCIShell(text)
 		require.True(t, parsed)
@@ -248,12 +248,12 @@ func TestJavaShellSetupIsRecognizedAsWritten(t *testing.T) {
 		require.Empty(t, setup.Problem)
 		require.True(t, setup.fallback && setup.Supported)
 		require.Equal(t, map[string]string{"languages": "java", "api_key": "$DD_API_KEY", "site": tc.site, "java-tracer-version": tc.release}, setup.Inputs)
-		require.Empty(t, fallbackSetupProblem(setup, "java-tracer-version", exactJavaRelease.MatchString, javaRecommendedTracer, tc.site))
+		require.Empty(t, fallbackSetupProblem(setup, "java-tracer-version", exactJavaRelease.MatchString, javaSetupRelease(), tc.site))
 	}
 	// It checks the agent's SHA256 whichever way it downloads it, runs under
 	// set -u, where either option list may be unset, and the agent's path has
 	// no whitespace, which the option lists split on.
-	written := fallbackSnippet{form: jenkinsSnippetForm, language: "java", version: `"` + javaRecommendedTracer + `"`, site: `"datadoghq.com"`}.shell()
+	written := fallbackSnippet{form: jenkinsSnippetForm, language: "java", version: `"` + javaSetupRelease() + `"`, site: `"datadoghq.com"`}.shell()
 	require.Contains(t, written, `sha256sum -c -`)
 	require.Contains(t, written, `"$DD_TRACER_FOLDER/dd-java-agent.jar.sha256" `+javaFallbackURL+`.sha256`)
 	require.Contains(t, written, `does not match its SHA256`)
@@ -280,7 +280,7 @@ func TestJavaJenkinsShellSetupResetsThePlugin(t *testing.T) {
 	}
 	reset := javaDiscovery{}.ciPluginReset()
 	require.True(t, strings.HasPrefix(reset, "{ ") && strings.HasSuffix(reset, "; }"), "one compound statement")
-	request := ciSetupRequest{Language: "java", Site: "datadoghq.com", TracerVersion: javaRecommendedTracer}
+	request := ciSetupRequest{Language: "java", Site: "datadoghq.com", TracerVersion: javaSetupRelease()}
 	fallback := newImageFallback(jenkinsContainer{reset: true}, "maven:3-alpine", "no Bash")
 	written := fallback.snippet(request).shell()
 	require.Contains(t, written, fallbackComment[1]+"\n"+reset+"\nif [ \"${DD_API_KEY:+set}\" = set ]; then")
@@ -292,7 +292,7 @@ func TestJavaJenkinsShellSetupResetsThePlugin(t *testing.T) {
 		problem string
 	}{
 		"with the reset":    {written, ""},
-		"without the reset": {fallbackSnippet{form: jenkinsSnippetForm, language: "java", version: `"` + javaRecommendedTracer + `"`, site: `"datadoghq.com"`}.shell(), reset},
+		"without the reset": {fallbackSnippet{form: jenkinsSnippetForm, language: "java", version: `"` + javaSetupRelease() + `"`, site: `"datadoghq.com"`}.shell(), reset},
 	} {
 		t.Run(name, func(t *testing.T) {
 			jobs := jenkinsJobs(t, scripted(tc.script+"\nmvn -B verify"))
@@ -326,10 +326,10 @@ func TestJavaJenkinsShellSetupResetsThePlugin(t *testing.T) {
 // matches; the agent's path has no whitespace even where the workspace's
 // has, since MAVEN_OPTS and GRADLE_OPTS split on it.
 func TestJavaShellSetupDownloadsAndChecksTheAgent(t *testing.T) {
-	agent := "dd-java-agent " + javaRecommendedTracer
+	agent := "dd-java-agent " + javaSetupRelease()
 	sum := sha256.Sum256([]byte(agent))
 	download := "#!/bin/sh\nout= url=\nwhile [ $# -gt 0 ]; do case \"$1\" in -o|-qO) out=\"$2\"; shift 2 ;; -*) shift ;; *) url=\"$1\"; shift ;; esac; done\n" +
-		"case \"$url\" in https://repo1.maven.org/maven2/com/datadoghq/dd-java-agent/" + javaRecommendedTracer + "/dd-java-agent-" + javaRecommendedTracer + ".jar) printf '%s' '" + agent + "' >\"$out\" ;; *.jar.sha256) printf '%s' \"$SUM\" >\"$out\" ;; *) exit 22 ;; esac\n"
+		"case \"$url\" in https://repo1.maven.org/maven2/com/datadoghq/dd-java-agent/" + javaSetupRelease() + "/dd-java-agent-" + javaSetupRelease() + ".jar) printf '%s' '" + agent + "' >\"$out\" ;; *.jar.sha256) printf '%s' \"$SUM\" >\"$out\" ;; *) exit 22 ;; esac\n"
 	missing := "#!/bin/sh\nexit 127\n"
 	for name, tc := range map[string]struct {
 		curl, wget, sum string
@@ -347,7 +347,7 @@ func TestJavaShellSetupDownloadsAndChecksTheAgent(t *testing.T) {
 				require.NoError(t, os.WriteFile(filepath.Join(tools, "java"), []byte(missing), 0o755))
 				workspace := filepath.Join(t.TempDir(), "my workspace")
 				require.NoError(t, os.Mkdir(workspace, 0o755))
-				text := fallbackSnippet{form: form, language: "java", version: `"` + javaRecommendedTracer + `"`, site: `"datadoghq.com"`}.shell()
+				text := fallbackSnippet{form: form, language: "java", version: `"` + javaSetupRelease() + `"`, site: `"datadoghq.com"`}.shell()
 				shell := exec.Command("sh", "-u", "-c", text+"\nprintf '%s' \"${MAVEN_OPTS:-}|${GRADLE_OPTS:-}\"")
 				shell.Dir = workspace
 				shell.Env = []string{"PATH=" + tools + ":/usr/bin:/bin", "DD_API_KEY=key", "SUM=" + tc.sum, "TMPDIR=" + temporary, "MAVEN_OPTS=-Xmx1g"}
@@ -473,12 +473,12 @@ func TestJavaJenkinsMixedStagesPinThePluginFirst(t *testing.T) {
 	_, err := PlanProviderSetup(root, "junit5", "")
 	var gap *EditThenApplyGap
 	require.ErrorAs(t, err, &gap)
-	require.Contains(t, gap.Error(), "downloads the latest tracer, but this container stage's snippet installs "+javaRecommendedTracer)
+	require.Contains(t, gap.Error(), "downloads the latest tracer, but this container stage's snippet installs "+javaSetupRelease())
 	require.Contains(t, gap.Error(), "Pin the plugin to that release")
 
 	// Once the host stage's plugin is pinned, the container snippet installs
 	// the same release, and the rerun applies.
-	pinned := strings.Replace(mixedJenkinsfile, "      agent { label 'java' }\n", "      agent { label 'java' }\n      options {\n        datadog(testOptimization: [enabled: true, serviceName: 'app', languages: ['JAVA'], additionalVariables: ["+javaPluginTracerURL+": '"+javaHandWrittenDownload+"']])\n      }\n", 1)
+	pinned := strings.Replace(mixedJenkinsfile, "      agent { label 'java' }\n", "      agent { label 'java' }\n      options {\n        datadog(testOptimization: [enabled: true, serviceName: 'app', languages: ['JAVA'], additionalVariables: ["+javaPluginTracerURL+": '"+javaHandWrittenDownload()+"']])\n      }\n", 1)
 	writeFile(t, root, "Jenkinsfile", pinned)
 	plan, err := PlanProviderSetup(root, "junit5", "")
 	require.NoError(t, err)
@@ -486,7 +486,7 @@ func TestJavaJenkinsMixedStagesPinThePluginFirst(t *testing.T) {
 	require.NoError(t, err)
 	data, err := os.ReadFile(filepath.Join(root, "Jenkinsfile"))
 	require.NoError(t, err)
-	require.Contains(t, string(data), `DD_SET_TRACER_VERSION_JAVA="`+javaRecommendedTracer+`"`, "the snippet installs the plugin's release")
+	require.Contains(t, string(data), `DD_SET_TRACER_VERSION_JAVA="`+javaSetupRelease()+`"`, "the snippet installs the plugin's release")
 }
 
 // javaJenkinsHandWrittenStage is a Jenkins stage that downloads an exact

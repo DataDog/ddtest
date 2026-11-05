@@ -224,6 +224,9 @@ func StartWithOptions(output io.Writer, options StartOptions) error {
 	if err != nil {
 		return fail("framework_unresolved", err)
 	}
+	if err := SelectTracerRelease(detected.Name(), options.Tracer); err != nil {
+		return errors.Join(err, WriteAgentResult(output, AgentResult{Status: "needs_input", Phase: "discovery", Code: "invalid_options", Reason: err.Error(), NextAction: "supply_input"}))
+	}
 	if root, err := os.Getwd(); err == nil {
 		if err := CheckCIProviderSupport(root, detected.Name(), frameworkName); err != nil {
 			var choice *CIProviderChoice
