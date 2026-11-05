@@ -226,7 +226,7 @@ class MainTests(unittest.TestCase):
         lanes = 2 if agent == "both" else 1
         checkout = root / "trial" / "repo"
         (checkout / ".testoptimization").mkdir(parents=True)
-        (checkout / ".testoptimization" / "testdrive.json").write_text(json.dumps({"summary": {"status": "COMPLETE LOCALLY"}}))
+        (checkout / ".testoptimization" / "testdrive.json").write_text(json.dumps({"summary": {"status": "COMPLETE LOCALLY", "blocking_checks": []}}))
         log = root / "harness.log"
         log.touch()
 
@@ -403,6 +403,72 @@ class MainTests(unittest.TestCase):
     def outcomes(self, root):
         results = json.loads((root / "out" / "results.json").read_text())
         return results, {(case["id"], case["agent"]): case for case in results["cases"]}
+
+    def evaluate_only(self, root, *ids):
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
+            code = run_catalog.main(["--evaluate-only", *ids, "--output", str(root / "out"),
+                                     "--results", str(root / "reevaluated.json")])
+        results = json.loads((root / "reevaluated.json").read_text())
+        return code, {(case["id"], case["agent"]): case for case in results["cases"]}
+
+    def test_a_retention_failure_after_the_report_was_copied_is_recorded_and_reevaluated(self):
+        real_retain = run_catalog.retain
+
+        def retain(output):
+            result = real_retain(output)  # testdrive.json is copied ...
+            if output.name.startswith("E01-"):
+                raise OSError(28, "No space left on device")  # ... then a later copy fails
+            return result
+
+        with tempfile.TemporaryDirectory() as temporary, patch.object(run_catalog, "retain", retain):
+            root = Path(temporary)
+            code, output, _ = self.trials(root, "complete", "E01", "E02")
+            self.assertEqual(code, 1, output)
+            evidence = root / "out" / "E01-nion-codex"
+            self.assertTrue((evidence / "retained" / ".testoptimization" / "testdrive.json").is_file())
+            self.assertEqual(json.loads((evidence / "retained" / run_catalog.RETENTION).read_text()),
+                             {"status": "failed", "error": "[Errno 28] No space left on device"})
+            self.assertEqual(json.loads((evidence / "run.json").read_text())["status"], "completed")
+            _, outcomes = self.outcomes(root)
+            failed = outcomes[("E01-nion", "codex")]
+            self.assertEqual((failed["outcome"], failed["harness_category"]), ("harness_failure", "retention"))
+            self.assertEqual(failed["problems"], ["retention failed: [Errno 28] No space left on device"])
+            self.assertEqual(json.loads((root / "out" / "E02-pipeline-schema-codex" / "retained" / run_catalog.RETENTION)
+                                        .read_text())["status"], "ok")
+            # Re-evaluating the same evidence keeps the failure; E02 still passes.
+            code, outcomes = self.evaluate_only(root, "E01", "E02")
+            self.assertEqual(code, 1)
+            failed = outcomes[("E01-nion", "codex")]
+            self.assertEqual((failed["outcome"], failed["harness_category"]), ("harness_failure", "retention"))
+            self.assertEqual(failed["problems"], ["retention failed: [Errno 28] No space left on device"])
+            self.assertEqual(outcomes[("E02-pipeline-schema", "codex")]["outcome"], "pass")
+
+    def test_a_checkout_replaced_by_a_symlink_is_a_retention_failure_that_copies_nothing(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            host = root / "host"
+            (host / ".testoptimization").mkdir(parents=True)
+            (host / ".testoptimization" / "testdrive.json").write_text(
+                json.dumps({"summary": {"status": "COMPLETE LOCALLY", "blocking_checks": []}}))
+            (root / "linked-trial").mkdir()
+            (root / "linked-trial" / "repo").symlink_to(host, target_is_directory=True)
+            code, output, events = self.trials(root, "complete", "E01",
+                                               FAKE_HARNESS_CHECKOUT=str(root / "linked-trial" / "repo"))
+            self.assertEqual(code, 1, output)
+            evidence = root / "out" / "E01-nion-codex"
+            self.assertIn(f"cleanup {evidence}", events)
+            self.assertEqual(sorted(path.name for path in (evidence / "retained").rglob("*")), [run_catalog.RETENTION])
+            recorded = json.loads((evidence / "retained" / run_catalog.RETENTION).read_text())
+            self.assertEqual(recorded["status"], "failed")
+            self.assertIn("was replaced by a symlink; nothing retained", recorded["error"])
+            _, outcomes = self.outcomes(root)
+            failed = outcomes[("E01-nion", "codex")]
+            self.assertEqual((failed["outcome"], failed["harness_category"]), ("harness_failure", "retention"))
+            self.assertIn("was replaced by a symlink", failed["problems"][0])
+            code, outcomes = self.evaluate_only(root, "E01")
+            self.assertEqual(code, 1)
+            self.assertEqual(outcomes[("E01-nion", "codex")]["harness_category"], "retention")
 
     def test_malformed_report_is_a_harness_failure_and_the_batch_goes_on(self):
         real_retain = run_catalog.retain
@@ -632,6 +698,103 @@ class RetainTests(unittest.TestCase):
     def test_missing_run_record_retains_nothing(self):
         with tempfile.TemporaryDirectory() as temporary:
             self.assertIn("nothing retained", run_catalog.retain(Path(temporary)))
+
+    def outside_tree(self, root):
+        """A folder standing for the host's /: a secret file and a report that must never be copied."""
+        outside = root / "host"
+        (outside / ".testoptimization").mkdir(parents=True)
+        (outside / ".testoptimization" / "testdrive.json").write_text('{"secret": "host report"}')
+        (outside / "secret.txt").write_text("host secret")
+        return outside
+
+    def evidence(self, root, checkout, status="?? secret.txt\n?? ci/secret.txt\n"):
+        output = root / "out"
+        output.mkdir()
+        (output / "run.json").write_text(json.dumps({"checkout": str(checkout), "trial_directory": str(checkout.parent)}))
+        (output / "status.txt").write_text(status)
+        return output
+
+    def retained_files(self, output):
+        return sorted(str(path.relative_to(output / "retained")) for path in (output / "retained").rglob("*")
+                      if not path.is_dir())
+
+    def test_a_checkout_replaced_by_a_symlink_retains_nothing(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for name, target in (("host-like", self.outside_tree(root)), ("root", Path("/"))):
+                with self.subTest(name):
+                    trial = root / f"trial-{name}"
+                    trial.mkdir()
+                    (trial / "repo").symlink_to(target, target_is_directory=True)
+                    (root / name).mkdir()
+                    output = self.evidence(root / name, trial / "repo",
+                                           "?? secret.txt\n?? etc/hosts\n?? .testoptimization/testdrive.json\n")
+                    with self.assertRaisesRegex(run_eval.SymlinkedPath, "was replaced by a symlink; nothing retained"):
+                        run_catalog.retain(output)
+                    self.assertEqual(self.retained_files(output), [run_catalog.RETENTION])
+                    self.assertEqual(json.loads((output / "retained" / run_catalog.RETENTION).read_text())["status"], "started")
+
+    def test_a_trial_folder_replaced_by_a_symlink_retains_nothing(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            outside = self.outside_tree(root)
+            (outside / "repo").mkdir()
+            (outside / "repo" / "secret.txt").write_text("host secret")
+            (root / "trial").symlink_to(outside, target_is_directory=True)
+            output = self.evidence(root, root / "trial" / "repo")
+            with self.assertRaisesRegex(run_eval.SymlinkedPath, "trial folder .* was replaced by a symlink"):
+                run_catalog.retain(output)
+            self.assertEqual(self.retained_files(output), [run_catalog.RETENTION])
+
+    def test_a_checkout_outside_its_trial_folder_retains_nothing(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            output = root / "out"
+            output.mkdir()
+            (output / "run.json").write_text(json.dumps({"checkout": str(self.outside_tree(root)),
+                                                         "trial_directory": str(root / "trial")}))
+            with self.assertRaisesRegex(run_eval.SymlinkedPath, "is not directly inside the trial folder"):
+                run_catalog.retain(output)
+            self.assertEqual(self.retained_files(output), [run_catalog.RETENTION])
+
+    def test_symlinked_folders_and_reports_inside_the_checkout_copy_nothing_from_outside(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            outside = self.outside_tree(root)
+            (outside / "ci").mkdir()
+            (outside / "ci" / "secret.txt").write_text("host secret")
+            checkout = root / "trial" / "repo"
+            (checkout / ".testoptimization").mkdir(parents=True)
+            (checkout / ".testoptimization" / "report.html").write_text("<html>")
+            # A symlinked report, a symlinked folder of reports and a symlinked folder of untracked files.
+            (checkout / ".testoptimization" / "testdrive.json").symlink_to(outside / ".testoptimization" / "testdrive.json")
+            (checkout / ".testoptimization" / "nested").symlink_to(outside / ".testoptimization", target_is_directory=True)
+            (checkout / "ci").symlink_to(outside / "ci", target_is_directory=True)
+            (checkout / "own.txt").write_text("mine")
+            output = self.evidence(root, checkout, "?? ci/secret.txt\n?? own.txt\n")
+            self.assertIn("retained 1 report file(s)", run_catalog.retain(output))
+            self.assertEqual(self.retained_files(output), [".testoptimization/report.html", run_catalog.RETENTION,
+                                                           "untracked.txt", "untracked/own.txt"])
+            recorded = json.loads((output / "retained" / run_catalog.RETENTION).read_text())
+            self.assertEqual(recorded["status"], "ok")
+            self.assertIn({"path": ".testoptimization/testdrive.json", "reason": "symlink"}, recorded["skipped"])
+            self.assertIn({"path": "ci/secret.txt", "reason": "symlink"}, recorded["skipped"])
+            for path in (output / "retained").rglob("*"):
+                if path.is_file():
+                    self.assertNotIn("host", path.read_text())
+
+    def test_a_symlinked_report_folder_copies_nothing(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            checkout = root / "trial" / "repo"
+            checkout.mkdir(parents=True)
+            (checkout / ".testoptimization").symlink_to(self.outside_tree(root) / ".testoptimization",
+                                                        target_is_directory=True)
+            output = self.evidence(root, checkout, "")
+            self.assertIn("retained 0 report file(s)", run_catalog.retain(output))
+            self.assertEqual(self.retained_files(output), [run_catalog.RETENTION, "untracked.txt"])
+            self.assertEqual(json.loads((output / "retained" / run_catalog.RETENTION).read_text())["skipped"],
+                             [{"path": ".testoptimization", "reason": "symlink"}])
 
 
 if __name__ == "__main__":

@@ -1049,6 +1049,49 @@ class FrameworkEnvironmentTests(unittest.TestCase):
         self.assertEqual(run_eval.agent_environment("codex", 7200, "cypress"), {})
 
 
+class TrialReportTests(unittest.TestCase):
+    """Finalization reads the report on the host without following any symlink trial code planted."""
+
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.root = Path(directory.name).resolve()
+        self.host = self.root / "host"
+        (self.host / ".testoptimization").mkdir(parents=True)
+        (self.host / ".testoptimization" / "testdrive.json").write_text('{"secret": true}')
+        self.trial = self.root / "dde-trial"
+        self.checkout = self.trial / "repo"
+
+    def test_reads_a_regular_report_and_none_when_absent(self):
+        self.checkout.mkdir(parents=True)
+        self.assertIsNone(run_eval.read_trial_report(self.trial, self.checkout, 100))
+        (self.checkout / ".testoptimization").mkdir()
+        (self.checkout / ".testoptimization" / "testdrive.json").write_text('{"summary": {}}')
+        self.assertEqual(run_eval.read_trial_report(self.trial, self.checkout, 100), b'{"summary": {}}')
+        self.assertEqual(len(run_eval.read_trial_report(self.trial, self.checkout, 4)), 5)
+
+    def test_symlinks_anywhere_on_the_way_are_refused(self):
+        for name in ("checkout", "folder", "report"):
+            with self.subTest(name):
+                shutil.rmtree(self.trial, ignore_errors=True)
+                self.trial.mkdir()
+                if name == "checkout":
+                    self.checkout.symlink_to(self.host, target_is_directory=True)
+                else:
+                    self.checkout.mkdir()
+                if name == "folder":
+                    (self.checkout / ".testoptimization").symlink_to(self.host / ".testoptimization",
+                                                                     target_is_directory=True)
+                if name == "report":
+                    (self.checkout / ".testoptimization").mkdir()
+                    (self.checkout / ".testoptimization" / "testdrive.json").symlink_to(
+                        self.host / ".testoptimization" / "testdrive.json")
+                with self.assertRaisesRegex(ValueError, "Report path escapes owned trial storage: .* is a symlink"):
+                    run_eval.read_trial_report(self.trial, self.checkout, 100)
+        with self.assertRaisesRegex(ValueError, "escapes owned trial storage"):
+            run_eval.read_trial_report(self.trial, self.host, 100)
+
+
 class FailureClassificationTests(unittest.TestCase):
     def test_transport_failure_is_retryable_but_generic_failure_is_not(self):
         self.assertEqual(run_eval.failure_kind(['API Error: Response stalled mid-stream']), 'infrastructure')

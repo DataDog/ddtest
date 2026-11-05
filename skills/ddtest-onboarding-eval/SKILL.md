@@ -261,8 +261,17 @@ after another, copies each trial's `.testoptimization` reports and small
 untracked files to `<evidence>/retained/` (the reports in the hidden
 `<evidence>/retained/.testoptimization/`, such as `testdrive.json`; untracked paths come from
 `status.txt`, with Git's path quoting decoded; Git never runs on the host in the
-trial checkout, and symlinks and paths outside it are skipped), then runs
-`run_eval.py --cleanup`. Each trial's output goes to `<id>-<agent>.log`.
+trial checkout), then runs `run_eval.py --cleanup`. Each trial's output goes to
+`<id>-<agent>.log`. Trial code can replace any folder with a symlink, so
+retention opens the checkout directly inside the trial folder named by
+`run.json` and every path below it one folder at a time, never following a
+symlink: a symlinked file or folder in the checkout is skipped (and listed),
+and a checkout or trial folder replaced by a symlink retains nothing and is a
+`harness_failure` (`retention`). `run_eval.py` reads the report the same way.
+`<evidence>/retained/RETENTION.json` records the outcome (`started`, then `ok`
+or `failed` with the error, plus what was skipped), and `catalog_check.py`
+fails any status but `ok`, also on a later `--evaluate-only`; evidence from
+before it existed has none, which is not a failure.
 If copying fails (such as a full disk), cleanup still runs, the case is a
 `harness_failure` (`retention`) and the batch goes on. A failed write to the
 log is listed under the case's `notes` and never skips cleanup. An error in the
@@ -356,10 +365,10 @@ Each trial gets one outcome:
 | outcome | meaning | fails the batch |
 |---|---|---|
 | `pass` | verdict and blockers match | no |
-| `verdict_mismatch (worse)` | a regression; `STOPPED` means no report | yes |
+| `verdict_mismatch (worse)` | a regression; `STOPPED` means no report and no verdict in ddtest's last result | yes |
 | `verdict_mismatch (better: update expected)` | an improvement | no, exit 3 |
 | `unexpected_blockers` | the expected verdict with a blocker not allowed, or none of the expected ones | yes |
-| `harness_failure` | container, clone, setup, readiness, login, timeout, interruption, retention, cleanup, a runner error, or missing or malformed evidence (such as a `testdrive.json` that is not a report) | yes |
+| `harness_failure` | container, clone, setup, readiness, login, timeout, interruption, retention, cleanup, a runner error, or missing or malformed evidence (such as a `testdrive.json` that is not valid JSON or lacks `summary.status` or `summary.blocking_checks`, or no report although ddtest's last result claims a verdict) | yes |
 | `agent_failure` | no ddtest result or report, no final answer, or `run.json` `agent_reporting` is not `pass` | yes |
 
 Expected blockers that are no longer reported only add a note. Whether the agent

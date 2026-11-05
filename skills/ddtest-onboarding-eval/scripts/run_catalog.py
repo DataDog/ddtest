@@ -23,8 +23,8 @@ import os
 from pathlib import Path
 import re
 import shlex
-import shutil
 import signal
+import stat
 import subprocess
 import sys
 import threading
@@ -249,21 +249,6 @@ def resolve_images(pairs, path=None):
     return images
 
 
-def inside(path, root):
-    try:
-        return Path(os.path.realpath(path)).is_relative_to(os.path.realpath(root))
-    except OSError:
-        return False
-
-
-def copy_regular(source, target, root, limit):
-    if source.is_symlink() or not source.is_file() or not inside(source, root) or source.stat().st_size >= limit:
-        return False
-    target.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(source, target)
-    return True
-
-
 # Git's C-style path quoting (quote_c_style): these escapes plus \ooo octal bytes.
 GIT_ESCAPES = {"a": 7, "b": 8, "t": 9, "n": 10, "v": 11, "f": 12, "r": 13, '"': 34, "\\": 92}
 
@@ -302,32 +287,115 @@ def untracked_paths(status):
     return entries
 
 
+RETENTION = "RETENTION.json"
+EXCLUDED_UNTRACKED = (".testoptimization/", "node_modules/", "vendor/", ".m2/", ".gradle/")
+
+
+def record_retention(output, status, **fields):
+    """Write <evidence>/retained/RETENTION.json, the retention outcome catalog_check.py honors."""
+    destination = output / "retained"
+    destination.mkdir(exist_ok=True)
+    temporary = destination / (RETENTION + ".partial")
+    temporary.write_text(json.dumps({"status": status, **fields}, indent=2) + "\n")
+    temporary.replace(destination / RETENTION)
+
+
+def copy_beneath(directory_fd, parts, target, limit, shown, skipped):
+    """Copy the regular file at `parts` below directory_fd to target, following no symlink.
+    Returns whether it was copied; a symlink, a non-regular or a large file is listed in skipped."""
+    try:
+        data = run_eval.read_beneath(directory_fd, parts, limit)
+    except run_eval.SymlinkedPath:
+        skipped.append({"path": shown, "reason": "symlink"})
+        return False
+    except (FileNotFoundError, NotADirectoryError):
+        return False
+    if data is None or len(data) >= limit:
+        skipped.append({"path": shown, "reason": "not a regular file" if data is None else "too large"})
+        return False
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(data)
+    return True
+
+
+def open_checkout(run):
+    """An fd of the trial checkout, or None when it does not exist.
+
+    Trial code can replace the checkout, or any folder in it, with a symlink
+    (to the host's / for example) and can shadow git to list chosen paths, so
+    the checkout must sit directly in the trial folder named by run.json and is
+    opened without following a symlink; every later path is opened relative to
+    it the same way, so nothing outside the checkout can be copied.
+    """
+    checkout = Path(run["checkout"])
+    trial = Path(run.get("trial_directory") or checkout.parent)
+    if not checkout.is_absolute() or checkout.parent != trial or checkout.name in ("", ".", ".."):
+        raise run_eval.SymlinkedPath(f"checkout {checkout} is not directly inside the trial folder {trial}")
+    try:
+        trial_fd = run_eval.open_directory(trial)
+    except run_eval.SymlinkedPath:
+        raise run_eval.SymlinkedPath(f"trial folder {trial} was replaced by a symlink; nothing retained") from None
+    except (FileNotFoundError, NotADirectoryError):
+        return None
+    try:
+        return run_eval.open_directory_beneath(trial_fd, [checkout.name])
+    except run_eval.SymlinkedPath:
+        raise run_eval.SymlinkedPath(f"checkout {checkout} was replaced by a symlink; nothing retained") from None
+    except (FileNotFoundError, NotADirectoryError):
+        return None
+    finally:
+        os.close(trial_fd)
+
+
 def retain(output):
     """Copy the report pair and small untracked files out of the trial checkout.
 
     Untracked paths come from the container-collected status.txt; Git never runs
-    on the host in the agent-modified checkout.
+    on the host in the agent-modified checkout. Nothing is followed through a
+    symlink (see open_checkout). retained/RETENTION.json records the outcome: it
+    says "started" until everything was copied, then "ok"; run_trial records
+    "failed" with the error when this raises.
     """
     try:
-        checkout = Path(json.loads((output / "run.json").read_text())["checkout"])
-    except (OSError, ValueError, KeyError) as error:
+        run = json.loads((output / "run.json").read_text())
+        run["checkout"]
+    except (OSError, ValueError, KeyError, TypeError) as error:
         return f"nothing retained: {error}"
     destination = output / "retained"
-    destination.mkdir(exist_ok=True)
-    reports = checkout / ".testoptimization"
-    kept = 0
-    if reports.is_dir() and not reports.is_symlink():
-        for path in sorted(reports.rglob("*")):
-            kept += copy_regular(path, destination / ".testoptimization" / path.relative_to(reports), checkout, REPORT_LIMIT)
-    status = output / "status.txt"
-    untracked = untracked_paths(status.read_text(errors="replace")) if status.is_file() else []
-    # Paths as git printed them: quoted names stay on one line.
-    (destination / "untracked.txt").write_text("".join(printed + "\n" for printed, _ in untracked))
-    for _, relative in untracked:
-        if (not relative or "\0" in relative or os.path.isabs(relative) or ".." in Path(relative).parts
-                or relative.startswith((".testoptimization/", "node_modules/", "vendor/", ".m2/", ".gradle/"))):
-            continue
-        copy_regular(checkout / relative, destination / "untracked" / relative, checkout, UNTRACKED_LIMIT)
+    record_retention(output, "started")
+    checkout_fd = open_checkout(run)
+    kept, copied, skipped = 0, 0, []
+    try:
+        status = output / "status.txt"
+        untracked = untracked_paths(status.read_text(errors="replace")) if status.is_file() else []
+        # Paths as git printed them: quoted names stay on one line.
+        (destination / "untracked.txt").write_text("".join(printed + "\n" for printed, _ in untracked))
+        try:
+            reports = checkout_fd is not None and os.stat(".testoptimization", dir_fd=checkout_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            reports = None
+        if reports and stat.S_ISLNK(reports.st_mode):
+            skipped.append({"path": ".testoptimization", "reason": "symlink"})
+        elif reports:
+            # fwalk without following symlinks never descends into a symlinked folder,
+            # and checks that each folder it opens is the one it listed; each
+            # folder_fd is valid only until the walk moves on.
+            for folder, _, names, folder_fd in os.fwalk(".testoptimization", dir_fd=checkout_fd, follow_symlinks=False):
+                for name in sorted(names):
+                    kept += copy_beneath(folder_fd, [name], destination / folder / name, REPORT_LIMIT,
+                                         f"{folder}/{name}", skipped)
+        if checkout_fd is not None:
+            for _, relative in untracked:
+                if (not relative or "\0" in relative or os.path.isabs(relative) or ".." in Path(relative).parts
+                        or relative.startswith(EXCLUDED_UNTRACKED) or not Path(relative).parts):
+                    continue
+                copied += copy_beneath(checkout_fd, list(Path(relative).parts), destination / "untracked" / relative,
+                                       UNTRACKED_LIMIT, relative, skipped)
+    finally:
+        if checkout_fd is not None:
+            os.close(checkout_fd)
+    record_retention(output, "ok", reports=kept, untracked=copied, skipped=skipped,
+                     checkout="present" if checkout_fd is not None else "missing")
     return f"retained {kept} report file(s) in {destination}"
 
 
@@ -447,9 +515,14 @@ def run_trial(state, argv, output, log, supervisor, agent, cleanup_argv):
         try:
             state["result"] = retain(output)
         except OSError as error:
-            # Cleanup still runs and the batch goes on; the case fails.
+            # Cleanup still runs and the batch goes on; the case fails, also on a later --evaluate-only.
             state["retention_error"] = f"retention failed: {error}"
             state["result"] = state["retention_error"]
+            try:
+                record_retention(output, "failed", error=str(error))
+            except OSError as record_error:
+                # RETENTION.json still says "started", which catalog_check.py also fails.
+                state["log_errors"].append(f"recording the retention failure failed: {record_error}")
         log_write(state, stream, f"\nexit={state['code']}\n{state['result']}\n")
     finally:
         try:
@@ -487,7 +560,7 @@ def run_case(case, argv, output, log, supervisor, rerun=None, agent="codex", ddt
     if retention_error and record["outcome"] != "harness_failure":
         record["harness_category"] = "retention"
         record = catalog_check.finish(record, "harness_failure", retention_error, "", rerun)
-    elif retention_error:
+    elif retention_error and retention_error not in record["problems"]:
         record["problems"].append(retention_error)
     cleanup_text = "not run" if not state["started"] else f"exit {cleanup}" if isinstance(cleanup, int) else cleanup
     if cleanup and record["outcome"] != "harness_failure":

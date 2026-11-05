@@ -327,6 +327,94 @@ def read_record(name, directory_fd):
         os.close(fd)
 
 
+NOFOLLOW_DIRECTORY = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+
+
+class SymlinkedPath(OSError):
+    """A component of a path inside an owned trial is a symlink, which is never followed."""
+
+
+def refusal(directory_fd, name, error, shown):
+    """SymlinkedPath when `name` (below directory_fd) is a symlink, else the original error."""
+    try:
+        linked = stat.S_ISLNK(os.stat(name, dir_fd=directory_fd, follow_symlinks=False).st_mode)
+    except OSError:
+        linked = False
+    return SymlinkedPath(f"{shown} is a symlink") if linked else error
+
+
+def open_directory(path):
+    """An fd of an owned folder, refusing a symlink in its place."""
+    try:
+        return os.open(path, NOFOLLOW_DIRECTORY)
+    except OSError as error:
+        raise refusal(None, path, error, str(path)) from error
+
+
+def open_directory_beneath(directory_fd, parts, shown=""):
+    """An fd of the folder at `parts` below directory_fd. Trial code can replace
+    any folder with a symlink, so no component is followed: a symlink raises
+    SymlinkedPath, a missing one FileNotFoundError, a file NotADirectoryError."""
+    fd = os.dup(directory_fd)
+    try:
+        for index, part in enumerate(parts):
+            try:
+                child = os.open(part, NOFOLLOW_DIRECTORY, dir_fd=fd)
+            except OSError as error:
+                raise refusal(fd, part, error, posixpath.join(shown, *parts[:index + 1])) from error
+            os.close(fd)
+            fd = child
+        return fd
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+def read_beneath(directory_fd, parts, limit, shown=""):
+    """Up to limit+1 bytes of the regular file at `parts` below directory_fd, or
+    None for anything else (a FIFO, a folder). Like open_directory_beneath, it
+    follows no symlink, the file's own name included, and never blocks on a FIFO."""
+    parent = open_directory_beneath(directory_fd, parts[:-1], shown)
+    try:
+        try:
+            fd = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
+        except OSError as error:
+            raise refusal(parent, parts[-1], error, posixpath.join(shown, *parts)) from error
+        try:
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                return None
+            chunks, size = [], 0
+            while size <= limit:
+                chunk = os.read(fd, min(1024 * 1024, limit + 1 - size))
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                size += len(chunk)
+            return b"".join(chunks)
+        finally:
+            os.close(fd)
+    finally:
+        os.close(parent)
+
+
+def read_trial_report(trial, checkout, limit):
+    """The checkout's .testoptimization/testdrive.json bytes (up to limit+1), or
+    None when there is none. The checkout must sit directly in the trial folder,
+    and none of the trial folder, the checkout, its report folder or the report
+    is followed if it is a symlink."""
+    if Path(checkout).parent != Path(trial):
+        raise ValueError("Report path escapes owned trial storage")
+    trial_fd = open_directory(trial)
+    try:
+        return read_beneath(trial_fd, [Path(checkout).name, ".testoptimization", "testdrive.json"], limit, str(trial))
+    except SymlinkedPath as error:
+        raise ValueError(f"Report path escapes owned trial storage: {error}") from None
+    except (FileNotFoundError, NotADirectoryError):
+        return None
+    finally:
+        os.close(trial_fd)
+
+
 def harvest_ddtest_records(directory):
     """Completed ddtest invocations' standard output, oldest first, removed
     from the trial. A record still being written is left for later; a record
@@ -1474,14 +1562,13 @@ def run(args):
             manifest["status"]="failed"
             manifest["failure_kind"]="authentication"
             code=1
-        report_path = checkout / ".testoptimization" / "testdrive.json"
         report = {}
         try:
-            if not report_path.resolve().is_relative_to(trial):
-                raise ValueError("Report path escapes owned trial storage")
-            if report_path.is_file():
-                with report_path.open("rb") as source:
-                    encoded = source.read(16*1024*1024+1)
+            # Trial code may have replaced the checkout or its report folder with
+            # a symlink (and processes may outlive a failed container removal),
+            # so the report is read by walking open folders, never following one.
+            encoded = read_trial_report(trial, checkout, 16*1024*1024)
+            if encoded is not None:
                 if len(encoded)>16*1024*1024:
                     raise ValueError("Compact report exceeds 16 MiB")
                 report = json.loads(encoded)

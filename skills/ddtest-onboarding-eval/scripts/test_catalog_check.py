@@ -290,9 +290,84 @@ class EvaluateTests(unittest.TestCase):
                                        rows=[{"turn": 1, "result": {"status": "complete", "code": "done"}}])
                 self.assertEqual((record["outcome"], record["harness_category"]), ("harness_failure", "report"))
                 self.assertEqual(record["problems"], ["malformed retained/.testoptimization/testdrive.json: " + text])
-                self.assertIn("is not a ddtest report", record["next_step"])
+                self.assertIn("is missing or not a ddtest report", record["next_step"])
                 self.assertTrue(catalog_check.is_failing(record))
                 catalog_check.error_block(record)
+
+    def claiming_evidence(self, name, text=None):
+        """Evidence whose last ddtest result and final answer claim COMPLETE LOCALLY, with text as the
+        retained testdrive.json (None: no report at all)."""
+        final = "Onboarding validation: COMPLETE LOCALLY. Local validation: PASSED."
+        rows = [{"turn": 1, "result": {"status": "complete", "code": "validation_complete", "reason": "ok",
+                                       "final_response": final}}]
+        folder = write_evidence(self.root / name, rows=rows)
+        (folder / "final-response.md").write_text(final + "\n")
+        if text is not None:
+            (folder / catalog_check.REPORT).parent.mkdir(parents=True)
+            (folder / catalog_check.REPORT).write_text(text)
+        return folder
+
+    def test_an_existing_report_that_is_not_a_report_never_passes_from_final_response(self):
+        valid = report("COMPLETE LOCALLY")
+        self.assertEqual(catalog_check.evaluate(case(verdict="COMPLETE LOCALLY"),
+                                                self.claiming_evidence("valid-codex", json.dumps(valid)))["outcome"], "pass")
+        for name, text, problem in (
+                ("truncated", json.dumps(valid)[:40], "not valid JSON"),
+                ("empty-file", "", "not valid JSON"),
+                ("null", "null", "top level is null, not an object"),
+                ("empty", "{}", "summary is missing"),
+                ("no-status", json.dumps({"summary": {"blocking_checks": []}}), "summary.status is missing"),
+                ("blank-status", json.dumps({"summary": {"status": " ", "blocking_checks": []}}), "summary.status is empty"),
+                ("no-checks", json.dumps({"summary": {"status": "COMPLETE LOCALLY"}}), "summary.blocking_checks is missing"),
+                ("null-checks", json.dumps({"summary": {"status": "COMPLETE LOCALLY", "blocking_checks": None}}),
+                 "summary.blocking_checks is missing"),
+                ("check-type", json.dumps({"summary": {"status": "INCOMPLETE", "blocking_checks": [{"a": 1}]}}),
+                 "summary.blocking_checks[0] is dict, not a string"),
+                ("features-type", json.dumps({"summary": None, "features": "x"}), "features is str, not a list")):
+            with self.subTest(name):
+                record = catalog_check.evaluate(case(verdict="COMPLETE LOCALLY"), self.claiming_evidence(name + "-codex", text))
+                self.assertEqual((record["outcome"], record["harness_category"]), ("harness_failure", "report"))
+                self.assertIn("malformed retained/.testoptimization/testdrive.json: " + problem, record["problems"][0])
+                self.assertIsNone(record["actual"]["verdict"])
+
+    def test_a_symlinked_report_is_not_read(self):
+        outside = self.root / "outside.json"
+        outside.write_text(json.dumps(report("COMPLETE LOCALLY")))
+        folder = self.claiming_evidence("linked-codex", None)
+        (folder / catalog_check.REPORT).parent.mkdir(parents=True)
+        (folder / catalog_check.REPORT).symlink_to(outside)
+        record = catalog_check.evaluate(case(verdict="COMPLETE LOCALLY"), folder)
+        self.assertEqual((record["outcome"], record["harness_category"]), ("harness_failure", "report"))
+        self.assertIn("is a symlink", record["problems"][0])
+
+    def test_an_absent_report_never_passes_from_final_response(self):
+        record = catalog_check.evaluate(case(verdict="COMPLETE LOCALLY"), self.claiming_evidence("absent-codex"))
+        self.assertEqual((record["outcome"], record["harness_category"]), ("harness_failure", "report"))
+        self.assertIn("no retained/.testoptimization/testdrive.json, but ddtest's last result (ddtest-results.jsonl row 1) "
+                      "claims Onboarding validation: COMPLETE LOCALLY", record["problems"][0])
+        self.assertIsNone(record["actual"]["verdict"])
+        self.assertTrue(catalog_check.is_failing(record))
+
+    def test_recorded_retention_outcome(self):
+        for name, recorded, outcome in (
+                ("ok", {"status": "ok", "reports": 1}, ("pass", None)),
+                ("failed", {"status": "failed", "error": "[Errno 28] No space left on device"}, ("harness_failure", "retention")),
+                ("started", {"status": "started"}, ("harness_failure", "retention")),
+                ("garbage", None, ("harness_failure", "retention"))):
+            with self.subTest(name):
+                folder = write_evidence(self.root / f"{name}-codex", testdrive=real_report("E08"))
+                (folder / catalog_check.RETENTION).write_text(json.dumps(recorded) if recorded else "{trunc")
+                record = catalog_check.evaluate(case(blockers=["Cypress real-suite coverage was not observed"]), folder)
+                self.assertEqual((record["outcome"], record.get("harness_category")), outcome)
+                if name == "failed":
+                    self.assertEqual(record["problems"], ["retention failed: [Errno 28] No space left on device"])
+                if name == "started":
+                    self.assertIn("retention started: it did not finish", record["problems"][0])
+        # Evidence retained before RETENTION.json existed has none: not recorded, not a failure.
+        folder = write_evidence(self.root / "older-codex", testdrive=real_report("E08"))
+        self.assertFalse((folder / catalog_check.RETENTION).exists())
+        self.assertEqual(catalog_check.evaluate(case(blockers=["Cypress real-suite coverage was not observed"]),
+                                                folder)["outcome"], "pass")
 
     def test_unreadable_evidence_is_an_evaluation_failure_with_its_traceback(self):
         record = self.evaluate(case(), testdrive=real_report("E08"), run={"agent_reporting": "pass"})

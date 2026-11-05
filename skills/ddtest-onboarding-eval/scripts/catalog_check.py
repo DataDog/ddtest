@@ -1,7 +1,8 @@
 """Check a catalog trial's evidence against its case's `expected` outcome.
 
 evaluate() reads one evidence folder (run.json, ddtest-results.jsonl,
-final-response.md, retained/.testoptimization/testdrive.json) and classifies it:
+final-response.md, retained/.testoptimization/testdrive.json,
+retained/RETENTION.json) and classifies it:
 
   pass                 verdict and blockers match `expected`.
   verdict_mismatch     the verdict differs; `direction` is "worse" (a regression)
@@ -14,6 +15,14 @@ final-response.md, retained/.testoptimization/testdrive.json) and classifies it:
   agent_failure        no ddtest result or report, no final answer, or the
                        answer fails run.json's agent_reporting check.
 
+The verdict comes only from the retained report's summary.status. A report that
+exists but is not valid JSON, or lacks summary.status or summary.blocking_checks,
+is a harness_failure (`report`). Without a report the verdict is STOPPED, unless
+ddtest's last result claims a validation verdict: then the report was lost, a
+harness_failure (`report`), never a verdict taken from final_response.
+A RETENTION.json whose status is not "ok" is a harness_failure (`retention`);
+evidence from before RETENTION.json existed has none, which is not a failure.
+
 Blockers are compared as stable identifiers (blocker_id) derived from
 summary.blocking_checks, so a configuration's command line or a long remedy
 text does not make a case fail.
@@ -21,6 +30,7 @@ text does not make a case fail.
 
 import fnmatch
 import json
+import os
 from pathlib import Path
 import re
 import shlex
@@ -42,6 +52,7 @@ FEATURES = ("auto-retries", "early-flake-detection", "skipping", "quarantine", "
 DERIVED = ("configuration: *", "not every project has every required feature result")
 EXCERPT = 600
 REPORT = Path("retained") / ".testoptimization" / "testdrive.json"
+RETENTION = Path("retained") / "RETENTION.json"
 
 
 def one_line(text, limit=None):
@@ -182,6 +193,41 @@ def read_json(path):
         return json.loads(path.read_text())
     except (OSError, ValueError):
         return None
+
+
+def read_report(path):
+    """(report, problem): (None, None) when there is no report file, (None, why)
+    when one exists but is not a ddtest report, else (report, None)."""
+    if not os.path.lexists(path):
+        return None, None
+    if path.is_symlink():
+        return None, "is a symlink"
+    try:
+        text = path.read_text(errors="replace")
+    except OSError as error:
+        return None, f"unreadable ({error})"
+    try:
+        report = json.loads(text)
+    except ValueError as error:
+        return None, f"not valid JSON ({one_line(error, 200)})"
+    problem = report_shape(report)
+    return (None, problem) if problem else (report, None)
+
+
+def retention_problem(evidence):
+    """Why retained/RETENTION.json records a failed or unfinished retention, or None.
+    Evidence retained before RETENTION.json existed has none: not recorded, not a failure."""
+    path = evidence / RETENTION
+    if not os.path.lexists(path):
+        return None
+    recorded = read_json(path)
+    if not isinstance(recorded, dict):
+        return f"retention outcome unreadable ({RETENTION.as_posix()})"
+    if recorded.get("status") == "ok":
+        return None
+    if recorded.get("error"):
+        return "retention failed: " + one_line(recorded["error"], 400)
+    return f"retention {recorded.get('status')}: it did not finish ({RETENTION.as_posix()})"
 
 
 def read_rows(path):
@@ -330,18 +376,35 @@ def error_text(error):
     return one_line(f"{type(error).__name__}: {error}", 300), trace[-EXCERPT:].strip()
 
 
+def type_name(value):
+    return "null" if value is None else type(value).__name__
+
+
 def report_shape(report):
-    """Why a parsed testdrive.json can't be read as a report, or None."""
+    """Why a parsed testdrive.json can't be read as a report, or None. A report
+    needs summary.status (the verdict) and summary.blocking_checks (its blockers)."""
     if not isinstance(report, dict):
-        return f"top level is {type(report).__name__}, not an object"
+        return f"top level is {type_name(report)}, not an object"
     for key, kind in (("summary", dict), ("features", list)):
         if report.get(key) is not None and not isinstance(report[key], kind):
-            return f"{key} is {type(report[key]).__name__}, not {'an object' if kind is dict else 'a list'}"
-    summary = report.get("summary") or {}
-    if summary.get("blocking_checks") is not None and not isinstance(summary["blocking_checks"], list):
-        return f"summary.blocking_checks is {type(summary['blocking_checks']).__name__}, not a list"
-    if summary.get("status") is not None and not isinstance(summary["status"], str):
-        return f"summary.status is {type(summary['status']).__name__}, not a string"
+            return f"{key} is {type_name(report[key])}, not {'an object' if kind is dict else 'a list'}"
+    summary = report.get("summary")
+    if summary is None:
+        return "summary is missing"
+    if summary.get("status") is None:
+        return "summary.status is missing"
+    if not isinstance(summary["status"], str):
+        return f"summary.status is {type_name(summary['status'])}, not a string"
+    if not summary["status"].strip():
+        return "summary.status is empty"
+    checks = summary.get("blocking_checks")
+    if checks is None:
+        return "summary.blocking_checks is missing"
+    if not isinstance(checks, list):
+        return f"summary.blocking_checks is {type_name(checks)}, not a list"
+    for index, check in enumerate(checks):
+        if not isinstance(check, str):
+            return f"summary.blocking_checks[{index}] is {type_name(check)}, not a string"
     return None
 
 
@@ -378,10 +441,7 @@ def classify(case, evidence, log, rerun, agent, ddtest_label):
     actual["ddtest_label"] = run.get("ddtest_label") or ddtest_label
     rows = read_rows(evidence / "ddtest-results.jsonl")
     row, first_row, result = last_result(rows)
-    report = read_json(evidence / REPORT)
-    malformed = report_shape(report) if report is not None else None
-    if malformed:
-        report = {}
+    report, malformed = read_report(evidence / REPORT)
     summary = (report or {}).get("summary") or {}
     features = [str(feature.get("name")) for feature in (report or {}).get("features") or [] if isinstance(feature, dict)]
     checks = [str(check) for check in summary.get("blocking_checks") or []]
@@ -396,17 +456,29 @@ def classify(case, evidence, log, rerun, agent, ddtest_label):
             # The trial ended on a decision only the user can make; no answer form covers it.
             record["question"] = {"code": code, "scriptable": False, "row": row, "next_action": result.get("next_action")}
             record["notes"].append(f"question not scriptable: {code} (ddtest-results.jsonl row {row})")
-    actual["verdict"] = summary.get("status") or response_verdict(result.get("final_response")) or (
-        "STOPPED" if result else None)
+    # The verdict is the report's; final_response never stands in for a missing report.
+    claimed = response_verdict(result.get("final_response")) if report is None and not malformed else None
+    actual["verdict"] = summary.get("status") if report else "STOPPED" if result and not (claimed or malformed) else None
+    retention = retention_problem(evidence)
     problem = harness_problem(run, log)
     if problem:
         record["harness_category"] = problem[0]
+        record["problems"] += [text for text in (retention, malformed and f"malformed {REPORT.as_posix()}: {malformed}")
+                               if text]
+        return finish(record, "harness_failure", *problem[1:], rerun)
+    if retention:
+        record["harness_category"] = "retention"
         if malformed:
             record["problems"].append(f"malformed {REPORT.as_posix()}: {malformed}")
-        return finish(record, "harness_failure", *problem[1:], rerun)
+        return finish(record, "harness_failure", retention, "", rerun)
     if malformed:
         record["harness_category"] = "report"
         return finish(record, "harness_failure", f"malformed {REPORT.as_posix()}: {malformed}", "", rerun)
+    if claimed:
+        record["harness_category"] = "report"
+        return finish(record, "harness_failure", f"no {REPORT.as_posix()}, but ddtest's last result (ddtest-results.jsonl "
+                      f"row {row}) claims Onboarding validation: {claimed}; the verdict is never taken from "
+                      "final_response", "", rerun)
     problem = agent_problem(run, rows, report, evidence)
     if problem:
         return finish(record, "agent_failure", problem, "", rerun)
@@ -460,7 +532,8 @@ HARNESS_HINTS = {
     "infrastructure": "the agent CLI lost its model connection; check network or service status",
     "trial": "check Docker, network and {log}",
     "exists": "{evidence} is from an earlier run; check it with --evaluate-only or pick a new --output",
-    "report": "the retained testdrive.json is not a ddtest report (see problems); inspect it in {evidence}/retained",
+    "report": "the retained testdrive.json is missing or not a ddtest report (see problems); inspect "
+              "{evidence}/retained and {log}",
     "evaluation": "catalog_check.py could not read {evidence} (see problems and output); fix the evidence or the "
                   "checker and check it with --evaluate-only",
     "runner": "run_catalog.py failed on this case (see problems and output); its cleanup ran (see {log}); "
