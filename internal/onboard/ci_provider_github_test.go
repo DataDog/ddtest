@@ -6,13 +6,60 @@
 package onboard
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
+
+func TestGitHubInstructionsIgnoreExpressionEnvironments(t *testing.T) {
+	for _, scope := range []string{"workflow", "job", "step"} {
+		for _, configured := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/configured=%t", scope, configured), func(t *testing.T) {
+				workflow := `jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - run: npm test
+`
+				const environment = "env: ${{ fromJSON(vars.TEST_ENV) }}\n"
+				switch scope {
+				case "workflow":
+					workflow = environment + workflow
+				case "job":
+					workflow = strings.Replace(workflow, "    runs-on:", "    "+environment+"    runs-on:", 1)
+				case "step":
+					workflow += "        " + environment
+				}
+				if configured {
+					workflow = strings.Replace(workflow, "    steps:\n", "    steps:\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: js}\n", 1)
+				}
+				root := newJestRepository(t, workflow)
+				useCIProvider(t, "github")
+				t.Chdir(root)
+
+				var output bytes.Buffer
+				require.NoError(t, Run(&output))
+				require.Contains(t, output.String(), "DDTest found javascript, jest, and GitHub Actions.")
+				require.Contains(t, output.String(), ".github/workflows/test.yml")
+				require.Equal(t, configured, strings.Contains(output.String(), "already appears in every detected test workflow"))
+				if !configured {
+					require.Contains(t, output.String(), "languages: js")
+				}
+
+				// Manual guidance must not make unresolved environments acceptable
+				// to full discovery and validation.
+				_, err := (gitHubActions{}).readWorkflows(root)
+				require.ErrorContains(t, err, "cannot unmarshal")
+				require.ErrorContains(t, err, "into map[string]string")
+			})
+		}
+	}
+}
 
 func TestGitHubFindTestWorkflowsWorkingDirectories(t *testing.T) {
 	for _, tc := range []struct {

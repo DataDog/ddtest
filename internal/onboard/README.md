@@ -32,7 +32,8 @@ Providers parse their own syntax into `ciWorkflow`, `runtimeJob` and
 language decisions stay behind `discoveryLanguage`. Providers normally use
 `findTestWorkflows`' shared classification. GitHub manual instructions preserve
 their conservative literal-command inspection and use the same GitHub file
-loader as full discovery; full discovery additionally expands composite actions.
+loader as full discovery. Instructions decode only the fields they inspect;
+full discovery decodes the complete workflow model and expands composite actions.
 
 `internal/environment` detects the running CI environment and supplies runtime
 tags and runner configuration. Repository CI inspection belongs here, in
