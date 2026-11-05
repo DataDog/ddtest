@@ -122,6 +122,7 @@ if pathlib.Path(sys.argv[0]).name == "codex":
     ]
 else:
     events = [
+        {"type": "system", "subtype": "init", "session_id": "fake-session", "model": "claude-fake-model[1m]"},
         {"type": "assistant", "message": {"content": [
             {"type": "thinking", "thinking": "PRIVATE_REASONING"},
             {"type": "tool_use", "name": "Bash", "id": "cmd1", "input": {"command": "ddtest onboard"}},
@@ -530,6 +531,10 @@ class RunnerTests(unittest.TestCase):
                     self.assertEqual(observed["agent_environment"]["CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"], "1")
                     self.assertEqual(observed["agent_environment"]["BASH_MAX_TIMEOUT_MS"], "30000")
                 self.assertNotIn("--model", observed["argv"])
+                # The model the CLI reports in its session event; Codex reports none.
+                self.assertEqual(manifest["resolved_model"], "claude-fake-model[1m]" if agent == "claude" else None)
+                self.assertNotIn("resolved_models", manifest)
+                self.assertIsNone(manifest["ddtest_label"])
                 # The folder the prompt names holds only the recording wrapper;
                 # DDTEST_SELF_PATH makes ddtest's printed commands name it.
                 wrapper = checkout.parent / "bin" / "ddtest"
@@ -845,6 +850,13 @@ class RunnerTests(unittest.TestCase):
                          f"Use ddtest in {checkout.parent / 'bin'} and onboard this repository to test-optimization for playwright only.")
         self.assertEqual(manifest["framework_scope"], "playwright")
 
+    def test_ddtest_label_is_recorded_beside_the_version(self):
+        self.args.ddtest_label = "b7a9d2ba (go build, no -ldflags)"
+        code, manifest = self.trial()
+        self.assertEqual(code, 0)
+        self.assertEqual(manifest["ddtest_label"], "b7a9d2ba (go build, no -ldflags)")
+        self.assertIn("ddtest_version", manifest)
+
     def test_refused_agent_command_exits_nonzero(self):
         execute = FakeContainer.execute
         def refusing(container, argv, *rest):
@@ -940,6 +952,34 @@ class RunnerTests(unittest.TestCase):
         self.assertIn("setup changed", manifest["error"])
         self.assertFalse((Path(manifest["checkout"]) / "observed.json").exists())
 
+    def test_changes_patch_starts_after_setup_commits(self):
+        # A catalog trim: remove a tracked file and commit it inside the trial,
+        # as run_catalog.py does, before the agent starts.
+        import run_catalog
+        tracked = "skills/ddtest-onboarding-eval/catalog/cases.yaml"
+        case = {"trims": {"required": {"reason": "test trim", "commands": [f"git rm -q {tracked}"]}}}
+        self.args.setup_command = run_catalog.trim_commands(case)
+        code, manifest = self.trial()
+        self.assertEqual(code, 0, manifest.get("error"))
+        checkout = Path(manifest["checkout"])
+        self.assertFalse((checkout / tracked).exists())
+        self.assertEqual(manifest["commit"], subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=self.source, text=True).strip())
+        self.assertNotEqual(manifest["agent_baseline"], manifest["commit"])
+        rev_parses = [entry for entry in manifest["commands"] if entry["argv"] == ["git", "rev-parse", "HEAD"]]
+        self.assertEqual(len(rev_parses), 2)
+        patch_text = (self.args.output / "changes.patch").read_text()
+        self.assertIn("Fake agent changed", patch_text)
+        self.assertNotIn(tracked, patch_text)
+        self.assertNotIn(tracked, (self.args.output / "status.txt").read_text())
+
+    def test_failed_setup_diffs_against_the_fetched_commit(self):
+        self.args.setup_command = [f"{shlex.quote(sys.executable)} -c 'import sys; sys.exit(7)'"]
+        code, manifest = self.trial()
+        self.assertEqual(code, 1)
+        self.assertNotIn("agent_baseline", manifest)
+        self.assertTrue((self.args.output / "changes.patch").is_file())
+
     def test_error_event_is_failure_even_with_zero_cli_exit(self):
         self.args.agent = "claude"
         code, manifest = self.trial({"FAKE_AGENT_ERROR": "1"})
@@ -1007,6 +1047,49 @@ class FrameworkEnvironmentTests(unittest.TestCase):
             self.assertEqual(run_eval.agent_environment("claude", 30, framework)["BASH_MAX_TIMEOUT_MS"], "30000")
         self.assertEqual(run_eval.agent_environment("claude", 7200, "jest")["BASH_MAX_TIMEOUT_MS"], "600000")
         self.assertEqual(run_eval.agent_environment("codex", 7200, "cypress"), {})
+
+
+class TrialReportTests(unittest.TestCase):
+    """Finalization reads the report on the host without following any symlink trial code planted."""
+
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.root = Path(directory.name).resolve()
+        self.host = self.root / "host"
+        (self.host / ".testoptimization").mkdir(parents=True)
+        (self.host / ".testoptimization" / "testdrive.json").write_text('{"secret": true}')
+        self.trial = self.root / "dde-trial"
+        self.checkout = self.trial / "repo"
+
+    def test_reads_a_regular_report_and_none_when_absent(self):
+        self.checkout.mkdir(parents=True)
+        self.assertIsNone(run_eval.read_trial_report(self.trial, self.checkout, 100))
+        (self.checkout / ".testoptimization").mkdir()
+        (self.checkout / ".testoptimization" / "testdrive.json").write_text('{"summary": {}}')
+        self.assertEqual(run_eval.read_trial_report(self.trial, self.checkout, 100), b'{"summary": {}}')
+        self.assertEqual(len(run_eval.read_trial_report(self.trial, self.checkout, 4)), 5)
+
+    def test_symlinks_anywhere_on_the_way_are_refused(self):
+        for name in ("checkout", "folder", "report"):
+            with self.subTest(name):
+                shutil.rmtree(self.trial, ignore_errors=True)
+                self.trial.mkdir()
+                if name == "checkout":
+                    self.checkout.symlink_to(self.host, target_is_directory=True)
+                else:
+                    self.checkout.mkdir()
+                if name == "folder":
+                    (self.checkout / ".testoptimization").symlink_to(self.host / ".testoptimization",
+                                                                     target_is_directory=True)
+                if name == "report":
+                    (self.checkout / ".testoptimization").mkdir()
+                    (self.checkout / ".testoptimization" / "testdrive.json").symlink_to(
+                        self.host / ".testoptimization" / "testdrive.json")
+                with self.assertRaisesRegex(ValueError, "Report path escapes owned trial storage: .* is a symlink"):
+                    run_eval.read_trial_report(self.trial, self.checkout, 100)
+        with self.assertRaisesRegex(ValueError, "escapes owned trial storage"):
+            run_eval.read_trial_report(self.trial, self.host, 100)
 
 
 class FailureClassificationTests(unittest.TestCase):

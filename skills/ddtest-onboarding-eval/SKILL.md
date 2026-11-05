@@ -26,7 +26,10 @@ the container.
 ## Prepare
 
 For pytest trials, use `--framework pytest --python /absolute/image/path/to/python`
-with a trusted image containing Python and venv support. The runner creates a
+with a trusted image containing Python and venv support, such as the
+Dockerfile's `python` target (CPython 3.12, `--python /usr/local/bin/python3`;
+select another with `--build-arg PYTHON_IMAGE=python:<version>-bookworm@sha256:<digest>`
+and `--build-arg PYTHON_VERSION=<major.minor>`). The runner creates a
 private environment before dependency setup, preserves it for the agent, and
 checks the final report's Python version, interpreter location and environment
 prefix. Current execution with missing or different environment evidence fails
@@ -62,7 +65,9 @@ Build the trusted image (add project-specific OS/browser dependencies to a
 reviewed derived image if needed). Never bake personal configuration or secrets
 into an image. The supplied image pins Node, pnpm, Codex and Claude; unexpected
 CLI versions fail before cloning. For `--framework rspec` or `minitest`, use a
-trusted derived image with the project-compatible Ruby and Bundler installed.
+trusted image with the project-compatible Ruby and Bundler installed: the
+Dockerfile's `ruby` target adds Ruby 3.4 (select another with
+`--build-arg RUBY_IMAGE=ruby:<version>-bookworm@sha256:<digest>`).
 The runner records its Ruby version before cloning and checks the report against
 that version. Install dependencies in the private trial HOME (for example,
 `bundle config set --global path /trial/home/bundle`, then `bundle install`) and
@@ -108,8 +113,17 @@ docker build --target agents -t ddtest-eval \
   skills/ddtest-onboarding-eval/scripts
 IMAGE=$(docker image inspect --format '{{.Id}}' ddtest-eval)
 ARCH=$(docker image inspect --format '{{.Architecture}}' "$IMAGE")
-GOOS=linux GOARCH="$ARCH" go build -o /absolute/path/to/ddtest-linux .
+GOOS=linux GOARCH="$ARCH" go build -o /absolute/path/to/ddtest-linux \
+  -ldflags "-X github.com/DataDog/ddtest/internal/buildinfo.Version=$(git rev-parse --short HEAD)" .
 ```
+
+A plain `go build` reports version `dev`; the `-ldflags` value above, as the
+Makefile and release builds set it, makes `ddtest --version` (and so
+`ddtest_version` in `run.json`) name the commit. Add `-dirty` to it for an
+uncommitted tree. `--ddtest-label <text>` (run_eval.py and run_catalog.py)
+records free-text provenance, such as `b7a9d2ba` or `b7a9d2ba + local fix`, as
+`ddtest_label` in `run.json` and `results.json`; next steps and the catalog's
+`expected.ddtest` use it in place of a `dev` version.
 
 Use a separate test account when available. An explicitly authorized existing
 CLI account works with `--existing-login`; no manual JSON export or new login is
@@ -153,10 +167,15 @@ Repeat with `--agent claude`, its selected login and a new output directory.
 The runner mounts storage at the short container path `/trial`, explicitly fetches the ref, records its resolved SHA, and creates a
 fresh clone and private caches every time. Submodules are opt-in with
 `--submodules`. Setup arguments use `shlex` without an implicit shell; setup must
-leave tracked/untracked Git state clean. Optional `--node` selects an absolute
+leave tracked/untracked Git state clean; it may commit, and `changes.patch`
+starts from HEAD after setup and readiness (`agent_baseline` in `run.json`;
+`commit` stays the fetched SHA). Optional `--node` selects an absolute
 **image** executable for Codex, not a host binary. The recorded final ddtest
 runtime must match it. Optional `--model` selects a model; otherwise the fresh
-CLI default applies. `run.json` records the CLI version and requested model.
+CLI default applies. `run.json` records the CLI version, the requested model and
+`resolved_model`, the model the CLI reports in its session events (Claude's
+init event; `null` for Codex, which reports none; `resolved_models` lists more
+than one if a resumed turn changed it).
 
 The tested prompt is exactly:
 
@@ -230,6 +249,196 @@ are listed under `agent_artifacts` in `run.json`. Its Bash tasks remain synchron
 Neither inherits the evaluator's CLI profile. Flag references:
 [Codex](https://developers.openai.com/codex/cli/reference),
 [Claude](https://code.claude.com/docs/en/cli-reference).
+
+## Case catalog
+
+`catalog/cases.yaml` is the standard set of cases: one pinned open-source
+repository per supported framework, covering every CI provider, with its image,
+setup, readiness, harness flags and answers, trims, measured timings, test
+counts, prepared-image notes and risks. Its header documents each field.
+`scripts/run_catalog.py` turns cases into `run_eval.py` arguments, runs them one
+after another, copies each trial's `.testoptimization` reports and small
+untracked files to `<evidence>/retained/` (the reports in the hidden
+`<evidence>/retained/.testoptimization/`, such as `testdrive.json`; untracked paths come from
+`status.txt`, with Git's path quoting decoded; Git never runs on the host in the
+trial checkout), then runs `run_eval.py --cleanup`. Each trial's output goes to
+`<id>-<agent>.log`. Trial code can replace any folder with a symlink, so
+retention opens the checkout directly inside the trial folder named by
+`run.json` and every path below it one folder at a time, never following a
+symlink: a symlinked file or folder in the checkout is skipped (and listed),
+and a checkout or trial folder replaced by a symlink retains nothing and is a
+`harness_failure` (`retention`). `run_eval.py` reads the report the same way.
+`<evidence>/retained/RETENTION.json` records the outcome (`started`, then `ok`
+or `failed` with the error, plus what was skipped), and `catalog_check.py`
+fails any status but `ok`, also on a later `--evaluate-only`; evidence from
+before it existed has none, which is not a failure.
+If copying fails (such as a full disk), cleanup still runs, the case is a
+`harness_failure` (`retention`) and the batch goes on. A failed write to the
+log is listed under the case's `notes` and never skips cleanup. An error in the
+runner itself on one case makes it a `harness_failure` (`runner`, with the
+exception and a traceback excerpt) after its cleanup, and the lane goes on; if a
+lane stops anyway, each case it did not finish is a `harness_failure`
+(`not_run`), so the batch can't exit 0.
+Each trial runs in its own session: the first Ctrl-C (or SIGTERM/SIGHUP) is
+forwarded once, and the runner waits for the trial to finalize `run.json` and
+remove its container, retains, cleans up and stops the batch with a non-zero
+exit. A second Ctrl-C kills the trial; cleanup still runs, and the runner
+prints the `--cleanup` command to retry it.
+
+Build the images that the selected cases name (`images` in the catalog lists
+each key's target and build arguments), then map them. `--dry-run` needs no
+`--ddtest`, images or output: it prints the exact `docker build` command for
+each image key the selection needs (tagged `ddtest-eval-<key>`), a shell line
+that writes their IDs to `images.json`, an `--image-file` template, and every
+case's `run_eval.py` arguments, with `<ddtest>`, `<image:KEY>` and `<output>`
+placeholders for what was not given. It builds nothing.
+
+```sh
+S=skills/ddtest-onboarding-eval/scripts
+python3 $S/run_catalog.py --dry-run E01 E02    # image builds and each case's arguments
+# run the printed docker build commands and the images.json line, then:
+python3 $S/run_catalog.py E01 E02 --image-file images.json \
+  --ddtest /absolute/path/to/ddtest-linux --ddtest-label "$(git rev-parse --short HEAD)" \
+  --existing-login --output /absolute/path/to/new-evidence-folder
+```
+
+`--image-file` (or `DDTEST_EVAL_IMAGES`) takes a JSON or YAML mapping of image
+key to image instead. `--timeout` defaults to 5400 seconds. `--agent` is
+`codex` (the default for trials), `claude` or `both`. One agent is one lane: its cases run one
+after another, because `--existing-login` locks that agent's login for a whole
+trial. `both` runs a Codex lane and a Claude lane at the same time, each in
+catalog order, so the same case can run in both lanes at once
+(`<id>-codex` and `<id>-claude`). The two logins don't contend: Codex locks
+`~/.codex/auth.json`, Claude locks `~/.claude/.credentials.json`, or takes no
+lock when it uses a managed model helper. Trial folders, caches and containers
+are per trial. Two lanes double the Docker load: on a small VM (4 CPUs, 8 GB)
+timings get noisier, and heavy cases (browsers, JVM builds) may need more CPUs
+or memory. A case whose evidence folder exists is not run and fails the batch
+(`harness_failure`, `exists`: check that folder with `--evaluate-only`).
+Status lines start with `[codex]` or `[claude]` and reach stdout as each case
+starts and ends, also when it is redirected; each lane also writes them to
+`<output>/lane-<agent>.log`. During a long run, follow that file
+(`tail -f <output>/lane-claude.log`) and the running case's
+`<output>/<id>-<agent>.log`. The first Ctrl-C reaches every running trial once;
+both finalize, retain and clean up, and no lane starts another case.
+
+Claude with `--existing-login` needs one of: a managed model helper
+(`apiKeyHelper`, plus `ANTHROPIC_*` routing in `env`, in `~/.claude/settings.json`
+or `/Library/Application Support/ClaudeCode/managed-settings.json`), or an OAuth
+file at `~/.claude/.credentials.json`. On macOS, Claude Code keeps its own OAuth
+login in the Keychain, which the harness never reads: without a helper, run that
+agent's trials with `run_eval.py --login-json <exported file>`, or run Codex only. The model
+preflight fails before cloning when neither is available.
+
+Trims are setup commands that edit or `git rm` files; `run_catalog.py` commits
+each trim inside the trial container with a scratch identity
+(`ddtest-eval-scratch`), so setup still leaves `git status` clean. The trial's
+private HOME has no Git configuration, and nothing changes signing settings.
+`changes.patch` diffs against `agent_baseline`, the HEAD after the trim
+commits and setup, so it holds only the agent's changes.
+`trims.required` (the suite can't pass without it on the image, such as expired
+certificates) always applies; `trims.optional_speed` applies only with
+`--speed-trims`, and changes what the agent sees, so compare like with like.
+
+### Expected outcomes
+
+`expected` is checked after every trial (`scripts/catalog_check.py`); the
+catalog header documents its fields. `verdict` is the `summary.status` a correct
+trial reaches. For INCOMPLETE and FAILED, optional `blockers` lists the
+blockers the verdict may have, as identifiers derived from
+`summary.blocking_checks`: `feature <name>: <status>`, `compatibility:
+<status>`, `runtime fidelity: substitute Java`, `unresolved CI scope: <file> /
+<job> / step <n>: <cause class>` (one per step; the class is the cause's
+leading clause, such as `CI command expression was not resolved`, without the
+step's command or ddtest's "Runs before the job's ... tests" context),
+`configuration: <status>`, or a headline such as `Cypress real-suite coverage
+was not observed`. `fnmatch` patterns such as `feature *: inconclusive` are
+allowed, but prefer exact identifiers: a broad pattern also matches a new real
+blocker. So INCOMPLETE for the known reason passes, and INCOMPLETE with a new
+blocker fails. `expected.agents.<codex|claude>` overrides verdict, blockers or
+reason for one agent; ddtest decides the verdict, so use it only for a known
+agent difference. Every case's blockers are confirmed by the retained reports
+of eval-claude-2026-11-04.
+
+Each trial gets one outcome:
+
+| outcome | meaning | fails the batch |
+|---|---|---|
+| `pass` | verdict and blockers match | no |
+| `verdict_mismatch (worse)` | a regression; `STOPPED` means no report and no verdict in ddtest's last result | yes |
+| `verdict_mismatch (better: update expected)` | an improvement | no, exit 3 |
+| `unexpected_blockers` | the expected verdict with a blocker not allowed, or none of the expected ones | yes |
+| `harness_failure` | container, clone, setup, readiness, login, timeout, interruption, retention, cleanup, a runner error, or missing or malformed evidence (such as a `testdrive.json` that is not valid JSON or lacks `summary.status` or `summary.blocking_checks`, or no report although ddtest's last result claims a verdict) | yes |
+| `agent_failure` | no ddtest result or report, no final answer, or `run.json` `agent_reporting` is not `pass` | yes |
+
+Expected blockers that are no longer reported only add a note. Whether the agent
+changed files ddtest didn't prescribe is not checked; grade that by hand.
+
+At the end the runner prints a table (case, agent, provider, framework,
+expected, actual, outcome), `NOTE <id>: agents disagree` when both agents ran a
+case to different verdicts (agent behavior, not ddtest), and one block per case
+that did not pass, `ERROR` (or `IMPROVEMENT`), with what failed, expected and
+actual, ddtest's last result and blocking checks, the failing harness step
+and its output, the evidence paths, and the next step. For a regression or
+unexpected blocker the next step offers three choices: (1) a ddtest bug:
+investigate, starting from the `ddtest-results.jsonl` row where each new
+blocker first appears (often ddtest's own advice before the agent's edit); keep
+`expected` so the regression stays visible; (2) an intentional ddtest change:
+update the shared `expected`; (3) agent-specific: add `expected.agents.<agent>`.
+A trial whose last ddtest result asks the user a question no `--user-answer`
+form answers (such as `substitute_runtime_unaccepted` or
+`scope_decision_required`) gets the note `question not scriptable: <code>`,
+`question` in its record and an entry in `questions_not_scriptable`. It writes the same data
+to `<output>/results.json` (or `--results PATH`): `exit_code`, `outcomes`,
+`agents_disagree` and, per case and agent, `outcome`, `direction`, `expected`,
+`actual` (verdict, blocker identifiers, blocking-check excerpts, ddtest's final
+reason, run status, ddtest version and label), `problems`, `notes`, `evidence`
+paths and `next_step`, plus `ddtest_label`, `questions_not_scriptable` and
+`not_evaluated`. Exit status: 0 when every trial passed, 1 when any did not, 3
+when the only differences are improvements, 128+N when interrupted.
+
+An existing `results.json` for the same output folder is merged into, not
+replaced: each new record replaces the entry with the same case and agent,
+other entries stay, and `outcomes`, `agents_disagree` and `exit_code` are
+recomputed over all of them (`merged_entries_kept` counts the kept ones). With
+`--all`, the batch replaces every entry of the agents it covers. A
+`results.json` written for another output folder is refused; pass a new
+`--results`. The process exit status covers only the cases of this invocation.
+
+`--evaluate-only` checks existing evidence and runs nothing: `run_catalog.py
+--evaluate-only E02 --output <folder holding E02-pipeline-schema-codex>`.
+Without `--agent`, each case's agents are the `<id>-<agent>` folders that exist.
+A requested agent without a folder is listed as `no <agent> evidence (found:
+...)` and is not evaluated; for a named case with `--agent codex` or `claude`,
+or a named case with no evidence at all, the exit status is 1. With `--all` (or
+`--agent both`), cases without a folder are only listed.
+
+After an intentional ddtest change, rerun the affected cases, then copy what
+the block's next step names into the case: `verdict`, `blockers` (the
+identifiers listed under actual, without the `configuration:` lines), `reason`,
+`run` (the output folder or round, such as `eval-claude-2026-11-04`) and
+`ddtest` (the `--ddtest-label` you passed, such as the commit; a `dev` version
+names no build). Check it with `--evaluate-only` on the same evidence, which
+must now pass.
+
+To add or replace a case:
+
+- Keep one case per framework in `run_eval.py`'s `--framework` list, and keep
+  every provider (GitHub, GitLab, CircleCI, Buildkite, Jenkins) covered. The
+  current cases predate Java on Jenkins, so no JVM case runs on Jenkins yet;
+  prefer one when replacing a JVM case.
+- Pin a full commit whose own CI is green and whose suite passes on the image,
+  outside any agent. Prefer small, active, public repositories without services,
+  secrets or live network calls in tests.
+- Add a trim to `required` only when the suite fails without it; put
+  speed-only trims in `optional_speed`. Run every trim through `shlex.split`
+  with no shell on a fresh clone: it may only edit or remove tracked files,
+  which the trim commit (`git commit -a`) records.
+- Measure clone, install, browser, build and test times on the image and record
+  the conditions. Add answers only for questions only the user can answer.
+- Run `python3 -m unittest test_run_catalog test_catalog_check` in `scripts/`;
+  they validate the schema, the expectations and the framework and provider
+  coverage.
 
 ## Grade independently
 

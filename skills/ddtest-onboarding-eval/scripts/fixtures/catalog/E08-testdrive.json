@@ -1,0 +1,48 @@
+{
+ "schema_version": 1,
+ "framework": "cypress",
+ "compatibility": {
+  "status": "compatible"
+ },
+ "features": [
+  {
+   "project": "configuration 1: npm run e2e:record -- --parallel --group 'electrons on GitLab CI' (NODE_OPTIONS cleared)",
+   "name": "auto-retries",
+   "status": "passed"
+  },
+  {
+   "project": "configuration 1: npm run e2e:record -- --parallel --group 'electrons on GitLab CI' (NODE_OPTIONS cleared)",
+   "name": "early-flake-detection",
+   "status": "passed"
+  },
+  {
+   "project": "configuration 1: npm run e2e:record -- --parallel --group 'electrons on GitLab CI' (NODE_OPTIONS cleared)",
+   "name": "skipping",
+   "status": "passed"
+  },
+  {
+   "project": "configuration 1: npm run e2e:record -- --parallel --group 'electrons on GitLab CI' (NODE_OPTIONS cleared)",
+   "name": "quarantine",
+   "status": "passed"
+  },
+  {
+   "project": "configuration 1: npm run e2e:record -- --parallel --group 'electrons on GitLab CI' (NODE_OPTIONS cleared)",
+   "name": "disabled",
+   "status": "passed"
+  },
+  {
+   "project": "configuration 1: npm run e2e:record -- --parallel --group 'electrons on GitLab CI' (NODE_OPTIONS cleared)",
+   "name": "attempt-to-fix",
+   "status": "passed"
+  }
+ ],
+ "summary": {
+  "status": "INCOMPLETE",
+  "local_validation": "INCOMPLETE",
+  "blocking_checks": [
+   "Cypress real-suite coverage was not observed: No application source coverage observed, so Test Impact Analysis cannot be validated. The tested page must expose Istanbul's window.__coverage__: instrument the application build served to Cypress with babel-plugin-istanbul (Babel) or vite-plugin-istanbul (Vite), limited to test builds. That changes the application build and its dependencies, so propose the exact change to the user and apply it only with their approval. Specs, support files and dependencies alone are insufficient. Synthetic skipping probes do not validate coverage of customer source; preserve coverage thresholds.",
+   "configuration npm run e2e:record -- --parallel --group 'electrons on GitLab CI': incomplete"
+  ],
+  "final_response": "NOT COMPLETE: onboarding validation is INCOMPLETE. Report the blockers below; do not describe onboarding as complete or successful.\nOnboarding validation: INCOMPLETE.\nLocal results so far (they do not complete onboarding): executed Cypress validations incomplete (0/1); local validation incomplete.\nConfigurations: 0/1 validated; 1 executed with paired comparison; 0 blocked, 0 not exercised, 1 incomplete.\nReporting: 122 test executions; 122 source-test identities.\nCompatibility: compatible. Features: 6/6 supported checks passed.\nReal-suite coverage: observed in 0/1 reporting runs; 0/122 results linked to source.\nCI configuration: compatible (static analysis). CI execution and Datadog backend processing: not exercised.\nHuman action: Add DD_API_KEY as a masked GitLab CI/CD variable (Settings > CI/CD > Variables), available to every branch whose pipelines run the tests (a protected variable only reaches protected branches). Until it exists, Test Optimization is disabled for those jobs and their tests run untraced.\nCI runtime scope (static): Node versions 1 instrumented, 0 excluded, 0 unverified (each version counted once; per-job findings in Results JSON).\nEarlier attempts for this workflow stopped before this run: ci_edit_unsupported, report_exclusions_required. This run's results stand on their own; the earlier stops are listed so retries stay visible.\nLocal runtime: Node v24.19.0.\nBlockers: 2 \u2014 Cypress real-suite coverage was not observed: No application source coverage observed, so Test Impact Analysis cannot be validated. The tested page must expose Istanbul's window.__coverage__: instrument the application build served to Cypre\u2026 (see Results JSON); and 1 more. Full blockers and commands are in Results JSON.\n\n[Open report](</trial/repo/.testoptimization/report.html>)\n[Results JSON](</trial/repo/.testoptimization/testdrive.json>)\nCleanup: passed (ddtest sessions only).\nWorkflow checks: 5 recorded; Git/package exclusions and owned cleanup: passed. Preserve both reports. No further cache or package audit is required for unchanged inputs."
+ }
+}

@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "framework": "spock",
+  "summary": {
+    "status": "INCOMPLETE",
+    "local_validation": "PASSED",
+    "blocking_checks": [
+      "runtime fidelity: validated on substitute Java 17.0.20.1; .github/workflows/ci.yml / build (java: \"21\") / step 5 (./gradlew --continue check) runs on Java 21. Accept this evidence with --accept-substitute-runtime, or set JAVA_HOME to an existing Java 21 JDK and rerun",
+      "runtime fidelity: validated on substitute Java 17.0.20.1; .github/workflows/ci.yml / build (java: \"24\") / step 5 (./gradlew --continue check) runs on Java 24. Accept this evidence with --accept-substitute-runtime, or set JAVA_HOME to an existing Java 24 JDK and rerun"
+    ],
+    "final_response": "NOT COMPLETE: onboarding validation is INCOMPLETE. Report the blockers below; do not describe onboarding as complete or successful.\nOnboarding validation: INCOMPLETE.\nLocal results so far (they do not complete onboarding): executed Spock validations passed (1/1); local validation passed.\nConfigurations: 1/1 validated; 1 executed with paired comparison; 0 blocked, 0 not exercised, 0 incomplete.\nReporting: 4452 test executions; source-test identities unavailable (native file/name identities repeat within a configuration); this count does not affect coverage or feature results.\nCompatibility: compatible. Features: 6/6 supported checks passed.\nReal-suite coverage: observed in 1/1 reporting runs; 4373/4450 results linked to source.\nCI configuration: compatible (static analysis). CI execution and Datadog backend processing: not exercised.\nHuman action: Add the DD_API_KEY repository secret (GitHub Settings > Secrets and variables > Actions). Until it exists, the Datadog step fails without failing the job and tests run untraced.\nCI runtime scope (static): Java versions 3 instrumented, 0 excluded, 0 unverified (each version counted once; per-job findings in Results JSON).\nBlockers: 2 \u2014 runtime fidelity: validated on substitute Java 17.0.20.1; .github/workflows/ci.yml / build (java: \"21\") / step 5 (./gradlew --continue check) runs on Java 21. Accept this evidence with --accept-substitute-runtime, or set JAVA_HOME to an exi\u2026 (see Results JSON); runtime fidelity: validated on substitute Java 17.0.20.1; .github/workflows/ci.yml / build (java: \"24\") / step 5 (./gradlew --continue check) runs on Java 24. Accept this evidence with --accept-substitute-runtime, or set JAVA_HOME to an exi\u2026 (see Results JSON). Full blockers and commands are in Results JSON.\n\n[Open report](</trial/repo/.testoptimization/report.html>)\n[Results JSON](</trial/repo/.testoptimization/testdrive.json>)\nCleanup: passed (ddtest sessions only).\nWorkflow checks: 4 recorded; Git/package exclusions and owned cleanup: passed. Preserve both reports. No further cache or package audit is required for unchanged inputs."
+  },
+  "features": [
+    {
+      "project": "configuration 1: ./gradlew --continue check",
+      "name": "auto-retries",
+      "status": "passed"
+    },
+    {
+      "project": "configuration 1: ./gradlew --continue check",
+      "name": "early-flake-detection",
+      "status": "passed"
+    },
+    {
+      "project": "configuration 1: ./gradlew --continue check",
+      "name": "skipping",
+      "status": "passed"
+    },
+    {
+      "project": "configuration 1: ./gradlew --continue check",
+      "name": "quarantine",
+      "status": "passed"
+    },
+    {
+      "project": "configuration 1: ./gradlew --continue check",
+      "name": "disabled",
+      "status": "passed"
+    },
+    {
+      "project": "configuration 1: ./gradlew --continue check",
+      "name": "attempt-to-fix",
+      "status": "passed"
+    }
+  ]
+}

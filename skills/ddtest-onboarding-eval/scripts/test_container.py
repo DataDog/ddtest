@@ -88,6 +88,24 @@ class ContainerTests(unittest.TestCase):
         self.assertEqual(code,0,manifest.get('error'))
         self.assertEqual(manifest['isolation']['cleanup'],'removed')
 
+    def test_changes_patch_excludes_trim_commits_made_in_the_container(self):
+        import run_catalog
+        tracked='skills/ddtest-onboarding-eval/catalog/cases.yaml'
+        # The fake agent rewrites observed.json; tracking it in the trim commit
+        # makes that agent edit part of changes.patch.
+        case={'trims':{'required':{'reason':'container trim','commands':[
+            "sh -c ': > observed.json && git add observed.json'",f'git rm -q {tracked}']}}}
+        self.args.setup_command=run_catalog.trim_commands(case)
+        code,manifest=self.trial()
+        self.assertEqual(code,0,str(manifest.get('error'))+json.dumps(manifest['commands'][-2:]))
+        self.assertRegex(manifest['agent_baseline'],r'^[0-9a-f]{40}$')
+        self.assertNotEqual(manifest['agent_baseline'],manifest['commit'])
+        patch_text=(self.args.output/'changes.patch').read_text()
+        self.assertIn('observed.json',patch_text)
+        self.assertIn('fake_agent',patch_text)
+        self.assertNotIn(tracked,patch_text)
+        self.assertEqual((self.args.output/'status.txt').read_text().strip(),'M observed.json')
+
     def test_selected_fake_login_preflight_keeps_credentials_out_of_setup(self):
         import shlex
         for agent,key in (('codex','tokens'),('claude','claudeAiOauth')):
