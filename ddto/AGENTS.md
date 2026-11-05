@@ -199,7 +199,7 @@ goroutines for every goleak check.
 | A large repository whose Git upload is slow | `--git-upload-timeout=2m` after `ddtest instrument test`. |
 | Fuzzing with `-fuzz` | Nothing: fuzz roots and seeds report, generated inputs do not. |
 | `go test file_test.go` or standard-library packages | Not instrumented: name packages instead of files. |
-| Bazel | `ddtest instrument bazel` writes the instrumented Go SDK and Mini's repository that rules_test_optimization's next major version, in development, uses; see [Bazel](docs/bazel.md). |
+| Bazel | `ddtest instrument bazel` writes the instrumented Go SDK and Mini's repository that rules_test_optimization uses from version 2.0.0; see [Bazel](docs/bazel.md). |
 
 ### Turn features off
 
