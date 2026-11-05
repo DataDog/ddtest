@@ -164,7 +164,11 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 				result.NextAction = "supply_input"
 			}
 		case "unsupported":
-			if code == "ci_edit_unsupported" {
+			if code == "ci_edit_unsupported" && len(result.NextCommand) > 0 {
+				// The setup to apply comes from next_command (the manual
+				// instructions); resume_command validates it.
+				result.NextAction = "run_command"
+			} else if code == "ci_edit_unsupported" {
 				result.NextAction = "apply_source_edit"
 			} else {
 				result.NextAction = "report_result"
@@ -501,14 +505,18 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 		result.Checks = append(result.Checks, onboard.WorkflowCheck{Name: "preflight_preparation", Status: "passed", Reason: fmt.Sprintf("Verified preflight reused: %t. Test execution is always fresh.", reused)})
 		t.setPlanTracer(plan, selected)
 		if !onboard.SupportsAutomaticSetup(name) {
+			// The manual setup instructions hold the exact CI setup, as for
+			// unresolved scope; only the tracer release they leave to the
+			// reader is named here.
+			setting := "dd-trace " + selected + " in place of its tracer release placeholder (" + onboard.CIProviderTracerSetting("js", selected) + ")"
 			result.Location = "CI initialization"
-			result.RequiredInput = []string{"framework-specific CI loader/hook integration using the selected tracer release " + selected}
+			result.RequiredInput = []string{"the " + onboard.CIProviderDisplayName() + " setup next_command prints, exactly as shown, with " + setting}
 			result.ResumeCommand = t.workflowValidationResume(recoveryCommand[0], name, selected, options)
 			checkpoint.Apply = false
 			checkpoint.All = true
 			result.ResumeCommand = append(result.ResumeCommand, "--resume", checkpoint.RunID)
-			result.NextCommand = nil
-			return fail("unsupported", "ci_edit_unsupported", "The selected tracer and runtime are resolved; this framework still needs its custom CI hooks.", "Apply only plan_summary.initialization using plan_summary.tracer and plan_summary.site at the named CI hook; run resume_command. Inspect details_command only if the missing source integration needs more context.")
+			result.NextCommand = onboard.DDTestCommand("onboard", "--framework", name, "--instructions")
+			return fail("unsupported", "ci_edit_unsupported", "onboard --apply does not write the "+displayName(name)+" CI setup on "+onboard.CIProviderDisplayName()+". next_command prints it: apply that setup exactly as shown, with "+setting+": the release ddtest selected and validates.", "Run next_command, apply only the CI setup it prints, exactly as shown and with "+setting+", then run resume_command. Do not write a loader, hook or plugin integration of your own, and do not run testdrive or the tests first.")
 		}
 		progress("apply")
 		var sourcePlan *onboard.SetupPlan

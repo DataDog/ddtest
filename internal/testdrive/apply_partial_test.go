@@ -121,3 +121,32 @@ func TestWorkflowProceedsWithResolvedConfigurationsAndReportsUnresolvedCI(t *tes
 		require.Contains(t, scopeCheck.Reason, "unknown-wrapper.js")
 	}
 }
+
+// A framework whose CI setup onboard --apply doesn't write (Cypress) hands
+// off to the exact manual setup: next_command prints it, the result names
+// the release to write, and resume_command validates it.
+func TestWorkflowSendsManualSetupFrameworksToTheInstructions(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir())
+	root := t.TempDir()
+	t.Chdir(root)
+	onboard.UseCIProvider("gitlab")
+	t.Cleanup(func() { onboard.UseCIProvider("") })
+	requireWriteFile(t, filepath.Join(root, "package.json"), `{"scripts":{"e2e":"cypress run"},"devDependencies":{"cypress":"15.1.0"}}`)
+	requireWriteFile(t, filepath.Join(root, "cypress.config.js"), "module.exports = { e2e: { supportFile: false } }\n")
+	requireWriteFile(t, filepath.Join(root, ".gitlab-ci.yml"), "e2e:\n  image: cypress/base:24.19.0\n  script:\n    - npm ci\n    - npm run e2e\n")
+	drive := &Testdrive{repositoryRoot: root, framework: &framework.Cypress{}, language: "javascript", nodeVersion: func() string { return "24.19.0" }}
+	drive.workflowSelect = func(context.Context, onboard.ValidationScope, bool) (string, error) { return "6.23.0", nil }
+	var output bytes.Buffer
+	require.Error(t, drive.Workflow(t.Context(), &output, WorkflowOptions{Apply: true, Format: "json"}))
+	var result onboard.AgentResult
+	require.NoError(t, json.Unmarshal(output.Bytes(), &result))
+	require.Equal(t, "ci_edit_unsupported", result.Code, output.String())
+	require.Equal(t, "run_command", result.NextAction)
+	require.Contains(t, strings.Join(result.NextCommand, " "), "onboard --framework cypress --instructions --ci-provider gitlab")
+	require.Contains(t, result.Reason, "onboard --apply does not write the Cypress CI setup on GitLab CI")
+	require.Contains(t, result.Reason, "dd-trace 6.23.0 in place of its tracer release placeholder ("+onboard.CIProviderTracerSetting("js", "6.23.0")+")")
+	require.Contains(t, result.Needs, "Do not write a loader, hook or plugin integration of your own")
+	require.NotContains(t, result.Reason+result.Needs+strings.Join(result.RequiredInput, " "), "loader/hook integration")
+	require.Contains(t, strings.Join(result.ResumeCommand, " "), "testdrive --framework cypress --all --agent --tracer-version 6.23.0")
+	require.Empty(t, result.Changes)
+}
