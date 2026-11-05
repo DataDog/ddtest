@@ -47,7 +47,19 @@ func (r *Ruby) Name() string {
 }
 
 func (r *Ruby) Detect(repositoryRoot string) (bool, error) {
-	return detectAnyFile(repositoryRoot, "Gemfile")
+	gemfile := rubyGemfile(repositoryRoot)
+	return detectAnyFile(filepath.Dir(gemfile), filepath.Base(gemfile))
+}
+
+func rubyGemfile(root string) string {
+	gemfile := os.Getenv("BUNDLE_GEMFILE")
+	if gemfile == "" {
+		gemfile = "Gemfile"
+	}
+	if filepath.IsAbs(gemfile) {
+		return gemfile
+	}
+	return filepath.Join(root, gemfile)
 }
 
 func (r *Ruby) DetectFramework() (framework.Framework, error) {
@@ -56,7 +68,7 @@ func (r *Ruby) DetectFramework() (framework.Framework, error) {
 	candidates := []framework.Framework{framework.NewRSpec(r), framework.NewMinitest(r)}
 	if hint == "" {
 		candidates = nil
-		gemfile, err := os.ReadFile(filepath.Join(root, "Gemfile"))
+		gemfile, err := os.ReadFile(rubyGemfile(root))
 		if err != nil && !os.IsNotExist(err) {
 			return nil, err
 		}

@@ -195,7 +195,7 @@ func dispatchHelper(t *testing.T, args ...string) (string, string, int) {
 		t.Fatal(err)
 	}
 	command := exec.Command(executable, "-test.run=^TestDispatchHelper$")
-	for _, entry := range os.Environ() {
+	for _, entry := range helperEnvironment() {
 		if !strings.HasPrefix(entry, "_DD_ROOT_GO_SESSION_ID=") {
 			command.Env = append(command.Env, entry)
 		}
