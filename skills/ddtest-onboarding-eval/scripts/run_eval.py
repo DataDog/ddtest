@@ -327,6 +327,94 @@ def read_record(name, directory_fd):
         os.close(fd)
 
 
+NOFOLLOW_DIRECTORY = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+
+
+class SymlinkedPath(OSError):
+    """A component of a path inside an owned trial is a symlink, which is never followed."""
+
+
+def refusal(directory_fd, name, error, shown):
+    """SymlinkedPath when `name` (below directory_fd) is a symlink, else the original error."""
+    try:
+        linked = stat.S_ISLNK(os.stat(name, dir_fd=directory_fd, follow_symlinks=False).st_mode)
+    except OSError:
+        linked = False
+    return SymlinkedPath(f"{shown} is a symlink") if linked else error
+
+
+def open_directory(path):
+    """An fd of an owned folder, refusing a symlink in its place."""
+    try:
+        return os.open(path, NOFOLLOW_DIRECTORY)
+    except OSError as error:
+        raise refusal(None, path, error, str(path)) from error
+
+
+def open_directory_beneath(directory_fd, parts, shown=""):
+    """An fd of the folder at `parts` below directory_fd. Trial code can replace
+    any folder with a symlink, so no component is followed: a symlink raises
+    SymlinkedPath, a missing one FileNotFoundError, a file NotADirectoryError."""
+    fd = os.dup(directory_fd)
+    try:
+        for index, part in enumerate(parts):
+            try:
+                child = os.open(part, NOFOLLOW_DIRECTORY, dir_fd=fd)
+            except OSError as error:
+                raise refusal(fd, part, error, posixpath.join(shown, *parts[:index + 1])) from error
+            os.close(fd)
+            fd = child
+        return fd
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+def read_beneath(directory_fd, parts, limit, shown=""):
+    """Up to limit+1 bytes of the regular file at `parts` below directory_fd, or
+    None for anything else (a FIFO, a folder). Like open_directory_beneath, it
+    follows no symlink, the file's own name included, and never blocks on a FIFO."""
+    parent = open_directory_beneath(directory_fd, parts[:-1], shown)
+    try:
+        try:
+            fd = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
+        except OSError as error:
+            raise refusal(parent, parts[-1], error, posixpath.join(shown, *parts)) from error
+        try:
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                return None
+            chunks, size = [], 0
+            while size <= limit:
+                chunk = os.read(fd, min(1024 * 1024, limit + 1 - size))
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                size += len(chunk)
+            return b"".join(chunks)
+        finally:
+            os.close(fd)
+    finally:
+        os.close(parent)
+
+
+def read_trial_report(trial, checkout, limit):
+    """The checkout's .testoptimization/testdrive.json bytes (up to limit+1), or
+    None when there is none. The checkout must sit directly in the trial folder,
+    and none of the trial folder, the checkout, its report folder or the report
+    is followed if it is a symlink."""
+    if Path(checkout).parent != Path(trial):
+        raise ValueError("Report path escapes owned trial storage")
+    trial_fd = open_directory(trial)
+    try:
+        return read_beneath(trial_fd, [Path(checkout).name, ".testoptimization", "testdrive.json"], limit, str(trial))
+    except SymlinkedPath as error:
+        raise ValueError(f"Report path escapes owned trial storage: {error}") from None
+    except (FileNotFoundError, NotADirectoryError):
+        return None
+    finally:
+        os.close(trial_fd)
+
+
 def harvest_ddtest_records(directory):
     """Completed ddtest invocations' standard output, oldest first, removed
     from the trial. A record still being written is left for later; a record
@@ -501,6 +589,7 @@ class BackgroundCommands:
 # and container-native scratch storage.
 RUBY_FRAMEWORKS = ("rspec", "minitest")
 JAVA_FRAMEWORKS = ("junit4", "junit5", "testng", "spock", "cucumber-java", "karate", "scalatest", "munit")
+FRAMEWORKS = ("jest", "vitest", "playwright", "mocha", "cypress", "cucumber", "webdriverio", "pytest", *RUBY_FRAMEWORKS, *JAVA_FRAMEWORKS)
 
 
 def agent_environment(agent, timeout, framework=None):
@@ -1048,7 +1137,8 @@ def run(args):
     manifest = {"isolation": {"kind":"container", "image":getattr(args,"image",None), "name":container.name,"git_safe_directory":str(checkout)}, "repository": args.repo, "requested_ref": args.ref,
                 "trial_directory": str(trial), "checkout": str(checkout),
                 "ddtest_sha256": hashlib.sha256(binary.read_bytes()).hexdigest(),
-                "agent": args.agent, "requested_model": args.model, "prompt": container.inside(prompt) if hasattr(container,"inside") else prompt,
+                "agent": args.agent, "requested_model": args.model, "resolved_model": None,
+                "ddtest_label": getattr(args, "ddtest_label", None), "prompt": container.inside(prompt) if hasattr(container,"inside") else prompt,
                 "framework_scope": framework,
                 "started_at": time.time(), "commands": [], "status": "preparing",
                 "evaluation": "pending", "ci_execution": "not exercised"}
@@ -1098,6 +1188,14 @@ def run(args):
             agent_errors.append(str(event.get("error", event.get("text", ""))))
         if event["type"] == "result":
             agent_completed = True
+        if event["type"] == "session" and event.get("model"):
+            # The model the CLI reports for its session (Claude's init event); Codex reports none.
+            if manifest["resolved_model"] is None:
+                manifest["resolved_model"] = event["model"]
+            elif event["model"] != manifest["resolved_model"]:
+                models = manifest.setdefault("resolved_models", [manifest["resolved_model"]])
+                if event["model"] not in models:
+                    models.append(event["model"])
         if event["type"] == "item.completed" and "ddtest" in event.get("command", ""):
             for version in re.findall(r"Local runtime: Node (v?\d+\.\d+\.\d+(?:[-+][\w.-]+)?)", event.get("output", "")):
                 observations = manifest.setdefault("runtime_observations", [])
@@ -1350,6 +1448,9 @@ def run(args):
         if readiness and command(["git", "status", "--porcelain"], cwd=checkout):
             raise RuntimeError("A readiness command changed the checkout; choose readiness checks that leave it clean")
         manifest.pop("failure_stage",None)
+        # Setup may commit (catalog trims do): the agent's changes start here,
+        # while "commit" stays the fetched ref's SHA.
+        manifest["agent_baseline"] = command(["git", "rev-parse", "HEAD"], cwd=checkout)
         # Setup descendants cannot mutate credential directories during installation.
         if hasattr(container,"control"):
             container.control("pause",container.name)
@@ -1418,11 +1519,14 @@ def run(args):
                 manifest["isolation"]["processes_stopped"] = False
                 code = finalization_failed(str(error))
         # Processes that could not be stopped may still change the checkout, so
-        # its diff and status would not be stable evidence.
+        # its diff and status would not be stable evidence. The diff starts
+        # from the post-setup baseline, or the fetched commit if setup failed.
         if "commit" in manifest and manifest["isolation"].get("processes_stopped", True):
+            baseline = manifest.get("agent_baseline", manifest["commit"])
             for name, argv in (
-                ("changes.patch", ["git", "diff", "--no-ext-diff", "--no-textconv", manifest["commit"], "--"]),
-                ("status.txt", ["git", "status", "--short", "--untracked-files=all"]),
+                ("changes.patch", ["git", "diff", "--no-ext-diff", "--no-textconv", baseline, "--"]),
+                # Default quoting keeps status.txt ASCII; run_catalog.py decodes it.
+                ("status.txt", ["git", "-c", "core.quotePath=true", "status", "--short", "--untracked-files=all"]),
             ):
                 try:
                     with (output / name).open("w") as destination:
@@ -1458,14 +1562,13 @@ def run(args):
             manifest["status"]="failed"
             manifest["failure_kind"]="authentication"
             code=1
-        report_path = checkout / ".testoptimization" / "testdrive.json"
         report = {}
         try:
-            if not report_path.resolve().is_relative_to(trial):
-                raise ValueError("Report path escapes owned trial storage")
-            if report_path.is_file():
-                with report_path.open("rb") as source:
-                    encoded = source.read(16*1024*1024+1)
+            # Trial code may have replaced the checkout or its report folder with
+            # a symlink (and processes may outlive a failed container removal),
+            # so the report is read by walking open folders, never following one.
+            encoded = read_trial_report(trial, checkout, 16*1024*1024)
+            if encoded is not None:
                 if len(encoded)>16*1024*1024:
                     raise ValueError("Compact report exceeds 16 MiB")
                 report = json.loads(encoded)
@@ -1560,13 +1663,15 @@ def main():
     parser.add_argument("--node", type=Path,
                         help="Absolute Node executable for setup and Codex non-login shells; Codex only")
     parser.add_argument("--python", type=Path, help="Absolute Python executable inside the image; create and activate a private trial venv before setup")
-    parser.add_argument("--framework", choices=("jest", "vitest", "playwright", "mocha", "cypress", "cucumber", "webdriverio", "pytest", *RUBY_FRAMEWORKS, *JAVA_FRAMEWORKS),
+    parser.add_argument("--framework", choices=FRAMEWORKS,
                         help="Optional scope for mixed-framework repositories; adds only the framework to the minimal prompt")
     parser.add_argument("--readiness-command", action="append", default=[], help="Repeatable native runtime/browser readiness checks before the uncoached agent")
     parser.add_argument("--setup-command", action="append", default=[], help="Repeatable, no implicit shell")
     parser.add_argument("--pnpm", help="Install this pnpm version privately for setup and the agent (e.g. the version the project's CI pins)")
     parser.add_argument("--output", type=Path, help="New directory for evaluator evidence")
     parser.add_argument("--model", help="Optional requested model; default is the CLI's configured model")
+    parser.add_argument("--ddtest-label", help="Free-text ddtest provenance, such as its source commit, recorded in run.json "
+                                               "(a plain go build reports version dev)")
     parser.add_argument("--timeout", type=float, default=1800, help="Seconds allowed per command, each agent turn included")
     parser.add_argument("--user-answer", action="append", default=[], metavar="KIND=VALUE",
                         help="Repeatable scripted reply to a ddtest question only the user can answer: ci_runtime=<runtime>=<version>, "

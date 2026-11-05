@@ -45,7 +45,8 @@ func TestProbeRecoveryAfterKilledProcess(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	child := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestProbeRecoveryAfterKilledProcess$")
-	child.Env = append(os.Environ(), "DDTEST_PROBE_CRASH_HELPER="+root)
+	// This helper's stdout is a protocol, so it must not start a CI test session.
+	child.Env = append(os.Environ(), "DD_CIVISIBILITY_ENABLED=false", "DDTEST_PROBE_CRASH_HELPER="+root)
 	stdout, err := child.StdoutPipe()
 	require.NoError(t, err)
 	require.NoError(t, child.Start())

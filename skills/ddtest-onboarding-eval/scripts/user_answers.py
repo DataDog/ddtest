@@ -12,6 +12,8 @@ import json
 import re
 
 KINDS = ("ci_runtime", "ci_confirm", "ci_provider")
+# The question codes a --user-answer form can answer.
+SCRIPTABLE_CODES = ("ci_provider_required", "ci_runtime_required", "ci_setup_confirmation_required")
 _NAME = r"[a-z0-9][a-z0-9_-]*"
 # The versions ddtest's --ci-runtime takes (after an optional v): Node 22,
 # 22.11 or 22.11.0; Ruby 3.3 or 3.3.6, with a minor version.
@@ -115,6 +117,22 @@ def question(result):
     return asked
 
 
+def unscriptable(result):
+    """The code of a user question no --user-answer form answers, or None.
+
+    Besides ask_user questions, ddtest asks for a "User decision" in
+    required_input (such as substitute_runtime_unaccepted or
+    scope_decision_required); the harness never answers those.
+    """
+    if not isinstance(result, dict) or result.get("status") != "needs_input":
+        return None
+    required = result.get("required_input") if isinstance(result.get("required_input"), list) else []
+    decision = any(isinstance(item, str) and item.startswith("User decision") for item in required)
+    if (result.get("next_action") == "ask_user" or decision) and result.get("code") not in SCRIPTABLE_CODES:
+        return str(result.get("code") or "unknown")
+    return None
+
+
 # The values ddtest accepts for each placeholder a ci_confirm form names, as
 # its own parser checks them (<site> is jenkinsSiteValue in
 # internal/onboard/ci_provider_jenkins_setup.go). A value ddtest would reject
@@ -161,7 +179,7 @@ def reply(asked, answers):
             answered("ci_provider", chosen, f"CI provider: {chosen['provider']}.")
         else:
             missing.append("ci_provider:" + "|".join(required))
-    elif code in ("ci_runtime_required", "ci_setup_confirmation_required") and required:
+    elif code in SCRIPTABLE_CODES[1:] and required:
         for item in required:
             kind, _, subject = item.partition(":")
             if code == "ci_runtime_required" and kind == "ci_runtime":

@@ -37,6 +37,32 @@ func TestTestEventCountRecognizesOneTest(t *testing.T) {
 	require.Equal(t, 1, count)
 }
 
+func TestEventsInheritCapabilitiesFromPayloadMetadata(t *testing.T) {
+	const capability = "_dd.library_capabilities.auto_test_retries"
+	payload, err := msgp.AppendIntf(nil, map[string]any{
+		"metadata": map[string]any{
+			"*":              map[string]any{"library_version": "1.2.3", capability: "0"},
+			"test":           map[string]any{capability: "1"},
+			"test_suite_end": map[string]any{"suite-only": "yes"},
+		},
+		"events": []any{
+			map[string]any{"type": "test", "content": map[string]any{"meta": map[string]any{"test.name": "inherited"}}},
+			map[string]any{"type": "test", "content": map[string]any{"meta": map[string]any{"test.name": "overridden", capability: "2"}}},
+			map[string]any{"type": "test_suite_end", "content": map[string]any{}},
+		},
+	})
+	require.NoError(t, err)
+	server := &Server{collectEvents: true, requests: []RawRequest{{Method: http.MethodPost, Path: constants.TestCycleURLPath, Body: payload}}}
+	facts, err := server.Facts()
+	require.NoError(t, err)
+	require.Len(t, facts.Events, 3)
+	require.Equal(t, "1", facts.Events[0].Tags[capability], "event type metadata overrides wildcard metadata")
+	require.Equal(t, "2", facts.Events[1].Tags[capability], "event metadata overrides shared metadata")
+	require.Equal(t, "0", facts.Events[2].Tags[capability], "test metadata does not leak into suites")
+	require.Equal(t, "1.2.3", facts.Events[0].Tags["library_version"])
+	require.NotContains(t, facts.Events[0].Tags, "suite-only")
+}
+
 func TestTestReferencesReadReportFields(t *testing.T) {
 	payload := msgp.AppendMapHeader(nil, 1)
 	payload = msgp.AppendString(payload, "events")

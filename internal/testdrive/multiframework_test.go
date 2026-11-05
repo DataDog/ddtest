@@ -31,7 +31,8 @@ func TestPrepareRubyEnvironment(t *testing.T) {
 				preloads := "-rbundler/setup -rdatadog/ci/auto_instrument"
 				t.Setenv("RUBYOPT", preloads)
 				t.Setenv("BUNDLE_GEMFILE", "config/Gemfile.test")
-				requireWriteFile(t, "Gemfile", "gem '"+name+"'\n")
+				require.NoError(t, os.MkdirAll("config", 0755))
+				requireWriteFile(t, "config/Gemfile.test", "gem '"+name+"'\n")
 				if available {
 					script := `#!/bin/sh
 [ "$RUBYOPT" = '' ] || exit 2

@@ -91,7 +91,7 @@ func featureSatisfied(framework string, feature featureResult) bool {
 	for _, policy := range featurePolicies(framework) {
 		if policy.Name == feature.Name {
 			if policy.Status == "required" {
-				return feature.Status == "passed"
+				return feature.Status == "passed" || feature.Status == "not supported" && feature.Code == tracerFeatureUnsupported
 			}
 			return feature.Status == policy.Status
 		}

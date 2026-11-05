@@ -258,17 +258,23 @@ func (s *Server) events() ([]Event, error) {
 			return nil, err
 		}
 		values, _ := payload["events"].([]any)
+		shared, _ := payload["metadata"].(map[string]any)
 		for _, value := range values {
 			event, _ := value.(map[string]any)
 			content, _ := event["content"].(map[string]any)
 			metadata, _ := content["meta"].(map[string]any)
+			eventType := text(event["type"])
+			common, _ := shared["*"].(map[string]any)
+			typed, _ := shared[eventType].(map[string]any)
 			tags := make(map[string]string)
-			for key, value := range metadata {
-				if v, ok := value.(string); ok {
-					tags[key] = v
+			for _, source := range []map[string]any{common, typed, metadata} {
+				for key, value := range source {
+					if v, ok := value.(string); ok {
+						tags[key] = v
+					}
 				}
 			}
-			events = append(events, Event{Type: text(event["type"]), Tags: tags})
+			events = append(events, Event{Type: eventType, Tags: tags})
 		}
 	}
 	return events, nil

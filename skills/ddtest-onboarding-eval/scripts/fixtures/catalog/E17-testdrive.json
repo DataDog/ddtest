@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "framework": "scalatest",
+  "summary": {
+    "status": "INCOMPLETE",
+    "local_validation": "PASSED",
+    "blocking_checks": [
+      "runtime fidelity: validated on substitute Java 17.0.20.1; .github/workflows/build-maven.yml / build (java: \"11\") / step 5 (mvn -B clean -P checkFormat verify) runs on Java 11. Accept this evidence with --accept-substitute-runtime, or set JAVA_HOME to an existing Java 11 JDK and rerun",
+      "runtime fidelity: validated on substitute Java 17.0.20.1; .github/workflows/build-maven.yml / build (java: \"21\") / step 5 (mvn -B clean -P checkFormat verify) runs on Java 21. Accept this evidence with --accept-substitute-runtime, or set JAVA_HOME to an existing Java 21 JDK and rerun",
+      "CI runtime: inconclusive",
+      "unresolved CI scope: .github/workflows/release.yml / release / step 1 (echo \"${{ toJSON(github.event.inputs) }}\"): Runs before the job's scalatest tests and may change what they run, which ddtest can't replay: CI command expression was not resolved; ddtest cannot tell which tests it runs: echo \"${{ toJSON(github.event.inputs) }}\"; unresolved CI workflow expression requires review: ${{ toJSON(github.event.inputs) }}",
+      "unresolved CI scope: .github/workflows/release.yml / release / step 5 (echo -n \"${{ steps.secrets.outputs.MAVEN_CENTRAL_GPG_SIGNING_KEY_SEC }}\" \\\n  | base64 --decode \\\n  | gpg -q --allow-secret-key-import --import --no-tty --batch --yes\necho -n \"${{ steps.secrets.outputs.MAVEN_CENTRAL_GPG_SIGNING_KEY_PUB }}\" \\\n  | base64 --decode \\\n  | gpg -q --import --no-tty --batch --yes): Runs before the job's scalatest tests and may change what they run, which ddtest can't replay: CI command expression was not resolved; ddtest cannot tell which tests it runs: echo -n \"${{ steps.secrets.outputs.MAVEN_CENTRAL_GPG_SIGNING_KEY_SEC }}\" \\\n  | base64 --decode \\\n  | gpg -q --allow-secret-key-import --import --no-tty --batch --yes\necho -n \"${{ steps.secrets.outputs.MAVEN_CENTRAL_GPG_SIGNING_KEY_PUB }}\" \\\n  | base64 --decode \\\n  | gpg -q --import --no-tty --batch --yes\n; unresolved CI workflow expression requires review: ${{ steps.secrets.outputs.MAVEN_CENTRAL_GPG_SIGNING_KEY_SEC }}",
+      "unresolved CI scope: .github/workflows/release.yml / release / step 9 (./mvnw release:prepare release:perform -B \\\n  -Dgpg.passphrase=\"${{ steps.secrets.outputs.MAVEN_CENTRAL_GPG_SIGNING_KEY_PASSPHRASE }}\" \\\n  -Dresume=false \\\n  -Dtag=${RELEASE_VERSION} \\\n  -DreleaseVersion=${RELEASE_VERSION} \\\n  -DdevelopmentVersion=${DEVELOPMENT_VERSION} \\\n  -DpushChanges=${PUSH_CHANGES} \\\n  -DremoteTagging=${PUSH_CHANGES} \\\n  -DlocalCheckout=${{ inputs.dryRun }} \\\n  -P-autoFormat \\\n  -Darguments='-P-autoFormat -Dskip.central.release=${SKIP_REPO_DEPLOY} -Dskip.camunda.release=${SKIP_REPO_DEPLOY} -Dgpg.passphrase=\"${{ steps.secrets.outputs.MAVEN_CENTRAL_GPG_SIGNING_KEY_PASSPHRASE }}\"'\n\n# switch to the directory to which maven checks out the release tag\n# see https://maven.apache.org/maven-release/maven-release-plugin/perform-mojo.html#workingDirectory\npushd target/checkout\nexport TAG_REVISION=$(git log -n 1 --pretty=format:'%h')\necho \"tagRevision=${TAG_REVISION}\" >> $GITHUB_OUTPUT\npopd): CI command expression was not resolved; ddtest cannot tell which tests it runs: ./mvnw release:prepare release:perform -B \\\n  -Dgpg.passphrase= \\\n  -Dresume=false \\\n  -Dtag=${RELEASE_VERSION} \\\n  -DreleaseVersion=${RELEASE_VERSION} \\\n  -DdevelopmentVersion=${DEVELOPMENT_VERSION} \\\n  -DpushChanges=${PUSH_CHANGES} \\\n  -DremoteTagging=${PUSH_CHANGES} \\\n  -DlocalCheckout=${{ inputs.dryRun }} \\\n  -P-autoFormat \\\n  -Darguments='-P-autoFormat -Dskip.central.release=${SKIP_REPO_DEPLOY} -Dskip.camunda.release=${SKIP_REPO_DEPLOY} -Dgpg.passphrase=\"${{ steps.secrets.outputs.MAVEN_CENTRAL_GPG_SIGNING_KEY_PASSPHRASE }}\"'\n\n# switch to the directory to which maven checks out the release tag\n# see https://maven.apache.org/maven-release/maven-release-plugin/perform-mojo.html#workingDirectory\npushd target/checkout\nexport TAG_REVISION=$(git log -n 1 --pretty=format:'%h')\necho \"tagRevision=${TAG_REVISION}\" >> $GITHUB_OUTPUT\npopd\n; unresolved CI workflow expression requires review: ${{ inputs.dryRun }}"
+    ],
+    "final_response": "NOT COMPLETE: onboarding validation is INCOMPLETE. Report the blockers below; do not describe onboarding as complete or successful.\nUnresolved CI scope blockers are limits of ddtest's static analysis: the user decides whether to run the tests in a CI step ddtest can read or to keep those steps reported as not validated. Do not edit CI to make ddtest accept them unless a ddtest result prescribes that edit.\nOnboarding validation: INCOMPLETE.\nLocal results so far (they do not complete onboarding): executed ScalaTest validations passed (1/1); local validation passed.\nConfigurations: 1/1 validated; 1 executed with paired comparison; 0 blocked, 0 not exercised, 0 incomplete.\nReporting: 1222 test executions; 1222 source-test identities.\nCompatibility: compatible. Features: 6/6 supported checks passed.\nReal-suite coverage: observed in 1/1 reporting runs; 1219/1222 results linked to source.\nCI configuration: inconclusive (static analysis). CI execution and Datadog backend processing: not exercised.\nHuman action: Add the DD_API_KEY repository secret (GitHub Settings > Secrets and variables > Actions). Until it exists, the Datadog step fails without failing the job and tests run untraced.\nCI runtime scope (static): Java versions 3 instrumented, 0 excluded, 1 unverified (each version counted once; per-job findings in Results JSON).\nCI edits require a full local rerun; an actual CI run does not update this local report.\nBlockers: 6 \u2014 runtime fidelity: validated on substitute Java 17.0.20.1; .github/workflows/build-maven.yml / build (java: \"11\") / step 5 (mvn -B clean -P checkFormat verify) runs on Java 11. Accept this evidence with --accept-substitute-runtime, or set JA\u2026 (see Results JSON); runtime fidelity: validated on substitute Java 17.0.20.1; .github/workflows/build-maven.yml / build (java: \"21\") / step 5 (mvn -B clean -P checkFormat verify) runs on Java 21. Accept this evidence with --accept-substitute-runtime, or set JA\u2026 (see Results JSON); and 4 more. Full blockers and commands are in Results JSON.\n\n[Open report](</trial/repo/.testoptimization/report.html>)\n[Results JSON](</trial/repo/.testoptimization/testdrive.json>)\nCleanup: passed (ddtest sessions only).\nWorkflow checks: 5 recorded; Git/package exclusions and owned cleanup: passed. Preserve both reports. No further cache or package audit is required for unchanged inputs."
+  },
+  "features": [
+    {
+      "project": "configuration 1: mvn -B clean -P checkFormat verify",
+      "name": "auto-retries",
+      "status": "passed"
+    },
+    {
+      "project": "configuration 1: mvn -B clean -P checkFormat verify",
+      "name": "early-flake-detection",
+      "status": "passed"
+    },
+    {
+      "project": "configuration 1: mvn -B clean -P checkFormat verify",
+      "name": "skipping",
+      "status": "passed"
+    },
+    {
+      "project": "configuration 1: mvn -B clean -P checkFormat verify",
+      "name": "quarantine",
+      "status": "passed"
+    },
+    {
+      "project": "configuration 1: mvn -B clean -P checkFormat verify",
+      "name": "disabled",
+      "status": "passed"
+    },
+    {
+      "project": "configuration 1: mvn -B clean -P checkFormat verify",
+      "name": "attempt-to-fix",
+      "status": "passed"
+    }
+  ]
+}

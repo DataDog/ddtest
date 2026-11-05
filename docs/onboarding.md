@@ -1994,8 +1994,9 @@ dd-java-agent. Native results (Surefire/Failsafe reports, the
 scalatest-maven-plugin's `target/scalatest-reports` and Karate's
 `target/karate-reports` feature reports) must match (identities, outcomes,
 failure types and messages, exit code), each must match one reported test
-execution, the reporting run must cover repository application sources, and all
-six feature controls run with a probe test in a module of the selected framework
+execution, the reporting run must cover repository application sources, and
+supported feature controls run with a probe test in a module of the selected
+framework
 (a Groovy specification for Spock, compiled by the project's GMavenPlus setup,
 and a Scala suite for ScalaTest and MUnit, compiled by its scala-maven-plugin).
 For Cucumber JVM the probe is a feature with a step in the glue package of the
@@ -2006,8 +2007,23 @@ module without such a runner, or a suite that pins its own features or tags,
 leaves the features inconclusive. For Karate the probe is a feature that the
 module's runner class (`@Karate.Test`, `@RunWith(Karate.class)` or a JUnit test
 calling `Runner.path`) runs through `karate.options`, so `karate-config.js` and
-`karate.env` still apply; the runner's own JUnit result is left out. MUnit's
-runner is not one dd-java-agent can skip tests in, so its skipping and disabled
+`karate.env` still apply; the runner's own JUnit result is left out.
+
+The passing and failing probe controls also read the tracer's advertised
+`_dd.library_capabilities.*` tags, including tags in shared payload metadata.
+When both controls advertise capabilities but omit a feature, that feature is
+reported as **not supported**, with the framework version the tracer reported.
+It is not exercised or counted as a passed check, and does not block
+**COMPLETE LOCALLY**. For example, dd-java-agent advertises skipping and disabled
+tests on TestNG 7.4.0, but requires TestNG 7.5 or later for early flake detection,
+auto retries, quarantine and attempt-to-fix. An advertised feature must still
+pass its probe; a quarantine failure with an older Surefire provider remains a
+failure. Tracers that send no capability tags still run every applicable probe.
+The same capability rule applies to JavaScript, Python and Ruby. Vitest skipping
+on the `ddtest run` path is exercised through ddtest's planner independently of
+the tracer's skipping capability.
+
+MUnit's runner is not one dd-java-agent can skip tests in, so its skipping and disabled
 features are reported as not supported. A ScalaTest suite that Surefire runs
 through ScalaTest's `JUnitRunner` gets a probe with the same runner; dd-java-agent
 1.67.1 and 1.68.0 fail every test of such a suite, which validation reports as a

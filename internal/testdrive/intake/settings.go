@@ -30,6 +30,8 @@ type Scenario struct {
 	Suite      string
 	Test       string
 	Parameters string
+	// CollectEvents retains tags for the small reporting-only probe controls.
+	CollectEvents bool
 	// KnownModules each get an unrelated known test, for tracers that treat
 	// a module without known tests as unusable for early flake detection.
 	KnownModules []string
