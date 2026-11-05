@@ -13,12 +13,19 @@ import (
 )
 
 type binaryCache struct {
-	once sync.Once
-	path string
-	err  error
+	once      sync.Once
+	directory string
+	path      string
+	err       error
 }
 
-var compiled = new(binaryCache)
+var compiled = &binaryCache{directory: os.TempDir()}
+
+// SetBinaryDirectory gives the shared executable a process-owned directory.
+// Call from TestMain before running tests that override their temporary paths.
+func SetBinaryDirectory(directory string) {
+	compiled = &binaryCache{directory: directory}
+}
 
 // Capture the package directory before customer fixtures use t.Chdir.
 var repositoryRoot, repositoryRootError = filepath.Abs("../..")
@@ -34,18 +41,18 @@ func DDTest(t testing.TB) string {
 		}
 		return path
 	}
-	compiled.once.Do(func() { compiled.path, compiled.err = buildDDTest(t.Context()) })
+	compiled.once.Do(func() { compiled.path, compiled.err = buildDDTest(t.Context(), compiled.directory) })
 	if compiled.err != nil {
 		t.Fatal(compiled.err)
 	}
 	return compiled.path
 }
 
-func buildDDTest(ctx context.Context) (string, error) {
+func buildDDTest(ctx context.Context, parent string) (string, error) {
 	if repositoryRootError != nil {
 		return "", repositoryRootError
 	}
-	directory, err := os.MkdirTemp("", "ddtest-binary-")
+	directory, err := os.MkdirTemp(parent, "ddtest-binary-")
 	if err != nil {
 		return "", err
 	}

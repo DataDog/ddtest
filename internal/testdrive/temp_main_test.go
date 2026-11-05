@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/DataDog/ddtest/internal/onboard"
+	"github.com/DataDog/ddtest/internal/testutil"
 )
 
 func TestMain(m *testing.M) {
@@ -21,6 +22,7 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	_ = os.Setenv("DDTEST_ISOLATED_TEST_TMP", "1")
+	testutil.SetBinaryDirectory(root)
 	for _, key := range []string{"TMPDIR", "TMP", "TEMP"} {
 		_ = os.Setenv(key, root)
 	}

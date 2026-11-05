@@ -15,11 +15,12 @@ func TestDDTestBuildIsSharedAcrossWorkingDirectories(t *testing.T) {
 		t.Skip("POSIX fake Go executable")
 	}
 	previous := compiled
-	compiled = new(binaryCache)
 	t.Cleanup(func() { compiled = previous })
 	t.Setenv("DDTEST_TEST_BINARY", "")
 	directory := t.TempDir()
-	t.Setenv("TMPDIR", directory)
+	SetBinaryDirectory(directory)
+	firstTemporaryDirectory := t.TempDir()
+	t.Setenv("TMPDIR", firstTemporaryDirectory)
 	log := filepath.Join(directory, "builds")
 	t.Setenv("BUILD_LOG", log)
 	goCommand := "#!/bin/sh\nprintf '%s\\n' \"$PWD\" >> \"$BUILD_LOG\"\nprintf '#!/bin/sh\\nexit 0\\n' > \"$3\"\nchmod +x \"$3\"\n"
@@ -27,6 +28,9 @@ func TestDDTestBuildIsSharedAcrossWorkingDirectories(t *testing.T) {
 	t.Setenv("PATH", directory+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Chdir(t.TempDir())
 	first := DDTest(t)
+	t.Chdir(directory)
+	require.NoError(t, os.RemoveAll(firstTemporaryDirectory), "simulate the first journey's cleanup")
+	t.Setenv("TMPDIR", directory)
 	t.Chdir(t.TempDir())
 	require.Equal(t, first, DDTest(t))
 	data, err := os.ReadFile(log)
