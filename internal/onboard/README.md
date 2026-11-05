@@ -22,6 +22,9 @@ Start at the boundary that owns the behavior you need to change:
 | Literal command recognition without executing repository code | `internal/testcommand` |
 | Setup plans and bounded source edits | `internal/onboard/execution_plan.go`, `apply*.go` |
 | Validation preparation and execution | `internal/testdrive/testdrive.go` |
+| Shared paired-execution engine and framework adapters | `internal/testdrive/paired_validation.go` |
+| Shared preflight evidence and CI configuration checks | `internal/testdrive/preflight.go` |
+| Native result model, outcome comparison and telemetry matching | `internal/testdrive/native_results.go` |
 | Coordinated setup and validation | `internal/testdrive/workflow.go` |
 | Attempt state, failure policy and retry handoffs | `internal/testdrive/workflow_attempt.go` |
 | Shared CI questions and pinned tracer selection | `internal/testdrive/workflow_ci.go` |

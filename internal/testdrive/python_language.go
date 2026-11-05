@@ -3,7 +3,6 @@ package testdrive
 import (
 	"context"
 	"fmt"
-	"io"
 	"maps"
 	"os"
 	"path/filepath"
@@ -150,11 +149,9 @@ func (pythonLanguage) noResultsFinding(runtime reportRuntime, noEvents, commandF
 
 func (pythonLanguage) pairedFrameworks() map[string]pairedFramework {
 	return map[string]pairedFramework{"pytest": {
-		run:      (*Testdrive).runPytest,
-		features: (*Testdrive).runPytestFeatures,
-		preflight: func(t *Testdrive) func(context.Context, io.Writer, *validationResult) error {
-			return t.checkPytestPreflight
-		},
+		run:            (*Testdrive).runPytest,
+		features:       (*Testdrive).runPytestFeatures,
+		preflight:      (*Testdrive).checkPytestPreflight,
 		telemetry:      verifyPytestTelemetry,
 		probeTelemetry: verifyPytestTelemetry,
 		verifyInstallation: func(t *Testdrive, ctx context.Context, path string) error {

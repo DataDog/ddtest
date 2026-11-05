@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
-	"io"
 	"strings"
 	"time"
 
@@ -12,7 +11,6 @@ import (
 	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
-	"github.com/DataDog/ddtest/internal/testdrive/workspace"
 )
 
 // validationLanguage is everything testdrive needs from one language. Shared
@@ -186,39 +184,6 @@ type environmentRequest struct {
 }
 
 // pairedFramework is one framework's part of paired validation.
-type pairedFramework struct {
-	// run executes one baseline, reporting-only or probe variant.
-	run func(t *Testdrive, ctx context.Context, output io.Writer, session *workspace.Session, preload string, spec runSpec) (validationRun, error)
-	// features runs the feature probes after a compatible pair.
-	features func(t *Testdrive, ctx context.Context, output io.Writer, session *workspace.Session, preload string, baseline validationRun, result *validationResult) error
-	// preflight checks the framework's own prerequisites; nil has none.
-	preflight func(t *Testdrive) func(context.Context, io.Writer, *validationResult) error
-	// telemetry matches native results to reported telemetry; nil uses
-	// defaultTelemetry.
-	telemetry func(validationRun) verdict
-	// probeTelemetry matches a probe control's native result to its
-	// telemetry; nil uses the shared file-based check.
-	probeTelemetry func(validationRun) verdict
-	// preflightAfterInstall runs preflight again once the tracer is
-	// installed, to inspect the dependencies that load it.
-	preflightAfterInstall bool
-	// verifyInstallation confirms that the selected runtime loads the selected tracer.
-	verifyInstallation func(t *Testdrive, ctx context.Context, preload string) error
-	// missingCoverage is the blocking check when real-suite coverage is
-	// missing; empty uses the default.
-	missingCoverage string
-	// outcomeTotals adds the reporting-only native outcomes summed across
-	// configurations to the handoff.
-	outcomeTotals bool
-}
-
-// Neutral names for the paired-validation building blocks every language
-// shares; the originals are named after the framework that introduced them.
-type (
-	nativeTest     = jestTest
-	preflightCheck = jestPreflight
-)
-
 // defaultTelemetry matches native results to telemetry by file, name and status.
 func defaultTelemetry(run validationRun) verdict { return verifyJestTelemetry(run) }
 
@@ -254,16 +219,6 @@ func languageForFramework(framework string) validationLanguage {
 		}
 	}
 	return nil
-}
-
-// pairedFrameworkNamed returns the paired-validation adapter of framework.
-func pairedFrameworkNamed(framework string) (pairedFramework, bool) {
-	language := languageForFramework(framework)
-	if language == nil {
-		return pairedFramework{}, false
-	}
-	adapter, ok := language.pairedFrameworks()[framework]
-	return adapter, ok
 }
 
 // lang is the selected language; a run without a registered one gets

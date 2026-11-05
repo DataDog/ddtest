@@ -248,9 +248,7 @@ func (javaLanguage) pairedFrameworks() map[string]pairedFramework {
 		features: func(t *Testdrive, ctx context.Context, output io.Writer, session *workspace.Session, agent string, baseline validationRun, result *validationResult) error {
 			return t.runJavaFeatures(ctx, output, session, agent, baseline, result)
 		},
-		preflight: func(t *Testdrive) func(context.Context, io.Writer, *validationResult) error {
-			return t.checkJavaPreflight
-		},
+		preflight: (*Testdrive).checkJavaPreflight,
 		telemetry: verifyJavaTelemetry,
 		// The agent reports no source file for some frameworks, such as
 		// Cucumber, so the probe is matched by module, class and name.

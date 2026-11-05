@@ -95,51 +95,37 @@ func (javascriptLanguage) pairedFrameworks() map[string]pairedFramework {
 			features: func(t *Testdrive, ctx context.Context, output io.Writer, session *workspace.Session, preload string, _ validationRun, result *validationResult) error {
 				return t.runJestFeatures(ctx, output, session, preload, result)
 			},
-			preflight: func(t *Testdrive) func(context.Context, io.Writer, *validationResult) error {
-				return t.checkJestPreflight
-			},
+			preflight: (*Testdrive).checkJestPreflight,
 		},
 		"vitest": {
-			run:      (*Testdrive).runVitest,
-			features: (*Testdrive).runVitestFeatures,
-			preflight: func(t *Testdrive) func(context.Context, io.Writer, *validationResult) error {
-				return t.checkVitestPreflight
-			},
+			run:       (*Testdrive).runVitest,
+			features:  (*Testdrive).runVitestFeatures,
+			preflight: (*Testdrive).checkVitestPreflight,
 		},
 		"mocha": {
-			run:      (*Testdrive).runMocha,
-			features: (*Testdrive).runMochaFeatures,
-			preflight: func(t *Testdrive) func(context.Context, io.Writer, *validationResult) error {
-				return t.checkMochaPreflight
-			},
+			run:       (*Testdrive).runMocha,
+			features:  (*Testdrive).runMochaFeatures,
+			preflight: (*Testdrive).checkMochaPreflight,
 		},
 		"playwright": {
-			run:      (*Testdrive).runPlaywright,
-			features: (*Testdrive).runPlaywrightFeatures,
-			preflight: func(t *Testdrive) func(context.Context, io.Writer, *validationResult) error {
-				return t.checkPlaywrightPreflight
-			},
+			run:       (*Testdrive).runPlaywright,
+			features:  (*Testdrive).runPlaywrightFeatures,
+			preflight: (*Testdrive).checkPlaywrightPreflight,
 		},
 		"cypress": {
-			run:      (*Testdrive).runCypress,
-			features: (*Testdrive).runCypressFeatures,
-			preflight: func(t *Testdrive) func(context.Context, io.Writer, *validationResult) error {
-				return t.checkCypressPreflight
-			},
+			run:       (*Testdrive).runCypress,
+			features:  (*Testdrive).runCypressFeatures,
+			preflight: (*Testdrive).checkCypressPreflight,
 		},
 		"cucumber": {
-			run:      (*Testdrive).runCucumber,
-			features: (*Testdrive).runCucumberFeatures,
-			preflight: func(t *Testdrive) func(context.Context, io.Writer, *validationResult) error {
-				return t.checkCucumberPreflight
-			},
+			run:       (*Testdrive).runCucumber,
+			features:  (*Testdrive).runCucumberFeatures,
+			preflight: (*Testdrive).checkCucumberPreflight,
 		},
 		"webdriverio": {
-			run:      (*Testdrive).runWebdriverIO,
-			features: (*Testdrive).runWebdriverIOFeatures,
-			preflight: func(t *Testdrive) func(context.Context, io.Writer, *validationResult) error {
-				return t.checkWebdriverIOPreflight
-			},
+			run:       (*Testdrive).runWebdriverIO,
+			features:  (*Testdrive).runWebdriverIOFeatures,
+			preflight: (*Testdrive).checkWebdriverIOPreflight,
 		},
 	}
 }
