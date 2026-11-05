@@ -973,13 +973,13 @@ var statusSubshellProviders = map[string]func(t *testing.T, root string, command
 // the shell's flow, or the status it exits with, makes the subshell
 // unresolved: the saved-status exit might never run, as after exit 0.
 func TestStatusSubshellRejectsCommandsThatSkipTheExit(t *testing.T) {
-	for _, middle := range []string{
+	for _, middle := range append([]string{
 		"exit 0", "return 0", "exec cucumber-junit", "break", "continue", "set +e", `\exit 0`, "'exit' 0", "eval exit 0",
 		"source ./convert.sh", ". ./convert.sh", "trap 'exit 0' EXIT", "builtin exit 0", "command exit 0",
 		"cucumber-junit < r.json & :", "cat r.json | cucumber-junit || true", "cucumber-junit < r.json && exit 0",
 		"status=0", "status=0 cucumber-junit", "export status=0", "unset status", ": $((status=0))", "let status=0", "echo ${status:=0}",
 		"(exit 0)", "{ exit 0; }", "if true; then exit 0; fi", "f() { exit 0; }", "! cucumber-junit", "$CONVERT r.json",
-	} {
+	}, statusWritingBuiltins...) {
 		t.Run(middle, func(t *testing.T) {
 			run := `(status=0; npx cucumber-js || status=$?; ` + middle + ` || { converted=$?; [ "$status" -ne 0 ] || status=$converted; }; exit "$status")`
 			step := runtimeStep{Run: run}
@@ -988,7 +988,7 @@ func TestStatusSubshellRejectsCommandsThatSkipTheExit(t *testing.T) {
 			require.Empty(t, step.afterTests)
 		})
 	}
-	for _, middle := range []string{"cat r.json | cucumber-junit > j.xml", "cucumber-junit < r.json > j.xml 2>&1", "status-report r.json", "echo $other", ": done"} {
+	for _, middle := range []string{"cat r.json | cucumber-junit > j.xml", "cucumber-junit < r.json > j.xml 2>&1", "status-report r.json", "echo $other", ": done", `printf 'done\n'`, "test -f j.xml", "sort -o status r.txt", "/usr/bin/printf -v"} {
 		step := runtimeStep{Run: `(status=0; npx cucumber-js || status=$?; ` + middle + ` || { converted=$?; [ "$status" -ne 0 ] || status=$converted; }; exit "$status")`}
 		step.readStatusSubshell()
 		require.Equal(t, []string{middle}, step.afterTests, middle)
@@ -1004,8 +1004,26 @@ func TestStatusSubshellRejectsCommandsThatSkipTheExit(t *testing.T) {
 			require.NoError(t, err)
 			require.Empty(t, scope.Commands, "an exit 0 before the saved status masks failing tests")
 			require.NotEmpty(t, scope.Unresolved)
+
+			for _, middle := range statusWritingBuiltins {
+				write(t, root, "npm ci", `(status=0; ./node_modules/.bin/cucumber-js || status=$?; `+middle+` || { converted=$?; [ "$status" -ne 0 ] || status=$converted; }; exit "$status")`)
+				scope, err := DiscoverValidationScope(root, "cucumber")
+				require.NoError(t, err)
+				require.Empty(t, scope.Commands, "%s overwrites the saved status", middle)
+				require.NotEmpty(t, scope.Unresolved, middle)
+			}
 		})
 	}
+}
+
+// Builtins that write a shell variable named by an argument, here the saved
+// status, so the subshell's exit would mask failing tests, or change how the
+// shell runs later commands; no builtin but those that only print or test
+// may run after the tests.
+var statusWritingBuiltins = []string{
+	"printf -v status 0", "printf -vstatus 0", "printf -- -v", `printf "$format" 0`, "read status <<<0", "read -r status < r.txt",
+	"mapfile status < r.txt", "readarray -t status < r.txt", "getopts a status", "wait -p status", "compgen -V status -W 0",
+	"hash -p /bin/true cucumber-junit", "[[ -n $((status=0)) ]]",
 }
 
 // The commands after a status subshell's tests are read as the same

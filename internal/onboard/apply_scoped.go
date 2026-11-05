@@ -224,18 +224,26 @@ func stmtText(src string, stmt *syntax.Stmt) string {
 	return strings.TrimSpace(src[stmt.Pos().Offset():end.Offset()])
 }
 
-// Builtins that change the shell's control flow or state, which a command
-// between a status subshell's tests and its exit must not run: the exit
-// could be skipped, or report another status.
-var statusFlowBuiltins = []string{"exit", "return", "exec", "break", "continue", "set", "shopt", "trap", "eval", "source", ".", "builtin", "command", "unset", "readonly", "export", "local", "declare", "typeset", "shift", "wait", "kill", "enable", "alias", "ulimit", "umask", "cd", "pushd", "popd", "let"}
+// The builtins of bash and POSIX shells (bash's enable -a), which run in
+// the shell itself, so can change its control flow or state, such as the
+// variables a status subshell exits with: read status <<<0, printf -v
+// status 0, mapfile, getopts, declare, eval, source and many more. A command
+// between a status subshell's tests and its exit runs an external program
+// instead, which can't, or one of statusSafeBuiltins.
+var shellBuiltins = []string{".", ":", "[", "alias", "bg", "bind", "break", "builtin", "caller", "cd", "command", "compgen", "complete", "compopt", "continue", "declare", "dirs", "disown", "echo", "enable", "eval", "exec", "exit", "export", "false", "fc", "fg", "getopts", "hash", "help", "history", "jobs", "kill", "let", "local", "logout", "mapfile", "popd", "printf", "pushd", "pwd", "read", "readarray", "readonly", "return", "set", "shift", "shopt", "source", "suspend", "test", "times", "trap", "true", "type", "typeset", "ulimit", "umask", "unalias", "unset", "wait"}
+
+// The builtins that only print or test, and set no variable: printf only
+// without options, as printf -v sets one.
+var statusSafeBuiltins = []string{":", "[", "echo", "false", "printf", "pwd", "test", "true"}
 
 // fallsThrough reports a command between a status subshell's tests and its
 // exit that always continues to that exit with the tests' status, as a
 // report conversion does: one plain command, or a pipeline of them, that
-// runs in the foreground, starts with a literal program that is no
-// flow-changing builtin (see statusFlowBuiltins), and neither reads nor
-// assigns the status variable. Lists such as a || b, compound commands,
-// functions, arithmetic and bare assignments don't qualify.
+// runs in the foreground, starts with a literal program that is an
+// external program or a builtin that sets nothing (see shellBuiltins), and
+// neither reads nor assigns the status variable. Lists such as a || b,
+// compound commands, functions, arithmetic and bare assignments don't
+// qualify.
 func fallsThrough(stmt *syntax.Stmt, variable string) bool {
 	if stmt.Background || stmt.Negated || stmt.Coprocess || stmt.Disown {
 		return false
@@ -251,8 +259,16 @@ func fallsThrough(stmt *syntax.Stmt, variable string) bool {
 			return false
 		}
 		program, literal := shellLiteralWord(command.Args[0])
-		if !literal || program == "" || strings.Contains(program, `\`) || slices.Contains(statusFlowBuiltins, program) {
+		if !literal || program == "" || strings.Contains(program, `\`) {
 			return false
+		}
+		if slices.Contains(shellBuiltins, program) && !slices.Contains(statusSafeBuiltins, program) {
+			return false
+		}
+		if program == "printf" && len(command.Args) > 1 {
+			if format, literal := shellLiteralWord(command.Args[1]); !literal || strings.HasPrefix(format, "-") {
+				return false
+			}
 		}
 	default:
 		return false
