@@ -1,10 +1,14 @@
 package onboard
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"maps"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -338,14 +342,16 @@ func markScopedLeaf(result *commandResolution, variable, framework string) {
 // step's command after the scoped prefix and, for Cucumber, the
 // impacted-tests workaround, with cucumber-js wrapped by NYC, as onboard
 // --apply writes a package-script leaf. It is "" when the step already has
-// that form.
-func directScopedCommand(step runtimeStep, test TestCommand, framework string) (string, error) {
+// that form. root is the repository, in whose test.Directory a report
+// pipe's intermediate report must name no existing file (see
+// cucumberReportPipe).
+func directScopedCommand(root string, step runtimeStep, test TestCommand, framework string) (string, error) {
 	if step.statusWrapper != [2]string{} {
 		// The tests of a status subshell: the edit replaces them inside it,
 		// keeping the commands after them and the exit with their status.
 		tests := step
 		tests.statusWrapper, tests.afterTests = [2]string{}, nil
-		command, err := directScopedCommand(tests, test, framework)
+		command, err := directScopedCommand(root, tests, test, framework)
 		if command == "" || err != nil {
 			return command, err
 		}
@@ -372,7 +378,7 @@ func directScopedCommand(step runtimeStep, test TestCommand, framework string) (
 	}
 	command = strings.TrimSpace(strings.TrimPrefix(command, cucumberImpactedWorkaround+" "))
 	if err := compoundCommandError(command); err != nil {
-		tests, conversion, ok := cucumberReportPipe(command)
+		tests, conversion, ok := cucumberReportPipe(command, reportNameTaken(root, test.Directory))
 		if !ok {
 			return "", err
 		}
@@ -380,7 +386,7 @@ func directScopedCommand(step runtimeStep, test TestCommand, framework string) (
 		// with the scoped setup; the conversion follows as its own command.
 		split := step
 		split.Run, split.scopedVariable, split.impactedWorkaround = tests, "", false
-		scoped, scopedErr := directScopedCommand(split, test, framework)
+		scoped, scopedErr := directScopedCommand(root, split, test, framework)
 		if scopedErr != nil {
 			return "", scopedErr
 		}
@@ -461,9 +467,11 @@ var cucumberReportExtensions = map[string]string{"json": "json", "message": "ndj
 // with one formatter writing to standard output, such as
 // cucumber-js ./features --format json | cucumber-junit > junit.xml, into
 // that command writing the formatter's output to a file and a later command
-// that pipes the file into the rest of the pipeline. ok is false for any
-// other command, or when the rest of the pipeline may start tests.
-func cucumberReportPipe(command string) (tests, conversion string, ok bool) {
+// that pipes the file into the rest of the pipeline. taken reports an
+// intermediate report name that is already a file where the command runs.
+// ok is false for any other command, or when the rest of the pipeline may
+// start tests.
+func cucumberReportPipe(command string, taken func(name string) bool) (tests, conversion string, ok bool) {
 	file, parsed := parseCIShell(command)
 	if !parsed || len(file.Stmts) != 1 || file.Stmts[0].Background || file.Stmts[0].Negated || file.Stmts[0].Coprocess || len(file.Stmts[0].Redirs) > 0 {
 		return "", "", false
@@ -517,9 +525,11 @@ func cucumberReportPipe(command string) (tests, conversion string, ok bool) {
 	}
 	// The intermediate report is a file the pipeline names nowhere, so the
 	// conversion never writes to the file it reads, as
-	// cucumber-js --format junit | tee cucumber-report.xml would.
+	// cucumber-js --format junit | tee cucumber-report.xml would, and that
+	// is no file of the step's directory, such as a tracked fixture, which
+	// the tests would overwrite.
 	report := "cucumber-report." + extension
-	for suffix := 1; strings.Contains(command, report); suffix++ {
+	for suffix := 1; strings.Contains(command, report) || taken(report); suffix++ {
 		report = fmt.Sprintf("cucumber-report-%d.%s", suffix, extension)
 	}
 	wordStart, wordEnd := int(target.Pos().Offset()), int(target.End().Offset())
@@ -537,6 +547,20 @@ func cucumberReportPipe(command string) (tests, conversion string, ok bool) {
 		return "", "", false
 	}
 	return tests, "cat " + report + " | " + rest, true
+}
+
+// reportNameTaken reports a name that is a file, or a path git tracks, in
+// directory of the repository at root, where a CI command runs (see
+// TestCommand.Directory).
+func reportNameTaken(root, directory string) func(name string) bool {
+	return func(name string) bool {
+		path := filepath.Join(filepath.FromSlash(directory), name)
+		if _, err := os.Lstat(filepath.Join(root, path)); !errors.Is(err, fs.ErrNotExist) {
+			return true
+		}
+		tracked, err := exec.Command("git", "-C", root, "ls-files", "--cached", "--", filepath.ToSlash(path)).Output()
+		return err == nil && len(bytes.TrimSpace(tracked)) > 0
+	}
 }
 
 // inlineAssignmentsError explains why ddtest does not rebuild a direct

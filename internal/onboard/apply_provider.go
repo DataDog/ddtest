@@ -213,7 +213,7 @@ func planProviderJavaScriptSetup(root string, provider ciProvider, workflows []c
 						continue // Explicit browser runner remains outside instrumentation.
 					}
 				}
-				command, err := directScopedCommand(leaf.step, leaf.test, framework)
+				command, err := directScopedCommand(root, leaf.step, leaf.test, framework)
 				if err != nil {
 					return nil, directScopedGap(provider, location, leaf.step, err)
 				}
@@ -227,7 +227,7 @@ func planProviderJavaScriptSetup(root string, provider ciProvider, workflows []c
 				}
 				if framework == "cucumber" {
 					// A direct invocation needs NYC in the CI command itself.
-					if gap := directCucumberCoverageGap(provider, location, workflow, job, direct, "the job's hand-written setup stays."); gap != nil {
+					if gap := directCucumberCoverageGap(root, provider, location, workflow, job, direct, "the job's hand-written setup stays."); gap != nil {
 						return nil, gap
 					}
 				}
@@ -284,7 +284,7 @@ func planProviderJavaScriptSetup(root string, provider ciProvider, workflows []c
 								bare = append(bare, leaf)
 							}
 						}
-						if gap := directCucumberCoverageGap(provider, location, workflow, job, bare, "the job's "+provider.setupName()+" stays."); gap != nil {
+						if gap := directCucumberCoverageGap(root, provider, location, workflow, job, bare, "the job's "+provider.setupName()+" stays."); gap != nil {
 							return nil, gap
 						}
 					}
@@ -689,13 +689,13 @@ func cucumberLoaderReached(workflow ciWorkflow, job runtimeJob, steps []matchedT
 // without the scoped variable): no package script carries the wrapper
 // onboard --apply adds, so the CI command itself must. stays says what
 // happens to the job's setup. nil when every one has NYC.
-func directCucumberCoverageGap(provider ciProvider, location string, workflow ciWorkflow, job runtimeJob, direct []directLeaf, stays string) error {
+func directCucumberCoverageGap(root string, provider ciProvider, location string, workflow ciWorkflow, job runtimeJob, direct []directLeaf, stays string) error {
 	for _, leaf := range direct {
 		workaround := cucumberImpactedWorkaroundSet(workflow, job, leaf.step)
 		if leaf.test.usesNYC && workaround {
 			continue
 		}
-		command, err := directScopedCommand(leaf.step, leaf.test, "cucumber")
+		command, err := directScopedCommand(root, leaf.step, leaf.test, "cucumber")
 		if err != nil {
 			return directScopedGap(provider, location, leaf.step, err)
 		}

@@ -813,7 +813,7 @@ func TestEveryReportPipePrescriptionReadsBack(t *testing.T) {
 		"cucumber-js --format json | cucumber-junit > junit.xml && echo done":                                           false,
 	} {
 		t.Run(pipe, func(t *testing.T) {
-			_, err := directScopedCommand(runtimeStep{Run: pipe}, TestCommand{}, "cucumber")
+			_, err := directScopedCommand(t.TempDir(), runtimeStep{Run: pipe}, TestCommand{}, "cucumber")
 			require.Error(t, err)
 			var split *ReportPipeSplit
 			if !prescribed {
@@ -904,7 +904,7 @@ func TestCucumberReportPipeSplitsOnlyAReportConversion(t *testing.T) {
 		"npm run build && cucumber-js --format json | cucumber-junit":          {},
 		"cat x.json | cucumber-junit":                                          {},
 	} {
-		tests, conversion, ok := cucumberReportPipe(command)
+		tests, conversion, ok := cucumberReportPipe(command, noFile)
 		require.Equal(t, want[0] != "", ok, command)
 		require.Equal(t, want, [2]string{tests, conversion}, command)
 	}
@@ -1098,7 +1098,7 @@ func TestCucumberReportPipeChoosesAFreshReportAndDecodesTheOption(t *testing.T) 
 		"cucumber-js --format 'json' | cucumber-junit":                                                  {"cucumber-js --format json:cucumber-report.json", "cat cucumber-report.json | cucumber-junit"},
 	} {
 		t.Run(command, func(t *testing.T) {
-			tests, conversion, ok := cucumberReportPipe(command)
+			tests, conversion, ok := cucumberReportPipe(command, noFile)
 			require.True(t, ok)
 			require.Equal(t, want, [2]string{tests, conversion})
 			_, parsed := parseCIShell(statusSubshell(tests, conversion))
@@ -1129,4 +1129,60 @@ func TestCucumberReportPipeChoosesAFreshReportAndDecodesTheOption(t *testing.T) 
 			require.NoError(t, err)
 		})
 	}
+}
+
+// noFile is a directory with no file of any name.
+func noFile(string) bool { return false }
+
+// The intermediate report also names no file of the step's directory, such
+// as a tracked fixture the tests would overwrite, and onboard --apply accepts
+// the prescription that skips it.
+func TestCucumberReportPipeSkipsTheStepDirectorysFiles(t *testing.T) {
+	for _, provider := range scopedProviders {
+		t.Run(provider.name, func(t *testing.T) {
+			framework := scopedFrameworks[0]
+			pipe := "./node_modules/.bin/cucumber-js ./features --format json | ./node_modules/.bin/cucumber-junit > junit.xml"
+			root := scopedRepository(t, provider, provider.config("npm ci", pipe), framework.pkg, map[string]string{"cucumber-report.json": "{}\n", "cucumber-report-1.json": "{}\n"})
+			_, err := PlanJavaScriptSetup(root, "cucumber", "5.133.0", "datadoghq.com", ">=18")
+			var gap *EditThenApplyGap
+			require.ErrorAs(t, err, &gap)
+			_, after, ok := strings.Cut(gap.Reason, "or the conversion's when only the conversion fails: ")
+			require.True(t, ok, gap.Reason)
+			command, _, ok := strings.Cut(after, ". Then rerun onboard --apply")
+			require.True(t, ok, gap.Reason)
+			tests := cucumberScopedOptions + " " + cucumberImpactedWorkaround + " npx --no-install nyc -- ./node_modules/.bin/cucumber-js ./features --format json:cucumber-report-2.json"
+			want := statusSubshell(tests, "cat cucumber-report-2.json | ./node_modules/.bin/cucumber-junit > junit.xml")
+			if provider.name == buildkiteProvider {
+				want = buildkiteEscape(want) // As the pipeline holds it.
+			}
+			require.Equal(t, want, command)
+
+			writeFile(t, root, provider.file, provider.config("npm ci", command))
+			plan, err := PlanJavaScriptSetup(root, "cucumber", "5.133.0", "datadoghq.com", ">=18")
+			require.NoError(t, err)
+			require.Contains(t, plannedFile(t, plan, provider.file), command)
+		})
+	}
+}
+
+// A report name is taken by a file of the step's directory, or a path git
+// tracks there that the checkout lacks, and by no file elsewhere.
+func TestReportNameTakenReadsTheStepDirectory(t *testing.T) {
+	root := t.TempDir()
+	output, err := exec.Command("git", "init", "-q", root).CombinedOutput()
+	require.NoError(t, err, string(output))
+	writeFile(t, root, "cucumber-report.json", "{}\n")
+	writeFile(t, root, "packages/a/cucumber-report.xml", "<x/>\n")
+	writeFile(t, root, "packages/a/cucumber-report.html", "<x/>\n")
+	output, err = exec.Command("git", "-C", root, "add", "packages/a/cucumber-report.html").CombinedOutput()
+	require.NoError(t, err, string(output))
+	require.NoError(t, os.Remove(filepath.Join(root, "packages/a/cucumber-report.html")))
+
+	taken := reportNameTaken(root, ".")
+	require.True(t, taken("cucumber-report.json"))
+	require.False(t, taken("cucumber-report.xml"))
+	taken = reportNameTaken(root, "packages/a")
+	require.False(t, taken("cucumber-report.json"), "the root's file is not the step's")
+	require.True(t, taken("cucumber-report.xml"))
+	require.True(t, taken("cucumber-report.html"), "tracked, though missing from the checkout")
 }
