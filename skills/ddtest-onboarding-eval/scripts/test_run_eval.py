@@ -122,6 +122,7 @@ if pathlib.Path(sys.argv[0]).name == "codex":
     ]
 else:
     events = [
+        {"type": "system", "subtype": "init", "session_id": "fake-session", "model": "claude-fake-model[1m]"},
         {"type": "assistant", "message": {"content": [
             {"type": "thinking", "thinking": "PRIVATE_REASONING"},
             {"type": "tool_use", "name": "Bash", "id": "cmd1", "input": {"command": "ddtest onboard"}},
@@ -530,6 +531,10 @@ class RunnerTests(unittest.TestCase):
                     self.assertEqual(observed["agent_environment"]["CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"], "1")
                     self.assertEqual(observed["agent_environment"]["BASH_MAX_TIMEOUT_MS"], "30000")
                 self.assertNotIn("--model", observed["argv"])
+                # The model the CLI reports in its session event; Codex reports none.
+                self.assertEqual(manifest["resolved_model"], "claude-fake-model[1m]" if agent == "claude" else None)
+                self.assertNotIn("resolved_models", manifest)
+                self.assertIsNone(manifest["ddtest_label"])
                 # The folder the prompt names holds only the recording wrapper;
                 # DDTEST_SELF_PATH makes ddtest's printed commands name it.
                 wrapper = checkout.parent / "bin" / "ddtest"
@@ -844,6 +849,13 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(observed["prompt"],
                          f"Use ddtest in {checkout.parent / 'bin'} and onboard this repository to test-optimization for playwright only.")
         self.assertEqual(manifest["framework_scope"], "playwright")
+
+    def test_ddtest_label_is_recorded_beside_the_version(self):
+        self.args.ddtest_label = "b7a9d2ba (go build, no -ldflags)"
+        code, manifest = self.trial()
+        self.assertEqual(code, 0)
+        self.assertEqual(manifest["ddtest_label"], "b7a9d2ba (go build, no -ldflags)")
+        self.assertIn("ddtest_version", manifest)
 
     def test_refused_agent_command_exits_nonzero(self):
         execute = FakeContainer.execute

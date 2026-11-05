@@ -1049,7 +1049,8 @@ def run(args):
     manifest = {"isolation": {"kind":"container", "image":getattr(args,"image",None), "name":container.name,"git_safe_directory":str(checkout)}, "repository": args.repo, "requested_ref": args.ref,
                 "trial_directory": str(trial), "checkout": str(checkout),
                 "ddtest_sha256": hashlib.sha256(binary.read_bytes()).hexdigest(),
-                "agent": args.agent, "requested_model": args.model, "prompt": container.inside(prompt) if hasattr(container,"inside") else prompt,
+                "agent": args.agent, "requested_model": args.model, "resolved_model": None,
+                "ddtest_label": getattr(args, "ddtest_label", None), "prompt": container.inside(prompt) if hasattr(container,"inside") else prompt,
                 "framework_scope": framework,
                 "started_at": time.time(), "commands": [], "status": "preparing",
                 "evaluation": "pending", "ci_execution": "not exercised"}
@@ -1099,6 +1100,14 @@ def run(args):
             agent_errors.append(str(event.get("error", event.get("text", ""))))
         if event["type"] == "result":
             agent_completed = True
+        if event["type"] == "session" and event.get("model"):
+            # The model the CLI reports for its session (Claude's init event); Codex reports none.
+            if manifest["resolved_model"] is None:
+                manifest["resolved_model"] = event["model"]
+            elif event["model"] != manifest["resolved_model"]:
+                models = manifest.setdefault("resolved_models", [manifest["resolved_model"]])
+                if event["model"] not in models:
+                    models.append(event["model"])
         if event["type"] == "item.completed" and "ddtest" in event.get("command", ""):
             for version in re.findall(r"Local runtime: Node (v?\d+\.\d+\.\d+(?:[-+][\w.-]+)?)", event.get("output", "")):
                 observations = manifest.setdefault("runtime_observations", [])
@@ -1574,6 +1583,8 @@ def main():
     parser.add_argument("--pnpm", help="Install this pnpm version privately for setup and the agent (e.g. the version the project's CI pins)")
     parser.add_argument("--output", type=Path, help="New directory for evaluator evidence")
     parser.add_argument("--model", help="Optional requested model; default is the CLI's configured model")
+    parser.add_argument("--ddtest-label", help="Free-text ddtest provenance, such as its source commit, recorded in run.json "
+                                               "(a plain go build reports version dev)")
     parser.add_argument("--timeout", type=float, default=1800, help="Seconds allowed per command, each agent turn included")
     parser.add_argument("--user-answer", action="append", default=[], metavar="KIND=VALUE",
                         help="Repeatable scripted reply to a ddtest question only the user can answer: ci_runtime=<runtime>=<version>, "
