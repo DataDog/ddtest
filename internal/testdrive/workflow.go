@@ -7,12 +7,9 @@ package testdrive
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"net/url"
 	"os"
 	"slices"
 	"strings"
@@ -44,129 +41,18 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 		result.Status, result.Code, result.Reason, result.NextAction = "needs_input", "transient_executable", onboard.TransientExecutableReason, "supply_input"
 		return errors.Join(fmt.Errorf("%s", result.Reason), onboard.RenderAgentResult(output, result, options.Format))
 	}
-	recoveryCommand := append([]string{}, result.NextCommand...)
-	var checkpoint *workflowCheckpoint
-	var factsHash string
-	ownedLock, executed := false, false
-	// acceptFlag, when set, is appended to the final resume command after the
-	// checkpoint rewrites --resume, so the offered command never goes stale.
-	acceptFlag := ""
-	turnFinalResponse := ""
-	// attemptStarted is when this attempt's validation began, so a failure
-	// reads only the report it wrote.
-	var attemptStarted time.Time
-	fail := func(status, code, reason, needs string) error {
-		result.Status, result.Code, result.Reason, result.Needs = status, code, reportText(reason), needs
-		if options.Format == "verbose" && result.UndoInstructions != "" {
-			_, _ = io.WriteString(output, result.UndoInstructions)
-		}
-		if checkpoint != nil {
-			if checkpoint.FactsSHA256 == "" || (code != "facts_invalid" && code != "facts_refresh_required") {
-				checkpoint.Plan = result.Plan
-			}
-			var varying []string
-			if !attemptStarted.IsZero() {
-				if report, err := readCurrentOnboardingResult(t.repositoryRoot, attemptStarted); err == nil {
-					varying = varyingTests(report)
-				}
-			}
-			if err := checkpoint.recordFailure(result.Fingerprint, factsHash, code, result.Reason, varying...); err != nil {
-				result.Reason += "; checkpoint: " + err.Error()
-			}
-			result.RunID = checkpoint.RunID
-			if result.ResumeCommand == nil {
-				result.ResumeCommand = append(append([]string{}, recoveryCommand...), "--resume", checkpoint.RunID)
-			} else {
-				for i := 0; i+1 < len(result.ResumeCommand); i++ {
-					if result.ResumeCommand[i] == "--resume" {
-						result.ResumeCommand[i+1] = checkpoint.RunID
-					}
-				}
-			}
-		}
-		if acceptFlag != "" && len(result.ResumeCommand) > 0 && !slices.Contains(result.ResumeCommand, acceptFlag) {
-			result.AcceptResumeCommand = append(append([]string{}, result.ResumeCommand...), acceptFlag)
-		}
-		switch status {
-		case "blocked_environment":
-			switch code {
-			case "workflow_busy":
-				result.NextAction = "wait"
-			case fileDescriptorsExhaustedCode:
-				// A transient host limit, not a missing capability: retry as is.
-				result.NextAction = "run_command"
-				result.NextCommand = append([]string{}, recoveryCommand...)
-				if len(result.ResumeCommand) > 0 {
-					result.NextCommand = append([]string{}, result.ResumeCommand...)
-				}
-			default:
-				result.NextAction = "request_capability"
-			}
-		case "needs_input":
-			switch code {
-			case "scope_unresolved":
-				result.NextAction = "run_command"
-				result.NextCommand = onboard.DDTestCommand("onboard", "--framework", name, "--instructions")
-				result.ResumeCommand, result.RequiredInput = nil, nil
-				result.Needs = scopeUnresolvedNeeds(result.Needs, options.Site)
-			case "setup_dependencies_missing", "project_dependencies_missing":
-				result.NextAction = "run_command"
-			case "ci_edit_required", "report_exclusions_required":
-				result.NextAction = "apply_source_edit"
-			case "ci_runtime_required", "ci_setup_confirmation_required":
-				// Only the user's answer, added to the same command, continues.
-				result.NextAction = "ask_user"
-				result.ResumeCommand = nil
-			default:
-				result.NextAction = "supply_input"
-			}
-		case "unsupported":
-			if code == "ci_edit_unsupported" && len(result.NextCommand) > 0 {
-				// The setup to apply comes from next_command (the manual
-				// instructions); resume_command validates it.
-				result.NextAction = "run_command"
-			} else if code == "ci_edit_unsupported" {
-				result.NextAction = "apply_source_edit"
-			} else {
-				result.NextAction = "report_result"
-			}
-		default:
-			result.NextAction = "report_result"
-		}
-		if ownedLock && !executed && !t.checkOnly && !workflowInputFailure(code) {
-			invalidatePriorWorkflow(t.repositoryRoot, name, result)
-		}
-		switch result.NextAction {
-		case "report_result", "supply_input", "apply_source_edit", "wait", "ask_user":
-			result.NextCommand = nil
-		case "request_capability":
-			// Without a checkpoint there is nothing to resume; rerun from the start.
-			if len(result.ResumeCommand) > 0 {
-				result.NextCommand = append([]string{}, result.ResumeCommand...)
-			} else {
-				result.NextCommand = append([]string{}, recoveryCommand...)
-			}
-		}
-		if checkpoint != nil && checkpoint.repeated && !transientWorkflowFailure(code) {
-			// A deterministic failure with unchanged inputs repeats on every rerun.
-			result.NextAction = "report_result"
-			result.NextCommand, result.ResumeCommand = nil, nil
-			result.Needs += " This attempt failed exactly like the previous one with unchanged inputs, so rerunning cannot progress; stop and report this blocker."
-		} else if checkpoint != nil && checkpoint.Attempts >= maxWorkflowAttempts {
-			result.NextAction = "report_result"
-			result.NextCommand, result.ResumeCommand = nil, nil
-			result.Needs += " Three attempts with unchanged inputs made no progress; stop and report this blocker."
-		}
-		// A setup repair continues the workflow; a report or a user decision ends
-		// the turn and must carry the text to relay.
-		if turnFinalResponse != "" && (result.NextAction == "report_result" || code == "substitute_runtime_unaccepted") {
-			result.FinalResponse = turnFinalResponse
-		}
-		return errors.Join(fmt.Errorf("%s: %s", code, result.Reason), onboard.RenderAgentResult(output, result, options.Format))
+	attempt := &workflowAttempt{
+		result: &result, output: output, options: options, framework: name,
+		recoveryCommand: append([]string{}, result.NextCommand...),
 	}
+	// Preparation may replace t; failures must use the currently prepared drive.
+	fail := func(status, code, reason, needs string) error {
+		return attempt.fail(t, status, code, reason, needs)
+	}
+
 	if supportsValidationFramework(name) && StructuredValidation(t.language) && !t.lang().coordinated() && !options.Apply {
 		// Standalone validation has no automatic CI edits; --apply stays unsupported.
-		return t.standaloneWorkflow(ctx, output, options, &result, recoveryCommand, fail, &turnFinalResponse)
+		return t.standaloneWorkflow(ctx, attempt, fail)
 	}
 	if !supportsValidationFramework(name) || !t.lang().coordinated() {
 		result.NextCommand = nil
@@ -186,7 +72,7 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 		result.Capabilities = []string{"writable private temporary coordination storage"}
 		return fail("blocked_environment", "coordination_unavailable", err.Error(), "Restore access/free space in the named temporary storage, then rerun next_command.")
 	}
-	ownedLock = true
+	attempt.ownedLock = true
 	ctx = context.WithValue(ctx, workflowLockKey{}, t.repositoryRoot)
 	defer func() { _ = lock.Close() }()
 	if err := cleanupExpiredCheckpoints(); err != nil {
@@ -201,14 +87,14 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 	if err := recoverProbes(t.repositoryRoot); err != nil {
 		return fail("needs_input", "probe_recovery_failed", err.Error(), "Review only the named owned probe; modified files are preserved. Then retry the same command.")
 	}
-	checkpoint, err = openCheckpoint(options.Resume, t.repositoryRoot, name, settings.GetCommand(), options.Apply, t.allConfigurations)
+	attempt.checkpoint, err = openCheckpoint(options.Resume, t.repositoryRoot, name, settings.GetCommand(), options.Apply, t.allConfigurations)
 	if err != nil {
 		if errors.Is(err, errCheckpointNotFound) {
 			return fail("needs_input", "resume_not_found", err.Error(), "Start a fresh workflow without --resume; this run already finished or its checkpoint expired.")
 		}
 		return fail("needs_input", "resume_invalid", err.Error(), "Use the supplied resume command with its original repository/framework/scope, or start a fresh workflow.")
 	}
-	result.RunID = checkpoint.RunID
+	result.RunID = attempt.checkpoint.RunID
 	progress := func(phase string) {
 		result.Phase = phase
 		if options.Format == "verbose" {
@@ -275,62 +161,11 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 	result.Plan = plan
 	// A CI job's runtime that neither its configuration nor a statement
 	// names is the user's answer to give; nothing is set up or run before it.
-	if required := onboard.RequiredCIRuntimes(ctx, t.repositoryRoot, t.language, name); required != nil {
-		asked := onboard.CIRuntimeRequiredResult(required)
-		result.Location, result.RequiredInput, result.Instruction = asked.Location, asked.RequiredInput, asked.Instruction
-		return fail("needs_input", asked.Code, asked.Reason, asked.Instruction)
+	if err := attempt.checkCIStatements(ctx, t); err != nil {
+		return err
 	}
-	if required := onboard.RequiredCIConfirmations(t.repositoryRoot, t.language, name); required != nil {
-		asked := onboard.CIConfirmationRequiredResult(required)
-		result.Location, result.RequiredInput, result.Instruction = asked.Location, asked.RequiredInput, asked.Instruction
-		return fail("needs_input", asked.Code, asked.Reason, asked.Instruction)
-	}
-	if options.FactsFile != "" {
-		factsFingerprint := fingerprint
-		// Built before facts touch the scope: rejected facts are rewritten from it.
-		template := scopeFactsTemplate(fingerprint, scope)
-		data, readErr := readSetupFacts(t.repositoryRoot, options.FactsFile)
-		factsHash = fmt.Sprintf("%x", sha256.Sum256(data))
-		if readErr == nil && options.Resume == "" {
-			checkpoint.restoreFactsBinding(fingerprint, factsHash)
-		}
-		if readErr == nil && checkpoint.Fingerprint == fingerprint && checkpoint.FactsSHA256 == factsHash && checkpoint.Plan != nil && checkpoint.Engine == engineIdentity() {
-			// These exact facts already passed validation for the pre-edit inputs.
-			// Reuse only their additions, bound to the unchanged owned edit result,
-			// whose plan may still hold the pre-edit commands.
-			err = reattachSetupFacts(&scope, checkpoint.Plan.Scope, true)
-			factsFingerprint = checkpoint.FactsFingerprint
-		} else {
-			if readErr != nil {
-				err = readErr
-			} else {
-				_, err = applySetupFactsData(t.repositoryRoot, data, fingerprint, &scope)
-			}
-		}
-
-		if err != nil && checkpoint.FactsDependencyHandoff && readErr == nil && checkpoint.FactsSHA256 == factsHash && checkpoint.Engine == engineIdentity() {
-			var refresh onboard.SetupFacts
-			if json.Unmarshal(data, &refresh) == nil {
-				refresh.Fingerprint = fingerprint
-				result.InputTemplate = &refresh
-				result.Location = options.FactsFile
-				result.RequiredInput = []string{"Review the unchanged setup entries against the post-install checkout, then replace the facts file with input_template and run resume_command."}
-				return fail("needs_input", "facts_refresh_required", "The declared dependency-install handoff changed repository inputs; the old facts cannot certify the new snapshot.", "Explicitly refresh facts for the returned current fingerprint; do not retry unchanged facts or bypass their binding.")
-			}
-		}
-		if err != nil {
-			result.Location = options.FactsFile
-			result.InputTemplate = template
-			result.RequiredInput = []string{"schema_version=2, current input_fingerprint, configurations with configuration_id and build/service setup"}
-			return fail("needs_input", "facts_invalid", err.Error(), "Rewrite the facts file outside the checkout from input_template for the current input_fingerprint, supplying only the missing prerequisite facts, then run resume_command. No discovery or validation assertion can be overridden.")
-		}
-		if checkpoint.FactsSHA256 != factsHash || checkpoint.Fingerprint != fingerprint || checkpoint.Engine != engineIdentity() {
-			checkpoint.Tracer = "" // Replacement setup invalidates cached preparation.
-		}
-		checkpoint.FactsSHA256 = factsHash
-		checkpoint.Fingerprint = fingerprint
-		checkpoint.Engine = engineIdentity()
-		checkpoint.FactsFingerprint = factsFingerprint
+	if err := attempt.acceptSetupFacts(t, fingerprint, &scope); err != nil {
+		return err
 	}
 	plan.Scope = scope
 	if options.Apply || t.allConfigurations {
@@ -379,17 +214,9 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 		t.workflowScope = &scope
 	}
 	if !options.Apply && !options.ExplicitVersion && t.projectTracer == "" {
-		ci := t.lang().ciRuntimes(ctx, t.repositoryRoot, name)
-		pin := ""
-		for _, job := range ci.Jobs {
-			if candidate := t.lang().ciPinnedTracer(job); candidate != "" {
-				if pin != "" && pin != candidate {
-					result.Location = job.Workflow + " / " + job.Job
-					result.RequiredInput = []string{"one intended CI tracer release, or separate explicitly scoped runs"}
-					return fail("needs_input", "multiple_ci_tracers", "CI selects different tracer releases.", "Preserve every configuration and align the intended tracer selection explicitly.")
-				}
-				pin = candidate
-			}
+		pin, err := attempt.ciPinnedTracer(ctx, t)
+		if err != nil {
+			return err
 		}
 		if pin != "" {
 			prepared, err := Prepare(PrepareOptions{TracerVersion: pin, All: t.allConfigurations, Timeout: t.commandTimeout, AllowReviewedBuilds: t.allowReviewedBuilds, AcceptSubstituteRuntime: t.acceptSubstituteRuntime})
@@ -402,54 +229,21 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 	if options.Apply {
 
 		progress("preflight")
-		selected := checkpoint.Tracer
+		selected := attempt.checkpoint.Tracer
 		var problem error
-		reused := checkpoint.reusable(fingerprint, t.workflowNodeVersion(), factsHash, t.tracerVersion, options.ExplicitVersion)
+		reused := attempt.checkpoint.reusable(fingerprint, t.workflowNodeVersion(), attempt.factsHash, t.tracerVersion, options.ExplicitVersion)
 		if !reused {
 			selectTracer := t.selectWorkflowTracer
 			if t.workflowSelect != nil {
 				selectTracer = t.workflowSelect
 			}
 			selected, problem = selectTracer(ctx, scope, options.ExplicitVersion)
-		} else if checkpoint.Plan != nil {
-			plan.CIRuntime = checkpoint.Plan.CIRuntime
-			plan.TracerNode = checkpoint.Plan.TracerNode
+		} else if attempt.checkpoint.Plan != nil {
+			plan.CIRuntime = attempt.checkpoint.Plan.CIRuntime
+			plan.TracerNode = attempt.checkpoint.Plan.TracerNode
 		}
 		if problem != nil {
-			var metadata *platform.MetadataError
-			if errors.As(problem, &metadata) {
-				result.Capabilities = []string{workflowMetadataCapability(metadata)}
-				return fail("blocked_environment", metadata.Code, problem.Error(), "Grant/fix only the named capability and rerun next_command. No tracer version was guessed and no source edits were made.")
-			}
-			var transport *url.Error
-			if errors.As(problem, &transport) {
-				address, _ := url.Parse(transport.URL)
-				capability := "CI metadata network access"
-				if address != nil {
-					capability = "network access to " + address.Hostname()
-				}
-				result.Capabilities = []string{capability}
-				return fail("blocked_environment", "metadata_network", problem.Error(), "Restore only the named metadata network capability, then run resume_command. Do not change runtime, tracer or test scope to work around a network failure.")
-			}
-			var majors *ciTracerMajors
-			if errors.As(problem, &majors) {
-				// Resume with the release ddtest recommends rather than the default.
-				if majors.Recommended != "" && !options.ExplicitVersion && checkpoint != nil {
-					result.ResumeCommand = append(append([]string{}, recoveryCommand...), "--tracer-version", majors.Recommended, "--resume", checkpoint.RunID)
-				}
-				if len(majors.Exclusions) > 0 {
-					result.RequiredInput = []string{"the user's choice: one --tracer-version every instrumented CI row supports, or approval to opt these rows out: " + strings.Join(majors.Exclusions, "; ")}
-					return fail("needs_input", "preflight_unresolved", problem.Error(), "Ask the user before excluding any CI row. If they approve, make exactly the listed DD_CIVISIBILITY_ENABLED edits and run resume_command; otherwise rerun with one --tracer-version every instrumented row supports. Never weaken feature checks.")
-				}
-				result.RequiredInput = []string{"one --tracer-version every instrumented CI row supports"}
-				needs := "No opt-out edit applies to these CI rows; do not exclude or rewrite them. Report them as unvalidated blockers unless one --tracer-version supports every instrumented row."
-				if majors.Recommended != "" {
-					needs = "Run resume_command, which selects dd-trace@" + majors.Recommended + ". Rows it cannot run stay unvalidated blockers to report; do not exclude or rewrite CI rows."
-				}
-				return fail("needs_input", "preflight_unresolved", problem.Error(), needs)
-			}
-			result.RequiredInput = []string{"the named runtime/configuration incompatibility"}
-			return fail("needs_input", "preflight_unresolved", problem.Error(), "Resolve this exact mismatch without weakening feature checks. Do not exclude or rewrite CI rows to get past it; if it can't be resolved, report it as a blocker.")
+			return attempt.failTracerSelection(t, problem)
 		}
 		if len(t.workflowReportOnly) > 0 {
 			reason := "Not set up or validated locally; reported as blockers: " + strings.Join(t.workflowReportOnly, "; ")
@@ -473,10 +267,10 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 			}
 			result.Location = "CI initialization"
 			result.RequiredInput = []string{"the " + onboard.CIProviderDisplayName() + " setup next_command prints, exactly as shown, with " + setting}
-			result.ResumeCommand = t.workflowValidationResume(recoveryCommand[0], name, selected, options)
-			checkpoint.Apply = false
-			checkpoint.All = true
-			result.ResumeCommand = append(result.ResumeCommand, "--resume", checkpoint.RunID)
+			result.ResumeCommand = t.workflowValidationResume(attempt.recoveryCommand[0], name, selected, options)
+			attempt.checkpoint.Apply = false
+			attempt.checkpoint.All = true
+			result.ResumeCommand = append(result.ResumeCommand, "--resume", attempt.checkpoint.RunID)
 			result.NextCommand = onboard.DDTestCommand("onboard", "--framework", name, "--instructions")
 			return fail("unsupported", "ci_edit_unsupported", "onboard --apply does not write the "+displayName(name)+" CI setup on "+onboard.CIProviderDisplayName()+". next_command prints it: apply that setup exactly as shown, with "+setting+": what ddtest selected and resume_command validates.", "Run next_command, apply only the CI setup it prints, exactly as shown and with "+setting+", then run resume_command. Do not write a loader, hook or plugin integration of your own, and do not run testdrive or the tests first.")
 		}
@@ -493,7 +287,7 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 				// The manifest and lockfile changed only through the install ddtest
 				// prescribed: extend them without asking for --allow-dirty.
 				var dirty *onboard.DirtyWorkflowGap
-				if errors.As(err, &dirty) && checkpoint != nil && onboard.OnlyPrescribedDependencyChanges(t.repositoryRoot, dirty.Files, checkpoint.DependencyPackages) {
+				if errors.As(err, &dirty) && attempt.checkpoint != nil && onboard.OnlyPrescribedDependencyChanges(t.repositoryRoot, dirty.Files, attempt.checkpoint.DependencyPackages) {
 					result.Changes, err = sourcePlan.Apply(true)
 				}
 			}
@@ -506,59 +300,7 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 			}
 		}
 		if err != nil {
-			var dependencies *onboard.SetupDependencyGap
-			if errors.As(err, &dependencies) {
-				checkpoint.FactsDependencyHandoff = true
-				checkpoint.DependencyPackages = dependencies.Packages
-				checkpoint.Engine = engineIdentity()
-				checkpoint.FactsSHA256 = factsHash
-				checkpoint.Fingerprint = fingerprint
-				result.Location = "package.json / devDependencies"
-				result.NextCommand = dependencies.Command
-				result.ResumeCommand = append(append([]string{}, recoveryCommand...), "--resume", checkpoint.RunID)
-				result.RequiredInput = []string{"Run next_command once, as given and without asking, to update the manifest and lockfile, then resume_command. Preserve the selected framework and CI test commands."}
-				result.Instruction = onboard.PrescribedEditInstruction
-				return fail("needs_input", "setup_dependencies_missing", err.Error(), "The recognized coverage recipe needs only these dependencies; installing them is a ddtest-prescribed edit, listed with its revert in the final report. No CI edits have been made.")
-			}
-			var dirty *onboard.DirtyWorkflowGap
-			if errors.As(err, &dirty) {
-				result.Location = strings.Join(dirty.Files, ", ")
-				result.RequiredInput = []string{"Review setup_diff against the existing target-file edits. With approval to preserve and extend them, run resume_command with --allow-dirty; do not switch to testdrive or change scope."}
-				result.ResumeCommand = append(append([]string{}, recoveryCommand...), "--allow-dirty", "--resume", checkpoint.RunID)
-				return fail("needs_input", "dirty_workflow", err.Error(), "Commit or stash the listed target files, then rerun; add --allow-dirty only when the user approves extending those uncommitted edits.")
-			}
-			var runtimeGap *onboard.NodeRuntimeGap
-			if errors.As(err, &runtimeGap) {
-				result.Location = runtimeGap.Location
-				result.RequiredInput = []string{"A CI Node version that satisfies " + runtimeGap.Requirement + ", or an older tracer selected with --tracer-version"}
-				return fail("needs_input", "ci_runtime_incompatible", err.Error(), "Upgrade the CI Node version, or select an older tracer with --tracer-version, then rerun. No CI hook needs to be written by hand.")
-			}
-			var editGap *onboard.EditThenApplyGap
-			if errors.As(err, &editGap) {
-				// One source edit, then onboard --apply writes the setup itself:
-				// validating before that would check CI without the setup.
-				result.Location = editGap.Location
-				result.RequiredInput = []string{"Only the source edit reason names, at " + editGap.Location + " (and a dependency it names, through its install command); then run resume_command, which adds the Datadog CI setup and validates."}
-				result.ResumeCommand = append([]string{}, recoveryCommand...)
-				if !slices.Contains(result.ResumeCommand, "--allow-dirty") {
-					// It extends the uncommitted edit just made.
-					result.ResumeCommand = append(result.ResumeCommand, "--allow-dirty")
-				}
-				result.NextCommand = nil
-				return fail("needs_input", "ci_edit_required", err.Error(), "Make only the edit reason names, then run resume_command: onboard --apply adds the Datadog CI setup and validates. Do not run testdrive first."+manualSiteSentence(options.Site))
-			}
-			var gap *onboard.SetupGap
-			if errors.As(err, &gap) {
-				result.Location = gap.Location
-				result.RequiredInput = []string{"CI tracer initialization at " + gap.Location}
-				result.ResumeCommand = t.workflowValidationResume(recoveryCommand[0], name, selected, options)
-				checkpoint.Apply = false
-				checkpoint.All = true
-				result.ResumeCommand = append(result.ResumeCommand, "--resume", checkpoint.RunID)
-				result.NextCommand = nil
-				return fail("unsupported", "ci_edit_unsupported", err.Error(), "Integrate only this CI hook, then run resume_command. Do not repeatedly retry the automatic editor or drop configurations."+manualSiteSentence(options.Site))
-			}
-			return fail("blocked_environment", "ci_edit_unavailable", err.Error(), "Restore filesystem access. Completed source edits are listed in changes; do not overwrite customer edits.")
+			return attempt.failSetupEdits(t, err, selected, fingerprint)
 		}
 		// Bind the accepted plan and facts to the snapshot this owned edit produced
 		// at once, so a later failure resumes with them instead of a dead end.
@@ -567,9 +309,9 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 			return fail("blocked_environment", "input_snapshot_unavailable", err.Error(), "Restore source input access. Completed source edits are listed in changes.")
 		}
 		result.Fingerprint = applied
-		checkpoint.Engine, checkpoint.Fingerprint, checkpoint.FactsSHA256, checkpoint.Plan = engineIdentity(), applied, factsHash, plan
-		checkpoint.Tracer, checkpoint.Node = selected, t.workflowNodeVersion()
-		if err := errors.Join(checkpoint.save(), checkpoint.saveFactsBinding()); err != nil {
+		attempt.checkpoint.Engine, attempt.checkpoint.Fingerprint, attempt.checkpoint.FactsSHA256, attempt.checkpoint.Plan = engineIdentity(), applied, attempt.factsHash, plan
+		attempt.checkpoint.Tracer, attempt.checkpoint.Node = selected, t.workflowNodeVersion()
+		if err := errors.Join(attempt.checkpoint.save(), attempt.checkpoint.saveFactsBinding()); err != nil {
 			return fail("blocked_environment", "checkpoint_unavailable", err.Error(), "Restore private temporary storage. Completed source edits are listed in changes.")
 		}
 		// Refresh discovery after YAML insertion. Facts remain the exact additions
@@ -599,18 +341,16 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 		t = prepared.withWorkflowState(t)
 		// A setup the edit just added may depend on facts only the CI server
 		// shows; the user states them before anything runs.
-		if required := onboard.RequiredCIConfirmations(t.repositoryRoot, t.language, name); required != nil {
-			asked := onboard.CIConfirmationRequiredResult(required)
-			result.Location, result.RequiredInput, result.Instruction = asked.Location, asked.RequiredInput, asked.Instruction
-			return fail("needs_input", asked.Code, asked.Reason, asked.Instruction)
+		if err := attempt.checkCIConfirmations(t); err != nil {
+			return err
 		}
 	}
 	t.setPlanTracer(plan, t.tracerVersion)
-	checkpoint.Engine = engineIdentity()
-	checkpoint.Fingerprint, checkpoint.Node, checkpoint.FactsSHA256, checkpoint.Tracer, checkpoint.Plan = plan.Fingerprint, t.workflowNodeVersion(), factsHash, plan.Tracer, plan
+	attempt.checkpoint.Engine = engineIdentity()
+	attempt.checkpoint.Fingerprint, attempt.checkpoint.Node, attempt.checkpoint.FactsSHA256, attempt.checkpoint.Tracer, attempt.checkpoint.Plan = plan.Fingerprint, t.workflowNodeVersion(), attempt.factsHash, plan.Tracer, plan
 	// Cache only successful selection, not failed preflight or a test verdict.
 	if !options.Apply {
-		checkpoint.Tracer = ""
+		attempt.checkpoint.Tracer = ""
 	}
 	// Inventory dependencies before anything runs; the checks share one owned
 	// copy for this invocation.
@@ -623,7 +363,7 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 	if len(setup) > 0 {
 		result.SetupCommands = setup
 		result.NextCommand = setup[0]
-		result.ResumeCommand = append(append([]string{}, recoveryCommand...), "--resume", checkpoint.RunID)
+		result.ResumeCommand = append(append([]string{}, attempt.recoveryCommand...), "--resume", attempt.checkpoint.RunID)
 		result.RequiredInput = []string{"Run every setup_commands entry once, in order, from the repository root, then run resume_command."}
 		result.Instruction = onboard.PrescribedEditInstruction
 		return fail("needs_input", "project_dependencies_missing", fmt.Sprintf("dependency setup is missing for %d of the selected configurations", len(setup)), "Run every setup_commands entry (next_command is the first) from the repository root, then run resume_command. This readiness check installed nothing and ran no tests. Preserve the selected framework, CI test commands and scope.")
@@ -647,12 +387,12 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 		return fail("blocked_environment", "input_snapshot_unavailable", err.Error(), "Restore source input access.")
 	}
 	plan.Fingerprint = before
-	checkpoint.Fingerprint = before
-	if err := errors.Join(checkpoint.save(), checkpoint.saveFactsBinding()); err != nil {
+	attempt.checkpoint.Fingerprint = before
+	if err := errors.Join(attempt.checkpoint.save(), attempt.checkpoint.saveFactsBinding()); err != nil {
 		return fail("blocked_environment", "checkpoint_unavailable", err.Error(), "Restore private temporary storage.")
 	}
 	started := time.Now()
-	attemptStarted = started
+	attempt.started = started
 	logs := io.Discard
 	if options.Format == "verbose" {
 		logs = output
@@ -680,7 +420,7 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 	if err != nil {
 		return fail("validation_failed", "validation_report_unavailable", fmt.Sprint(errors.Join(runErr, err)), "No current full report exists. Resolve this execution failure; old/check-only evidence cannot certify completion.")
 	}
-	executed = true
+	attempt.executed = true
 	plan.CIRuntime = validation.CIRuntime
 	if validation.Selection != nil {
 		t.setPlanTracer(plan, validation.Selection.Version)
@@ -716,10 +456,10 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 		return fail("validation_failed", "execution_result_conflict", runErr.Error(), "Resolve the execution/report discrepancy before claiming completion.")
 	}
 	progress("verification")
-	workflow := &WorkflowEvidence{ValidationCommand: recoveryCommand, Plan: plan, Fingerprint: before, Node: t.workflowNodeVersion(), Runtime: languageRuntime, FactsSHA256: factsHash, Changes: result.Changes}
-	if checkpoint != nil {
-		workflow.EarlierAttempts = slices.Clone(checkpoint.Failures)
-		workflow.EarlierVaryingTests = slices.Clone(checkpoint.VaryingTests)
+	workflow := &WorkflowEvidence{ValidationCommand: attempt.recoveryCommand, Plan: plan, Fingerprint: before, Node: t.workflowNodeVersion(), Runtime: languageRuntime, FactsSHA256: attempt.factsHash, Changes: result.Changes}
+	if attempt.checkpoint != nil {
+		workflow.EarlierAttempts = slices.Clone(attempt.checkpoint.Failures)
+		workflow.EarlierVaryingTests = slices.Clone(attempt.checkpoint.VaryingTests)
 	}
 	workflow.Checks = append(refreshScopeCheck(result.Checks, validation.Scope), t.verifyReportExclusions(ctx)...)
 	after, snapshotErr := workflowFingerprint(ctx, t.repositoryRoot, name)
@@ -744,144 +484,7 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 	if finalizeErr != nil && validation.Summary.Status == "COMPLETE LOCALLY" {
 		return fail("blocked_environment", "report_write_failed", finalizeErr.Error(), "Restore report output access before claiming completion.")
 	}
-	result.Fingerprint = before
-	result.Checks = workflow.Checks
-	result.JSONReport = validation.jsonReportPath(t.repositoryRoot)
-	if validation.HTMLReportCurrent {
-		result.HTMLReport = validation.htmlReportPath(t.repositoryRoot)
-	}
-	result.Instruction = "Validation finished for this source snapshot. Finish any source edits, then run next_command as the final check and report its factual response. Further source edits invalidate completion. ddtest has already checked its owned cleanup and report exclusions; do not repeat cache or package audits."
-	result.NextAction = "run_command"
-	resume := result.NextCommand
-	result.NextCommand = onboard.DDTestCommand("testdrive", "--report")
-	if options.Format == "json" {
-		result.NextCommand = append(result.NextCommand, "--format", "json")
-	}
-	result.Phase = "complete"
-	if workflowVerdict(validation) == "selected_passed" {
-		if err := checkpoint.remove(); err != nil {
-			return fail("blocked_environment", "checkpoint_cleanup_failed", err.Error(), "Remove only the named owned checkpoint after restoring access.")
-		}
-		result.Status = "selected_passed"
-		if validation.KeptReport != "" {
-			// testdrive --report renders the kept --all report, not this run.
-			result.NextAction, result.NextCommand = "report_result", nil
-			result.FinalResponse = validation.Summary.FinalResponse
-			result.Instruction = "This run of one command passed. It was written beside the --all report " + validation.KeptReport + ", which it does not replace and which alone can certify onboarding. Report final_response unchanged; do not present this run as certification."
-		}
-		return onboard.RenderAgentResult(output, result, options.Format)
-	}
-	if workflowVerdict(validation) != "complete_locally" {
-		result.Instruction = ""
-		result.NextCommand = nil
-		// Results that end the agent's turn carry the current report's canonical
-		// text, so the agent can relay it verbatim (see fail).
-		turnFinalResponse = validation.Summary.FinalResponse
-		result.ResumeCommand = append(append([]string{}, resume...), "--resume", checkpoint.RunID)
-		result.Phase = "validation"
-		if !workflowChecksPassed(workflow) {
-			result.Phase = "verification"
-		}
-		var reviewCommands, reviewItems []string
-		for _, configuration := range validation.Configurations {
-			for _, build := range configuration.Preparation {
-				if build.Code == "preparation_review_required" && !slices.Contains(reviewCommands, build.Command) {
-					reviewCommands = append(reviewCommands, build.Command)
-					item := build.Command
-					if build.Diagnostic != "" {
-						item += " (review " + build.Diagnostic + ")"
-					}
-					reviewItems = append(reviewItems, item)
-				}
-			}
-		}
-		if len(reviewCommands) > 0 {
-			result.Location = strings.Join(reviewCommands, "; ")
-			result.RequiredInput = []string{"Read " + strings.Join(reviewItems, "; ") + ". The build runs in an isolated copy, never in the checkout. You may run resume_command without asking only when every named step runs repository-local code (package scripts resolving to files in the repository, or bundler configuration with well-known plugins) and nothing downloads or installs (no npx of uncached packages, curl, wget or network installs) or writes outside the repository copy; otherwise ask the user first. The final response reports the opt-in. No new setup facts are required."}
-			if !slices.Contains(result.ResumeCommand, "--allow-reviewed-builds") {
-				result.ResumeCommand = append(result.ResumeCommand, "--allow-reviewed-builds")
-			}
-			return fail("needs_input", "preparation_review_required", "Preparation was not executed pending review: "+result.Location, "After reviewing the named commands, opt in using resume_command. Preserve the CI commands, scope and assertions; do not invent build facts.")
-		}
-		if entry, cause := workflowSetupFailure(validation); entry != nil {
-			if entry.Cypress != nil && len(entry.Cypress.Start) > 0 && strings.Contains(validation.Error, "cypress startup port") {
-				result.Location = entry.ID
-				result.InputTemplate = cypressPortFactsTemplate(t.repositoryRoot, before, *entry)
-				result.RequiredInput = []string{"supported application/test port override for the existing Cypress startup; keep startup, baseUrl and action wait-on consistent"}
-				return fail("needs_input", "service_setup_unresolved", strings.Join(validation.Summary.BlockingChecks, "; "), "Use input_template.configurations[0].port_override for an existing application port variable. If the app has none, add a default-preserving variable in its startup source, rerun resume_command once for the new fingerprint, then fill the template outside the checkout and append --facts to resume_command. ddtest applies the local startup/baseUrl/readiness override; do not change CI port defaults or duplicate the service.")
-			}
-			result.InputTemplate = setupFactsTemplate(before, *entry)
-			result.RequiredInput = []string{"correct the named prerequisite or service; supply configuration_id setup facts and run resume_command"}
-			reason := entry.Command + ": setup did not complete"
-			if cause != "" {
-				reason += ": " + cause
-			}
-			return fail("needs_input", "configuration_setup_failed", reason, "Tests were not compared for this configuration. Correct only its declared setup; preserve scope and assertions.")
-		}
-		// Evidence that passed on a compatible substitute runtime is the user's to accept.
-		var subBlockers []string
-		var unaccepted []runtimeSubstitution
-		for _, sub := range validation.substitutions() {
-			if !sub.Accepted {
-				subBlockers = append(subBlockers, sub.blocker())
-				unaccepted = append(unaccepted, sub)
-			}
-		}
-		subLocal, subRemedy := substituteChoice(unaccepted)
-		if len(subBlockers) > 0 && slices.Equal(validation.Summary.BlockingChecks, subBlockers) {
-			if !slices.Contains(result.ResumeCommand, AcceptSubstituteRuntimeFlag) {
-				result.ResumeCommand = append(result.ResumeCommand, AcceptSubstituteRuntimeFlag)
-			}
-			result.RequiredInput = []string{"User decision: accept the evidence from " + subLocal + " by running resume_command, or " + subRemedy + " and rerun resume_command without " + AcceptSubstituteRuntimeFlag + "."}
-			return fail("needs_input", "substitute_runtime_unaccepted", strings.Join(subBlockers, "; "), "Every check passed on a compatible substitute runtime. Ask the user which option to take; do not accept it yourself, download a runtime, or change CI, the tracer or the test scope.")
-		}
-		reportOnly, actionable := splitTracerOnlyBlockers(validation)
-		decision := ""
-		if len(subBlockers) > 0 {
-			// The substitute is still the user's decision when other blockers remain;
-			// it must not be lost among them or accepted by the agent.
-			actionable = slices.DeleteFunc(actionable, func(check string) bool { return slices.Contains(subBlockers, check) })
-			acceptFlag = AcceptSubstituteRuntimeFlag
-			decision = " Separately, ask the user whether to accept the evidence from substitute " + subLocal + ": once they approve, run accept_resume_command instead of resume_command; otherwise " + subRemedy + ". Do not accept it yourself or download a runtime."
-		}
-		if len(actionable) == 0 && len(reportOnly) > 0 {
-			result.RequiredInput = reportOnly
-			return fail("validation_failed", "validation_incomplete", strings.Join(reportOnly, "; "), "Report these blockers to the user as they are: the tracer did not apply these controls for this framework setup, and no customer change is expected to fix them. Do not change the suite, CI, configuration or tracer to work around them, and do not rerun."+decision)
-		}
-		// Every actionable blocker is listed: a capped list hid real checks behind
-		// lines that only restate them. Multi-line CI scripts are shortened to one
-		// line; the report keeps them whole.
-		result.RequiredInput = nil
-		for _, check := range actionable {
-			result.RequiredInput = append(result.RequiredInput, onboard.OneLineExcerpt(check))
-		}
-		needs := "Address only these current blockers, then rerun full validation. A failed feature or exclusion check remains failed."
-		if slices.ContainsFunc(actionable, isScopeBlocker) {
-			needs = "Address only these current blockers, then rerun full validation; unresolved CI scope blockers are not yours to address. A failed feature or exclusion check remains failed. " + onboard.ScopeBlockerInstruction
-			if !slices.ContainsFunc(actionable, func(check string) bool { return !isScopeBlocker(check) }) {
-				needs = "Report these blockers to the user with their options; there is nothing to rerun until the user decides. " + onboard.ScopeBlockerInstruction
-			}
-		}
-		if len(reportOnly) > 0 {
-			needs += " Report, without trying to fix, these tracer limitations: " + strings.Join(reportOnly, "; ") + "."
-		}
-		return fail("validation_failed", "validation_incomplete", strings.Join(result.RequiredInput, "; "), needs+decision)
-	}
-	if err := checkpoint.remove(); err != nil {
-		return fail("blocked_environment", "checkpoint_cleanup_failed", err.Error(), "Restore access to private checkpoint storage.")
-	}
-	result.Status = "complete_locally"
-	return onboard.RenderAgentResult(output, result, options.Format)
-}
-
-// Rejected options, facts or resume IDs describe this invocation, not the
-// repository, so they leave an earlier report and its binding untouched.
-func workflowInputFailure(code string) bool {
-	switch code {
-	case "resume_invalid", "resume_not_found", "facts_invalid", "facts_refresh_required":
-		return true
-	}
-	return false
+	return attempt.complete(t, validation, workflow, before)
 }
 
 // withWorkflowState carries the workflow's scope, plan, run and selected site

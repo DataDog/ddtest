@@ -7,6 +7,10 @@ Start at the boundary that owns the behavior you need to change:
 | --- | --- |
 | CLI flags, consent and output mode | `internal/cmd/onboard.go`, `internal/cmd/testdrive.go` |
 | Shared CI flags and error rendering | `internal/cmd/ci_provider.go` (`ciOptions`) |
+| Onboarding detection and setup handoffs | `internal/onboard/agent.go` |
+| Shared agent protocol and rendering | `internal/onboard/agent_result.go` |
+| Persistent executable lookup and follow-up commands | `internal/onboard/commands.go` |
+| Execution plans and setup-facts schema | `internal/onboard/execution_plan.go` |
 | CI provider selection and follow-up arguments | `internal/onboard/ci_selection.go` |
 | Provider contract and registrations | `internal/onboard/ci_provider.go`, `ci_providers.go` |
 | Workflow model, loading and shared test/setup classification | `internal/onboard/ci_workflows.go` |
@@ -19,6 +23,10 @@ Start at the boundary that owns the behavior you need to change:
 | Setup plans and bounded source edits | `internal/onboard/execution_plan.go`, `apply*.go` |
 | Validation preparation and execution | `internal/testdrive/testdrive.go` |
 | Coordinated setup and validation | `internal/testdrive/workflow.go` |
+| Attempt state, failure policy and retry handoffs | `internal/testdrive/workflow_attempt.go` |
+| Shared CI questions and pinned tracer selection | `internal/testdrive/workflow_ci.go` |
+| Checkpoint-bound facts and setup failure recovery | `internal/testdrive/workflow_setup.go` |
+| Verified report completion and blocker handoffs | `internal/testdrive/workflow_completion.go` |
 | Restart and resume commands | `internal/testdrive/workflow_commands.go` |
 | Workflow tracer selection and metadata preflight | `internal/testdrive/workflow_tracer.go` |
 | Saved workflow reports and blocker classification | `internal/testdrive/workflow_report.go` |
@@ -38,6 +46,12 @@ full discovery decodes the complete workflow model and expands composite actions
 `internal/environment` detects the running CI environment and supplies runtime
 tags and runner configuration. Repository CI inspection belongs here, in
 `internal/onboard`, and is shared with testdrive.
+
+`workflowAttempt` owns a single invocation's result, checkpoint and recovery
+state. The coordinator sequences discovery, setup, execution and verification;
+the attempt handles failure and completion handoffs. Standalone validation
+shares the attempt's CI decisions and failure policy while keeping its own
+execution and verdict rules.
 
 After changing these paths, run `make test` and `make lint`. The end-to-end
 Codex catalog is described in
