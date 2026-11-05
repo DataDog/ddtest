@@ -8,8 +8,8 @@ executable writes them with `ddtest instrument bazel`.
 
 rules_test_optimization owns the Starlark: the test rule, the transition to
 the instrumented SDK, the toolchains and the repositories that run
-`ddtest instrument bazel` while Bazel fetches. Its major version that uses
-this command is in development. This page covers what ddtest provides to it.
+`ddtest instrument bazel` while Bazel fetches, from its version 2.0.0. This
+page covers what ddtest provides to it.
 
 ## `ddtest instrument bazel`
 
