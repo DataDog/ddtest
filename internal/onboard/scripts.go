@@ -16,7 +16,7 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/DataDog/ddtest/internal/environment"
+	"github.com/DataDog/ddtest/internal/testcommand"
 	"github.com/kballard/go-shellquote"
 )
 
@@ -152,7 +152,7 @@ func resolveTestStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 		return commandResolution{}
 	}
 	if !resolvesTestSteps(language, framework) {
-		return commandResolution{Matched: environment.LooksLikeTestCommand(root, step.Run, language, framework)}
+		return commandResolution{Matched: testcommand.Matches(root, step.Run, language, framework)}
 	}
 	// GitHub expands these before the shell runs; they are not shell syntax.
 	if expression := workflowExpression.FindString(step.Run); expression != "" {

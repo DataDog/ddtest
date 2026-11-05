@@ -65,7 +65,7 @@ func run(output io.Writer, agent *agentHandoff) error {
 
 // onboardCI prints the onboarding guidance for the selected CI provider.
 func onboardCI(output io.Writer, provider ciProvider, repositoryRoot, language, name string, agent *agentHandoff) error {
-	workflows, configured, err := provider.findTestWorkflows(repositoryRoot, language, name)
+	workflows, configured, err := findTestWorkflows(provider, repositoryRoot, language, name)
 	if err != nil {
 		return err
 	}

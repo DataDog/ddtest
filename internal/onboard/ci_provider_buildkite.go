@@ -136,15 +136,6 @@ func (b buildkite) readWorkflows(root string) ([]ciWorkflow, error) {
 	return workflows, nil
 }
 
-func (b buildkite) findTestWorkflows(root, language, framework string) ([]string, []string, error) {
-	workflows, err := b.readWorkflows(root)
-	if err != nil {
-		return nil, nil, err
-	}
-	found, configured := testWorkflowsWithSetup(root, workflows, language, framework)
-	return found, configured, nil
-}
-
 func (buildkite) setupStep(step runtimeStep) (ciSetup, bool) {
 	if step.Setup == nil {
 		return ciSetup{}, false

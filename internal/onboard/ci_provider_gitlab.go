@@ -75,15 +75,6 @@ func (g gitLabCI) readWorkflows(root string) ([]ciWorkflow, error) {
 	return config.workflows(), nil
 }
 
-func (g gitLabCI) findTestWorkflows(root, language, framework string) ([]string, []string, error) {
-	workflows, err := g.readWorkflows(root)
-	if err != nil {
-		return nil, nil, err
-	}
-	found, configured := testWorkflowsWithSetup(root, workflows, language, framework)
-	return found, configured, nil
-}
-
 func (gitLabCI) setupStep(step runtimeStep) (ciSetup, bool) {
 	if step.Setup == nil {
 		return ciSetup{}, false

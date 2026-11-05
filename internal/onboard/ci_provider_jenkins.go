@@ -109,15 +109,6 @@ func (j jenkins) readWorkflows(root string) ([]ciWorkflow, error) {
 	return workflows, nil
 }
 
-func (j jenkins) findTestWorkflows(root, language, framework string) ([]string, []string, error) {
-	workflows, err := j.readWorkflows(root)
-	if err != nil {
-		return nil, nil, err
-	}
-	found, configured := testWorkflowsWithSetup(root, workflows, language, framework)
-	return found, configured, nil
-}
-
 func (jenkins) setupStep(step runtimeStep) (ciSetup, bool) {
 	if step.Setup == nil {
 		return ciSetup{}, false

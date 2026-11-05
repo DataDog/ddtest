@@ -10,9 +10,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
-	"github.com/DataDog/ddtest/internal/environment"
+	"github.com/DataDog/ddtest/internal/testcommand"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -61,6 +62,22 @@ func (g gitHubActions) configurationFiles(root string) ([]string, error) {
 }
 
 func (g gitHubActions) readWorkflows(root string) ([]ciWorkflow, error) {
+	workflows, err := g.readWorkflowFiles(root)
+	if err != nil {
+		return nil, err
+	}
+	for _, workflow := range workflows {
+		for jobName, job := range workflow.Jobs {
+			job.Steps = expandCompositeSteps(root, workflow.Path, job.Steps)
+			workflow.Jobs[jobName] = job
+		}
+	}
+	return workflows, nil
+}
+
+// readWorkflowFiles is the single GitHub workflow loader. Manual instructions
+// inspect literal steps; discovery expands composite actions after loading.
+func (g gitHubActions) readWorkflowFiles(root string) ([]ciWorkflow, error) {
 	names, err := g.workflowEntries(root)
 	if err != nil {
 		return nil, err
@@ -78,17 +95,64 @@ func (g gitHubActions) readWorkflows(root string) ([]ciWorkflow, error) {
 			return nil, fmt.Errorf("parse %s: %w", path, err)
 		}
 		workflow.Path = ".github/workflows/" + name
-		for jobName, job := range workflow.Jobs {
-			job.Steps = expandCompositeSteps(root, workflow.Path, job.Steps)
-			workflow.Jobs[jobName] = job
-		}
 		workflows = append(workflows, workflow)
 	}
 	return workflows, nil
 }
 
-func (gitHubActions) findTestWorkflows(root, language, framework string) ([]string, []string, error) {
-	return environment.NewGitHub().FindTestWorkflows(root, language, framework)
+func (g gitHubActions) findTestWorkflows(root, language, framework string) ([]string, []string, error) {
+	workflows, err := g.readWorkflowFiles(root)
+	if err != nil {
+		return nil, nil, err
+	}
+	var found, configured []string
+	for _, workflow := range workflows {
+		tests, setup := inspectLiteralTestJobs(root, workflow, language, framework)
+		if tests {
+			found = append(found, workflow.Path)
+			if setup {
+				configured = append(configured, workflow.Path)
+			}
+		}
+	}
+	return found, configured, nil
+}
+
+// inspectLiteralTestJobs preserves the conservative action and command checks
+// used by manual onboarding. Full validation uses resolved commands instead.
+func inspectLiteralTestJobs(root string, workflow ciWorkflow, language, name string) (foundTests, configured bool) {
+	actionLanguage := setupActionLanguage(language)
+	for _, job := range workflow.Jobs {
+		jobConfigured := false
+		for _, step := range job.Steps {
+			condition := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(strings.TrimSpace(step.If), "${{"), "}}"))
+			if condition == "false" {
+				continue
+			}
+			directory := step.WorkingDirectory
+			if directory == "" {
+				directory = job.Defaults.Run.WorkingDirectory
+			}
+			if directory == "" {
+				directory = workflow.Defaults.Run.WorkingDirectory
+			}
+			if !filepath.IsAbs(directory) {
+				directory = filepath.Join(root, directory)
+			}
+			if testcommand.Matches(directory, step.Run, language, name) {
+				foundTests = true
+				if !jobConfigured {
+					return true, false
+				}
+			}
+			action, _, hasVersion := strings.Cut(strings.ToLower(step.Uses), "@")
+			if action == githubAction && hasVersion && (condition == "" || condition == "true" || condition == "success()") && !strings.Contains(step.With["languages"], "${{") {
+				languages := strings.Fields(step.With["languages"])
+				jobConfigured = jobConfigured || step.With["languages"] == "all" || slices.Contains(languages, actionLanguage)
+			}
+		}
+	}
+	return foundTests, foundTests
 }
 
 func (gitHubActions) editsSetup() bool { return true }

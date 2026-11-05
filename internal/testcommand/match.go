@@ -3,150 +3,29 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/).
 // Copyright 2026 Datadog, Inc.
 
-package environment
+// Package testcommand recognizes test entry points without executing repository code.
+package testcommand
 
 import (
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
-	"sort"
 	"strings"
 
 	"github.com/DataDog/ddtest/internal/maven"
 	"github.com/kballard/go-shellquote"
 	"github.com/pelletier/go-toml/v2"
-	"go.yaml.in/yaml/v3"
 )
 
-const githubAction = "datadog/test-visibility-github-action"
-
-func gitHubWorkflowPaths(repositoryRoot string) ([]string, error) {
-	directory := filepath.Join(repositoryRoot, ".github", "workflows")
-	entries, err := os.ReadDir(directory)
-	if os.IsNotExist(err) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("find GitHub Actions workflows: %w", err)
-	}
-	var paths []string
-	for _, entry := range entries {
-		if !entry.IsDir() && (filepath.Ext(entry.Name()) == ".yml" || filepath.Ext(entry.Name()) == ".yaml") {
-			paths = append(paths, filepath.Join(directory, entry.Name()))
-		}
-	}
-	return paths, nil
-}
-
-// FindTestWorkflows returns the workflows that run the selected framework and
-// the subset with an active Datadog action before every matching test step.
-func (g *GitHub) FindTestWorkflows(repositoryRoot, language, name string) ([]string, []string, error) {
-	var workflows []string
-	var configured []string
-	paths, err := gitHubWorkflowPaths(repositoryRoot)
-	if err != nil {
-		return nil, nil, err
-	}
-	for _, path := range paths {
-		contents, err := os.ReadFile(path)
-		if err != nil {
-			return nil, nil, fmt.Errorf("read %s: %w", path, err)
-		}
-		foundTests, isConfigured, err := inspectTestJobs(repositoryRoot, contents, language, name)
-		if err != nil {
-			return nil, nil, fmt.Errorf("parse %s: %w", path, err)
-		}
-		if !foundTests {
-			continue
-		}
-
-		relativePath, err := filepath.Rel(repositoryRoot, path)
-		if err != nil {
-			return nil, nil, fmt.Errorf("make workflow path relative: %w", err)
-		}
-		relativePath = filepath.ToSlash(relativePath)
-		workflows = append(workflows, relativePath)
-		if isConfigured {
-			configured = append(configured, relativePath)
-		}
-	}
-
-	sort.Strings(workflows)
-	sort.Strings(configured)
-	return workflows, configured, nil
-}
-
-func inspectTestJobs(root string, contents []byte, language, name string) (foundTests, configured bool, err error) {
-	type defaults struct {
-		Run struct {
-			WorkingDirectory string `yaml:"working-directory"`
-		} `yaml:"run"`
-	}
-	var workflow struct {
-		Defaults defaults `yaml:"defaults"`
-		Jobs     map[string]struct {
-			Defaults defaults `yaml:"defaults"`
-			Steps    []struct {
-				Run              string `yaml:"run"`
-				Uses             string `yaml:"uses"`
-				If               string `yaml:"if"`
-				WorkingDirectory string `yaml:"working-directory"`
-				With             struct {
-					Languages string `yaml:"languages"`
-				} `yaml:"with"`
-			} `yaml:"steps"`
-		} `yaml:"jobs"`
-	}
-	if err := yaml.Unmarshal(contents, &workflow); err != nil {
-		return false, false, err
-	}
-	actionLanguage := language
-	if language == "javascript" {
-		actionLanguage = "js"
-	}
-	for _, job := range workflow.Jobs {
-		jobConfigured := false
-		for _, step := range job.Steps {
-			condition := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(strings.TrimSpace(step.If), "${{"), "}}"))
-			if condition == "false" {
-				continue
-			}
-			directory := step.WorkingDirectory
-			if directory == "" {
-				directory = job.Defaults.Run.WorkingDirectory
-			}
-			if directory == "" {
-				directory = workflow.Defaults.Run.WorkingDirectory
-			}
-			if !filepath.IsAbs(directory) {
-				directory = filepath.Join(root, directory)
-			}
-			if looksLikeTestJob(directory, step.Run, language, name, 0) {
-				foundTests = true
-				if !jobConfigured {
-					return true, false, nil
-				}
-			}
-			action, _, hasVersion := strings.Cut(strings.ToLower(step.Uses), "@")
-			if action == githubAction && hasVersion && (condition == "" || condition == "true" || condition == "success()") && !strings.Contains(step.With.Languages, "${{") {
-				languages := strings.Fields(step.With.Languages)
-				jobConfigured = jobConfigured || step.With.Languages == "all" || slices.Contains(languages, actionLanguage)
-			}
-		}
-	}
-	return foundTests, foundTests, nil
-}
-
-// LooksLikeTestCommand recognizes literal framework invocations without running project code.
-func LooksLikeTestCommand(root, commands, language, name string) bool {
-	return looksLikeTestJob(root, commands, language, name, 0)
+// Matches recognizes literal framework invocations without running project code.
+func Matches(root, commands, language, name string) bool {
+	return matches(root, commands, language, name, 0)
 }
 
 // Resolve literal invocations without running project code. Limit script recursion
 // so cycles in package.json cannot hang onboarding.
-func looksLikeTestJob(root, commands, language, name string, depth int) bool {
+func matches(root, commands, language, name string, depth int) bool {
 	if depth > 10 {
 		return false
 	}
@@ -158,7 +37,7 @@ func looksLikeTestJob(root, commands, language, name string, depth int) bool {
 		// Handle simple shell command lists. Leave quoted shell expressions opaque.
 		if !strings.ContainsAny(command, "\"'`") && strings.ContainsAny(command, ";&|") {
 			for _, part := range strings.FieldsFunc(command, func(r rune) bool { return r == ';' || r == '&' || r == '|' }) {
-				if looksLikeTestJob(root, part, language, name, depth+1) {
+				if matches(root, part, language, name, depth+1) {
 					return true
 				}
 			}
@@ -239,7 +118,7 @@ func looksLikeTestJob(root, commands, language, name string, depth int) bool {
 					continue
 				}
 				if script, ok := manifest.Scripts[args[0]]; ok {
-					if looksLikeTestJob(root, script, language, name, depth+1) {
+					if matches(root, script, language, name, depth+1) {
 						return true
 					}
 					continue

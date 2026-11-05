@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/DataDog/ddtest/internal/environment"
+	"github.com/DataDog/ddtest/internal/testcommand"
 	"github.com/kballard/go-shellquote"
 	"mvdan.cc/sh/v3/syntax"
 )
@@ -38,7 +38,7 @@ func resolveRubyStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 		return resolution
 	}
 	parts, parseErr := staticCommands(step.Run)
-	matched := environment.LooksLikeTestCommand(filepath.Join(root, directory), step.Run, "ruby", framework)
+	matched := testcommand.Matches(filepath.Join(root, directory), step.Run, "ruby", framework)
 	if parseErr == nil && len(parts) == 1 {
 		words := parts[0]
 		if len(words) > 2 && filepath.Base(words[0]) == "bundle" && words[1] == "exec" {
@@ -56,7 +56,7 @@ func resolveRubyStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 			}
 		}
 		if len(words) > 0 && filepath.Base(words[0]) == "rake" {
-			if !environment.LooksLikeTestCommand(filepath.Join(root, directory), step.Run, "ruby", framework) {
+			if !testcommand.Matches(filepath.Join(root, directory), step.Run, "ruby", framework) {
 				return commandResolution{Review: true, Reason: "Ruby maintenance task is outside test validation."}
 			}
 			if resolution, done := resolveRubyRakeTargets(root, directory, step.Run, parts[0], words, framework); done {
