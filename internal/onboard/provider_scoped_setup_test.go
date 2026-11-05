@@ -1301,58 +1301,142 @@ func jenkinsContainerTestStage(script string) string {
 }
 
 // jenkinsWritten is the shell text of the sh step a Jenkinsfile runs last,
-// as Groovy reads it without its surrounding blank space, which must
-// interpolate nothing.
-func jenkinsWritten(t *testing.T, jenkinsfile string) string {
+// as Groovy reads it without its surrounding blank space, with each ${…}
+// it interpolates written back as ${…}, and the expressions it
+// interpolates.
+func jenkinsWritten(t *testing.T, jenkinsfile string) (string, []string) {
 	t.Helper()
 	tokens, err := lexGroovy(jenkinsfile)
 	require.NoError(t, err)
 	var text string
+	var interpolated []string
 	for _, token := range tokens {
-		if token.str != nil {
-			literal, ok := token.str.literal()
-			require.True(t, ok, "Groovy interpolates %s", token.text)
-			text = strings.TrimSpace(literal)
+		if token.str == nil {
+			continue
 		}
+		var written strings.Builder
+		interpolated = nil
+		for _, part := range token.str.parts {
+			if part.interpolated {
+				written.WriteString("${" + part.expr + "}")
+				interpolated = append(interpolated, part.expr)
+				continue
+			}
+			written.WriteString(part.text)
+		}
+		text = strings.TrimSpace(written.String())
 	}
-	return text
+	return text, interpolated
+}
+
+// jenkinsLiterals are the four string literals an sh step's script can be
+// written in, each holding a script whose first command reads SUITE, which
+// the pipeline's environment sets (see jenkinsSuiteStage), as Groovy (in a
+// GString) or the shell (in a single-quoted string) expands it, then a line
+// break or ; and the shell command it is given, escaped as that literal
+// needs; with what Groovy hands the shell before that command and the
+// expressions it interpolates.
+var jenkinsLiterals = []struct {
+	name, first  string
+	interpolated []string
+	script       func(command string) string
+}{
+	{"double-quoted", "echo ${env.SUITE}; ", []string{"env.SUITE"}, func(command string) string {
+		return `"echo ${env.SUITE}; ` + strings.NewReplacer(`\`, `\\`, `"`, `\"`, "$", `\$`).Replace(command) + `"`
+	}},
+	{"triple-double-quoted", "echo ${env.SUITE}\n          ", []string{"env.SUITE"}, func(command string) string {
+		return "\"\"\"\n          echo ${env.SUITE}\n          " + strings.NewReplacer(`\`, `\\`, "$", `\$`).Replace(command) + "\n        \"\"\""
+	}},
+	{"single-quoted", `echo "$SUITE"; `, nil, func(command string) string {
+		return `'echo "$SUITE"; ` + strings.NewReplacer(`\`, `\\`, "'", `\'`).Replace(command) + "'"
+	}},
+	{"triple-single-quoted", "echo \"$SUITE\"\n          ", nil, func(command string) string {
+		return "'''\n          echo \"$SUITE\"\n          " + strings.ReplaceAll(command, `\`, `\\`) + "\n        '''"
+	}},
+}
+
+// jenkinsSuiteStage is jenkinsContainerTestStage with SUITE set in the
+// pipeline's environment, which ddtest resolves where a GString
+// interpolates it.
+func jenkinsSuiteStage(script string) string {
+	return strings.Replace(jenkinsContainerTestStage(script), "  stages {", "  environment { SUITE = 'smoke' }\n  stages {", 1)
+}
+
+// requireJenkinsKeepsBuildNumber checks that, with the build number in
+// place of SUITE, which only the Jenkins build knows and ddtest so reads in
+// no script, the edited literal still hands the shell want after the first
+// command, with the build number still interpolated in a GString.
+func requireJenkinsKeepsBuildNumber(t *testing.T, applied, first string, interpolated []string, want string) {
+	t.Helper()
+	built := strings.NewReplacer("env.SUITE", "env.BUILD_NUMBER", "$SUITE", "$BUILD_NUMBER").Replace(applied)
+	written, got := jenkinsWritten(t, built)
+	require.Equal(t, strings.NewReplacer("env.SUITE", "env.BUILD_NUMBER", "$SUITE", "$BUILD_NUMBER").Replace(first)+want, written)
+	var expected []string
+	for _, expr := range interpolated {
+		expected = append(expected, strings.Replace(expr, "SUITE", "BUILD_NUMBER", 1))
+	}
+	require.Equal(t, expected, got, "Groovy still interpolates the build number")
+}
+
+// jenkinsReplaceCommand replaces, in a Jenkinsfile whose test step's script
+// is script(old), the old command as that literal holds it with command as
+// ddtest prescribes it, leaving the rest of the literal as it is: what a
+// user following the prescription does.
+func jenkinsReplaceCommand(t *testing.T, jenkinsfile string, script func(string) string, old, command string) string {
+	t.Helper()
+	before, empty := script(old), script("")
+	// The literal without the command shares its start and end with the
+	// literal with it: the command is what sits between them.
+	at := 0
+	for at < len(empty) && before[at] == empty[at] {
+		at++
+	}
+	edited := before[:at] + command + before[len(before)-(len(empty)-at):]
+	require.Contains(t, jenkinsfile, before)
+	return strings.Replace(jenkinsfile, before, edited, 1)
 }
 
 // In a container stage, the snippet's stage, a direct Cucumber invocation
-// piped into a report converter gets its replacement as a Groovy string in
-// triple single quotes holds it, whatever string the sh step uses:
-// pasted into a double-quoted one, Groovy would read $status and
-// ${NODE_OPTIONS} itself and reject $?. Quotes in the command are kept, and
-// ddtest reads the result as the tests and the conversion after them. A host
-// stage gets the plugin, which reaches the command without any change.
-func TestJenkinsReportPipePrescriptionIsASingleQuotedGroovyString(t *testing.T) {
+// piped into a report converter gets its replacement escaped for the
+// string literal its sh step already uses, so replacing only the old
+// command inside it hands the shell the exact status subshell while the
+// script's other commands, and what a GString interpolates in them, such
+// as ${env.BUILD_NUMBER}, stay as they are: switching a GString to single
+// quotes would hand the shell ${env.BUILD_NUMBER}, a bad substitution.
+// Quotes in the command are kept, and ddtest reads the result as the tests
+// and the conversion after them. A host stage gets the plugin, which
+// reaches the command without any change.
+func TestJenkinsReportPipePrescriptionKeepsTheStepsGroovyLiteral(t *testing.T) {
 	framework := scopedFrameworks[0]
 	pipe := `./node_modules/.bin/cucumber-js ./features --format json | ./node_modules/.bin/cucumber-junit --name 'My suite' > junit.xml`
 	tests := cucumberScopedOptions + " " + cucumberImpactedWorkaround + " npx --no-install nyc -- ./node_modules/.bin/cucumber-js ./features --format json:cucumber-report.json"
-	want := statusSubshell("cucumber-report.json", tests, `cat cucumber-report.json | ./node_modules/.bin/cucumber-junit --name 'My suite' > junit.xml`)
-	for name, script := range map[string]string{
-		"double-quoted":        groovyQuote(pipe, `"`),
-		"single-quoted":        groovyQuote(pipe, "'"),
-		"triple-double-quoted": `"""` + strings.NewReplacer(`\`, `\\`, "$", `\$`).Replace(pipe) + `"""`,
-		"triple-single-quoted": "'''" + strings.ReplaceAll(pipe, `\`, `\\`) + "'''",
-	} {
-		t.Run(name, func(t *testing.T) {
-			jenkinsfile := jenkinsContainerTestStage(script)
-			require.Equal(t, pipe, jenkinsWritten(t, jenkinsfile))
+	conversion := `cat cucumber-report.json | ./node_modules/.bin/cucumber-junit --name 'My suite' > junit.xml`
+	want := statusSubshell("cucumber-report.json", tests, conversion)
+	for _, literal := range jenkinsLiterals {
+		t.Run(literal.name, func(t *testing.T) {
+			jenkinsfile := jenkinsSuiteStage(literal.script(pipe))
+			written, interpolated := jenkinsWritten(t, jenkinsfile)
+			require.Equal(t, literal.first+pipe, written)
+			require.Equal(t, literal.interpolated, interpolated)
 			root := scopedRepository(t, scopedProvider{name: jenkinsProvider, file: "Jenkinsfile"}, jenkinsfile, framework.pkg, nil)
 			_, err := PlanJavaScriptSetup(root, "cucumber", "5.133.0", "datadoghq.com", ">=18")
 			var gap *EditThenApplyGap
 			require.ErrorAs(t, err, &gap)
-			require.Contains(t, gap.Reason, "replace that string with sh '''…''' holding the same script")
+			require.NotContains(t, gap.Reason, "replace that string with")
+			require.Contains(t, gap.Reason, "replace only the old command inside that string")
 			_, after, ok := strings.Cut(gap.Reason, "or the conversion's when only the conversion fails: ")
 			require.True(t, ok, gap.Reason)
 			command, _, ok := strings.Cut(after, ". Then rerun onboard --apply")
 			require.True(t, ok, gap.Reason)
 
-			applied := jenkinsContainerTestStage("'''\n          " + command + "\n        '''")
-			require.Equal(t, want, jenkinsWritten(t, applied), "Groovy passes the shell the exact command")
+			applied := jenkinsReplaceCommand(t, jenkinsfile, literal.script, pipe, command)
+			require.Equal(t, jenkinsSuiteStage(literal.script(want)), applied)
+			written, interpolated = jenkinsWritten(t, applied)
+			require.Equal(t, literal.first+want, written, "Groovy passes the shell the exact command")
+			require.Equal(t, literal.interpolated, interpolated, "the script's other expressions stay interpolated")
+			requireJenkinsKeepsBuildNumber(t, applied, literal.first, literal.interpolated, want)
 			writeFile(t, root, "Jenkinsfile", applied)
-			requireJenkinsReadsTheStatusSubshell(t, root, tests, `cat cucumber-report.json | ./node_modules/.bin/cucumber-junit --name 'My suite' > junit.xml`)
+			requireJenkinsReadsTheStatusSubshell(t, root, tests, conversion)
 		})
 	}
 
@@ -1363,30 +1447,40 @@ func TestJenkinsReportPipePrescriptionIsASingleQuotedGroovyString(t *testing.T) 
 }
 
 // The tests inside an existing status subshell in a container stage get
-// their scoped command as a single-quoted Groovy string holds it, which
-// ddtest reads back as the same tests and conversion.
-func TestJenkinsStatusSubshellEditIsASingleQuotedGroovyString(t *testing.T) {
+// their scoped command escaped for the string literal of its sh step,
+// which ddtest reads back as the same tests and conversion, with the
+// script's other expressions still interpolated.
+func TestJenkinsStatusSubshellEditKeepsTheStepsGroovyLiteral(t *testing.T) {
 	framework := scopedFrameworks[0]
 	conversion := "cat cucumber-report.json | ./node_modules/.bin/cucumber-junit > junit.xml"
 	original := statusSubshell("cucumber-report.json", "./node_modules/.bin/cucumber-js ./features --format json:cucumber-report.json", conversion)
-	jenkinsfile := jenkinsContainerTestStage(groovyQuote(original, `"`))
-	require.Equal(t, original, jenkinsWritten(t, jenkinsfile))
-	root := scopedRepository(t, scopedProvider{name: jenkinsProvider, file: "Jenkinsfile"}, jenkinsfile, framework.pkg, nil)
-	_, err := PlanJavaScriptSetup(root, "cucumber", "5.133.0", "datadoghq.com", ">=18")
-	var gap *EditThenApplyGap
-	require.ErrorAs(t, err, &gap)
-	require.Contains(t, gap.Reason, "replace that string with sh '''…''' holding the same script")
-	_, after, ok := strings.Cut(gap.Reason, "Change this CI command to exactly: ")
-	require.True(t, ok, gap.Reason)
-	command, _, ok := strings.Cut(after, ". This is the command as a single-quoted Groovy string")
-	require.True(t, ok, gap.Reason)
-	want := statusSubshell("cucumber-report.json", cucumberScopedOptions+" "+cucumberImpactedWorkaround+" npx --no-install nyc -- ./node_modules/.bin/cucumber-js ./features --format json:cucumber-report.json", conversion)
-	require.Equal(t, want, command)
+	tests := cucumberScopedOptions + " " + cucumberImpactedWorkaround + " npx --no-install nyc -- ./node_modules/.bin/cucumber-js ./features --format json:cucumber-report.json"
+	want := statusSubshell("cucumber-report.json", tests, conversion)
+	for _, literal := range jenkinsLiterals {
+		t.Run(literal.name, func(t *testing.T) {
+			jenkinsfile := jenkinsSuiteStage(literal.script(original))
+			written, _ := jenkinsWritten(t, jenkinsfile)
+			require.Equal(t, literal.first+original, written)
+			root := scopedRepository(t, scopedProvider{name: jenkinsProvider, file: "Jenkinsfile"}, jenkinsfile, framework.pkg, nil)
+			_, err := PlanJavaScriptSetup(root, "cucumber", "5.133.0", "datadoghq.com", ">=18")
+			var gap *EditThenApplyGap
+			require.ErrorAs(t, err, &gap)
+			require.NotContains(t, gap.Reason, "replace that string with")
+			_, after, ok := strings.Cut(gap.Reason, "Change this CI command to exactly: ")
+			require.True(t, ok, gap.Reason)
+			command, _, ok := strings.Cut(after, ". This is the command as the sh step's ")
+			require.True(t, ok, gap.Reason)
 
-	applied := jenkinsContainerTestStage("'''\n          " + command + "\n        '''")
-	require.Equal(t, want, jenkinsWritten(t, applied))
-	writeFile(t, root, "Jenkinsfile", applied)
-	requireJenkinsReadsTheStatusSubshell(t, root, cucumberScopedOptions+" "+cucumberImpactedWorkaround+" npx --no-install nyc -- ./node_modules/.bin/cucumber-js ./features --format json:cucumber-report.json", conversion)
+			applied := jenkinsReplaceCommand(t, jenkinsfile, literal.script, original, command)
+			require.Equal(t, jenkinsSuiteStage(literal.script(want)), applied)
+			written, interpolated := jenkinsWritten(t, applied)
+			require.Equal(t, literal.first+want, written)
+			require.Equal(t, literal.interpolated, interpolated, "the script's other expressions stay interpolated")
+			requireJenkinsKeepsBuildNumber(t, applied, literal.first, literal.interpolated, want)
+			writeFile(t, root, "Jenkinsfile", applied)
+			requireJenkinsReadsTheStatusSubshell(t, root, tests, conversion)
+		})
+	}
 }
 
 // requireJenkinsReadsTheStatusSubshell checks that the Jenkinsfile's test
@@ -1407,17 +1501,35 @@ func requireJenkinsReadsTheStatusSubshell(t *testing.T, root, tests, conversion 
 	}
 }
 
-// A command Jenkins holds in triple single quotes keeps its backslashes and any run
-// of three quotes as Groovy reads them; other quotes stay as they are.
-func TestProviderCommandEscapesForASingleQuotedGroovyString(t *testing.T) {
-	for _, command := range []string{`echo "$a" 'b'`, `printf '%s\n' x`, `echo '''`, `echo ''''`, `echo \\`} {
-		written, note := providerCommand(jenkinsContainer{}, command)
-		require.NotEmpty(t, note)
-		require.Equal(t, command, jenkinsWritten(t, "sh '''\n"+written+"\n'''\n"), written)
+// A command escaped for each Groovy string literal is the exact command
+// Groovy hands the shell, with backslashes, $, quotes, runs of three quotes
+// and line breaks, while a ${…} the literal interpolates before it stays
+// interpolated; a script that is not a literal gets the command as it is,
+// and other providers but Buildkite get it unchanged.
+func TestJenkinsCommandRoundTripsThroughEachGroovyLiteral(t *testing.T) {
+	commands := []string{`echo "$a" 'b'`, `printf '%s\n' x`, `echo '''`, `echo ''''`, `echo """`, `echo """"`, `echo \\`, `exit "$status"`, `echo "a"`, `echo 'a'`, "echo a\necho b", `echo ${NODE_OPTIONS} $?`}
+	for _, quote := range []string{`"`, `"""`, "'", "'''"} {
+		for _, command := range commands {
+			written, note := jenkinsCommand(quote, command)
+			require.Contains(t, note, "replace only the old command inside that string")
+			prefix := "echo ${env.BUILD_NUMBER}; "
+			var interpolated []string
+			if strings.HasPrefix(quote, `"`) {
+				interpolated = []string{"env.BUILD_NUMBER"}
+			}
+			text, got := jenkinsWritten(t, "sh "+quote+prefix+written+quote+"\n")
+			require.Equal(t, prefix+command, text, "%s %s", quote, written)
+			require.Equal(t, interpolated, got, "%s %s", quote, written)
+		}
 	}
-	written, note := providerCommand(gitLabCI{}, `echo "$a"`)
+	written, note := jenkinsCommand("", `echo "$a"`)
+	require.Equal(t, `echo "$a"`, written)
+	require.Contains(t, note, "not a Groovy string literal")
+	written, note = providerCommand(gitLabCI{}, runtimeStep{}, `echo "$a"`)
 	require.Equal(t, `echo "$a"`, written)
 	require.Empty(t, note)
+	written, _ = providerCommand(jenkinsContainer{}, runtimeStep{origin: jenkinsShellStep{quote: `"`}}, `echo "$a"`)
+	require.Equal(t, `echo \"\$a\"`, written)
 }
 
 // The intermediate report is a file the pipeline names nowhere, so the

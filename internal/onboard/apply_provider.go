@@ -218,7 +218,7 @@ func planProviderJavaScriptSetup(root string, provider ciProvider, workflows []c
 					return nil, directScopedGap(provider, location, leaf.step, err)
 				}
 				if command != "" {
-					return nil, &EditThenApplyGap{SetupGap{directLeafLocation(location, leaf.step), directLeafReason(provider, framework, leaf.test.Command, command, setupIndex >= 0)}}
+					return nil, &EditThenApplyGap{SetupGap{directLeafLocation(location, leaf.step), directLeafReason(provider, leaf.step, framework, leaf.test.Command, command, setupIndex >= 0)}}
 				}
 			}
 			if handWritten != nil {
@@ -699,7 +699,7 @@ func directCucumberCoverageGap(root string, provider ciProvider, location string
 		if err != nil {
 			return directScopedGap(provider, location, leaf.step, err)
 		}
-		command, written := providerCommand(provider, command)
+		command, written := providerCommand(provider, leaf.step, command)
 		reason := CucumberCoverageGap + " CI runs " + leaf.test.Command + " directly, not through a package script, so onboard --apply cannot wrap it with NYC."
 		if leaf.test.usesNYC {
 			reason = "CI runs " + leaf.test.Command + " directly, not through a package script, without " + cucumberImpactedWorkaround + ", which onboard --apply adds to the package scripts it scopes and dd-trace's Cucumber instrumentation needs, so onboard --apply cannot add it to this command."
@@ -719,29 +719,78 @@ func directScopedGap(provider ciProvider, location string, step runtimeStep, err
 	}
 	escaped := *split
 	var written string
-	escaped.Command, written = providerCommand(provider, split.Command)
+	escaped.Command, written = providerCommand(provider, step, split.Command)
 	return &EditThenApplyGap{SetupGap{directLeafLocation(location, step), escaped.Error() + ": it adds the " + provider.setupName() + " before the tests when the job has none, and reads the conversion as outside the tests." + written}}
 }
 
-// providerCommand is a shell command ddtest prescribes for a CI step,
-// written as the provider's configuration holds it, and how to place it
-// there when that takes more than replacing the old command: Buildkite's
-// pipeline upload would replace each $, so each is doubled; a Jenkinsfile
-// holds it in a Groovy string, which must be single-quoted, in triple
-// single quotes for a multi-line script, so Groovy leaves every $ to the
-// shell, as the setup snippet's instructions require too. In it, each
-// backslash is escaped, as is a run of three quotes that would end it;
-// other quotes stay as they are.
-func providerCommand(provider ciProvider, command string) (string, string) {
+// providerCommand is a shell command ddtest prescribes for step, written
+// as the provider's configuration holds it, and how to place it there when
+// that takes more than replacing the old command: Buildkite's pipeline
+// upload would replace each $, so each is doubled; a Jenkinsfile holds it
+// in the Groovy string literal of the step's sh script (see
+// jenkinsCommand).
+func providerCommand(provider ciProvider, step runtimeStep, command string) (string, string) {
 	switch provider.name() {
 	case buildkiteProvider:
 		return buildkiteEscape(command), ""
 	case jenkinsProvider:
-		escaped := strings.ReplaceAll(command, `\`, `\\`)
-		escaped = strings.ReplaceAll(escaped, "'''", `\'\'\'`)
-		return escaped, " This is the command as a single-quoted Groovy string (sh '''…''') holds it, and Groovy leaves every $ to the shell only in a single-quoted one: when the sh step's script is double-quoted (\"…\" or \"\"\"…\"\"\"), or a one-line '…' string and this command has a single quote, replace that string with sh '''…''' holding the same script, keeping its other commands unchanged, with this command in place of the old one."
+		origin, _ := step.origin.(jenkinsShellStep)
+		return jenkinsCommand(origin.quote, command)
 	}
 	return command, ""
+}
+
+// jenkinsCommand is command escaped for the Groovy string literal, opened
+// by quote, that holds an sh step's script, so that Groovy hands the shell
+// exactly command when it replaces the old one inside that literal, which
+// keeps its type: the script's other commands, and any ${…} a GString
+// interpolates in them, stay as they are. In a GString, in double quotes
+// or triple double quotes, each backslash and $ is escaped; in a string in
+// single quotes or triple single quotes, each backslash. A one-line
+// literal escapes each of its own quotes and each line break; a
+// triple-quoted one, a run of three of its quotes and one that ends the
+// command, which would close it. A script that is not a literal gets the
+// command as the shell runs it.
+func jenkinsCommand(quote, command string) (string, string) {
+	escapeQuotes := func(text string, quote byte) string {
+		var escaped strings.Builder
+		for i := 0; i < len(text); i++ {
+			run := i
+			for run < len(text) && text[run] == quote {
+				run++
+			}
+			if run == i {
+				escaped.WriteByte(text[i])
+				continue
+			}
+			for j := i; j < run; j++ {
+				if run-i >= 3 || run == len(text) {
+					escaped.WriteByte('\\')
+				}
+				escaped.WriteByte(quote)
+			}
+			i = run - 1
+		}
+		return escaped.String()
+	}
+	var escaped, kind string
+	switch quote {
+	case `"`:
+		escaped = strings.NewReplacer(`\`, `\\`, "$", `\$`, `"`, `\"`, "\n", `\n`).Replace(command)
+		kind = "the sh step's double-quoted Groovy string (\"…\") holds it, with each backslash, $, double quote and line break escaped"
+	case `"""`:
+		escaped = escapeQuotes(strings.NewReplacer(`\`, `\\`, "$", `\$`).Replace(command), '"')
+		kind = "the sh step's triple-double-quoted Groovy string (\"\"\"…\"\"\") holds it, with each backslash and $ escaped, and any run of three double quotes"
+	case "'":
+		escaped = strings.NewReplacer(`\`, `\\`, "'", `\'`, "\n", `\n`).Replace(command)
+		kind = "the sh step's single-quoted Groovy string ('…') holds it, with each backslash, single quote and line break escaped"
+	case "'''":
+		escaped = escapeQuotes(strings.ReplaceAll(command, `\`, `\\`), '\'')
+		kind = "the sh step's triple-single-quoted Groovy string ('''…''') holds it, with each backslash escaped, and any run of three single quotes"
+	default:
+		return command, " This is the command as the shell runs it: the sh step's script is not a Groovy string literal ddtest reads, so write it there escaped as that string needs, so that Groovy hands the shell exactly this command."
+	}
+	return escaped, " This is the command as " + kind + ", so Groovy hands the shell exactly the command while the script's other commands, and anything that string interpolates in them, stay as they are: replace only the old command inside that string."
 }
 
 // cucumberImpactedWorkaroundSet reports whether a direct Cucumber
@@ -765,8 +814,8 @@ func directLeafLocation(location string, step runtimeStep) string {
 // directLeafReason prescribes the CI command a direct Cucumber or
 // WebdriverIO invocation needs (see directScopedCommand), written as the
 // provider's configuration holds it, and what onboard --apply does next.
-func directLeafReason(provider ciProvider, framework, leaf, command string, configured bool) string {
-	command, written := providerCommand(provider, command)
+func directLeafReason(provider ciProvider, step runtimeStep, framework, leaf, command string, configured bool) string {
+	command, written := providerCommand(provider, step, command)
 	edit := "it adds the " + provider.setupName() + " before this command, with the command that exports " + scopedEnvironment(framework) + "."
 	if configured {
 		edit = "the job's " + provider.setupName() + " already exports " + scopedEnvironment(framework) + "."
