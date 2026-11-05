@@ -8,9 +8,11 @@ package onboard
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -127,6 +129,38 @@ func TestJavaOnboardingHonorsTracerVersion(t *testing.T) {
 	_ = StartWithOptions(&output, StartOptions{Format: "json", Tracer: "1.66"})
 	require.Contains(t, output.String(), `"code":"invalid_options"`)
 	require.Contains(t, output.String(), "exact dd-java-agent release")
+}
+
+// An explicit --tracer-version latest selects the exact latest release, as
+// no --tracer-version does: the setup pins it, and every command of the
+// handoff carries that release, never latest, so the resumed validation
+// compares it with the CI pin.
+func TestJavaOnboardingResolvesAnExplicitLatest(t *testing.T) {
+	useJavaRelease(t, "1.70.2", nil)
+	gitLabJavaRepository(t, "test:\n  image: maven:3.9-eclipse-temurin-21\n  script:\n    - mvn -B verify\n")
+	var output bytes.Buffer
+	_ = StartWithOptions(&output, StartOptions{Format: "json", Tracer: "latest"})
+	var result AgentResult
+	require.NoError(t, json.Unmarshal(output.Bytes(), &result), output.String())
+	require.Contains(t, output.String(), `JAVA_TRACER_VERSION=\"1.70.2\"`, output.String())
+	commands := [][]string{result.NextCommand, result.ResumeCommand, result.AcceptResumeCommand}
+	require.NotEmpty(t, slices.Concat(commands...), output.String())
+	for _, command := range commands {
+		if i := slices.Index(command, "--tracer-version"); i >= 0 {
+			require.Equal(t, "1.70.2", command[i+1], "%v", command)
+		}
+	}
+	require.Contains(t, slices.Concat(commands...), "1.70.2", "the handoff carries the exact release")
+	require.NotContains(t, slices.Concat(commands...), "latest")
+
+	selected, err := SelectTracerRelease("java", "latest")
+	require.NoError(t, err)
+	require.Equal(t, "1.70.2", selected)
+	for _, language := range []string{"javascript", "python", "ruby"} {
+		selected, err := SelectTracerRelease(language, "latest")
+		require.NoError(t, err)
+		require.Equal(t, "latest", selected, "%s installs the release its registry tags latest", language)
+	}
 }
 
 // The Jenkins container snippet installs the release the host stages' plugin

@@ -19,8 +19,10 @@ import (
 	"testing"
 
 	"github.com/DataDog/ddtest/internal/framework"
+	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
 	"github.com/DataDog/ddtest/internal/testdrive/workspace"
+	"github.com/spf13/viper"
 	"github.com/stretchr/testify/require"
 )
 
@@ -419,6 +421,34 @@ func TestJavaValidationReportsTheCIPinnedAgent(t *testing.T) {
 	require.NoError(t, err, output.String())
 	require.Equal(t, "dd-java-agent@1.67.1", result.Tracer, "the report names the release CI pins, which this run validated")
 	require.Equal(t, "1.67.1", drive.platform.(*fakeTracer).options.Version)
+	require.Equal(t, "compatible", result.CIRuntime.Status, "%+v", result.CIRuntime)
+}
+
+// An explicit --tracer-version latest validates the exact latest release,
+// which the setup onboarding prescribed pins in CI, so the pinned row is
+// compatible, not a mismatch between latest and that release.
+func TestJavaValidationResolvesAnExplicitLatest(t *testing.T) {
+	root := t.TempDir()
+	requireWriteFile(t, filepath.Join(root, "pom.xml"), `<project><artifactId>fixture</artifactId><dependencies><dependency><groupId>org.junit.jupiter</groupId><artifactId>junit-jupiter</artifactId></dependency></dependencies></project>`)
+	t.Chdir(root)
+	viper.Reset()
+	settings.Init()
+	t.Cleanup(func() { viper.Reset(); settings.Init() })
+	prepared, err := Prepare(PrepareOptions{TracerVersion: "latest", CheckOnly: true})
+	require.NoError(t, err)
+	require.Equal(t, "1.68.1", prepared.tracerVersion, "the release every Java setup of this run pins")
+	require.Equal(t, "dd-java-agent@1.68.1", prepared.tracerLabel)
+
+	drive, _, _ := javaSimulation(t)
+	require.NoError(t, os.MkdirAll(filepath.Join(drive.repositoryRoot, ".github/workflows"), 0755))
+	requireWriteFile(t, filepath.Join(drive.repositoryRoot, ".github/workflows/ci.yml"), "jobs:\n  test:\n    steps:\n      - uses: actions/setup-java@v4\n        with: {java-version: '17'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: java, api_key: '${{ secrets.DD_API_KEY }}', java-tracer-version: '1.68.1'}\n      - run: mvn -B test\n")
+	drive.configurationEnvironment = map[string]string{"JAVA_HOME": writeJDK(t, "17.0.20")}
+	drive.platform = &fakeTracer{preloadPath: "/agent/dd-java-agent.jar"}
+	drive.tracerVersion, drive.tracerLabel = prepared.tracerVersion, prepared.tracerLabel
+	drive.preflight = drive.frameworkPreflight()
+	var output bytes.Buffer
+	result, err := drive.run(t.Context(), &output)
+	require.NoError(t, err, output.String())
 	require.Equal(t, "compatible", result.CIRuntime.Status, "%+v", result.CIRuntime)
 }
 
