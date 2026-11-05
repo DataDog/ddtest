@@ -172,6 +172,9 @@ type runtimeStep struct {
 	// Run's tests whatever their result, before it exits with their status
 	// (see readStatusSubshell).
 	afterTests []string
+	// statusWrapper is the text of that subshell before and after its
+	// tests, which an edit to the tests keeps (see directScopedCommand).
+	statusWrapper [2]string
 	// inline names the variables assigned inline before Run's command, which
 	// the provider's reader moved into Env (see foldInlineEnvironment).
 	inline []string

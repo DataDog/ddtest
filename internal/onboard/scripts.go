@@ -95,8 +95,14 @@ func resolveTestStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 				return unresolvedCommand("CI runs " + command + " after the tests in the same command, and it may start " + framework + " itself; ddtest reads only commands that can't start tests there")
 			}
 		}
-		result := resolveTestStep(root, workflow, job, plain, language, framework)
-		note := "This CI step also runs " + strings.Join(step.afterTests, "; ") + " after its " + framework + " tests, whether they pass or fail, then exits with the tests' status; it can't start " + framework + " and is outside this validation."
+		// They are read as the same commands after the tests in a plain
+		// sequence are: file changes stay setup for later tests, and those
+		// ddtest can't resolve are outside the tests unless a later test
+		// follows them.
+		sequence := plain
+		sequence.Run = strings.Join(append([]string{plain.Run}, step.afterTests...), "\n")
+		result := resolveTestStep(root, workflow, job, sequence, language, framework)
+		note := "This CI step runs " + strings.Join(step.afterTests, "; ") + " after its " + framework + " tests, whether they pass or fail, then exits with the tests' status."
 		for i := range result.Tests {
 			if !slices.Contains(result.Tests[i].StepScopeNotes, note) {
 				result.Tests[i].StepScopeNotes = append(result.Tests[i].StepScopeNotes, note)

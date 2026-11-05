@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/kballard/go-shellquote"
 	"mvdan.cc/sh/v3/syntax"
 )
 
@@ -91,9 +92,11 @@ func (s *runtimeStep) readScopedPrefix() {
 // The || keeps errexit from stopping at failing tests, and the subshell
 // keeps the exit to this command, so a passing run continues with the
 // script's later commands, as a script stopping at errors does, and a failing
-// one fails the step after the conversion. Run becomes the tests and
-// afterTests the commands between them and the exit, which resolution checks
-// can't start tests. Any other command stays as written.
+// one fails the step after the conversion. Run becomes the tests, afterTests
+// the commands between them and the exit, which resolution checks can't
+// start tests and reads as a plain sequence after them, and statusWrapper
+// the text around the tests. Each of those commands must fall through to the
+// exit (see fallsThrough); any other command stays as written.
 func (s *runtimeStep) readStatusSubshell() {
 	run := strings.TrimSpace(s.Run)
 	file, ok := parseCIShell(run)
@@ -153,9 +156,61 @@ func (s *runtimeStep) readStatusSubshell() {
 	}
 	var after []string
 	for _, stmt := range stmts[2 : len(stmts)-1] {
+		if !fallsThrough(stmt, variable) {
+			return
+		}
 		after = append(after, text(stmt))
 	}
-	s.Run, s.afterTests = text(record.X), after
+	start, end := record.X.Pos().Offset(), record.X.End().Offset()
+	s.Run, s.afterTests, s.statusWrapper = text(record.X), after, [2]string{run[:start], run[end:]}
+}
+
+// Builtins that change the shell's control flow or state, which a command
+// between a status subshell's tests and its exit must not run: the exit
+// could be skipped, or report another status.
+var statusFlowBuiltins = []string{"exit", "return", "exec", "break", "continue", "set", "shopt", "trap", "eval", "source", ".", "builtin", "command", "unset", "readonly", "export", "local", "declare", "typeset", "shift", "wait", "kill", "enable", "alias", "ulimit", "umask", "cd", "pushd", "popd", "let"}
+
+// fallsThrough reports a command between a status subshell's tests and its
+// exit that always continues to that exit with the tests' status, as a
+// report conversion does: one plain command, or a pipeline of them, that
+// runs in the foreground, starts with a literal program that is no
+// flow-changing builtin (see statusFlowBuiltins), and neither reads nor
+// assigns the status variable. Lists such as a || b, compound commands,
+// functions, arithmetic and bare assignments don't qualify.
+func fallsThrough(stmt *syntax.Stmt, variable string) bool {
+	if stmt.Background || stmt.Negated || stmt.Coprocess || stmt.Disown {
+		return false
+	}
+	switch command := stmt.Cmd.(type) {
+	case *syntax.BinaryCmd:
+		if command.Op != syntax.Pipe && command.Op != syntax.PipeAll {
+			return false
+		}
+		return fallsThrough(command.X, variable) && fallsThrough(command.Y, variable)
+	case *syntax.CallExpr:
+		if len(command.Args) == 0 {
+			return false
+		}
+		program, literal := shellLiteralWord(command.Args[0])
+		if !literal || program == "" || strings.Contains(program, `\`) || slices.Contains(statusFlowBuiltins, program) {
+			return false
+		}
+	default:
+		return false
+	}
+	clean := true
+	syntax.Walk(stmt, func(node syntax.Node) bool {
+		switch node := node.(type) {
+		case *syntax.ParamExp:
+			clean = clean && (node.Param == nil || node.Param.Value != variable)
+		case *syntax.Assign:
+			clean = clean && (node.Name == nil || node.Name.Value != variable)
+		case *syntax.ArithmExp, *syntax.ArithmCmd, *syntax.LetClause:
+			clean = false
+		}
+		return clean
+	})
+	return clean
 }
 
 // readsOnly reports a word that is only the variable's value, as $status or
@@ -210,6 +265,17 @@ func markScopedLeaf(result *commandResolution, variable, framework string) {
 // --apply writes a package-script leaf. It is "" when the step already has
 // that form.
 func directScopedCommand(step runtimeStep, test TestCommand, framework string) (string, error) {
+	if step.statusWrapper != [2]string{} {
+		// The tests of a status subshell: the edit replaces them inside it,
+		// keeping the commands after them and the exit with their status.
+		tests := step
+		tests.statusWrapper, tests.afterTests = [2]string{}, nil
+		command, err := directScopedCommand(tests, test, framework)
+		if command == "" || err != nil {
+			return command, err
+		}
+		return step.statusWrapper[0] + command + step.statusWrapper[1], nil
+	}
 	command := strings.TrimSpace(step.Run)
 	if framework == "webdriverio" {
 		if step.scopedVariable == scopedEnvironment(framework) {
@@ -357,13 +423,20 @@ func cucumberReportPipe(command string) (tests, conversion string, ok bool) {
 	if target == nil || !known {
 		return "", "", false
 	}
+	// The intermediate report is a file the pipeline names nowhere, so the
+	// conversion never writes to the file it reads, as
+	// cucumber-js --format junit | tee cucumber-report.xml would.
 	report := "cucumber-report." + extension
+	for suffix := 1; strings.Contains(command, report); suffix++ {
+		report = fmt.Sprintf("cucumber-report-%d.%s", suffix, extension)
+	}
 	wordStart, wordEnd := int(target.Pos().Offset()), int(target.End().Offset())
 	replacement := value + ":" + report
-	if option, _, assigned := strings.Cut(command[wordStart:wordEnd], "="); assigned {
+	if option, _, assigned := strings.Cut(shellLiteral(target), "="); assigned {
 		replacement = option + "=" + replacement
 	}
-	tests = command[start:wordStart] + replacement + command[wordEnd:end]
+	// The word as the shell reads it, quoted only when it needs to be.
+	tests = command[start:wordStart] + shellquote.Join(replacement) + command[wordEnd:end]
 	rest := strings.TrimSpace(command[stages[1].Pos().Offset():])
 	if mayStartTests(runtimeStep{Run: rest}, "cucumber") {
 		return "", "", false
