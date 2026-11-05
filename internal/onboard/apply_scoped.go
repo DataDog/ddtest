@@ -137,7 +137,19 @@ func directScopedCommand(step runtimeStep, test TestCommand, framework string) (
 	}
 	command = strings.TrimSpace(strings.TrimPrefix(command, cucumberImpactedWorkaround+" "))
 	if err := compoundCommandError(command); err != nil {
-		return "", err
+		tests, conversion, ok := cucumberReportPipe(command)
+		if !ok {
+			return "", err
+		}
+		// The tests write their report to a file, read as one simple command
+		// with the scoped setup; the conversion follows as its own command.
+		split := step
+		split.Run, split.scopedVariable, split.impactedWorkaround = tests, "", false
+		scoped, err := directScopedCommand(split, test, framework)
+		if err != nil {
+			return "", err
+		}
+		return "", &ReportPipeSplit{Original: step.Run, Tests: scoped, Conversion: conversion}
 	}
 	if !test.usesNYC {
 		start, end, insertion, err := cucumberCoverageEdit(command)
@@ -161,7 +173,99 @@ func compoundCommandError(command string) error {
 			return nil
 		}
 	}
-	return fmt.Errorf("CI runs %s as part of a compound shell command, which ddtest does not rewrite into the scoped command: the variables its prefix assigns would reach only the first command. Run the test command as a CI command of its own, then rerun onboard --apply", command)
+	return fmt.Errorf("CI runs %s as part of a compound shell command, which ddtest does not rewrite into the scoped command: the variables its prefix assigns would reach only the first command. Run the test command as a CI command of its own, then rerun onboard --apply. When CI pipes the tests' output into a report converter, the tests write that report to a file instead and a later CI command converts the file: ddtest reads that conversion as outside the tests", command)
+}
+
+// ReportPipeSplit is the rewrite of a direct Cucumber invocation that CI
+// pipes into a report converter, as
+// cucumber-js --format json | cucumber-junit > junit.xml: the scoped prefix
+// and NYC, which prints its coverage summary to standard output, can't share
+// the converter's input. The tests write the same report to a file in one CI
+// command, and a later one converts that file, a step ddtest reads as outside
+// the tests (see reportTools).
+type ReportPipeSplit struct {
+	// Original is the CI command; Tests and Conversion replace it, in order.
+	Original, Tests, Conversion string
+}
+
+func (s *ReportPipeSplit) Error() string {
+	return "CI pipes the report of " + s.Original + " into a converter in one command, which ddtest does not rewrite into the scoped command. Replace this CI command with exactly these two CI commands, in this order and each as a command of its own: 1) " + s.Tests + " 2) " + s.Conversion + ". Then rerun onboard --apply"
+}
+
+// Cucumber's formatters by the extension of the file their output is
+// written to.
+var cucumberReportExtensions = map[string]string{"json": "json", "message": "ndjson", "junit": "xml", "html": "html"}
+
+// cucumberReportPipe splits a pipeline whose first command runs Cucumber
+// with one formatter writing to standard output, such as
+// cucumber-js ./features --format json | cucumber-junit > junit.xml, into
+// that command writing the formatter's output to a file and a later command
+// that pipes the file into the rest of the pipeline. ok is false for any
+// other command, or when the rest of the pipeline may start tests.
+func cucumberReportPipe(command string) (tests, conversion string, ok bool) {
+	file, parsed := parseCIShell(command)
+	if !parsed || len(file.Stmts) != 1 || file.Stmts[0].Background || file.Stmts[0].Negated || file.Stmts[0].Coprocess || len(file.Stmts[0].Redirs) > 0 {
+		return "", "", false
+	}
+	var stages []*syntax.Stmt
+	var flatten func(*syntax.Stmt) bool
+	flatten = func(stmt *syntax.Stmt) bool {
+		if binary, ok := stmt.Cmd.(*syntax.BinaryCmd); ok {
+			return binary.Op == syntax.Pipe && flatten(binary.X) && flatten(binary.Y)
+		}
+		stages = append(stages, stmt)
+		return true
+	}
+	if !flatten(file.Stmts[0]) || len(stages) < 2 || len(stages[0].Redirs) > 0 || stages[0].Negated {
+		return "", "", false
+	}
+	call, isCall := stages[0].Cmd.(*syntax.CallExpr)
+	start, end := int(stages[0].Pos().Offset()), int(stages[0].End().Offset())
+	if !isCall || len(call.Assigns) > 0 || len(call.Args) == 0 || !namesFramework(command[start:end], "cucumber", true) {
+		return "", "", false
+	}
+	var target *syntax.Word
+	value := ""
+	for i, arg := range call.Args[1:] {
+		word, literal := shellLiteralWord(arg)
+		option, inline, assigned := strings.Cut(word, "=")
+		if !literal || option != "--format" && option != "-f" {
+			continue
+		}
+		next := arg
+		if !assigned {
+			if i+2 >= len(call.Args) {
+				return "", "", false
+			}
+			next = call.Args[i+2]
+			if inline, literal = shellLiteralWord(next); !literal {
+				return "", "", false
+			}
+		}
+		if strings.Contains(inline, ":") {
+			continue // Already written to a file.
+		}
+		if target != nil {
+			return "", "", false // Two formatters share standard output.
+		}
+		target, value = next, inline
+	}
+	extension, known := cucumberReportExtensions[value]
+	if target == nil || !known {
+		return "", "", false
+	}
+	report := "cucumber-report." + extension
+	wordStart, wordEnd := int(target.Pos().Offset()), int(target.End().Offset())
+	replacement := value + ":" + report
+	if option, _, assigned := strings.Cut(command[wordStart:wordEnd], "="); assigned {
+		replacement = option + "=" + replacement
+	}
+	tests = command[start:wordStart] + replacement + command[wordEnd:end]
+	rest := strings.TrimSpace(command[stages[1].Pos().Offset():])
+	if mayStartTests(runtimeStep{Run: rest}, "cucumber") {
+		return "", "", false
+	}
+	return tests, "cat " + report + " | " + rest, true
 }
 
 // inlineAssignmentsError explains why ddtest does not rebuild a direct

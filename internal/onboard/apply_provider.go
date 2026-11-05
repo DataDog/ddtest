@@ -215,7 +215,7 @@ func planProviderJavaScriptSetup(root string, provider ciProvider, workflows []c
 				}
 				command, err := directScopedCommand(leaf.step, leaf.test, framework)
 				if err != nil {
-					return nil, &SetupGap{location, err.Error()}
+					return nil, directScopedGap(provider, location, leaf.step, err)
 				}
 				if command != "" {
 					return nil, &EditThenApplyGap{SetupGap{directLeafLocation(location, leaf.step), directLeafReason(provider, framework, leaf.test.Command, command, setupIndex >= 0)}}
@@ -697,7 +697,7 @@ func directCucumberCoverageGap(provider ciProvider, location string, workflow ci
 		}
 		command, err := directScopedCommand(leaf.step, leaf.test, "cucumber")
 		if err != nil {
-			return &SetupGap{location, err.Error()}
+			return directScopedGap(provider, location, leaf.step, err)
 		}
 		if _, ok := provider.(buildkite); ok {
 			command = buildkiteEscape(command) // pipeline upload would replace each $.
@@ -709,6 +709,22 @@ func directCucumberCoverageGap(provider ciProvider, location string, workflow ci
 		return &EditThenApplyGap{SetupGap{directLeafLocation(location, leaf.step), reason + " Change this CI command to exactly: " + command + ". Then rerun onboard --apply; " + stays}}
 	}
 	return nil
+}
+
+// directScopedGap is the gap of a direct invocation whose scoped command
+// directScopedCommand could not write: the exact two commands of a report
+// pipe it splits (see ReportPipeSplit), or the reason it writes none.
+func directScopedGap(provider ciProvider, location string, step runtimeStep, err error) error {
+	var split *ReportPipeSplit
+	if !errors.As(err, &split) {
+		return &SetupGap{location, err.Error()}
+	}
+	if _, ok := provider.(buildkite); ok {
+		escaped := *split // pipeline upload would replace each $.
+		escaped.Tests, escaped.Conversion = buildkiteEscape(split.Tests), buildkiteEscape(split.Conversion)
+		split = &escaped
+	}
+	return &EditThenApplyGap{SetupGap{directLeafLocation(location, step), split.Error() + ": it adds the " + provider.setupName() + " before the tests when the job has none, and reads the conversion as outside the tests."}}
 }
 
 // cucumberImpactedWorkaroundSet reports whether a direct Cucumber

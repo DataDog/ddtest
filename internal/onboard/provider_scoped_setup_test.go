@@ -671,3 +671,64 @@ func TestProviderDirectWebdriverIOReadsItsDirectorysConfig(t *testing.T) {
 	require.Error(t, err)
 	require.False(t, errors.As(err, &gap), "%v", err)
 }
+
+// A direct Cucumber invocation that CI pipes into a report converter gets
+// the exact split: the tests write the same report to a file with the scoped
+// setup, and a later command converts the file. onboard --apply then accepts
+// both commands, reading the conversion as outside the tests.
+func TestProviderSplitsACucumberReportPipe(t *testing.T) {
+	for _, provider := range scopedProviders {
+		t.Run(provider.name, func(t *testing.T) {
+			framework := scopedFrameworks[0]
+			pipe := "./node_modules/.bin/cucumber-js ./features --format json | ./node_modules/.bin/cucumber-junit > junit.xml"
+			root := scopedRepository(t, provider, provider.config("npm ci", pipe), framework.pkg, nil)
+			_, err := PlanJavaScriptSetup(root, "cucumber", "5.133.0", "datadoghq.com", ">=18")
+			var gap *EditThenApplyGap
+			require.ErrorAs(t, err, &gap)
+			_, after, ok := strings.Cut(gap.Reason, "each as a command of its own: 1) ")
+			require.True(t, ok, gap.Reason)
+			tests, after, ok := strings.Cut(after, " 2) ")
+			require.True(t, ok, gap.Reason)
+			conversion, _, ok := strings.Cut(after, ". Then rerun onboard --apply")
+			require.True(t, ok, gap.Reason)
+			want := cucumberScopedOptions + " " + cucumberImpactedWorkaround + " npx --no-install nyc -- ./node_modules/.bin/cucumber-js ./features --format json:cucumber-report.json"
+			if provider.name == buildkiteProvider {
+				want = buildkiteEscape(want) // As the pipeline holds it.
+			}
+			require.Equal(t, want, tests)
+			require.Equal(t, "cat cucumber-report.json | ./node_modules/.bin/cucumber-junit > junit.xml", conversion)
+
+			writeFile(t, root, provider.file, provider.config("npm ci", tests, conversion))
+			plan, err := PlanJavaScriptSetup(root, "cucumber", "5.133.0", "datadoghq.com", ">=18")
+			require.NoError(t, err)
+			require.Contains(t, plannedFile(t, plan, provider.file), conversion)
+			scope, err := DiscoverValidationScope(root, "cucumber")
+			require.NoError(t, err)
+			require.Empty(t, scope.Unresolved)
+			require.Contains(t, strings.Join(scope.Caveats, "\n"), "runs after the job's last cucumber test and can't start cucumber")
+		})
+	}
+}
+
+// Only a pipe from one Cucumber formatter on standard output into commands
+// that can't start tests is split; any other compound command keeps the
+// general advice.
+func TestCucumberReportPipeSplitsOnlyAReportConversion(t *testing.T) {
+	for command, want := range map[string][2]string{
+		"cucumber-js --format json | cucumber-junit > junit.xml":               {"cucumber-js --format json:cucumber-report.json", "cat cucumber-report.json | cucumber-junit > junit.xml"},
+		"npx cucumber-js -f message | npx @cucumber/junit-xml-formatter":       {},
+		"cucumber-js --format=junit | tee junit.xml":                           {"cucumber-js --format=junit:cucumber-report.xml", "cat cucumber-report.xml | tee junit.xml"},
+		"cucumber-js --format json --format html:report.html | cucumber-junit": {"cucumber-js --format json:cucumber-report.json --format html:report.html", "cat cucumber-report.json | cucumber-junit"},
+		"cucumber-js --format json --format html | cucumber-junit":             {},
+		"cucumber-js --format json | node convert.js":                          {},
+		"cucumber-js --format json:out.json | cucumber-junit":                  {},
+		"cucumber-js --format pretty | cucumber-junit":                         {},
+		"cucumber-js --format json |& cucumber-junit":                          {},
+		"npm run build && cucumber-js --format json | cucumber-junit":          {},
+		"cat x.json | cucumber-junit":                                          {},
+	} {
+		tests, conversion, ok := cucumberReportPipe(command)
+		require.Equal(t, want[0] != "", ok, command)
+		require.Equal(t, want, [2]string{tests, conversion}, command)
+	}
+}
