@@ -1,9 +1,11 @@
 # CI fixture reuse
 
 PR branches, main and releases use the same CI workflow and the same onboard and
-testdrive scenarios. Both existing Go instrumentation paths and their coverage
-remain enabled. Datadog Test Impact Analysis owns test skipping; this workflow
-does not maintain a separate changed-file test selector.
+testdrive scenarios. The Go suite reports through `ddtest instrument`; only
+ddto's comparison tests still build with Orchestrion. Datadog Test Impact
+Analysis owns test skipping; this workflow does not maintain a separate
+changed-file test selector. It never skips on the default branch, so main alone
+uploads the Go suite's coverage report.
 
 ## Go test discovery and compiler caches
 
@@ -13,14 +15,10 @@ build tags, then uses Go's parser and example discovery to list tests, examples
 and fuzz targets. Discovery builds only the small helper; it does not build
 every test executable or run their initializers and `TestMain` functions.
 
-The native Orchestrion and `ddtest instrument` jobs retain separate compiler
-caches. Keys include OS, architecture, Go version, dependencies and the source
-revision; the Orchestrion cache also includes its pinned version and executable.
-A new revision restores compatible previous output and saves updated compiler
-artifacts, rather than repeatedly restoring an immutable dependency-only cache.
-The Datadog action uses this cache instead of restoring another overlapping
-module cache. Its configuration script still runs to resolve compatible SDK
-versions and set up the current job's instrumentation and reporting.
+The Go shards keep their own compiler cache. Keys include OS, architecture, Go
+version, dependencies and the source revision. A new revision restores
+compatible previous output and saves updated compiler artifacts, rather than
+repeatedly restoring an immutable dependency-only cache.
 
 ## Shared CLI executable
 

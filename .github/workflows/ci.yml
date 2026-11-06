@@ -73,6 +73,8 @@ jobs:
       - name: Test install scripts
         run: python -m unittest discover -s scripts -p 'test_*.py'
 
+  # Dogfooding: the only job that reports tests to Datadog. It runs the suite
+  # with ddtest instrument, built from this checkout as a release builds it.
   test-shards:
     runs-on: ubuntu-latest
     strategy:
@@ -81,7 +83,6 @@ jobs:
         shard: [1, 2, 3]
     env:
       DATADOG_API_KEY_CONFIGURED: ${{ secrets.DATADOG_API_KEY != '' }}
-      ORCHESTRION_VERSION: 5df280060f05cbf2863d43748667fcf9cd18c448
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -119,13 +120,12 @@ jobs:
           path: |
             ~/.cache/go-build
             ~/go/pkg/mod
-            ~/go/bin/orchestrion
           # Cache entries are immutable: a new revision must save fresh compiler
-          # output, including the SDK install and instrumented test builds.
-          key: ${{ runner.os }}-${{ runner.arch }}-go-orchestrion-v2-${{ steps.go.outputs.go-version }}-${{ env.ORCHESTRION_VERSION }}-${{ hashFiles('go.mod') }}-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
+          # output, including the instrumented test builds.
+          key: ${{ runner.os }}-${{ runner.arch }}-go-ddtest-instrument-v2-${{ steps.go.outputs.go-version }}-${{ hashFiles('go.mod') }}-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
           restore-keys: |
-            ${{ runner.os }}-${{ runner.arch }}-go-orchestrion-v2-${{ steps.go.outputs.go-version }}-${{ env.ORCHESTRION_VERSION }}-${{ hashFiles('go.mod') }}-${{ hashFiles('**/go.sum') }}-
-            ${{ runner.os }}-${{ runner.arch }}-go-orchestrion-v2-${{ steps.go.outputs.go-version }}-${{ env.ORCHESTRION_VERSION }}-${{ hashFiles('go.mod') }}-
+            ${{ runner.os }}-${{ runner.arch }}-go-ddtest-instrument-v2-${{ steps.go.outputs.go-version }}-${{ hashFiles('go.mod') }}-${{ hashFiles('**/go.sum') }}-
+            ${{ runner.os }}-${{ runner.arch }}-go-ddtest-instrument-v2-${{ steps.go.outputs.go-version }}-${{ hashFiles('go.mod') }}-
 
       - name: Download dependencies
         run: go mod download
@@ -156,26 +156,32 @@ jobs:
       - name: Select Go test shard
         run: python scripts/go_test_shards.py select --shard "${{ matrix.shard }}/3" > "$RUNNER_TEMP/go-test-filter"
 
-      - name: Configure Datadog Test Optimization
-        if: ${{ env.DATADOG_API_KEY_CONFIGURED == 'true' }}
-        uses: datadog/test-visibility-github-action@7ce545f228901e4ac4ef0b45d946120f1c4124e0 # v3.3.0
-        with:
-          languages: go
-          # The compiler cache above already owns modules and Orchestrion.
-          # Avoid restoring the action's overlapping module cache a second time.
-          cache: false
-          # Pin upstream Go 1.27 compatibility fixes until they reach a stable
-          # Orchestrion release.
-          go-tracer-version: ${{ env.ORCHESTRION_VERSION }}
-          api_key: ${{ secrets.DATADOG_API_KEY }}
-          site: datadoghq.com
-          service: ddtest
+      # The release builder, as `make release` runs it for one target: ddtest
+      # with the runtime sources and tool wrapper that ddtest instrument provides.
+      - name: Build ddtest instrument from this checkout
+        run: |
+          version="dogfood-${GITHUB_SHA::12}"
+          go -C ddto run ./scripts/release -main .. -name ddtest -command instrument \
+            -version "v0.0.0-$version" -ldflags "-X github.com/DataDog/ddtest/internal/buildinfo.Version=$version" \
+            -target linux/amd64 -o "$RUNNER_TEMP/dist"
+          mkdir -p "$RUNNER_TEMP/bin"
+          mv "$RUNNER_TEMP/dist/ddtest-linux-amd64" "$RUNNER_TEMP/bin/ddtest"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/bin/ddtest" instrument --version
 
       - name: Run tests
-        run: go test -timeout=20m -race -coverpkg=./... -coverprofile=coverage.out -covermode=atomic -run "$(cat "$RUNNER_TEMP/go-test-filter")" ./...
+        run: ddtest instrument go test -timeout=20m -race -coverpkg=./... -coverprofile=coverage.out -covermode=atomic -run "$(cat "$RUNNER_TEMP/go-test-filter")" ./...
         env:
+          DD_CIVISIBILITY_ENABLED: ${{ env.DATADOG_API_KEY_CONFIGURED == 'true' && 'parent' || 'false' }}
+          DD_CIVISIBILITY_AGENTLESS_ENABLED: "true"
+          DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
+          DD_SITE: datadoghq.com
+          DD_SERVICE: ddtest
           DD_ENV: ci
+          JOB_CHECK_RUN_ID: ${{ job.check_run_id }}
           DDTEST_REQUIRE_PROJECT_RUNTIMES: "1"
+          # `test` uploads this commit's coverage report.
+          DD_CIVISIBILITY_CODE_COVERAGE_REPORT_UPLOAD_ENABLED: "false"
 
       - name: Retain shard coverage
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -209,8 +215,11 @@ jobs:
           path: ${{ runner.temp }}/unit-coverage
       - name: Merge complete coverage
         run: python3 scripts/go_test_shards.py merge --expected 3 --output coverage.out "$RUNNER_TEMP"/unit-coverage/*/coverage.out
+      # Test Impact Analysis never skips on the default branch, so only main has
+      # complete coverage. Elsewhere the report would lack what skipped tests
+      # cover: the shards' -run keeps ddtest instrument from backfilling it.
       - name: Upload coverage report to Datadog
-        if: ${{ env.DATADOG_API_KEY_CONFIGURED == 'true' }}
+        if: ${{ env.DATADOG_API_KEY_CONFIGURED == 'true' && github.ref == 'refs/heads/main' }}
         uses: DataDog/coverage-upload-github-action@d9548b1c3c4ab639d5d3ab29a1508af188975f77 # v1.0.5
         with:
           api_key: ${{ secrets.DATADOG_API_KEY }}
@@ -218,112 +227,6 @@ jobs:
           files: coverage.out
           format: go-coverprofile
           version: v5.19.0
-
-  # Dogfooding: runs the `test` suite with ddtest instrument, built from this
-  # checkout as a release builds it, instead of Orchestrion. Its results reach
-  # Test Optimization beside those of `test`, under this job's name.
-  test-ddtest-instrument-shards:
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: [1, 2, 3]
-    env:
-      DATADOG_API_KEY_CONFIGURED: ${{ secrets.DATADOG_API_KEY != '' }}
-
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Set up Go
-        id: go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
-        with:
-          go-version-file: go.mod
-          # This job already has a compiler-specific cache below. Restoring
-          # setup-go's cache too collides with read-only module files.
-          cache: false
-
-      - name: Set up Python
-        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
-        with:
-          python-version: "3.12"
-
-      - name: Set up Node.js for project environment regression tests
-        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: "22"
-
-      - name: Install Yarn for the Plug'n'Play regression fixture
-        run: npm install --global yarn@1.22.22
-
-      - name: Set up Ruby for project environment regression tests
-        uses: ruby/setup-ruby@de492cf36cbab201753d720ce4f4e336cd688c94 # v1
-        with:
-          ruby-version: "3.4"
-
-      # Its own key, so that its instrumented builds don't replace those of `test`.
-      - name: Cache Go modules
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
-        with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: ${{ runner.os }}-${{ runner.arch }}-go-ddtest-instrument-v2-${{ steps.go.outputs.go-version }}-${{ hashFiles('go.mod') }}-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
-          restore-keys: |
-            ${{ runner.os }}-${{ runner.arch }}-go-ddtest-instrument-v2-${{ steps.go.outputs.go-version }}-${{ hashFiles('go.mod') }}-${{ hashFiles('**/go.sum') }}-
-            ${{ runner.os }}-${{ runner.arch }}-go-ddtest-instrument-v2-${{ steps.go.outputs.go-version }}-${{ hashFiles('go.mod') }}-
-
-      - name: Download dependencies
-        run: go mod download
-
-      - name: Verify dependencies
-        run: go mod verify
-
-      - name: Install Python test dependencies
-        run: python -m pip install "ddtrace>=4.11.0" pytest pytest-cov pytest-xdist
-
-      - name: Install evaluator package-manager fixture
-        run: npm install --global pnpm@12.14.0
-
-      - name: Select Go test shard
-        run: python scripts/go_test_shards.py select --shard "${{ matrix.shard }}/3" > "$RUNNER_TEMP/go-test-filter"
-
-      # The release builder, as `make release` runs it for one target: ddtest
-      # with the runtime sources and tool wrapper that ddtest instrument provides.
-      - name: Build ddtest instrument from this checkout
-        run: |
-          version="dogfood-${GITHUB_SHA::12}"
-          go -C ddto run ./scripts/release -main .. -name ddtest -command instrument \
-            -version "v0.0.0-$version" -ldflags "-X github.com/DataDog/ddtest/internal/buildinfo.Version=$version" \
-            -target linux/amd64 -o "$RUNNER_TEMP/dist"
-          mkdir -p "$RUNNER_TEMP/bin"
-          mv "$RUNNER_TEMP/dist/ddtest-linux-amd64" "$RUNNER_TEMP/bin/ddtest"
-          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
-          "$RUNNER_TEMP/bin/ddtest" instrument --version
-
-      - name: Run tests
-        run: ddtest instrument go test -timeout=20m -race -coverpkg=./... -coverprofile=coverage.out -covermode=atomic -run "$(cat "$RUNNER_TEMP/go-test-filter")" ./...
-        env:
-          DD_CIVISIBILITY_ENABLED: ${{ env.DATADOG_API_KEY_CONFIGURED == 'true' && 'parent' || 'false' }}
-          DD_CIVISIBILITY_AGENTLESS_ENABLED: "true"
-          DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
-          DD_SITE: datadoghq.com
-          DD_SERVICE: ddtest
-          DD_ENV: ci
-          JOB_CHECK_RUN_ID: ${{ job.check_run_id }}
-          DDTEST_REQUIRE_PROJECT_RUNTIMES: "1"
-          # `test` uploads this commit's coverage report.
-          DD_CIVISIBILITY_CODE_COVERAGE_REPORT_UPLOAD_ENABLED: "false"
-
-  test-ddtest-instrument:
-    if: ${{ always() }}
-    needs: test-ddtest-instrument-shards
-    runs-on: ubuntu-latest
-    steps:
-      - name: Require every instrumented shard
-        env:
-          SHARDS_RESULT: ${{ needs.test-ddtest-instrument-shards.result }}
-        run: test "$SHARDS_RESULT" = success
 
   rspec-compatibility:
     runs-on: ubuntu-latest
