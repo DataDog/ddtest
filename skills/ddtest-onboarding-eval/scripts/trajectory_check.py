@@ -24,7 +24,7 @@ def strings(value):
 
 def hunks(patch):
     """Each hunk's exact path, header, context and changed lines."""
-    path, body = None, []
+    path, body, mode = None, [], None
     for line in patch.splitlines():
         if line.startswith('diff --git ') or line.startswith('@@ '):
             if body:
@@ -33,9 +33,11 @@ def hunks(patch):
                 body = []
             if line.startswith('diff --git '):
                 match = re.fullmatch(r'diff --git a/(.+) b/(.+)', line)
-                path = match[2] if match else None
+                path, mode = match[2] if match else None, None
             elif path:
-                body = [line]
+                body = ([mode] if mode else []) + [line]
+        elif not body and line.startswith(('new file mode ', 'deleted file mode ')):
+            mode = line
         elif not body and line.startswith(('--- ', '+++ ')):
             try:
                 name = unquote_path(line[4:])
@@ -63,12 +65,18 @@ def evaluate(output):
     changed = list(hunks(patch.decode(errors='replace')))
     if any(not isinstance(row, dict) for row in rows):
         return {'status': 'review', 'reason': 'Malformed ddtest prescription rows', 'hunks': changed}
-    # Binary, mode, rename and untracked changes cannot be certified by text hunks.
+    # File creation/deletion modes are part of each text hunk's identity.
+    # Binary, standalone mode, rename and unavailable changes still require review.
     status_file = output / 'status.txt'
     if not status_file.is_file():
         return {'status': 'review', 'reason': 'Missing Git status; untracked edits cannot be checked', 'hunks': changed}
     untracked = untracked_paths(status_file.read_text())
-    special = bool(patch.strip()) and not changed or any(token in patch for token in (b'GIT binary patch', b'Binary files ', b'old mode ', b'new file mode ', b'deleted file mode ', b'rename from '))
+    sections = re.split(r'(?m)(?=^diff --git )', patch.decode(errors='replace'))
+    special = any(section.strip() and not list(hunks(section)) for section in sections)
+    special = special or any(token in patch for token in (b'GIT binary patch', b'Binary files ', b'old mode ', b'rename from '))
+    special = special or any(line.startswith((b'new file mode ', b'deleted file mode '))
+                             and line.rsplit(b' ', 1)[-1] not in (b'100644', b'100755')
+                             for line in patch.splitlines())
     for printed, name in untracked:
         if name is None:
             special = True

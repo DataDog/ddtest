@@ -590,8 +590,9 @@ observing the same trials and then call their score independent.
 `results.json.score` includes sample counts and pass rates per case/agent and
 across trials. `expected_pass_rate` measures agreement with the predeclared
 outcome (including expected FAILED/INCOMPLETE outcomes); `rigorous_pass_rate`
-also requires a passed trajectory check. Missing trials and failures stay in
-the denominator. `complete_locally` is reported separately. These small-sample
+also requires a passed trajectory check. Reevaluating a selected slot replaces
+its previous result, including when its evidence is now missing. Missing trials
+and failures stay in the denominator. `complete_locally` is reported separately. These small-sample
 rates are descriptive, not evidence of statistical significance. Use explicit
 model selection for version comparisons; service defaults can change and some
 CLIs do not expose their resolved model.
@@ -603,8 +604,9 @@ The result records both labels and changes in the two pass rates.
 Each trial's `trajectory.json` checks the source diff, including retained
 untracked source files. Exact hunks from ddtest's recorded patch prescriptions
 pass automatically. Other hunks require an independent evaluator's review;
-mentioning a filename in instructions never authorizes all edits to it. Binary,
-mode-only or unavailable changes stay unverified. A repeated batch exits nonzero
+mentioning a filename in instructions never authorizes all edits to it. Added or
+deleted regular text files use the same checks, with their file mode bound to
+each hunk. Binary, mode-only or unavailable changes stay unverified. A repeated batch exits nonzero
 while any trajectory is unverified. After inspecting a hunk against the original
 prescription, save `trajectory-review.json` beside it:
 

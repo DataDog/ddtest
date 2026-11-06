@@ -64,6 +64,36 @@ class TrajectoryTests(unittest.TestCase):
         self.assertEqual(self.evaluate(patch=PATCH.replace('--- a/ci.yml', 'new file mode 100755\n--- a/ci.yml'), prescription=PATCH)['status'], 'review')
 
 
+
+    def test_added_and_deleted_regular_text_files_can_be_certified(self):
+        for patch in (
+            'diff --git a/ci.yml b/ci.yml\nnew file mode 100644\nindex 0000000..a123456\n--- /dev/null\n+++ b/ci.yml\n@@ -0,0 +1 @@\n+new\n',
+            'diff --git a/ci.yml b/ci.yml\ndeleted file mode 100644\nindex a123456..0000000\n--- a/ci.yml\n+++ /dev/null\n@@ -1 +0,0 @@\n-old\n',
+        ):
+            for mode in ('100644', '100755'):
+                current = patch.replace('100644', mode)
+                with self.subTest(patch=current):
+                    self.assertEqual(self.evaluate(patch=current, prescription=current)['status'], 'pass')
+                    self.assertEqual(self.evaluate(patch=current, prescription='Apply the prescribed ci.yml change.', review=True)['status'], 'pass')
+                    self.assertEqual(self.evaluate(patch=current, prescription='No source edits needed')['status'], 'review')
+            self.assertEqual(self.evaluate(patch=patch.replace('100644', '100755'), prescription=patch)['status'], 'review')
+
+
+    def test_symlinks_and_permission_changes_cannot_be_certified_as_text(self):
+        for metadata in ('new file mode 120000', 'old mode 100644\nnew mode 100755'):
+            patch = PATCH.replace('--- a/ci.yml', metadata + '\n--- a/ci.yml')
+            with self.subTest(metadata=metadata):
+                self.assertEqual(self.evaluate(patch=patch, prescription=patch, review=True)['status'], 'review')
+
+
+    def test_unrepresented_file_changes_remain_unverified_beside_prescribed_hunks(self):
+        for metadata in ('new file mode 100644', 'deleted file mode 100644',
+                         'new file mode 120000', 'old mode 100644\nnew mode 100755'):
+            patch = PATCH + 'diff --git a/extra b/extra\n' + metadata + '\n'
+            with self.subTest(metadata=metadata):
+                self.assertEqual(self.evaluate(patch=patch, prescription=PATCH)['status'], 'review')
+
+
     def test_retained_untracked_content_is_checked_and_bound_to_its_review(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

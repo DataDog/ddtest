@@ -895,13 +895,16 @@ def main(argv=None):
 
     def save(records, code, not_evaluated=()):
         merged = merge(previous, records, replaced, order)
-        kept = len(merged) - len(records)
         if args.trials > 1:
-            covered = {(record["id"], record["agent"]) for record in merged}
+            covered = {(record["id"], record["agent"]) for record in records}
+            stale = {(case["id"], agent) for agent, plans in lanes.items() for case, _, _ in plans} - covered
+            # Missing selected evidence replaces an old result, just as a new record does.
+            merged = [record for record in merged if (record["id"], record["agent"]) not in stale]
             not_evaluated = [{"id": case["id"], "catalog_id": case["catalog_id"], "trial": case["trial"],
                               "agent": agent, "reason": "No completed trial evidence"}
                              for agent, plans in lanes.items() for case, _, _ in plans
                              if (case["id"], agent) not in covered]
+        kept = len(merged) - len(records)
         write_results(results, args.catalog, output, merged, code, args.ddtest_label, not_evaluated, kept, oracle, comparison)
         return kept
 

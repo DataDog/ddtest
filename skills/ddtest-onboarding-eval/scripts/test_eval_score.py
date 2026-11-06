@@ -150,3 +150,51 @@ class ScoreTests(unittest.TestCase):
             result = json.loads((root / 'results.json').read_text())
             self.assertEqual(result['oracle_sha256'], eval_score.oracle([case], ['claude'], False)['sha256'])
             self.assertEqual({row['agent'] for row in result['score']['cases']}, {'claude'})
+
+
+    def test_reevaluation_discards_stale_passes_when_trial_evidence_disappears(self):
+        from test_catalog_check import write_evidence, real_report
+        case = next(c for c in run_catalog.load_catalog()['cases'] if c['id'] == 'E02-pipeline-schema')
+        image = 'sha256:' + 'a' * 64
+        for agents in [('claude',), ('codex', 'claude')]:
+            with self.subTest(agents=agents), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                oracle = eval_score.oracle([{**case, 'image': image}], agents, False)
+                eval_score.freeze(root / 'oracle.json', oracle)
+                for trial in range(1, 4):
+                    for agent in agents:
+                        write_evidence(root / f"{case['id']}-trial-{trial:02d}-{agent}", testdrive=real_report('E02'))
+                argv = [case['id'], '--evaluate-only', '--trials', '3', '--image-map',
+                        case['image'] + '=' + image, '--output', str(root)]
+                with contextlib.redirect_stdout(io.StringIO()):
+                    self.assertEqual(run_catalog.main(argv), 0)
+                baseline = root / 'baseline.json'
+                baseline.write_text((root / 'results.json').read_text())
+                missing_id = case['id'] + '-trial-03'
+                (root / (missing_id + '-claude')).rename(root / 'removed-evidence')
+                with contextlib.redirect_stdout(io.StringIO()):
+                    self.assertEqual(run_catalog.main([*argv, '--compare-results', str(baseline)]), 1)
+                result = json.loads((root / 'results.json').read_text())
+                total = 3 * len(agents)
+                self.assertEqual(result['score']['trials'], total)
+                self.assertEqual(len(result['cases']), total - 1)
+                for metric in ('expected_pass_rate', 'rigorous_pass_rate'):
+                    self.assertEqual(result['score'][metric], (total - 1) / total)
+                    self.assertAlmostEqual(result['comparison'][metric + '_delta'], -1 / total)
+                self.assertEqual([(row['id'], row['agent']) for row in result['not_evaluated']],
+                                 [(missing_id, 'claude')])
+                self.assertEqual(result['merged_entries_kept'], 0)
+                self.assertEqual(result['oracle_sha256'], oracle['sha256'])
+
+                # A named selection replaces only its slots, preserving earlier cases.
+                unrelated = {**result['cases'][0], 'id': 'unselected-case', 'catalog_id': 'unselected-case'}
+                stale = next(row for row in json.loads(baseline.read_text())['cases']
+                             if (row['id'], row['agent']) == (missing_id, 'claude'))
+                result['cases'].extend([unrelated, stale])
+                (root / 'results.json').write_text(json.dumps(result))
+                with contextlib.redirect_stdout(io.StringIO()):
+                    self.assertEqual(run_catalog.main(argv), 1)
+                result = json.loads((root / 'results.json').read_text())
+                self.assertIn(unrelated, result['cases'])
+                self.assertNotIn(stale, result['cases'])
+                self.assertEqual(result['merged_entries_kept'], 1)
