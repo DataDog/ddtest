@@ -542,7 +542,12 @@ class EvaluateOnlyTests(unittest.TestCase):
         rows = [json.loads(line) for line in (FIXTURES / "E14-ddtest-results.jsonl").read_text().splitlines()]
         rows[-1]["result"]["code"] = "scope_decision_required"
         write_evidence(self.root / "out" / "E14-tradukisto-claude", testdrive=real_report("E14"), rows=rows)
-        code, output, results = self.main("E14")
+        # This historical fixture stops before accepting the substitute runtime.
+        catalog = copy.deepcopy(self.catalog)
+        expected = next(case for case in catalog["cases"] if case["id"] == "E14-tradukisto")["expected"]
+        expected.update(verdict="INCOMPLETE", blockers=["runtime fidelity: substitute Java"],
+                        reason="Historical fixture stops for a runtime decision", run="catalog fixture", ddtest="fixture")
+        code, output, results = self.main("E14", catalog=catalog)
         self.assertEqual(code, 0, output)
         self.assertEqual(results["questions_not_scriptable"],
                          ["E14-tradukisto (claude): question not scriptable: scope_decision_required"])
@@ -577,7 +582,7 @@ class ExpectedSchemaTests(unittest.TestCase):
                 if "blockers" in resolved:
                     self.assertIn(resolved["verdict"], catalog_check.BLOCKER_VERDICTS)
         self.assertEqual({entry["id"] for entry in self.catalog["cases"] if entry["expected"].get("blockers")},
-                         {"E08-kitchensink", "E12-kalamar-export", "E13-jcommander", "E14-tradukisto",
+                         {"E08-kitchensink", "E12-kalamar-export",
                           "E15-spring-boot-cucumber", "E16-spring-karate-demo", "E17-feel-scala"})
 
     def problems(self, **changes):

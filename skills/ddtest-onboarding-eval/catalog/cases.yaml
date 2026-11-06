@@ -502,9 +502,10 @@ cases:
   risks: []
   expected:
     verdict: COMPLETE LOCALLY
-    run: round 1
-    ddtest: 8c1779df
-    reason: the agent hand-edits the GitLab job after ci_edit_unsupported on the cucumber-junit pipe
+    run: handoff-eval-2026-11-06-r1/reviewed-final
+    ddtest: 79998cb-handoff-r1
+    reason: Both agents followed ddtest's exact status-subshell and nyc dependency prescriptions; all three
+      trials per agent reached COMPLETE LOCALLY with scoped GitLab setup and no edits to the Mocha job.
 - id: E10-tic-tac-toe-wdio
   framework: webdriverio
   language: javascript
@@ -766,10 +767,11 @@ cases:
   risks: []
   expected:
     verdict: PASSED
-    run: eval-claude-2026-11-04
-    ddtest: b7a9d2ba
-    reason: the Python CI path is a manual CI edit, so PASSED rather than COMPLETE LOCALLY by design; observed on
-      Debian Python 3.11.2 (round 1) and CPython 3.12.16 (eval-claude-2026-11-04)
+    run: handoff-eval-2026-11-06-r1/reviewed-final
+    ddtest: 79998cb-handoff-r1
+    reason: Five Buildkite trials pass with ddtest-selected ddtrace 4.16.3; Python standalone validation is
+      PASSED rather than COMPLETE LOCALLY. Codex trial 3 selects GitHub without requesting the reactive
+      provider answer; its unresolved virtualenv build launcher blocks validation and remains a frozen failure.
 - id: E12-kalamar-export
   framework: junit4
   language: java
@@ -835,9 +837,11 @@ cases:
     blockers:  # verified: eval-claude-2026-11-04 testdrive.json, as the rerun grading notes said
     - 'feature auto-retries: failed'
     - 'compatibility: inconclusive'
-    run: eval-claude-2026-11-04
-    ddtest: b7a9d2ba
-    reason: JUnit 4.13.2 with surefire 3.6.0 reports retried attempts as skipped
+    run: handoff-eval-2026-11-06-r1/reviewed-final
+    ddtest: 79998cb-handoff-r1
+    reason: Both agents reproduce INCOMPLETE with ddtest-selected dd-java-agent 1.68.1; auto-retries fails
+      and compatibility remains inconclusive in all three trials per agent.
+
 - id: E11-cdoc2-auth
   framework: junit5
   language: java
@@ -903,9 +907,11 @@ cases:
   - Untrimmed, the suite is a time bomb (expired certs) and fails 3 tests; trimmed, only 8 tests remain.
   expected:
     verdict: COMPLETE LOCALLY
-    run: eval-claude-2026-11-04
-    ddtest: b7a9d2ba
-    reason: with the expired-certificate trim; 2/2 configurations
+    run: handoff-eval-2026-11-06-r1/reviewed-final
+    ddtest: 79998cb-handoff-r1
+    reason: All three trials per agent validate both configurations with the required expired-certificate trim
+      and ddtest-selected dd-java-agent 1.68.1; CI-only Maven settings and local publication limits remain caveats.
+
 - id: E13-jcommander
   framework: testng
   language: java
@@ -962,15 +968,12 @@ cases:
   risks:
   - 'setup-java@v1 without distribution: JDK version must still be read as 21.'
   expected:
-    verdict: INCOMPLETE
-    blockers:  # verified: eval-claude-2026-11-04 testdrive.json (all three failed)
-    - 'feature early-flake-detection: failed'
-    - 'feature attempt-to-fix: failed'
-    - 'feature quarantine: failed'
-    run: eval-claude-2026-11-04
-    ddtest: b7a9d2ba
-    reason: 'TestNG 7.0.0 with dd-java-agent 1.67.1: early flake detection and attempt-to-fix not applied, quarantine
-      fails'
+    verdict: COMPLETE LOCALLY
+    run: handoff-eval-2026-11-06-r1/reviewed-final
+    ddtest: 79998cb-handoff-r1
+    reason: All three trials per agent reach COMPLETE LOCALLY with ddtest-selected dd-java-agent 1.68.1.
+      Current TestNG policy validates two supported controls; auto-retries, early-flake-detection,
+      quarantine and attempt-to-fix are unsupported, not passed. CI clean/publishing limits remain caveats.
 - id: E14-tradukisto
   framework: spock
   language: groovy
@@ -1029,13 +1032,13 @@ cases:
   risks:
   - 21 and 24 matrix rows cannot be certified on the JDK 17 image (needs a 21 and 24 image to cover).
   expected:
-    verdict: INCOMPLETE
-    blockers:  # verified: eval-claude-2026-11-04 testdrive.json (substitute_runtime_unaccepted for CI Java 21 and 24)
-    - 'runtime fidelity: substitute Java'
-    run: eval-claude-2026-11-04
-    ddtest: b7a9d2ba
-    reason: local validation passes; accepting JDK 17 for CI's 21 and 24 rows needs a user answer the harness can't
-      script
+    verdict: COMPLETE LOCALLY
+    run: handoff-eval-2026-11-06-r1/reviewed-final
+    ddtest: 79998cb-handoff-r1
+    reason: All three trials per agent exercise the scripted substitute-runtime answer and reach COMPLETE
+      LOCALLY with ddtest-selected dd-java-agent 1.68.1. Java 21/24 use accepted Java 17 evidence, not native
+      execution; repeated Spock identities remain unavailable. Claude trial 3 adds an unsupported CI/backend
+      validation claim despite an accurate canonical block; independent reporting flags it separately.
 - id: E15-spring-boot-cucumber
   framework: cucumber-java
   language: java
@@ -1108,10 +1111,13 @@ cases:
     - 'feature quarantine: inconclusive'
     - 'feature disabled: inconclusive'
     - 'feature attempt-to-fix: inconclusive'
-    run: eval-claude-2026-11-04
-    ddtest: b7a9d2ba
-    reason: 'dd-java-agent Cucumber issue (resourcePaths is null) on both 1.67.1 and 1.68.1 (on CircleCI the agent
-      picks the release), fixed in dd-trace-java #13153, release 1.69.0'
+    run: handoff-eval-2026-11-06-r1/reviewed-final
+    ddtest: 79998cb-handoff-r1
+    reason: CircleCI validations use ddtest-selected dd-java-agent 1.68.1 and reproduce the Cucumber
+      resourcePaths-null regression; one Codex trial selects Jenkins and stops before validation.
+      Claude trial 2 was contained after production-telemetry attempts; trial 3 made unprescribed manual
+      diagnostics under the intake guard. Those execution findings remain separate from the product verdict.
+      The upstream 1.69.0 follow-up is still release-gated.
 - id: E16-spring-karate-demo
   framework: karate
   language: java
@@ -1175,9 +1181,11 @@ cases:
     - Java application coverage was not observed
     - 'feature skipping: inconclusive'
     - 'feature disabled: inconclusive'
-    run: eval-claude-2026-11-04
-    ddtest: b7a9d2ba
-    reason: Karate drives the app over HTTP, so application coverage is 0/2 (tracer limitation)
+    run: handoff-eval-2026-11-06-r1/reviewed-final
+    ddtest: 79998cb-handoff-r1
+    reason: Both agents reproduce zero application-source coverage (0/2) and inconclusive skipping/disabled
+      checks with ddtest-selected dd-java-agent 1.68.1 in all three trials per agent.
+
 - id: E17-feel-scala
   framework: scalatest
   language: scala
@@ -1252,10 +1260,12 @@ cases:
     - 'unresolved CI scope: .github/workflows/release.yml / release / step 5: CI command expression was not resolved'
     - 'unresolved CI scope: .github/workflows/release.yml / release / step 9: CI command expression was not resolved'
     - 'CI runtime: inconclusive'
-    run: eval-claude-2026-11-04
-    ddtest: b7a9d2ba
-    reason: local validation passes; accepting JDK 17 for CI's 11 and 21 rows needs a user answer, and release.yml's
-      echo, gpg and release:prepare steps stay unresolved CI scope
+    run: handoff-eval-2026-11-06-r1/reviewed-final
+    ddtest: 79998cb-handoff-r1
+    reason: Local validation passes with ddtest-selected dd-java-agent 1.68.1; substitute acceptance is not
+      requested by the structured result while release-scope blockers remain. Five trials match; Codex trial 3
+      adds unprescribed release setup, shifting step 9 to 10 and failing the frozen blocker/trajectory checks.
+
 - id: E18-mbari-commons
   framework: munit
   language: scala
@@ -1321,7 +1331,9 @@ cases:
   - Only viable Maven/Gradle MUnit candidate found.
   expected:
     verdict: COMPLETE LOCALLY
-    run: eval-claude-2026-11-04
-    ddtest: b7a9d2ba
-    reason: one testdrive of ./gradlew build from the gradle-build-action step
-
+    run: handoff-eval-2026-11-06-r1/reviewed-final
+    ddtest: 79998cb-handoff-r1
+    reason: All three scored trials per agent reach COMPLETE LOCALLY with ddtest-selected dd-java-agent
+      1.68.1 and the unchanged Gradle build action. Four supported controls pass; skipping and disabled are
+      unsupported. Mixed-build counts and the separate JUnit project caveat are retained. All six scored
+      trials use the intake guard; the user-approved replacement preserves the earlier operator interruption.

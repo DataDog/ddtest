@@ -494,13 +494,17 @@ A requested agent without a folder is listed as `no <agent> evidence (found:
 or a named case with no evidence at all, the exit status is 1. With `--all` (or
 `--agent both`), cases without a folder are only listed.
 
-After an intentional ddtest change, rerun the affected cases, then copy what
-the block's next step names into the case: `verdict`, `blockers` (the
+After an intentional ddtest change, rerun the affected cases before updating
+the catalog. Copy what the block's next step names into the case: `verdict`, `blockers` (the
 identifiers listed under actual, without the `configuration:` lines), `reason`,
 `run` (the output folder or round, such as `eval-claude-2026-11-04`) and
 `ddtest` (the `--ddtest-label` you passed, such as the commit; a `dev` version
-names no build). Check it with `--evaluate-only` on the same evidence, which
-must now pass.
+names no build). A single-trial calibration can be rechecked with
+`--evaluate-only` against the updated expectation; this is calibration, not an
+independent score. A repeated run keeps its original expectation and oracle:
+retain a copy of the catalog used before execution and pass it with `--catalog`
+when reevaluating those reports. Update expectations for future fresh output
+folders; improvements stay visible in the original repeated-run score.
 
 To add or replace a case:
 
