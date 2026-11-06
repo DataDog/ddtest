@@ -23,7 +23,7 @@ def strings(value):
 
 
 def hunks(patch):
-    """Each hunk's exact path, context and changed lines; line offsets may move."""
+    """Each hunk's exact path, header, context and changed lines."""
     path, body = None, []
     for line in patch.splitlines():
         if line.startswith('diff --git ') or line.startswith('@@ '):
@@ -35,7 +35,7 @@ def hunks(patch):
                 match = re.fullmatch(r'diff --git a/(.+) b/(.+)', line)
                 path = match[2] if match else None
             elif path:
-                body = [line.split('@@', 2)[-1]]
+                body = [line]
         elif not body and line.startswith(('--- ', '+++ ')):
             try:
                 name = unquote_path(line[4:])
@@ -80,8 +80,11 @@ def evaluate(output):
             if path.is_absolute() or '..' in path.parts or not retained.is_file() or retained.stat().st_size > 200_000:
                 raise ValueError('Untracked content was not retained')
             content = retained.read_bytes()
+            if b'\0' in content:
+                raise ValueError('Untracked binary content cannot be certified as text')
+            decoded = content.decode()
             changed.append({'id': digest(name.encode() + b'\n' + content), 'path': name,
-                            'patch': 'Untracked file:\n' + redact(content.decode(errors='replace'))})
+                            'patch': 'Untracked file:\n' + redact(decoded)})
         except (OSError, ValueError):
             special = True
     review_path = output / 'trajectory-review.json'

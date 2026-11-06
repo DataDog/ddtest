@@ -97,7 +97,7 @@ class ContainerTests(unittest.TestCase):
         import prepare_case_images
         case = {'id': 'fixture', 'repo': self.args.repo, 'commit': commit, 'framework': 'jest',
                 'harness': {}, 'trims': {}, 'setup_commands': [
-                    "python3 -c \"import pathlib; p=pathlib.Path('/trial/caches/pip/private-cache'); p.write_text('project cache'); p.chmod(0o600)\""],
+                    "python3 -c \"import pathlib; p=pathlib.Path('/trial/caches/pip/private-cache'); p.write_text('project cache'); p.chmod(0o600); d=pathlib.Path('/trial/home/.gradle/private-daemon'); d.mkdir(); d.chmod(0o700)\""],
                 'readiness_commands': []}
         text = prepare_case_images.dockerfile(case, IMAGE)
         # The same builder runs against a local fixture source, without network.

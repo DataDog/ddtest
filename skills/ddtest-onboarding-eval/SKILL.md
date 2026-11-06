@@ -445,8 +445,8 @@ Each trial gets one outcome:
 | `harness_failure` | container, clone, setup, readiness, login, timeout, interruption, retention, cleanup, a runner error, or missing or malformed evidence (such as a `testdrive.json` that is not valid JSON or lacks `summary.status` or `summary.blocking_checks`, or no report although ddtest's last result claims a verdict) | yes |
 | `agent_failure` | no ddtest result or report, no final answer, or `run.json` `agent_reporting` is not `pass` | yes |
 
-Expected blockers that are no longer reported only add a note. Whether the agent
-changed files ddtest didn't prescribe is not checked; grade that by hand.
+Expected blockers that are no longer reported only add a note. Source edits receive a conservative trajectory check; unmatched hunks require
+independent review as described below.
 
 At the end the runner prints a table (case, agent, provider, framework,
 expected, actual, outcome), `NOTE <id>: agents disagree` when both agents ran a
@@ -567,7 +567,8 @@ Use `run_catalog.py E04 E14 E17 --agent both --trials 3` with the usual image,
 binary, login and output flags. Every trial has a fresh checkout, private
 caches and a separate `<case>-trial-<nn>-<agent>` evidence folder. The two agent
 lanes remain independent. Before execution, `oracle.json` freezes the source
-commits, setup, images, scripted answers and expected verdicts/blockers. A
+commits, setup, images, scripted answers, an explicit `--model` selection and
+expected verdicts/blockers. A
 changed oracle requires a new output folder; do not revise expectations after
 observing the same trials and then call their score independent.
 
@@ -576,7 +577,9 @@ across trials. `expected_pass_rate` measures agreement with the predeclared
 outcome (including expected FAILED/INCOMPLETE outcomes); `rigorous_pass_rate`
 also requires a passed trajectory check. Missing trials and failures stay in
 the denominator. `complete_locally` is reported separately. These small-sample
-rates are descriptive, not evidence of statistical significance.
+rates are descriptive, not evidence of statistical significance. Use explicit
+model selection for version comparisons; service defaults can change and some
+CLIs do not expose their resolved model.
 
 Pass `--compare-results <earlier results.json>` to compare two ddtest versions.
 The oracle and case/agent sets must match, including the immutable images.

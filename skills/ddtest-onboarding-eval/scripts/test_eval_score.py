@@ -74,3 +74,14 @@ class ScoreTests(unittest.TestCase):
             self.assertEqual(len(result['score']['cases']), 2)
             self.assertTrue(all(group['case'] == case['id'] and group['trials'] == 3
                                 for group in result['score']['cases']))
+
+    def test_requested_model_is_part_of_the_frozen_inputs(self):
+        case = run_catalog.load_catalog()['cases'][0]
+        first = eval_score.oracle([case], ['codex'], False, model='model-one')
+        second = eval_score.oracle([case], ['codex'], False, model='model-two')
+        self.assertNotEqual(first['sha256'], second['sha256'])
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'oracle.json'
+            eval_score.freeze(path, first)
+            with self.assertRaises(ValueError):
+                eval_score.freeze(path, second, evaluate_only=True)

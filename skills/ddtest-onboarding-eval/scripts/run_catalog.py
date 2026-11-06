@@ -807,7 +807,7 @@ def main(argv=None):
         parser.error("dependency images require the original base --image-map/--image-file, even with --dry-run: "
                      + ", ".join(missing_cache_bases))
     oracle = eval_score.oracle([{**case, "image": cached.get(case["id"], images.get(case["id"] if args.case_image else case["image"], case["image"]))}
-                               for case in oracle_cases], agents, args.speed_trims)
+                               for case in oracle_cases], agents, args.speed_trims, model=args.model)
     image_keys = {case.get("catalog_id", case["id"]) if args.case_image else case["image"] for case in cases}
     missing = sorted(image_keys - set(images))
     if args.evaluate_only and not args.output:

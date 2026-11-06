@@ -40,6 +40,24 @@ class TrajectoryTests(unittest.TestCase):
         self.assertEqual(result['status'], 'review')
         self.assertEqual([item['path'] for item in result['hunks']], ['ci.yml', 'extra\tfile'])
 
+    def test_one_prescription_cannot_authorize_the_same_edit_at_another_location(self):
+        duplicate = PATCH + '@@ -10 +10 @@\n-old\n+new\n'
+        self.assertEqual(self.evaluate(patch=duplicate, prescription=PATCH)['status'], 'review')
+
+    def test_binary_untracked_files_stay_unverified(self):
+        for content in (b'header\x00binary', b'\xff\xfe'):
+            with tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / 'changes.patch').write_text('')
+                (root / 'status.txt').write_text('?? artifact.bin\n')
+                (root / 'ddtest-results.jsonl').write_text('{"result": {"instruction": "Write the prescribed artifact.bin"}}\n')
+                retained = root / 'retained/untracked/artifact.bin'
+                retained.parent.mkdir(parents=True)
+                retained.write_bytes(content)
+                result = trajectory_check.evaluate(root)
+                self.assertEqual(result['status'], 'review')
+                self.assertTrue(result['non_text_changes'])
+
     def test_nontext_edits_are_not_silently_ignored(self):
         self.assertEqual(self.evaluate(patch='diff --git a/a b/a\nold mode 100644\nnew mode 100755\n')['status'], 'review')
         self.assertEqual(self.evaluate(patch='diff --git a/a b/a\nBinary files a/a and b/a differ\n')['status'], 'review')
