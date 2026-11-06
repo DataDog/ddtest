@@ -154,7 +154,7 @@ jobs:
         run: go vet ./...
 
       - name: Select Go test shard
-        run: python scripts/go_test_shards.py select --shard "${{ matrix.shard }}/3" > "$RUNNER_TEMP/go-test-filter"
+        run: python scripts/go_test_shards.py select --shard "${{ matrix.shard }}/3" > "$RUNNER_TEMP/go-test-packages"
 
       # The release builder, as `make release` runs it for one target: ddtest
       # with the runtime sources and tool wrapper that ddtest instrument provides.
@@ -170,7 +170,7 @@ jobs:
           "$RUNNER_TEMP/bin/ddtest" instrument --version
 
       - name: Run tests
-        run: ddtest instrument go test -timeout=20m -race -coverpkg=./... -coverprofile=coverage.out -covermode=atomic -run "$(cat "$RUNNER_TEMP/go-test-filter")" ./...
+        run: ddtest instrument go test -timeout=20m -race -coverpkg=./... -coverprofile=coverage.out -covermode=atomic $(cat "$RUNNER_TEMP/go-test-packages")
         env:
           DD_CIVISIBILITY_ENABLED: ${{ env.DATADOG_API_KEY_CONFIGURED == 'true' && 'parent' || 'false' }}
           DD_CIVISIBILITY_AGENTLESS_ENABLED: "true"
@@ -215,11 +215,8 @@ jobs:
           path: ${{ runner.temp }}/unit-coverage
       - name: Merge complete coverage
         run: python3 scripts/go_test_shards.py merge --expected 3 --output coverage.out "$RUNNER_TEMP"/unit-coverage/*/coverage.out
-      # Test Impact Analysis never skips on the default branch, so only main has
-      # complete coverage. Elsewhere the report would lack what skipped tests
-      # cover: the shards' -run keeps ddtest instrument from backfilling it.
       - name: Upload coverage report to Datadog
-        if: ${{ env.DATADOG_API_KEY_CONFIGURED == 'true' && github.ref == 'refs/heads/main' }}
+        if: ${{ env.DATADOG_API_KEY_CONFIGURED == 'true' }}
         uses: DataDog/coverage-upload-github-action@d9548b1c3c4ab639d5d3ab29a1508af188975f77 # v1.0.5
         with:
           api_key: ${{ secrets.DATADOG_API_KEY }}
@@ -327,7 +324,7 @@ jobs:
           DDTEST_PYTHON_PLATFORM_INTEGRATION=1 \
             go test -v ./internal/compatibility -run '^TestPythonPlatformIntegration$'
           DDTEST_PYTEST_PYTHON="$(command -v python)" \
-            go test -v ./internal/testdrive -run '^TestPytest(RealValidation|CoverageExecutesOnlyInsideCopy|LoggingExecutesOnlyInsideCopy|RejectsEditableImportsFromOriginalCheckout|CoverageDataExecutesOnlyInsideCopy|IgnoredConfigurationUsesRoot|ObserverKeepsConcurrentDuplicateExecutions|PreflightReportsSelectedEnvironment)$'
+            go test -v ./internal/testdrive/... -run '^TestPytest(RealValidation|CoverageExecutesOnlyInsideCopy|LoggingExecutesOnlyInsideCopy|RejectsEditableImportsFromOriginalCheckout|CoverageDataExecutesOnlyInsideCopy|IgnoredConfigurationUsesRoot|ObserverKeepsConcurrentDuplicateExecutions|PreflightReportsSelectedEnvironment)$'
 
   javascript-platform-compatibility:
     runs-on: ubuntu-latest

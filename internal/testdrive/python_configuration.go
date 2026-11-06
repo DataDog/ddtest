@@ -1,16 +1,20 @@
 package testdrive
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 
 	"github.com/DataDog/ddtest/internal/ext"
+	"github.com/DataDog/ddtest/internal/framework"
 	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/DataDog/ddtest/internal/platform"
+	"github.com/DataDog/ddtest/internal/testdrive/intake"
 	"github.com/DataDog/ddtest/internal/testdrive/workspace"
 	"github.com/kballard/go-shellquote"
 )
@@ -365,4 +369,16 @@ func expandPytestArgumentFiles(args []string, directory, original, copied string
 		expanded = append(expanded, lines...)
 	}
 	return expanded, nil
+}
+
+// ValidatePytestCommand validates command and args in root as a prepared
+// configuration, with environment as that configuration's own. pytestpaths
+// calls it: its cases take most of this package's test time, so they live
+// outside it, where CI can run them in shards of their own.
+func ValidatePytestCommand(ctx context.Context, output io.Writer, root, command string, args []string, environment map[string]string) (validationResult, error) {
+	drive := &Testdrive{repositoryRoot: root, language: "python", framework: framework.NewPytest(platform.NewPython()), command: command, args: args, executor: &ext.DefaultCommandExecutor{}, startIntake: func(dir string, scenario intake.Scenario) (localIntake, error) {
+		return intake.StartScenario(dir, scenario)
+	}}
+	drive.preflight = drive.frameworkPreflight()
+	return drive.runPreparedConfiguration(ctx, output, &configurationResult{TestCommand: onboard.TestCommand{Directory: ".", Environment: environment}})
 }

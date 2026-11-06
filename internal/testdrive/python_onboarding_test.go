@@ -6,12 +6,13 @@ import (
 
 	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/DataDog/ddtest/internal/settings"
+	"github.com/DataDog/ddtest/internal/testutil"
 	"github.com/kballard/go-shellquote"
 	"github.com/stretchr/testify/require"
 )
 
 func TestPythonStandalonePreparationKeepsUnsupportedCIAdvisory(t *testing.T) {
-	python := feedbackPython(t)
+	python := testutil.PytestPython(t)
 	for _, mode := range []string{"default", "command", "all", "check-only"} {
 		t.Run(mode, func(t *testing.T) {
 			root := t.TempDir()

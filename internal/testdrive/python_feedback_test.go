@@ -18,6 +18,7 @@ import (
 	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
+	"github.com/DataDog/ddtest/internal/testutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -93,37 +94,15 @@ func TestPythonPrerequisiteProbeDoesNotStartDatadogReporting(t *testing.T) {
 	for _, key := range []string{"DD_INSTRUMENTATION_TELEMETRY_ENABLED", "DD_TRACE_ENABLED", "DD_CIVISIBILITY_ENABLED"} {
 		t.Setenv(key, "true")
 	}
-	require.Equal(t, python, feedbackPython(t))
+	require.Equal(t, python, testutil.PytestPython(t))
 	data, err := os.ReadFile(result)
 	require.NoError(t, err)
 	require.Equal(t, "false false false", string(data))
 	require.Equal(t, "true", os.Getenv("DD_CIVISIBILITY_ENABLED"))
 }
 
-func feedbackPython(t *testing.T) string {
-	t.Helper()
-	python := os.Getenv("DDTEST_PYTEST_PYTHON")
-	if python == "" {
-		python, _ = exec.LookPath("python3")
-	}
-	if python == "" {
-		t.Skip("Python required")
-	}
-	probe := exec.CommandContext(t.Context(), python, "-c", `import pytest, ddtrace; from packaging.version import Version; assert Version(ddtrace.__version__) >= Version("4.11.0") and Version(pytest.__version__) >= Version("7.2")`)
-	// This process only checks installed versions. The real validation processes
-	// still exercise telemetry and all feature controls against the local intake.
-	probe.Env = append(os.Environ(), "DD_INSTRUMENTATION_TELEMETRY_ENABLED=false", "DD_TRACE_ENABLED=false", "DD_CIVISIBILITY_ENABLED=false")
-	if output, err := probe.CombinedOutput(); err != nil {
-		if os.Getenv("DDTEST_REQUIRE_PROJECT_RUNTIMES") == "1" || os.Getenv("DDTEST_PYTEST_PYTHON") != "" {
-			t.Fatalf("pytest and ddtrace required: %s: %v", output, err)
-		}
-		t.Skip("pytest and ddtrace required")
-	}
-	return python
-}
-
 func TestPytestPreflightReportsSelectedEnvironment(t *testing.T) {
-	python := feedbackPython(t)
+	python := testutil.PytestPython(t)
 	root := t.TempDir()
 	t.Chdir(root)
 	requireWriteFile(t, "pytest.ini", "[pytest]\n")
@@ -143,7 +122,7 @@ func TestPytestPreflightReportsSelectedEnvironment(t *testing.T) {
 }
 
 func TestPytestObserverKeepsDuplicateExecutions(t *testing.T) {
-	python := feedbackPython(t)
+	python := testutil.PytestPython(t)
 	root := t.TempDir()
 	root, err := filepath.EvalSymlinks(root)
 	require.NoError(t, err)
@@ -179,7 +158,7 @@ func TestPytestObserverKeepsDuplicateExecutions(t *testing.T) {
 }
 
 func TestPytestObserverKeepsConcurrentDuplicateExecutions(t *testing.T) {
-	python := feedbackPython(t)
+	python := testutil.PytestPython(t)
 	if output, err := exec.CommandContext(t.Context(), python, "-c", "import xdist").CombinedOutput(); err != nil {
 		if os.Getenv("DDTEST_REQUIRE_PROJECT_RUNTIMES") == "1" {
 			t.Fatalf("pytest-xdist required: %s", output)
@@ -240,7 +219,7 @@ def test_duplicate():
 }
 
 func TestPytestNestedCopyPreservesAncestorFixturesAndNaming(t *testing.T) {
-	python := feedbackPython(t)
+	python := testutil.PytestPython(t)
 	root := t.TempDir()
 	t.Chdir(root)
 	require.NoError(t, exec.CommandContext(t.Context(), "git", "init", "-q").Run())
@@ -281,7 +260,7 @@ func TestPytestNestedCopyPreservesAncestorFixturesAndNaming(t *testing.T) {
 }
 
 func TestPytestNestedCheckKeepsCheckoutCIFindings(t *testing.T) {
-	python := feedbackPython(t)
+	python := testutil.PytestPython(t)
 	root := t.TempDir()
 	t.Chdir(root)
 	require.NoError(t, exec.CommandContext(t.Context(), "git", "init", "-q").Run())
@@ -300,7 +279,7 @@ func TestPytestNestedCheckKeepsCheckoutCIFindings(t *testing.T) {
 }
 
 func TestPytestCheckOnlyRejectsBrokenImport(t *testing.T) {
-	python := feedbackPython(t)
+	python := testutil.PytestPython(t)
 	for _, mode := range []string{"direct preflight", "check only"} {
 		t.Run(mode, func(t *testing.T) {
 			root := t.TempDir()

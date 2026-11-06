@@ -21,10 +21,10 @@ type ciTestJob struct {
 		Matrix   struct{ Shard []any }
 	}
 	Steps []struct {
-		Name, Run, Uses, If string
-		ID                  string `yaml:"id"`
-		Env                 map[string]string
-		With                map[string]string
+		Name, Run, Uses string
+		ID              string `yaml:"id"`
+		Env             map[string]string
+		With            map[string]string
 	}
 }
 
@@ -126,19 +126,12 @@ func TestGoCIShardsReportThroughDdtestInstrumentWithRaceCoverage(t *testing.T) {
 		}
 	}
 	require.True(t, strings.HasPrefix(command, "ddtest instrument go test"), command)
-	for _, flag := range []string{"-race", "-coverpkg=./...", "-coverprofile=coverage.out", "-covermode=atomic", "-run"} {
+	for _, flag := range []string{"-race", "-coverpkg=./...", "-coverprofile=coverage.out", "-covermode=atomic"} {
 		require.Contains(t, command, flag)
 	}
-}
-
-// Test Impact Analysis skips tests everywhere except the default branch, so a
-// report from any other branch would understate coverage.
-func TestCoverageReportUploadsOnlyFromTheDefaultBranch(t *testing.T) {
-	for _, step := range ciTestJobs(t)["test"].Steps {
-		if strings.HasPrefix(step.Uses, "DataDog/coverage-upload-github-action@") {
-			require.Contains(t, step.If, "github.ref == 'refs/heads/main'")
-			return
-		}
+	// ddtest instrument backfills the coverage of skipped tests only without
+	// flags that narrow the run, so the shards split by package.
+	for _, flag := range []string{"-run", "-skip", "-short"} {
+		require.NotContains(t, command, " "+flag)
 	}
-	t.Fatal("the test job uploads no coverage report")
 }
