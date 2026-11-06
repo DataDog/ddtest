@@ -163,6 +163,7 @@ class CacheTests(unittest.TestCase):
         original = self.root / "docker-profile"
         original.mkdir()
         (original / "contexts").mkdir()
+        (original / "cli-plugins").mkdir()
         settings = {"currentContext": "fixture-engine", "credsStore": "must-not-run",
                     "auths": {"registry.invalid": {"auth": "credential-canary"}},
                     "proxies": {"default": {"httpProxy": "proxy-credential-canary"}}}
@@ -170,20 +171,54 @@ class CacheTests(unittest.TestCase):
         context = self.root / "build"
         context.mkdir()
         seen = []
+        commands = []
+        base = "sha256:" + "a" * 64
 
         def build(argv, **kwargs):
+            commands.append(argv)
             config = Path(argv[argv.index("--config") + 1])
             seen.append(config)
             self.assertNotEqual(config.parent, context)
             self.assertEqual(json.loads((config / "config.json").read_text()), {"currentContext": "fixture-engine"})
             self.assertEqual((config / "contexts").resolve(), (original / "contexts").resolve())
+            self.assertEqual((config / "cli-plugins").resolve(), (original / "cli-plugins").resolve())
             self.assertNotIn("DOCKER_AUTH_CONFIG", kwargs["env"])
+            if "build" in argv:
+                reference = (context / "Dockerfile").read_text().splitlines()[0].removeprefix("FROM ")
+                self.assertRegex(reference, r"^ddtest-eval-base:[0-9a-f]{32}$")
+                self.assertEqual(reference, commands[0][-1])
 
         with patch.dict(os.environ, {"DOCKER_CONFIG": str(original), "DOCKER_AUTH_CONFIG": "must-not-forward"}), \
-                patch.object(prepare_dependencies.subprocess, "run", side_effect=build):
-            prepare_dependencies.build_image(context, "fixture", 30)
+                patch.object(prepare_dependencies.subprocess, "run", side_effect=build), \
+                patch.object(prepare_dependencies.subprocess, "check_output", return_value=base + "\n") as inspect:
+            prepare_dependencies.build_image(context, base, "fixture", 30)
+        self.assertEqual(commands[0][-4:-1], ["image", "tag", base])
+        self.assertEqual(commands[-1][-3:], ["image", "rm", commands[0][-1]])
+        self.assertEqual(inspect.call_args_list[0].args[0][-1], base)
+        self.assertEqual(inspect.call_args_list[1].args[0][-1], commands[0][-1])
         self.assertFalse(seen[0].exists())
         self.assertEqual(json.loads((original / "config.json").read_text()), settings)
+
+    def test_temporary_base_tag_is_removed_after_build_failure_or_identity_mismatch(self):
+        base = "sha256:" + "a" * 64
+        for mismatch in (False, True):
+            with self.subTest(mismatch=mismatch):
+                context = self.root / str(mismatch)
+                context.mkdir()
+                commands = []
+
+                def run(argv, **kwargs):
+                    commands.append(argv)
+                    if "build" in argv:
+                        raise subprocess.CalledProcessError(1, argv)
+
+                outputs = [base, "sha256:" + "b" * 64 if mismatch else base]
+                with patch.object(prepare_dependencies.subprocess, "run", side_effect=run), \
+                        patch.object(prepare_dependencies.subprocess, "check_output", side_effect=outputs), \
+                        self.assertRaises(ValueError if mismatch else subprocess.CalledProcessError):
+                    prepare_dependencies.build_image(context, base, "fixture", 30)
+                self.assertEqual(commands[-1][-3:], ["image", "rm", commands[0][-1]])
+                self.assertEqual(any("build" in argv for argv in commands), not mismatch)
 
 
 if __name__ == "__main__":

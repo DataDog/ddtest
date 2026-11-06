@@ -103,10 +103,9 @@ class ContainerTests(unittest.TestCase):
         context = self.root/'cache-image'
         context.mkdir()
         prepare_dependencies.copy_archive(Path(manifest['trial_directory']), context/'cache.tar', key)
-        (context/'Dockerfile').write_text(f'FROM {IMAGE}\nADD cache.tar /opt/ddtest-eval-cache/\nRUN chmod -R a+rX /opt/ddtest-eval-cache\n')
         tag = 'ddtest-eval-cache-test:' + uuid.uuid4().hex
         try:
-            prepare_dependencies.build_image(context, tag, 120)
+            prepare_dependencies.build_image(context, IMAGE, tag, 120)
             self.args.image = subprocess.check_output(['docker', 'image', 'inspect', '--format', '{{.Id}}', tag], text=True).strip()
             self.args.prepare_cache = None
             self.args.dependency_cache = key

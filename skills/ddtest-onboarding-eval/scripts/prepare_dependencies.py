@@ -13,6 +13,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import uuid
 
 import dependency_cache
 import run_catalog
@@ -20,7 +21,7 @@ import run_eval
 from isolation import cleanup, trial_root, validate_image
 
 
-def build_image(context, tag, timeout):
+def build_image(context, base_image, tag, timeout):
     """Keep the engine context, but never give the build registry logins/proxies.
 
     Legacy Docker otherwise invokes every configured credential helper even
@@ -33,11 +34,27 @@ def build_image(context, tag, timeout):
         config = Path(directory)
         (config / "config.json").write_text(json.dumps(
             {"currentContext": settings["currentContext"]} if settings.get("currentContext") else {}))
-        if (original / "contexts").exists():
-            (config / "contexts").symlink_to((original / "contexts").resolve(), target_is_directory=True)
+        for name in ("contexts", "cli-plugins"):
+            if (original / name).exists():
+                (config / name).symlink_to((original / name).resolve(), target_is_directory=True)
         env = {name: value for name, value in os.environ.items() if name != "DOCKER_AUTH_CONFIG"}
-        subprocess.run(["docker", "--config", str(config), "build", "--network=none", "--pull=false",
-                        "-t", tag, str(context)], env=env, check=True, timeout=timeout)
+        docker = ["docker", "--config", str(config)]
+        inspect = ["image", "inspect", "--format", "{{.Id}}"]
+        base_id = subprocess.check_output([*docker, *inspect, base_image], env=env, text=True, timeout=20).strip()
+        # BuildKit parses FROM sha256:<id> as a registry name. Keep the immutable
+        # ID in the recipe, but build through a private, verified local tag.
+        alias = "ddtest-eval-base:" + uuid.uuid4().hex
+        try:
+            subprocess.run([*docker, "image", "tag", base_id, alias], env=env, check=True, timeout=20)
+            if subprocess.check_output([*docker, *inspect, alias], env=env, text=True, timeout=20).strip() != base_id:
+                raise ValueError("temporary dependency base tag does not match the immutable image")
+            (context / "Dockerfile").write_text(
+                f"FROM {alias}\nADD cache.tar {dependency_cache.IMAGE_DIRECTORY}/\n"
+                f"RUN chmod -R a+rX {dependency_cache.IMAGE_DIRECTORY}\n")
+            subprocess.run([*docker, "build", "--network=none", "--pull=false", "-t", tag, str(context)],
+                           env=env, check=True, timeout=timeout)
+        finally:
+            subprocess.run([*docker, "image", "rm", alias], env=env, check=True, capture_output=True, timeout=20)
 
 
 def copy_archive(trial, target, key):
@@ -142,10 +159,7 @@ def main(argv=None):
             context = Path(directory)
             archive = context / "cache.tar"
             copy_archive(Path(run["trial_directory"]), archive, key)
-            (context / "Dockerfile").write_text(
-                f"FROM {args.image}\nADD cache.tar {dependency_cache.IMAGE_DIRECTORY}/\n"
-                f"RUN chmod -R a+rX {dependency_cache.IMAGE_DIRECTORY}\n")
-            build_image(context, args.tag, args.timeout)
+            build_image(context, args.image, args.tag, args.timeout)
             image = subprocess.check_output(["docker", "image", "inspect", "--format", "{{.Id}}", args.tag],
                                             text=True, timeout=20).strip()
             digest = hashlib.sha256()
