@@ -379,6 +379,11 @@ warmups resolve compiler/provider/plugin dependencies a `go-offline` or
 it does not certify onboarding. The preparation trial is cleaned up even if building the
 local image fails. Nothing is published.
 
+Each base keeps a local `ddtest-eval-base:<image-id>` tag, recorded as `base_tag`
+in `dependency-image.json`. This supports BuildKit and preserves an untagged
+caller image after build failure. Repeated preparation reuses that base tag;
+remove it only when retiring the base image itself.
+
 The cache contains only allowlisted package caches, Maven/Gradle user-home
 data, Ruby's private bundle and its generated Git-ignored lockfile. It does
 not snapshot the checkout, `node_modules`, venv, CLI profiles, credentials,

@@ -11,6 +11,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import tarfile
 import unittest
 from unittest.mock import patch
 
@@ -129,6 +130,26 @@ class ContainerTests(unittest.TestCase):
             self.assertFalse((Path(mismatch['checkout'])/'observed.json').exists())
         finally:
             subprocess.run(['docker', 'image', 'rm', tag], capture_output=True)
+
+    def test_failed_cache_build_preserves_an_untagged_base_image(self):
+        import uuid
+        context = self.root/'failed-cache-image'
+        context.mkdir()
+        archive = context/'cache.tar'
+        with tarfile.open(archive, 'w'):
+            pass
+        base = subprocess.check_output([
+            'docker', 'image', 'import', '--change', 'LABEL ddtest.eval.fixture=' + uuid.uuid4().hex,
+            str(archive)], text=True).strip()
+        try:
+            tags = subprocess.check_output(['docker', 'image', 'inspect', '--format', '{{json .RepoTags}}', base], text=True)
+            self.assertFalse(json.loads(tags))
+            with self.assertRaises(subprocess.CalledProcessError):
+                prepare_dependencies.build_image(context, base, 'INVALID/OUTPUT', 120)
+            result = subprocess.run(['docker', 'image', 'inspect', base], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, 'Failed preparation removed the caller\'s base image: ' + result.stderr)
+        finally:
+            subprocess.run(['docker', 'image', 'rm', '--force', base], capture_output=True)
 
     def test_changes_patch_excludes_trim_commits_made_in_the_container(self):
         import run_catalog

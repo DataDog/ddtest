@@ -185,7 +185,7 @@ class CacheTests(unittest.TestCase):
             self.assertNotIn("DOCKER_AUTH_CONFIG", kwargs["env"])
             if "build" in argv:
                 reference = (context / "Dockerfile").read_text().splitlines()[0].removeprefix("FROM ")
-                self.assertRegex(reference, r"^ddtest-eval-base:[0-9a-f]{32}$")
+                self.assertEqual(reference, "ddtest-eval-base:" + base.removeprefix("sha256:"))
                 self.assertEqual(reference, commands[0][-1])
 
         with patch.dict(os.environ, {"DOCKER_CONFIG": str(original), "DOCKER_AUTH_CONFIG": "must-not-forward"}), \
@@ -193,13 +193,13 @@ class CacheTests(unittest.TestCase):
                 patch.object(prepare_dependencies.subprocess, "check_output", return_value=base + "\n") as inspect:
             prepare_dependencies.build_image(context, base, "fixture", 30)
         self.assertEqual(commands[0][-4:-1], ["image", "tag", base])
-        self.assertEqual(commands[-1][-3:], ["image", "rm", commands[0][-1]])
+        self.assertFalse(any("rm" in argv for argv in commands))
         self.assertEqual(inspect.call_args_list[0].args[0][-1], base)
         self.assertEqual(inspect.call_args_list[1].args[0][-1], commands[0][-1])
         self.assertFalse(seen[0].exists())
         self.assertEqual(json.loads((original / "config.json").read_text()), settings)
 
-    def test_temporary_base_tag_is_removed_after_build_failure_or_identity_mismatch(self):
+    def test_base_is_not_removed_after_build_failure_or_identity_mismatch(self):
         base = "sha256:" + "a" * 64
         for mismatch in (False, True):
             with self.subTest(mismatch=mismatch):
@@ -217,7 +217,7 @@ class CacheTests(unittest.TestCase):
                         patch.object(prepare_dependencies.subprocess, "check_output", side_effect=outputs), \
                         self.assertRaises(ValueError if mismatch else subprocess.CalledProcessError):
                     prepare_dependencies.build_image(context, base, "fixture", 30)
-                self.assertEqual(commands[-1][-3:], ["image", "rm", commands[0][-1]])
+                self.assertFalse(any("rm" in argv for argv in commands))
                 self.assertEqual(any("build" in argv for argv in commands), not mismatch)
 
 

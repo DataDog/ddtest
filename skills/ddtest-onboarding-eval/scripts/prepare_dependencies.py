@@ -13,7 +13,6 @@ import subprocess
 import sys
 import tarfile
 import tempfile
-import uuid
 
 import dependency_cache
 import run_catalog
@@ -41,20 +40,19 @@ def build_image(context, base_image, tag, timeout):
         docker = ["docker", "--config", str(config)]
         inspect = ["image", "inspect", "--format", "{{.Id}}"]
         base_id = subprocess.check_output([*docker, *inspect, base_image], env=env, text=True, timeout=20).strip()
-        # BuildKit parses FROM sha256:<id> as a registry name. Keep the immutable
-        # ID in the recipe, but build through a private, verified local tag.
-        alias = "ddtest-eval-base:" + uuid.uuid4().hex
-        try:
-            subprocess.run([*docker, "image", "tag", base_id, alias], env=env, check=True, timeout=20)
-            if subprocess.check_output([*docker, *inspect, alias], env=env, text=True, timeout=20).strip() != base_id:
-                raise ValueError("temporary dependency base tag does not match the immutable image")
-            (context / "Dockerfile").write_text(
-                f"FROM {alias}\nADD cache.tar {dependency_cache.IMAGE_DIRECTORY}/\n"
-                f"RUN chmod -R a+rX {dependency_cache.IMAGE_DIRECTORY}\n")
-            subprocess.run([*docker, "build", "--network=none", "--pull=false", "-t", tag, str(context)],
-                           env=env, check=True, timeout=timeout)
-        finally:
-            subprocess.run([*docker, "image", "rm", alias], env=env, check=True, capture_output=True, timeout=20)
+        # BuildKit needs a named FROM reference. Retain one tag per base:
+        # removing its last tag also deletes an otherwise untagged caller image.
+        base_tag = "ddtest-eval-base:" + base_id.removeprefix("sha256:")
+        subprocess.run([*docker, "image", "tag", base_id, base_tag], env=env, check=True, timeout=20)
+        if subprocess.check_output([*docker, *inspect, base_tag], env=env, text=True, timeout=20).strip() != base_id:
+            raise ValueError("dependency base tag does not match the immutable image")
+        print(f"Retaining local base tag {base_tag} for {base_id}", file=sys.stderr)
+        (context / "Dockerfile").write_text(
+            f"FROM {base_tag}\nADD cache.tar {dependency_cache.IMAGE_DIRECTORY}/\n"
+            f"RUN chmod -R a+rX {dependency_cache.IMAGE_DIRECTORY}\n")
+        subprocess.run([*docker, "build", "--network=none", "--pull=false", "-t", tag, str(context)],
+                       env=env, check=True, timeout=timeout)
+        return base_tag
 
 
 def copy_archive(trial, target, key):
@@ -159,14 +157,14 @@ def main(argv=None):
             context = Path(directory)
             archive = context / "cache.tar"
             copy_archive(Path(run["trial_directory"]), archive, key)
-            build_image(context, args.image, args.tag, args.timeout)
+            base_tag = build_image(context, args.image, args.tag, args.timeout)
             image = subprocess.check_output(["docker", "image", "inspect", "--format", "{{.Id}}", args.tag],
                                             text=True, timeout=20).strip()
             digest = hashlib.sha256()
             with archive.open("rb") as stream:
                 for block in iter(lambda: stream.read(1024 * 1024), b""):
                     digest.update(block)
-            receipt = {"case": case["id"], "image": image, "base_image": args.image, "fingerprint": key,
+            receipt = {"case": case["id"], "image": image, "base_image": args.image, "base_tag": base_tag, "fingerprint": key,
                        "archive_sha256": digest.hexdigest()}
             (output / "dependency-image.json").write_text(json.dumps(receipt, indent=2) + "\n")
             print(f"--dependency-image {case['id']}={image}")
