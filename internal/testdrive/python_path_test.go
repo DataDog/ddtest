@@ -9,12 +9,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestPytestApplicationPythonPathIsIsolated(t *testing.T) {
-	for _, source := range []string{"ambient", "configured"} {
-		t.Run(source, func(t *testing.T) { testPytestPathsExecuteOnlyInsideCopy(t, "pythonpath "+source) })
-	}
-}
-
 func TestPytestTracerVerificationHonorsEmptyPythonPath(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("uses POSIX executable fixtures")

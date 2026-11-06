@@ -4,16 +4,16 @@ PR branches, main and releases use the same CI workflow and the same onboard and
 testdrive scenarios. The Go suite reports through `ddtest instrument`; only
 ddto's comparison tests still build with Orchestrion. Datadog Test Impact
 Analysis owns test skipping; this workflow does not maintain a separate
-changed-file test selector. It never skips on the default branch, so main alone
-uploads the Go suite's coverage report.
+changed-file test selector.
 
-## Go test discovery and compiler caches
+## Go shards and compiler caches
 
-The Go shard selector runs `go run ./scripts/testnames`. The helper asks
-`go list -race -json ./...` for the files selected by the current platform and
-build tags, then uses Go's parser and example discovery to list tests, examples
-and fuzz targets. Discovery builds only the small helper; it does not build
-every test executable or run their initializers and `TestMain` functions.
+The Go shards split by package with `go list ./...`. `-run` would keep
+`ddtest instrument` from backfilling the coverage of the tests that Test Impact
+Analysis skips, so no shard narrows its tests. `scripts/go_test_shards.py` pins
+the slowest packages to different shards and spreads the others by hash.
+`internal/testdrive/pytestpaths` holds the real pytest validations in two
+packages because they take most of `internal/testdrive`'s time.
 
 The Go shards keep their own compiler cache. Keys include OS, architecture, Go
 version, dependencies and the source revision. A new revision restores

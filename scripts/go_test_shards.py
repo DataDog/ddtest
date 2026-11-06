@@ -1,11 +1,21 @@
-"""Shard the root Go suite without changing tests; merge its atomic coverage."""
+"""Shard the root Go suite by package; merge its atomic coverage."""
 
 import argparse
 import hashlib
 from pathlib import Path
-import re
 import subprocess
 import sys
+
+
+# The packages that take the longest, one group per shard. A shard of packages
+# needs no -run, which would keep ddtest instrument from backfilling the coverage
+# of the tests that Test Impact Analysis skips. The other packages spread by hash.
+MODULE = "github.com/DataDog/ddtest/"
+PINNED_SHARDS = (
+    (MODULE + "internal/testdrive/pytestpaths/configuration",),
+    (MODULE + "internal/testdrive/pytestpaths/commands",),
+    (MODULE + "internal/testdrive", MODULE + "internal/onboard"),
+)
 
 
 def parse_shard(value):
@@ -18,28 +28,32 @@ def parse_shard(value):
     raise ValueError("shard must be index/total with 1 <= index <= total")
 
 
-def discover_tests():
-    # Go selects race-enabled source files; the helper parses declarations
-    # without compiling every test executable or running package initializers.
-    result = subprocess.run(["go", "run", "./scripts/testnames"],
-                            check=True, capture_output=True, text=True)
-    names = sorted({line for line in result.stdout.splitlines()
-                    if re.fullmatch(r"(?:Test|Example|Fuzz)\w*", line)})
-    if not names:
-        raise ValueError("Go reported no tests, examples or fuzz seeds")
-    return names
+def discover_packages():
+    result = subprocess.run(["go", "list", "./..."], check=True, capture_output=True, text=True)
+    packages = sorted(set(result.stdout.split()))
+    if not packages:
+        raise ValueError("Go reported no packages")
+    return packages
 
 
-def selected_tests(names, index, total):
-    return sorted({name for name in names
-                   if int.from_bytes(hashlib.sha256(name.encode()).digest()[:8], "big") % total == index - 1})
+def selected_packages(packages, index, total):
+    pinned = {package: position % total for position, group in enumerate(PINNED_SHARDS) for package in group}
+
+    def shard(package):
+        if package in pinned:
+            return pinned[package]
+        return int.from_bytes(hashlib.sha256(package.encode()).digest()[:8], "big") % total
+
+    return sorted({package for package in packages if shard(package) == index - 1})
 
 
-def test_pattern(names, shard):
+def shard_packages(packages, shard):
     index, total = parse_shard(shard)
-    selected = selected_tests(names, index, total)
-    print(f"Go shard {index}/{total}: {len(selected)}/{len(names)} test names", file=sys.stderr, flush=True)
-    return "^(" + "|".join(selected) + ")$" if selected else "^$"
+    selected = selected_packages(packages, index, total)
+    if not selected:
+        raise ValueError(f"Go shard {shard} has no packages")
+    print(f"Go shard {index}/{total}: {len(selected)}/{len(packages)} packages", file=sys.stderr, flush=True)
+    return "\n".join(selected)
 
 
 def merge_coverage(paths, output, expected):
@@ -75,7 +89,7 @@ def main():
     args = parser.parse_args()
     try:
         if args.action == "select":
-            print(test_pattern(discover_tests(), args.shard))
+            print(shard_packages(discover_packages(), args.shard))
             return 0
         merge_coverage(args.profiles, args.output, args.expected)
         return 0

@@ -16,11 +16,12 @@ import (
 	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
+	"github.com/DataDog/ddtest/internal/testutil"
 	"github.com/stretchr/testify/require"
 )
 
 func TestPytestRejectsEditableImportsFromOriginalCheckout(t *testing.T) {
-	python := feedbackPython(t)
+	python := testutil.PytestPython(t)
 	dependencies, err := exec.CommandContext(t.Context(), python, "-c", "import sysconfig; print(sysconfig.get_paths()['purelib'])").Output()
 	require.NoError(t, err)
 	for _, mode := range []string{"pth", "legacy", "finder", "external editable", "noneditable"} {
