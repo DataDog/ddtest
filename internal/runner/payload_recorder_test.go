@@ -3,9 +3,11 @@ package runner
 import (
 	"bytes"
 	"context"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/DataDog/ddtest/internal/constants"
@@ -27,10 +29,17 @@ func (f *sendingFramework) RunTests(ctx context.Context, testFiles []string, env
 	payload := msgp.AppendMapHeader(nil, 1)
 	payload = msgp.AppendString(payload, "version")
 	payload = msgp.AppendInt(payload, 1)
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, envMap["DD_TRACE_AGENT_URL"]+"/evp_proxy/v4/api/v2/citestcycle", bytes.NewReader(payload))
+	agentURL, client := envMap["DD_TRACE_AGENT_URL"], http.DefaultClient
+	if socket, ok := strings.CutPrefix(agentURL, "unix://"); ok {
+		agentURL = "http://agent"
+		client = &http.Client{Transport: &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, "unix", socket)
+		}}}
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, agentURL+"/evp_proxy/v4/api/v2/citestcycle", bytes.NewReader(payload))
 	require.NoError(f.t, err)
 	request.Header.Set("X-Datadog-EVP-Subdomain", "citestcycle-intake")
-	response, err := http.DefaultClient.Do(request)
+	response, err := client.Do(request)
 	require.NoError(f.t, err)
 	f.status = response.StatusCode
 	require.NoError(f.t, response.Body.Close())
@@ -65,6 +74,29 @@ func TestRunRecordsTheWorkersPayloadsWhenAsked(t *testing.T) {
 	assert.Equal(t, "false", calls[0].EnvMap["DD_CIVISIBILITY_AGENTLESS_ENABLED"])
 	_, err = http.Get(agentURL + "/info")
 	assert.Error(t, err, "the recorder still answers after the run")
+}
+
+func TestRunRecordsOverAUnixSocketWhenAsked(t *testing.T) {
+	payloadsDir := filepath.Join(t.TempDir(), "payloads")
+	t.Setenv("DD_TEST_OPTIMIZATION_RUNNER_RECORD_PAYLOADS", payloadsDir)
+	t.Setenv("DD_TEST_OPTIMIZATION_RUNNER_RECORD_PAYLOADS_UNIX_SOCKET", "true")
+	withRunnerTestSettings(t)
+	prepareSequentialRun(t)
+	framework := &sendingFramework{MockFramework: &MockFramework{FrameworkName: "rspec"}, t: t}
+	platform := &MockPlatform{PlatformName: "ruby", Framework: framework}
+
+	require.NoError(t, NewWithDependencies(platform, framework, &fakePlanner{}).Run(context.Background()))
+
+	assert.Equal(t, http.StatusAccepted, framework.status)
+	saved, err := os.ReadDir(filepath.Join(payloadsDir, "tests"))
+	require.NoError(t, err)
+	assert.Len(t, saved, 1)
+	calls := framework.GetRunTestsCalls()
+	require.Len(t, calls, 1)
+	agentURL := calls[0].EnvMap["DD_TRACE_AGENT_URL"]
+	assert.Regexp(t, `^unix:///.+/agent\.sock$`, agentURL)
+	_, err = os.Stat(filepath.Dir(strings.TrimPrefix(agentURL, "unix://")))
+	assert.ErrorIs(t, err, os.ErrNotExist, "the socket's directory outlives the run")
 }
 
 func TestRunOverridesAgentlessModeWhenRecording(t *testing.T) {

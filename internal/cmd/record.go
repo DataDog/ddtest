@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/DataDog/ddtest/internal/constants"
@@ -25,7 +26,10 @@ func newRecordCommand() *cobra.Command {
 		Long: `Stand in for the Datadog Agent while tests run on a machine that can't reach Datadog.
 
 Point the tracing library at the address ddtest listens on (for example
-DD_TRACE_AGENT_URL=http://127.0.0.1:8126) and turn agentless mode off. The
+DD_TRACE_AGENT_URL=http://127.0.0.1:8126) and turn agentless mode off. With
+--listen unix:///path/to/agent.sock, ddtest listens on a Unix domain socket
+instead, which suites that block network sockets, such as with pytest-socket,
+still let the library reach, if it supports an agent on one. The
 library sends its Test Optimization payloads here as it would through the
 Agent's EVP proxy, and ddtest writes them as JSON files under --payloads-dir,
 in the layout of the libraries' Bazel payload-files mode: tests/, coverage/
@@ -42,7 +46,7 @@ ddtest stops on SIGINT or SIGTERM, after saving the payloads it is receiving.`,
 		PersistentPreRunE: func(*cobra.Command, []string) error { return nil },
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cmd.SilenceUsage = true
-			listener, err := net.Listen("tcp", listen)
+			listener, err := agentListener(listen)
 			if err != nil {
 				return fmt.Errorf("listen on %s: %w", listen, err)
 			}
@@ -52,11 +56,20 @@ ddtest stops on SIGINT or SIGTERM, after saving the payloads it is receiving.`,
 			})
 		},
 	}
-	command.Flags().StringVar(&listen, "listen", "127.0.0.1:8126", "Address to listen on")
+	command.Flags().StringVar(&listen, "listen", "127.0.0.1:8126", "Address to listen on, or unix:// and the path of a Unix domain socket")
 	command.Flags().StringVar(&payloadsDir, "payloads-dir", "", "Directory that receives the payload files")
 	command.Flags().StringVar(&planDir, "plan-dir", constants.PlanDirectory, "Plan directory whose HTTP cache answers configuration requests")
 	_ = command.MarkFlagRequired("payloads-dir")
 	return command
+}
+
+// agentListener listens on a TCP address, or on a Unix domain socket for
+// unix:// and the socket's path.
+func agentListener(listen string) (net.Listener, error) {
+	if path, ok := strings.CutPrefix(listen, "unix://"); ok {
+		return net.Listen("unix", path)
+	}
+	return net.Listen("tcp", listen)
 }
 
 // serveOfflineAgent serves the agent on listener until ctx is done, then

@@ -146,6 +146,7 @@ var rootPersistentFlagBindings = []persistentFlagBinding{
 // runPersistentFlagBindings are the flags only ddtest run has.
 var runPersistentFlagBindings = []persistentFlagBinding{
 	{configKey: "record_payloads", flagName: "record-payloads"},
+	{configKey: "record_payloads_unix_socket", flagName: "record-payloads-unix-socket"},
 }
 
 func init() {
@@ -180,6 +181,7 @@ func init() {
 	}
 
 	runCmd.PersistentFlags().String("record-payloads", "", "Save the workers' Test Optimization payloads as files in this directory instead of sending them to Datadog (see ddtest record)")
+	runCmd.PersistentFlags().Bool("record-payloads-unix-socket", false, "With --record-payloads, receive the payloads on a Unix domain socket instead of a local TCP port, for suites that block network sockets, such as with pytest-socket; the tracing library must support an agent on a Unix domain socket")
 	if err := bindPersistentFlags(runCmd, runPersistentFlagBindings); err != nil {
 		fmt.Fprintf(os.Stderr, "Error binding CLI flags: %v\n", err)
 		os.Exit(1)
