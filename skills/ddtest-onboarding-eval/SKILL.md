@@ -45,7 +45,7 @@ the trial. Prepare the project's test dependencies;
 editable installs of the tested checkout block testdrive isolation. Use
 checkout-local `PYTHONPATH` or pytest `pythonpath` imports instead.
 
-Use Python 3.9+, Git, GnuPG for signed trims, Go for building ddtest, and Docker with the trial root
+Use Python 3.9+ with PyYAML, Git, GnuPG for signed trims, Go for building ddtest, and Docker with the trial root
 shared into its VM. On macOS the default root is `~/.dde`, created private:
 Colima shares only `$HOME` by default and Docker Desktop shares `/Users`. On Linux
 the system temporary root is used. To use another folder, set
@@ -541,8 +541,11 @@ python3 scripts/prepare_case_images.py E04 E07 E14 E17 --image-file images.json 
 
 Run this from the skill directory. Omit `--build` to generate Dockerfiles and
 print their commands. The builder applies required trims with signed commits,
-checks readiness and clean status, and refuses an installed tracer. Its local
-Docker client configuration is empty, so registry credentials are not consulted.
+checks readiness and clean status, and refuses an installed tracer. It keeps a
+content-addressed local base tag for BuildKit; the manifest still records the
+requested immutable image ID. Its credential-free Docker configuration permits
+the installed Buildx executable without copying registry credentials or builder
+state, so personal registry credentials are not consulted.
 `case-images.json` preserves earlier cases when adding more images.
 Prepared case images and dependency-cache images are separate modes; do not
 combine `--case-image` with `--dependency-image` or cache preparation/restoration.

@@ -693,7 +693,7 @@ def unfinished(workers, interrupted):
     return records
 
 
-def evaluate_only(cases, agents_option, output, ddtest_label, named):
+def evaluate_only(cases, agents_option, output, ddtest_label, named, planned_agents=None):
     """Records for existing evidence, and what had none.
 
     Without --agent, each case's agents are the <id>-<agent> folders present.
@@ -704,7 +704,7 @@ def evaluate_only(cases, agents_option, output, ddtest_label, named):
     records, missing, failed = [], [], False
     for case in cases:
         found = [agent for agent in catalog_check.AGENTS if (output / f"{case['id']}-{agent}").is_dir()]
-        wanted = found if agents_option is None else \
+        wanted = planned_agents if planned_agents is not None else found if agents_option is None else \
             catalog_check.AGENTS if agents_option == "both" else (agents_option,)
         for agent in wanted:
             evidence = output / f"{case['id']}-{agent}"
@@ -815,10 +815,19 @@ def main(argv=None):
         saved = Path(args.output) / "oracle.json"
         try:
             if saved.exists():
-                guard = json.loads(saved.read_text()).get("intake_guard")
+                document = json.loads(saved.read_text())
+                guard = document.get("intake_guard")
+                if args.agent is None:
+                    agents = tuple(agent for agent in catalog_check.AGENTS
+                                   if any(agent in case.get("expected", {}) for case in document["cases"]))
+                    if not agents:
+                        raise ValueError("The saved oracle contains no selected agents")
             else:
                 versions = set()
-                selected_agents = catalog_check.AGENTS if args.agent in (None, "both") else (args.agent,)
+                if args.agent is None:
+                    agents = tuple(agent for agent in catalog_check.AGENTS
+                                   if any((Path(args.output) / f"{case['id']}-{agent}").is_dir() for case in cases))
+                selected_agents = agents
                 for case in cases:
                     for agent in selected_agents:
                         manifest = Path(args.output) / f"{case['id']}-{agent}" / "run.json"
@@ -831,7 +840,7 @@ def main(argv=None):
                 if len(versions) > 1:
                     parser.error("Evidence uses different intake guards; evaluate the run folders separately")
                 guard = next(iter(versions), None)
-        except (OSError, ValueError) as error:
+        except (OSError, ValueError, KeyError, TypeError, AttributeError) as error:
             parser.error(str(error))
     oracle = eval_score.oracle([{**case, "image": cached.get(case["id"], images.get(case["id"] if args.case_image else case["image"], case["image"]))}
                                for case in oracle_cases], agents, args.speed_trims, model=args.model, intake_guard=guard)
@@ -844,7 +853,6 @@ def main(argv=None):
             parser.error("trials require --ddtest and --output")
     output = Path(os.path.abspath(args.output)) if args.output else Path("<output>")
     ddtest = Path(os.path.abspath(args.ddtest)) if args.ddtest else "<ddtest>"
-    agents = catalog_check.AGENTS if args.agent == "both" else (args.agent or "codex",)
     lanes = {}
     for agent in agents:
         for case in cases:
@@ -898,7 +906,8 @@ def main(argv=None):
         return kept
 
     if args.evaluate_only:
-        records, not_evaluated, failed = evaluate_only(cases, args.agent, output, args.ddtest_label, not args.all)
+        records, not_evaluated, failed = evaluate_only(cases, args.agent, output, args.ddtest_label, not args.all,
+                                                      planned_agents=agents if args.trials > 1 else None)
         code = catalog_check.report(records, sys.stdout) if records else catalog_check.EXIT_PASS
         if failed:
             code = catalog_check.EXIT_FAILED

@@ -105,13 +105,11 @@ class ContainerTests(unittest.TestCase):
         lines.insert(lines.index('WORKDIR /trial/repo'), 'COPY repo /trial/repo')
         (context / 'Dockerfile').write_text('\n'.join(lines) + '\n')
         config = self.root / 'empty-docker-config'
-        config.mkdir()
-        (config / 'config.json').write_text('{"auths":{}}')
-        endpoint = subprocess.check_output(['docker', 'context', 'inspect', '--format', '{{(index .Endpoints "docker").Host}}'], text=True).strip()
-        self.assertTrue(endpoint.startswith('unix://'))
-        subprocess.run(['docker', '--config', str(config), '--host', endpoint, 'build', '--network=none',
-                        '--build-arg', 'BASE=' + IMAGE, '--iidfile', str(context / 'image-id'), str(context)],
-                       check=True, capture_output=True, timeout=120)
+        client = prepare_case_images.docker_client(config)
+        commands = prepare_case_images.image_build_commands(client, IMAGE,
+                    ['--network=none', '--iidfile', str(context / 'image-id'), str(context)])
+        prepare_case_images.execute_image_build(commands, timeout=120)
+        self.assertEqual(subprocess.check_output([*client, 'image', 'inspect', '--format', '{{.Id}}', IMAGE], text=True).strip(), IMAGE)
         image = (context / 'image-id').read_text().strip()
         self.addCleanup(lambda: subprocess.run(['docker', 'image', 'rm', image], capture_output=True))
         self.args.image, self.args.ref, self.args.framework = image, commit, 'jest'

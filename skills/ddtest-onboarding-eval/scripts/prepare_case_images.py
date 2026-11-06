@@ -2,9 +2,11 @@
 """Build one credential-free dependency image per catalog case."""
 import argparse
 import json
+import os
 from pathlib import Path
 import re
 import shlex
+import shutil
 import subprocess
 
 import run_catalog
@@ -81,6 +83,49 @@ def dockerfile(case, base):
     return '\n'.join(lines) + '\n'
 
 
+def docker_client(config):
+    endpoint = subprocess.check_output(['docker', 'context', 'inspect', '--format', '{{(index .Endpoints "docker").Host}}'], text=True).strip()
+    if not endpoint.startswith('unix://'):
+        raise ValueError('Prepared images require a local Docker VM with no host credentials')
+    configuration = {'auths': {}}
+    buildx = shutil.which('docker-buildx')
+    if not buildx:
+        try:
+            plugins = json.loads(subprocess.check_output(['docker', 'info', '--format', '{{json .ClientInfo.Plugins}}'], text=True)) or []
+            buildx = next((plugin['Path'] for plugin in plugins if plugin.get('Name') == 'buildx'), None)
+        except (subprocess.CalledProcessError, ValueError):
+            pass  # A client without Buildx can still use Docker's legacy builder.
+    if buildx:
+        configuration['cliPluginsExtraDirs'] = [str(Path(buildx).parent.resolve())]
+    config.mkdir(exist_ok=True)
+    (config / 'config.json').write_text(json.dumps(configuration) + '\n')
+    return ['docker', '--config', str(config), '--host', endpoint]
+
+
+def image_build_commands(docker, base, arguments):
+    # BuildKit resolves a bare sha256 ID as a registry name. Keep a stable local
+    # alias for the same immutable input; removing its last tag could delete an
+    # otherwise untagged source image, so this small cache reference is retained.
+    if base.startswith('sha256:'):
+        reference = 'ddtest-eval-base:' + base.removeprefix('sha256:')
+        return [[*docker, 'image', 'tag', base, reference],
+                [*docker, 'build', '--build-arg', 'BASE=' + reference, *arguments]]
+    return [[*docker, 'build', '--build-arg', 'BASE=' + base, *arguments]]
+
+
+def execute_image_build(commands, timeout=None):
+    env = dict(os.environ)
+    env.pop('DOCKER_AUTH_CONFIG', None)
+    env.pop('DOCKER_CONTEXT', None)
+    # Build against the selected local daemon, without inheriting Buildx state
+    # or a remotely selected builder from the caller's personal configuration.
+    if '--config' in commands[-1]:
+        config = commands[-1][commands[-1].index('--config') + 1]
+        env.update(DOCKER_CONFIG=config, BUILDX_CONFIG=str(Path(config) / 'buildx'), BUILDX_BUILDER='default')
+    for command in commands:
+        subprocess.run(command, check=True, timeout=timeout, env=env)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('ids', nargs='*')
@@ -110,13 +155,10 @@ def main(argv=None):
     images = json.loads(mapping.read_text()) if mapping.exists() else {}
     docker = ['docker']
     if args.build:
-        endpoint = subprocess.check_output(['docker', 'context', 'inspect', '--format', '{{(index .Endpoints "docker").Host}}'], text=True).strip()
-        if not endpoint.startswith('unix://'):
-            parser.error('Prepared images require a local Docker VM with no host credentials')
-        config = args.output / 'docker-config'
-        config.mkdir(exist_ok=True)
-        (config / 'config.json').write_text('{"auths":{}}\n')
-        docker += ['--config', str(config), '--host', endpoint]
+        try:
+            docker = docker_client(args.output / 'docker-config')
+        except ValueError as error:
+            parser.error(str(error))
     for case in cases:
         base = bases.get(case['image'])
         if not base:
@@ -124,11 +166,12 @@ def main(argv=None):
         context = args.output / case['id']
         context.mkdir(exist_ok=True)
         (context / 'Dockerfile').write_text(dockerfile(case, base))
-        command = [*docker, 'build', '--build-arg', 'BASE=' + base, '--iidfile', str(context / 'image-id'),
-                   '-t', 'ddtest-eval-case-' + case['id'].lower(), str(context)]
-        print(shlex.join(command), flush=True)
+        commands = image_build_commands(docker, base, ['--iidfile', str(context / 'image-id'),
+                                        '-t', 'ddtest-eval-case-' + case['id'].lower(), str(context)])
+        for command in commands:
+            print(shlex.join(command), flush=True)
         if args.build:
-            subprocess.run(command, check=True)
+            execute_image_build(commands)
             images[case['id']] = (context / 'image-id').read_text().strip()
             mapping.write_text(json.dumps(images, indent=2) + '\n')
     return 0

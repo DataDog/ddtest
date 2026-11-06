@@ -2,6 +2,7 @@ import contextlib
 import copy
 import io
 import json
+import os
 from pathlib import Path
 import shlex
 import tempfile
@@ -64,13 +65,46 @@ class CaseImageBuilderTests(unittest.TestCase):
             calls = []
             def build(argv, **kwargs):
                 calls.append(argv)
-                Path(argv[argv.index('--iidfile') + 1]).write_text(BUILT)
+                if '--iidfile' in argv:
+                    Path(argv[argv.index('--iidfile') + 1]).write_text(BUILT)
             with patch.object(prepare_case_images.subprocess, 'check_output', return_value='unix:///local/docker.sock\n'), patch.object(prepare_case_images.subprocess, 'run', side_effect=build), contextlib.redirect_stdout(io.StringIO()):
                 code = prepare_case_images.main(['E04', '--image-file', str(bases), '--output', str(root), '--build'])
             self.assertEqual(code, 0)
             self.assertEqual(json.loads(mapping.read_text()), {'E07-existing-case': BASE, case['id']: BUILT})
-            self.assertEqual(json.loads((root / 'docker-config/config.json').read_text()), {'auths': {}})
+            configuration = json.loads((root / 'docker-config/config.json').read_text())
+            self.assertEqual(configuration['auths'], {})
+            self.assertFalse(set(configuration) - {'auths', 'cliPluginsExtraDirs'})
             self.assertEqual(calls[0][:5], ['docker', '--config', str(root / 'docker-config'), '--host', 'unix:///local/docker.sock'])
+
+
+    def test_empty_client_configuration_keeps_only_the_buildx_executable_directory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / 'client'
+            with patch.object(prepare_case_images.shutil, 'which', return_value='/trusted/tools/docker-buildx'), \
+                 patch.object(prepare_case_images.subprocess, 'check_output', return_value='unix:///local/docker.sock\n'):
+                client = prepare_case_images.docker_client(config)
+            self.assertEqual(json.loads((config / 'config.json').read_text()),
+                             {'auths': {}, 'cliPluginsExtraDirs': ['/trusted/tools']})
+            self.assertEqual(client[-2:], ['--host', 'unix:///local/docker.sock'])
+
+    def test_local_id_build_preserves_base_identity_without_personal_builder_state(self):
+        commands = prepare_case_images.image_build_commands(['docker', '--config', '/private/client'], BASE, ['context'])
+        alias = 'ddtest-eval-base:' + BASE.removeprefix('sha256:')
+        self.assertEqual(commands[0][-4:], ['image', 'tag', BASE, alias])
+        self.assertIn('BASE=' + alias, commands[1])
+        with patch.dict(os.environ, {'DOCKER_AUTH_CONFIG': 'private-credentials', 'BUILDX_CONFIG': '/personal/state',
+                                     'BUILDX_BUILDER': 'remote-builder', 'DOCKER_CONTEXT': 'personal-context'}), \
+             patch.object(prepare_case_images.subprocess, 'run') as run:
+            prepare_case_images.execute_image_build(commands)
+        self.assertEqual(run.call_count, 2)
+        for call in run.call_args_list:
+            env = call.kwargs['env']
+            self.assertNotIn('DOCKER_AUTH_CONFIG', env)
+            self.assertNotIn('DOCKER_CONTEXT', env)
+            self.assertEqual(env['BUILDX_CONFIG'], '/private/client/buildx')
+            self.assertEqual(env['BUILDX_BUILDER'], 'default')
+        # No rm/prune command may delete the source ID when it had no other tags.
+        self.assertFalse(any('rm' in command or 'prune' in command for command in commands))
 
 
 if __name__ == '__main__':

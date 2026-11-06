@@ -111,3 +111,42 @@ class ScoreTests(unittest.TestCase):
             result=json.loads((root/'results.json').read_text())
             expected=eval_score.oracle([case],['codex'],False,intake_guard='us1-defaults-v1')
             self.assertEqual(result['oracle_sha256'],expected['sha256'])
+
+
+    def test_reevaluation_infers_agents_and_keeps_missing_trials_in_the_score(self):
+        from test_catalog_check import write_evidence, real_report
+        case = next(c for c in run_catalog.load_catalog()['cases'] if c['id'] == 'E02-pipeline-schema')
+        image = 'sha256:' + 'a' * 64
+        for agents in [('claude',), ('codex', 'claude')]:
+            for missing in (False, True):
+                with self.subTest(agents=agents, missing=missing), tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory)
+                    oracle = eval_score.oracle([{**case, 'image': image}], agents, False)
+                    eval_score.freeze(root / 'oracle.json', oracle)
+                    for trial in range(1, 4):
+                        for agent in agents:
+                            if missing and trial == 3 and agent == 'claude':
+                                continue
+                            write_evidence(root / f"{case['id']}-trial-{trial:02d}-{agent}", testdrive=real_report('E02'))
+                    with contextlib.redirect_stdout(io.StringIO()):
+                        code = run_catalog.main([case['id'], '--evaluate-only', '--trials', '3',
+                                                 '--image-map', case['image'] + '=' + image, '--output', str(root)])
+                    result = json.loads((root / 'results.json').read_text())
+                    self.assertEqual(code, 1 if missing else 0)
+                    self.assertEqual(result['oracle_sha256'], oracle['sha256'])
+                    self.assertEqual(result['score']['trials'], 3 * len(agents))
+                    self.assertEqual({row['agent'] for row in result['score']['cases']}, set(agents))
+                    self.assertEqual(len(result['not_evaluated']), int(missing))
+                    self.assertEqual(json.loads((root / 'oracle.json').read_text()), oracle)
+
+    def test_single_claude_trial_has_claude_oracle_identity(self):
+        from test_catalog_check import write_evidence, real_report
+        case = next(c for c in run_catalog.load_catalog()['cases'] if c['id'] == 'E02-pipeline-schema')
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            write_evidence(root / (case['id'] + '-claude'), testdrive=real_report('E02'))
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(run_catalog.main([case['id'], '--evaluate-only', '--output', str(root)]), 0)
+            result = json.loads((root / 'results.json').read_text())
+            self.assertEqual(result['oracle_sha256'], eval_score.oracle([case], ['claude'], False)['sha256'])
+            self.assertEqual({row['agent'] for row in result['score']['cases']}, {'claude'})
