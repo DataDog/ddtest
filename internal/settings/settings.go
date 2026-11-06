@@ -141,7 +141,6 @@ type Config struct {
 	RuntimeTags            string            `mapstructure:"runtime_tags"`
 	ReportEnabled          bool              `mapstructure:"report_enabled"`
 	RecordPayloads         string            `mapstructure:"record_payloads"`
-	RecordPayloadsSocket   bool              `mapstructure:"record_payloads_unix_socket"`
 	DurationsFile          string            `mapstructure:"durations_file"`
 	TestDurationsFile      string            `mapstructure:"test_durations_file"`
 	SplitFilesOver         time.Duration     `mapstructure:"split_files_over"`
@@ -270,7 +269,6 @@ func setDefaults() {
 	viper.SetDefault("runtime_tags", "")
 	viper.SetDefault("report_enabled", true)
 	viper.SetDefault("record_payloads", "")
-	viper.SetDefault("record_payloads_unix_socket", false)
 	viper.SetDefault("durations_file", "")
 	viper.SetDefault("test_durations_file", "")
 	viper.SetDefault("split_files_over", "0s")
@@ -449,12 +447,6 @@ func GetReportEnabled() bool {
 // Datadog as usual.
 func GetRecordPayloads() string {
 	return Get().RecordPayloads
-}
-
-// GetRecordPayloadsUnixSocket reports whether ddtest run serves the workers'
-// agent for recording on a Unix domain socket instead of a local TCP port.
-func GetRecordPayloadsUnixSocket() bool {
-	return Get().RecordPayloadsSocket
 }
 
 // GetDurationsFile is a JSON file of suite durations that planning uses

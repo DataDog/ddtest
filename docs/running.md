@@ -244,15 +244,6 @@ holds every payload the libraries sent. If the directory can't be created,
 DDTest stops with `run_payload_recorder_failed` before running any test.
 Without the flag, workers send their payloads as usual.
 
-Some suites block network sockets while their tests run, such as with
-pytest-socket, and the tracing library's sends to a local port then fail,
-along with the tests during which it tried. `--record-payloads-unix-socket`
-(or `DD_TEST_OPTIMIZATION_RUNNER_RECORD_PAYLOADS_UNIX_SOCKET=true`) serves the
-stand-in on a Unix domain socket under `/tmp` instead, and sets
-`DD_TRACE_AGENT_URL` to `unix://` and its path. The tracing library must
-support an agent on a Unix domain socket: dd-trace-py's Test Optimization does
-from the fix in DataDog/dd-trace-py#21544.
-
 ## Custom Commands
 
 Use `--command` to override the framework's default base test command where

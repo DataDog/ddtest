@@ -6,7 +6,6 @@ import (
 	"errors"
 	"net"
 	"net/http"
-	"os"
 	"path/filepath"
 	"testing"
 
@@ -38,35 +37,6 @@ func TestOfflineAgentServesUntilCancelled(t *testing.T) {
 	require.NoError(t, <-served)
 	_, err = http.Get(url)
 	assert.Error(t, err, "the agent still answers after stopping")
-}
-
-func TestOfflineAgentServesOnAUnixSocket(t *testing.T) {
-	// Not t.TempDir(): a socket's path is limited to about 104 bytes on macOS.
-	dir, err := os.MkdirTemp("/tmp", "ddtest-")
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
-	socket := filepath.Join(dir, "agent.sock")
-	listener, err := agentListener("unix://" + socket)
-	require.NoError(t, err)
-	assert.Equal(t, "unix", listener.Addr().Network())
-	ctx, cancel := context.WithCancel(context.Background())
-	served := make(chan error, 1)
-	go func() {
-		served <- serveOfflineAgent(ctx, listener, offlineagent.Config{PayloadsDir: t.TempDir()})
-	}()
-	client := &http.Client{Transport: &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-		return (&net.Dialer{}).DialContext(ctx, "unix", socket)
-	}}}
-
-	response, err := client.Get("http://agent/info")
-	require.NoError(t, err)
-	require.NoError(t, response.Body.Close())
-	assert.Equal(t, http.StatusOK, response.StatusCode)
-
-	cancel()
-	require.NoError(t, <-served)
-	_, err = os.Stat(socket)
-	assert.ErrorIs(t, err, os.ErrNotExist, "the socket outlives the agent")
 }
 
 func TestOfflineAgentReportsAnAddressItCannotListenOn(t *testing.T) {
