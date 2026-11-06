@@ -998,7 +998,8 @@ cases:
     python: null
     pnpm: null
     bundle_binstubs: []
-    answers: []
+    answers:
+    - substitute_runtime=accept
   trims:
     required: null
     optional_speed: null
@@ -1205,7 +1206,8 @@ cases:
     python: null
     pnpm: null
     bundle_binstubs: []
-    answers: []
+    answers:
+    - substitute_runtime=accept
   trims:
     required: null
     optional_speed:

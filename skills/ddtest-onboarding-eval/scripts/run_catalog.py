@@ -18,6 +18,7 @@ or agent failure; 3 only improvements (update `expected`); 128+N interrupted.
 """
 
 import argparse
+import eval_score
 import json
 import os
 from pathlib import Path
@@ -30,6 +31,7 @@ import sys
 import threading
 
 import catalog_check
+from git_paths import unquote_path, untracked_paths
 import run_eval
 import user_answers
 import dependency_cache
@@ -48,8 +50,15 @@ TRIM_KINDS = ("required", "optional_speed")
 EXPECTED_FIELDS = ("verdict", "reason", "run", "ddtest")
 # Trims are committed inside the disposable trial container, whose private HOME
 # has no Git configuration; only the identity is supplied here.
-SCRATCH_COMMIT = ["git", "-c", "user.name=ddtest-eval-scratch", "-c", "user.email=scratch@example.invalid",
-                  "commit", "-q", "-a", "-m"]
+SCRATCH_COMMIT = ["sh", "-c", """set -eu
+gnupg_home="$HOME/../harness/trim-signing"
+mkdir -m 700 "$gnupg_home"
+export GNUPGHOME="$gnupg_home"
+trap 'gpgconf --kill gpg-agent >/dev/null 2>&1 || true; rm -rf "$gnupg_home"' EXIT
+gpg --batch --pinentry-mode loopback --passphrase '' --quick-generate-key 'ddtest-eval-scratch <scratch@example.invalid>' ed25519 sign 0
+git -c user.name=ddtest-eval-scratch -c user.email=scratch@example.invalid -c gpg.format=openpgp -c gpg.program=gpg -c user.signingkey=scratch@example.invalid commit -S -q -a -m "$1"
+git -c gpg.format=openpgp -c gpg.program=gpg verify-commit HEAD
+""", "ddtest-eval-trim"]
 DEFAULT_TIMEOUT = 5400
 UNTRACKED_LIMIT = 200_000
 REPORT_LIMIT = 20_000_000
@@ -177,12 +186,12 @@ def trim_commands(case, speed_trims=False):
     for kind in TRIM_KINDS[:2 if speed_trims else 1]:
         trim = (case.get("trims") or {}).get(kind)
         if trim:
-            commands += [*trim["commands"], shlex.join([*SCRATCH_COMMIT, f"Eval trim ({kind}): {trim['reason']}"])]
+            commands += [*trim["commands"], shlex.join([*SCRATCH_COMMIT, f"Eval trim ({kind}): {trim['reason']}\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"])]
     return commands
 
 
 def build_argv(case, image, ddtest, output, agent="codex", existing_login=False, timeout=DEFAULT_TIMEOUT,
-               speed_trims=False, model=None, ddtest_label=None, dependency_image=None):
+               speed_trims=False, model=None, ddtest_label=None, dependency_image=None, case_image=False):
     argv = [sys.executable, str(RUN_EVAL), "--image", dependency_image or image, "--repo", case["repo"], "--ref", case["commit"],
             "--ddtest", str(ddtest), "--agent", agent, "--timeout", str(timeout), "--output", str(output)]
     if dependency_image:
@@ -201,7 +210,9 @@ def build_argv(case, image, ddtest, output, agent="codex", existing_login=False,
         argv += ["--pnpm", str(harness["pnpm"])]
     for gem in harness.get("bundle_binstubs") or []:
         argv += ["--bundle-binstubs", gem]
-    for command in [*trim_commands(case, speed_trims), *case["setup_commands"]]:
+    if case_image:
+        argv.append("--case-image")
+    for command in ([] if case_image else [*trim_commands(case, speed_trims), *case["setup_commands"]]):
         argv += ["--setup-command", command]
     for command in case["readiness_commands"]:
         argv += ["--readiness-command", command]
@@ -253,42 +264,6 @@ def resolve_images(pairs, path=None):
     return images
 
 
-# Git's C-style path quoting (quote_c_style): these escapes plus \ooo octal bytes.
-GIT_ESCAPES = {"a": 7, "b": 8, "t": 9, "n": 10, "v": 11, "f": 12, "r": 13, '"': 34, "\\": 92}
-
-
-def unquote_path(text):
-    """Decode a path as git status prints it: verbatim, or quoted with escapes."""
-    if not (len(text) >= 2 and text[0] == text[-1] == '"'):
-        return text
-    body, decoded, index = text[1:-1], bytearray(), 0
-    while index < len(body):
-        character = body[index]
-        if character != "\\":
-            decoded += character.encode()
-            index += 1
-        elif body[index + 1:index + 2] in GIT_ESCAPES:
-            decoded.append(GIT_ESCAPES[body[index + 1]])
-            index += 2
-        elif re.fullmatch(r"[0-3][0-7]{2}", body[index + 1:index + 4]):
-            decoded.append(int(body[index + 1:index + 4], 8))
-            index += 4
-        else:
-            raise ValueError(f"unknown escape in {text}")
-    return os.fsdecode(bytes(decoded))
-
-
-def untracked_paths(status):
-    """(as printed, decoded) for each untracked entry of git status --short."""
-    entries = []
-    for line in status.splitlines():
-        if line.startswith("?? "):
-            try:
-                path = unquote_path(line[3:])
-            except ValueError:
-                path = None
-            entries.append((line[3:], path))
-    return entries
 
 
 RETENTION = "RETENTION.json"
@@ -618,7 +593,7 @@ def merge(previous, records, replaced_agents=(), order=None):
                                                        if r["agent"] in catalog_check.AGENTS else len(catalog_check.AGENTS)))
 
 
-def write_results(path, catalog, output, records, code, ddtest_label=None, not_evaluated=(), kept=0):
+def write_results(path, catalog, output, records, code, ddtest_label=None, not_evaluated=(), kept=0, oracle=None, comparison=None):
     """Write results.json; exit_code covers every entry, merged ones included (None while running)."""
     counts = {}
     for record in records:
@@ -631,6 +606,11 @@ def write_results(path, catalog, output, records, code, ddtest_label=None, not_e
     document = {"catalog": str(catalog), "output": str(output), "ddtest_label": ddtest_label, "exit_code": code,
                 "outcomes": counts, "merged_entries_kept": kept, "agents_disagree": catalog_check.disagreements(records),
                 "questions_not_scriptable": questions, "not_evaluated": list(not_evaluated), "cases": records}
+    scored = records + [{**item, "outcome": "not_evaluated"} for item in not_evaluated]
+    document["score"] = eval_score.score(scored)
+    document["oracle_sha256"] = oracle["sha256"] if oracle else None
+    if comparison is not None and code is not None:
+        document["comparison"] = eval_score.compare(document, comparison)
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(path.name + ".partial")
     temporary.write_text(json.dumps(document, indent=2) + "\n")
@@ -756,6 +736,8 @@ def main(argv=None):
     parser.add_argument("--image-file", help=f"JSON/YAML mapping of image key to image (default: ${IMAGES_VARIABLE})")
     parser.add_argument("--dependency-image", action="append", default=[], metavar="CASE=IMAGE",
                         help="Repeatable per-case dependency-cache image from prepare_dependencies.py; base --image-map is still required")
+    parser.add_argument("--case-image", action="store_true",
+                        help="Map each case id to its prepared image instead of a shared runtime image key")
     parser.add_argument("--ddtest", type=Path, help="Linux ddtest executable for the images' architecture")
     parser.add_argument("--ddtest-label",
                         help="Free-text ddtest provenance, such as its commit; recorded in run.json and results.json "
@@ -768,6 +750,8 @@ def main(argv=None):
                              "one case at a time")
     parser.add_argument("--model")
     parser.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT, help=f"Per-command timeout (default {DEFAULT_TIMEOUT})")
+    parser.add_argument("--trials", type=int, default=1, help="Independent fresh trials per case and agent (default 1)")
+    parser.add_argument("--compare-results", type=Path, help="Compare rates with results from the same frozen oracle")
     parser.add_argument("--speed-trims", action="store_true", help="Also apply each case's optional speed trims")
     parser.add_argument("--output", type=Path, help="Directory for <id>-<agent> evidence and logs")
     parser.add_argument("--dry-run", action="store_true",
@@ -779,12 +763,18 @@ def main(argv=None):
                         help="results.json to write (default: <output>/results.json); an existing one for the same "
                              "output is merged into by case and agent")
     args = parser.parse_args(argv)
+    if args.trials < 1:
+        parser.error("--trials must be at least 1")
+    if args.case_image and args.dependency_image:
+        parser.error("--case-image cannot be combined with --dependency-image")
+    if args.case_image and args.speed_trims:
+        parser.error("Prepared case images already contain their required trims; omit --speed-trims")
     catalog = load_catalog(args.catalog)
     problems = validate(catalog)
     if problems:
         parser.error("invalid catalog:\n  " + "\n  ".join(problems))
     cases = catalog["cases"]
-    order = {case["id"]: index for index, case in enumerate(cases)}
+    order = {case["id"]: index * (args.trials + 1) for index, case in enumerate(cases)}
     if args.all == bool(args.ids):
         parser.error("name case ids or pass --all")
     if not args.all:
@@ -795,6 +785,10 @@ def main(argv=None):
                 parser.error(f"unknown case {identifier}")
             selected += matches
         cases = selected
+    agents = catalog_check.AGENTS if args.agent == "both" else (args.agent or "codex",)
+    oracle_cases = cases
+    cases = eval_score.expand(cases, args.trials)
+    order.update({case["id"]: order[case["catalog_id"]] + (case["trial"] if args.trials > 1 else 0) for case in cases})
     try:
         images = resolve_images(args.image_map, args.image_file)
         cached = {}
@@ -808,11 +802,14 @@ def main(argv=None):
             cached[matches[0]["id"]] = image
     except (OSError, ValueError) as error:
         parser.error(str(error))
-    missing = sorted({case["image"] for case in cases} - set(images))
-    missing_cache_bases = sorted({case["image"] for case in cases if case["id"] in cached} - set(images))
+    missing_cache_bases = sorted({case["image"] for case in oracle_cases if case["id"] in cached} - set(images))
     if missing_cache_bases:
         parser.error("dependency images require the original base --image-map/--image-file, even with --dry-run: "
                      + ", ".join(missing_cache_bases))
+    oracle = eval_score.oracle([{**case, "image": cached.get(case["id"], images.get(case["id"] if args.case_image else case["image"], case["image"]))}
+                               for case in oracle_cases], agents, args.speed_trims)
+    image_keys = {case.get("catalog_id", case["id"]) if args.case_image else case["image"] for case in cases}
+    missing = sorted(image_keys - set(images))
     if args.evaluate_only and not args.output:
         parser.error("--evaluate-only requires --output, the folder holding <id>-<agent> evidence")
     if not args.dry_run and not args.evaluate_only:
@@ -828,11 +825,12 @@ def main(argv=None):
         for case in cases:
             evidence = output / f"{case['id']}-{agent}"
             lanes.setdefault(agent, []).append((case, evidence, build_argv(
-                case, images.get(case["image"], f"<image:{case['image']}>"), ddtest, evidence, agent,
+                case, images.get(case.get("catalog_id", case["id"]) if args.case_image else case["image"], f"<image:{case['id'] if args.case_image else case['image']}>"), ddtest, evidence, agent,
                 args.existing_login, args.timeout, args.speed_trims, args.model, args.ddtest_label,
-                cached.get(case["id"]))))
+                dependency_image=cached.get(case.get("catalog_id", case["id"])), case_image=args.case_image)))
     if args.dry_run:
-        print("\n".join(image_builds(catalog["images"], {case["image"] for case in cases})) + "\n")
+        if not args.case_image:
+            print("\n".join(image_builds(catalog["images"], {case["image"] for case in cases})) + "\n")
         for agent, plans in lanes.items():
             if len(lanes) > 1:
                 print(f"## lane {agent} (runs at the same time as the other lane)\n")
@@ -841,6 +839,19 @@ def main(argv=None):
                 print(shlex.join(arguments))
                 print(shlex.join([sys.executable, str(RUN_EVAL), "--cleanup", str(evidence)]) + "\n")
         return 0
+    if args.trials > 1:
+        try:
+            eval_score.freeze(output / "oracle.json", oracle, args.evaluate_only)
+        except (OSError, ValueError) as error:
+            parser.error(str(error))
+    comparison = None
+    if args.compare_results:
+        try:
+            comparison = json.loads(args.compare_results.read_text())
+            if comparison.get("oracle_sha256") != oracle["sha256"]:
+                parser.error("--compare-results uses a different frozen oracle")
+        except (OSError, ValueError) as error:
+            parser.error(str(error))
     results = Path(os.path.abspath(args.results)) if args.results else output / "results.json"
     try:
         previous = load_previous(results, output)
@@ -852,13 +863,21 @@ def main(argv=None):
     def save(records, code, not_evaluated=()):
         merged = merge(previous, records, replaced, order)
         kept = len(merged) - len(records)
-        write_results(results, args.catalog, output, merged, code, args.ddtest_label, not_evaluated, kept)
+        if args.trials > 1:
+            covered = {(record["id"], record["agent"]) for record in merged}
+            not_evaluated = [{"id": case["id"], "catalog_id": case["catalog_id"], "trial": case["trial"],
+                              "agent": agent, "reason": "No completed trial evidence"}
+                             for agent, plans in lanes.items() for case, _, _ in plans
+                             if (case["id"], agent) not in covered]
+        write_results(results, args.catalog, output, merged, code, args.ddtest_label, not_evaluated, kept, oracle, comparison)
         return kept
 
     if args.evaluate_only:
         records, not_evaluated, failed = evaluate_only(cases, args.agent, output, args.ddtest_label, not args.all)
         code = catalog_check.report(records, sys.stdout) if records else catalog_check.EXIT_PASS
         if failed:
+            code = catalog_check.EXIT_FAILED
+        if args.trials > 1 and code < 128 and (not_evaluated or any(record.get("trajectory", {}).get("status") != "pass" for record in records)):
             code = catalog_check.EXIT_FAILED
         kept = save(records, code, not_evaluated)
         print(f"Results: {results}" + (f" (merged: {kept} earlier entries kept)" if kept else ""), flush=True)
@@ -893,6 +912,9 @@ def main(argv=None):
                      if not evidence.exists()]
         print(f"Interrupted by signal {supervisor.signal}; not run: {', '.join(remaining) or 'none'}", flush=True)
         code = 128 + supervisor.signal
+    if args.trials > 1 and code < 128 and any(record.get("trajectory", {}).get("status") != "pass" for record in records):
+        print("Independent trajectory review is required; inspect trajectory.json in each trial.", flush=True)
+        code = catalog_check.EXIT_FAILED
     kept = save(records, code)
     print(f"Results: {results}" + (f" (merged: {kept} earlier entries kept)" if kept else ""), flush=True)
     return code

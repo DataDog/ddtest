@@ -210,6 +210,21 @@ class RunnerTests(unittest.TestCase):
         self.addCleanup(shutil.rmtree, manifest["trial_directory"], ignore_errors=True)
         return code, manifest
 
+    def test_non_json_ddtest_instructions_are_retained_and_redacted(self):
+        text = 'Add /.testoptimization/ to .gitignore. DD_API_KEY=synthetic-output-key'
+        self.binary.write_text(FAKE_DDTEST.replace('\nexit 0\n', "\nprintf '%s\\n' " + shlex.quote(text) + "\nexit 0\n"))
+        original = FakeContainer.execute
+        def execute(container, argv, cwd, env, timeout, on_line, prompt, executor):
+            if prompt and not prompt.startswith('Reply AUTH_OK only'):
+                subprocess.run([env[run_eval.SELF_PATH_VARIABLE], 'onboard', '--instructions'], cwd=cwd, env=env, check=True, capture_output=True)
+            return original(container, argv, cwd, env, timeout, on_line, prompt, executor)
+        with patch.object(FakeContainer, 'execute', execute):
+            code, _ = self.trial()
+        self.assertEqual(code, 0)
+        rows = [json.loads(line) for line in (self.args.output / 'ddtest-results.jsonl').read_text().splitlines()]
+        self.assertTrue(any(row['result'] is None and 'Add /.testoptimization/ to .gitignore.' in row.get('output', '') for row in rows))
+        self.assertNotIn('synthetic-output-key', json.dumps(rows))
+
     def test_local_repository_is_cloned_from_a_copy_in_the_trial(self):
         # The container mounts only the trial, so a host repository, as a
         # project patched for an eval, reaches it as a bare copy there.
@@ -274,7 +289,20 @@ class RunnerTests(unittest.TestCase):
     def test_nested_relative_submodules_of_a_local_repository_are_mirrored(self):
         # A mirrored submodule's own relative submodules, at the revision it
         # pins, resolve beside its mirror, as Git resolves them.
-        git = ["git", "-c", "commit.gpgsign=false", "-c", "user.name=eval", "-c", "user.email=eval@example.com"]
+        gpg = shutil.which("gpg")
+        if not gpg:
+            self.skipTest("GnuPG is required for signed submodule fixtures")
+        signing = self.root / "signing"
+        signing.mkdir(mode=0o700)
+        sign_env = {**os.environ, "GNUPGHOME": str(signing)}
+        gpgconf = shutil.which("gpgconf")
+        if gpgconf:
+            self.addCleanup(subprocess.run, [gpgconf, "--homedir", str(signing), "--kill", "gpg-agent"], capture_output=True)
+        subprocess.run([gpg, "--batch", "--pinentry-mode", "loopback", "--passphrase", "",
+                        "--quick-generate-key", "Eval fixture <eval@example.com>", "ed25519", "sign", "0"],
+                       env=sign_env, check=True, capture_output=True)
+        git = ["git", "-c", "gpg.format=openpgp", "-c", "gpg.openpgp.program=" + gpg,
+               "-c", "user.signingkey=eval@example.com", "-c", "user.name=eval", "-c", "user.email=eval@example.com"]
         work = self.root / "work"
         work.mkdir()
         subprocess.run(["git", "clone", "--bare", "--quiet", self.source, str(work / "leaf.git")], check=True)
@@ -285,7 +313,9 @@ class RunnerTests(unittest.TestCase):
             (path / ".gitmodules").write_text('[submodule "' + name + '"]\n\tpath = ' + name + '\n\turl = ' + url + '\n')
             subprocess.run(["git", "-C", str(path), "update-index", "--add", "--cacheinfo", "160000," + pinned + "," + name], check=True)
             subprocess.run(["git", "-C", str(path), "add", ".gitmodules"], check=True)
-            subprocess.run([*git, "-C", str(path), "commit", "--quiet", "-m", "pin " + name], check=True)
+            message = "pin " + name + "\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+            subprocess.run([*git, "-C", str(path), "commit", "-S", "--quiet", "-m", message], env=sign_env, check=True)
+            subprocess.run([*git, "-C", str(path), "verify-commit", "HEAD"], env=sign_env, check=True, capture_output=True)
             return subprocess.check_output(["git", "-C", str(path), "rev-parse", "HEAD"], text=True).strip()
 
         shared = repository_with_submodule(work / "shared", "leaf", "../leaf.git", leaf)

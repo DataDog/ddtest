@@ -32,7 +32,7 @@ def setup_commands(argv):
 
 
 def scratch_commits(argv):
-    return [command for command in setup_commands(argv) if command.startswith("git -c user.name=ddtest-eval-scratch")]
+    return [command for command in setup_commands(argv) if shlex.split(command)[:-1] == run_catalog.SCRATCH_COMMIT]
 
 
 @unittest.skipIf(yaml is None, "PyYAML is not installed")

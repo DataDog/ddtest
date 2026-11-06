@@ -29,6 +29,7 @@ from isolation import Container, check_socket_budget, cleanup, environment, inte
 
 import user_answers
 import dependency_cache
+import case_image
 
 
 # Characters kept of each text in activity.jsonl (--excerpt-limit). ddtest
@@ -1027,6 +1028,13 @@ def run(args):
         # The executable belongs to the image, not the evaluator's host.
         if ".." in node.parts:
             raise ValueError("--node must be an absolute path inside the image")
+    prepared_case = getattr(args, "case_image", False)
+    if prepared_case and (prepare_cache or restore_cache):
+        raise ValueError("--case-image cannot use dependency-cache preparation or restoration")
+    if prepared_case and not re.fullmatch(r"[0-9a-f]{40}", args.ref):
+        raise ValueError("--case-image requires --ref to be the full source commit")
+    if prepared_case and args.setup_command:
+        raise ValueError("--case-image already contains setup; omit --setup-command")
     setup_commands = [shlex.split(command) for command in args.setup_command]
     if any(not command for command in setup_commands):
         raise ValueError("--setup-command must not be empty")
@@ -1229,7 +1237,10 @@ def run(args):
         found = None
         for record in harvest_ddtest_records(ddtest_records):
             result = user_answers.agent_result(record)
-            ddtest_log.write(json.dumps({"turn": turn, "collected_at": time.time(), "result": redact(result)}) + "\n")
+            entry = {"turn": turn, "collected_at": time.time(), "result": redact(result)}
+            if result is None:
+                entry["output"] = excerpt(redact(record), 1024 * 1024)
+            ddtest_log.write(json.dumps(entry) + "\n")
             ddtest_log.flush()
             if result is not None:
                 found = result
@@ -1403,39 +1414,49 @@ def run(args):
             login.suspend()
             manifest.pop("failure_stage",None)
         phase = "clone"
-        source = args.repo
-        local = Path(os.path.expanduser(str(args.repo)))
-        if local.is_dir():
-            # The container mounts only the trial, so a repository on the host,
-            # such as a project patched for an eval, is cloned from a mirror
-            # in the harness folder, with every ref a --ref may name, which is
-            # removed once checked out.
-            source = harness / "source.git"
-            subprocess.run(["git", "clone", "--mirror", "--quiet", "--", str(local), str(source)], check=True)
-            manifest["repository_source"] = "local"
-        command(["git", "clone", "--", str(source), str(checkout)])
-        command(["git", "fetch", "--update-shallow", "--no-tags", "origin", args.ref], cwd=checkout)
-        command(["git", "checkout", "--detach", "FETCH_HEAD"], cwd=checkout)
-        copies = []
-        local_mirrors = False
-        if source != args.repo:
-            copies.append(source)
-            # Relative submodule URLs resolve against the checkout's remote:
-            # the source's own origin, or, without one, the mirror, beside
-            # which each relative submodule's repository is mirrored too.
-            origin = subprocess.run(["git", "-C", str(local), "remote", "get-url", "origin"], capture_output=True, text=True)
-            if origin.returncode == 0 and origin.stdout.strip():
-                command(["git", "remote", "set-url", "origin", origin.stdout.strip()], cwd=checkout)
-            elif getattr(args,"submodules",False):
-                mirrors = local_submodule_mirrors(checkout, local, source)
-                copies.extend(mirrors)
-                local_mirrors = bool(mirrors)
-        manifest["submodules"] = "requested" if getattr(args,"submodules",False) else "not requested"
-        if getattr(args,"submodules",False):
-            command(submodule_update_argv(local_mirrors), cwd=checkout)
-        for copy in copies:
-            shutil.rmtree(copy, ignore_errors=True)
-        manifest["commit"] = command(["git", "rev-parse", "HEAD"], cwd=checkout)
+        if prepared_case:
+            phase = "case_image"
+            manifest["failure_stage"] = "case_image"
+            prepared = case_image.restore(command, container, args.image, args.repo, args.ref,
+                                          framework, trial, checkout)
+            manifest["prepared_image"] = prepared
+            manifest["repository_source"] = "prepared image"
+            manifest["commit"] = prepared["commit"]
+            manifest["submodules"] = "prepared image"
+        else:
+            source = args.repo
+            local = Path(os.path.expanduser(str(args.repo)))
+            if local.is_dir():
+                # The container mounts only the trial, so a repository on the host,
+                # such as a project patched for an eval, is cloned from a mirror
+                # in the harness folder, with every ref a --ref may name, which is
+                # removed once checked out.
+                source = harness / "source.git"
+                subprocess.run(["git", "clone", "--mirror", "--quiet", "--", str(local), str(source)], check=True)
+                manifest["repository_source"] = "local"
+            command(["git", "clone", "--", str(source), str(checkout)])
+            command(["git", "fetch", "--update-shallow", "--no-tags", "origin", args.ref], cwd=checkout)
+            command(["git", "checkout", "--detach", "FETCH_HEAD"], cwd=checkout)
+            copies = []
+            local_mirrors = False
+            if source != args.repo:
+                copies.append(source)
+                # Relative submodule URLs resolve against the checkout's remote:
+                # the source's own origin, or, without one, the mirror, beside
+                # which each relative submodule's repository is mirrored too.
+                origin = subprocess.run(["git", "-C", str(local), "remote", "get-url", "origin"], capture_output=True, text=True)
+                if origin.returncode == 0 and origin.stdout.strip():
+                    command(["git", "remote", "set-url", "origin", origin.stdout.strip()], cwd=checkout)
+                elif getattr(args,"submodules",False):
+                    mirrors = local_submodule_mirrors(checkout, local, source)
+                    copies.extend(mirrors)
+                    local_mirrors = bool(mirrors)
+            manifest["submodules"] = "requested" if getattr(args,"submodules",False) else "not requested"
+            if getattr(args,"submodules",False):
+                command(submodule_update_argv(local_mirrors), cwd=checkout)
+            for copy in copies:
+                shutil.rmtree(copy, ignore_errors=True)
+            manifest["commit"] = command(["git", "rev-parse", "HEAD"], cwd=checkout)
         if restore_cache:
             phase = "dependency_cache_restore"
             manifest["failure_stage"] = phase
@@ -1444,7 +1465,8 @@ def run(args):
         phase = "package_manager"
         if pnpm is not None:
             manifest["failure_stage"] = "package_manager"
-            command(["npm", "install", "--prefix", str(tools), "--no-save", "--no-audit", "--no-fund", "pnpm@" + pnpm])
+            if not prepared_case:
+                command(["npm", "install", "--prefix", str(tools), "--no-save", "--no-audit", "--no-fund", "pnpm@" + pnpm])
             selected = command(["pnpm", "--version"], cwd=checkout, timeout=CLI_STARTUP_TIMEOUT)
             if selected != pnpm and not selected.startswith(pnpm + "."):
                 raise RuntimeError(f"Requested pnpm {pnpm}; pnpm {selected} runs in the checkout")
@@ -1455,11 +1477,12 @@ def run(args):
             manifest["failure_stage"] = "python_environment"
             requested_python_version = command([str(python), "-c", "import platform; print(platform.python_version())"])
             manifest["python_runtime"] = {"requested": str(python), "requested_version": requested_python_version}
-            command([str(python), "-m", "venv", env["VIRTUAL_ENV"]])
+            if not prepared_case:
+                command([str(python), "-m", "venv", env["VIRTUAL_ENV"]])
         phase = "setup"
         for setup in setup_commands:
             command(setup, cwd=checkout)
-        if binstubs:
+        if binstubs and not prepared_case:
             manifest["failure_stage"] = "bundle_binstubs"
             command(["env", f"BUNDLE_BIN={bundle_bin}", "bundle", "binstubs", *binstubs], cwd=checkout)
             manifest["bundle_binstubs"] = {"directory": inside(bundle_bin), "gems": binstubs,
@@ -1717,6 +1740,8 @@ def main():
     parser.add_argument("--login-json", type=Path, help="Selected model login; refresh updates persist, never copies a profile")
     parser.add_argument("--existing-login", action="store_true", help="Reuse authorized existing CLI model authentication, including a managed Claude helper")
     parser.add_argument("--submodules", action="store_true", help="Initialize submodules at the requested commit")
+    parser.add_argument("--case-image", action="store_true",
+                        help="Restore /opt/ddtest-case from the immutable image; skip clone and setup")
     parser.add_argument("--repo", help="Public clone URL reachable from the container, or a local repository, which the harness copies into the trial")
     parser.add_argument("--ref", help="Commit SHA or ref; resolved SHA is recorded")
     parser.add_argument("--ddtest", type=Path, help="Already-built Linux executable for the image architecture")

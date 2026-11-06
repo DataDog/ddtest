@@ -82,6 +82,54 @@ class ContainerTests(unittest.TestCase):
             self.assertIn('file_change' if agent=='codex' else 'Write',activity)
         self.assertEqual(canary.read_text(),'HOST-CREDENTIAL-CANARY')
 
+    def test_prepared_image_restores_clean_fresh_trials_without_setup(self):
+        context = self.root / 'prepared-context'
+        context.mkdir()
+        repo = context / 'repo'
+        subprocess.run(['git', 'clone', '--quiet', '--no-local', '--depth=1', '--', SOURCE, str(repo)], check=True, capture_output=True)
+        commit = subprocess.check_output(['git', '-C', str(repo), 'rev-parse', 'HEAD'], text=True).strip()
+        subprocess.run(['git', '-C', str(repo), 'remote', 'set-url', 'origin', self.args.repo], check=True)
+        dependency = repo / 'node_modules' / 'fixture-dependency'
+        dependency.mkdir(parents=True)
+        (dependency / 'ready').write_text('Prepared project dependency')
+        with (repo / '.git/info/exclude').open('a') as stream:
+            stream.write('\nnode_modules/\n')
+        import prepare_case_images
+        case = {'id': 'fixture', 'repo': self.args.repo, 'commit': commit, 'framework': 'jest',
+                'harness': {}, 'trims': {}, 'setup_commands': [
+                    "python3 -c \"import pathlib; p=pathlib.Path('/trial/caches/pip/private-cache'); p.write_text('project cache'); p.chmod(0o600)\""],
+                'readiness_commands': []}
+        text = prepare_case_images.dockerfile(case, IMAGE)
+        # The same builder runs against a local fixture source, without network.
+        lines = [line for line in text.splitlines() if not line.startswith('RUN ["git",')]
+        lines.insert(lines.index('WORKDIR /trial/repo'), 'COPY repo /trial/repo')
+        (context / 'Dockerfile').write_text('\n'.join(lines) + '\n')
+        config = self.root / 'empty-docker-config'
+        config.mkdir()
+        (config / 'config.json').write_text('{"auths":{}}')
+        endpoint = subprocess.check_output(['docker', 'context', 'inspect', '--format', '{{(index .Endpoints "docker").Host}}'], text=True).strip()
+        self.assertTrue(endpoint.startswith('unix://'))
+        subprocess.run(['docker', '--config', str(config), '--host', endpoint, 'build', '--network=none',
+                        '--build-arg', 'BASE=' + IMAGE, '--iidfile', str(context / 'image-id'), str(context)],
+                       check=True, capture_output=True, timeout=120)
+        image = (context / 'image-id').read_text().strip()
+        self.addCleanup(lambda: subprocess.run(['docker', 'image', 'rm', image], capture_output=True))
+        self.args.image, self.args.ref, self.args.framework = image, commit, 'jest'
+        self.args.case_image = True
+        self.args.pnpm = '12.14.0'
+        self.args.readiness_command = ['test -f node_modules/fixture-dependency/ready']
+        for number in range(2):
+            self.args.output = self.root / ('prepared-evidence-' + str(number))
+            with patch.object(run_eval, 'trial_root', return_value=self.root), contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                code = run_eval.run(self.args)
+            result = json.loads((self.args.output / 'run.json').read_text())
+            self.assertEqual(code, 0, result.get('error'))
+            self.assertEqual(result['prepared_image']['baseline'], commit)
+            self.assertEqual(result['prepared_image']['image_id'], image)
+            commands = [item['argv'] for item in result['commands']]
+            self.assertFalse(any(command[:2] == ['git', 'clone'] or command[:2] == ['npm', 'install'] for command in commands))
+            self.assertEqual(result['isolation']['cleanup'], 'removed')
+
     def test_pnpm_configuration_uses_container_paths(self):
         import shlex
         script="import subprocess; p=subprocess.check_output(['pnpm','config','get','store-dir'],text=True).strip(); assert p=='/trial/caches/pnpm-store',p"

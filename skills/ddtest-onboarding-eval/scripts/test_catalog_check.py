@@ -218,14 +218,15 @@ class EvaluateTests(unittest.TestCase):
 
     def test_trial_ending_on_an_unscriptable_question_is_recorded(self):
         rows = [json.loads(line) for line in (FIXTURES / "E14-ddtest-results.jsonl").read_text().splitlines()]
+        rows[-1]["result"]["code"] = "scope_decision_required"
         record = self.evaluate(case("E14-tradukisto", blockers=["runtime fidelity: substitute Java"]),
                                name="E14-tradukisto-claude", testdrive=real_report("E14"), rows=rows)
         self.assertEqual(record["outcome"], "pass")
-        self.assertEqual(record["question"]["code"], "substitute_runtime_unaccepted")
-        self.assertIn("question not scriptable: substitute_runtime_unaccepted (ddtest-results.jsonl row 4)", record["notes"])
+        self.assertEqual(record["question"]["code"], "scope_decision_required")
+        self.assertIn("question not scriptable: scope_decision_required (ddtest-results.jsonl row 4)", record["notes"])
         stream = io.StringIO()
         catalog_check.report([record], stream)
-        self.assertIn("NOTE E14-tradukisto (claude): question not scriptable: substitute_runtime_unaccepted", stream.getvalue())
+        self.assertIn("NOTE E14-tradukisto (claude): question not scriptable: scope_decision_required", stream.getvalue())
         # A scriptable question, or a result that is no question, is not flagged.
         for result in ({"status": "needs_input", "code": "ci_runtime_required", "next_action": "ask_user"},
                        {"status": "needs_input", "code": "setup_dependencies_missing", "next_action": "run_command"},
@@ -539,12 +540,13 @@ class EvaluateOnlyTests(unittest.TestCase):
 
     def test_unscriptable_questions_are_listed_in_results(self):
         rows = [json.loads(line) for line in (FIXTURES / "E14-ddtest-results.jsonl").read_text().splitlines()]
+        rows[-1]["result"]["code"] = "scope_decision_required"
         write_evidence(self.root / "out" / "E14-tradukisto-claude", testdrive=real_report("E14"), rows=rows)
         code, output, results = self.main("E14")
         self.assertEqual(code, 0, output)
         self.assertEqual(results["questions_not_scriptable"],
-                         ["E14-tradukisto (claude): question not scriptable: substitute_runtime_unaccepted"])
-        self.assertEqual(results["cases"][0]["question"]["code"], "substitute_runtime_unaccepted")
+                         ["E14-tradukisto (claude): question not scriptable: scope_decision_required"])
+        self.assertEqual(results["cases"][0]["question"]["code"], "scope_decision_required")
 
     def test_results_path_override(self):
         write_evidence(self.root / "out" / "E02-pipeline-schema-codex", testdrive=real_report("E02"))
