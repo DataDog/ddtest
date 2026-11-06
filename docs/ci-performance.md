@@ -15,6 +15,11 @@ the slowest packages to different shards and spreads the others by hash.
 `internal/testdrive/pytestpaths` holds the real pytest validations in two
 packages because they take most of `internal/testdrive`'s time.
 
+`-coverpkg` names the module's packages instead of `./...`. `ddto` lies below the
+repository root, so `./...` makes `ddtest instrument` fall back from in-memory
+per-test coverage to text profiles, which are too slow for this suite once Test
+Impact Analysis is on.
+
 The Go shards keep their own compiler cache. Keys include OS, architecture, Go
 version, dependencies and the source revision. A new revision restores
 compatible previous output and saves updated compiler artifacts, rather than
