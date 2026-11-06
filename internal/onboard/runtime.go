@@ -719,8 +719,12 @@ func checkRuntimeJob(ctx context.Context, root string, workflow ciWorkflow, name
 		}
 		if handWritten != nil {
 			finding.Action, finding.TracerRequested = handWritten.Reference, handWritten.Tracer
-			finding.SetupSite, _ = runtimeValue(handWrittenEnvironment(workflow, job, step)["DD_SITE"], row)
-			if finding.SetupSite == "" && !handWritten.reportsThroughAgent() {
+			var siteErr error
+			finding.SetupSite, siteErr = runtimeValue(handWrittenEnvironment(workflow, job, step)["DD_SITE"], row)
+			if siteErr != nil {
+				finding.SetupCaveats = append(finding.SetupCaveats, "Datadog site: the reporting site could not be resolved: "+siteErr.Error()+". The existing CI setting is preserved; local validation does not verify delivery to that site.")
+			}
+			if siteErr == nil && finding.SetupSite == "" && !handWritten.reportsThroughAgent() {
 				finding.SetupSite = defaultDatadogSite
 			}
 			finding.AgentReporting = handWritten.reportsThroughAgent()
@@ -731,6 +735,7 @@ func checkRuntimeJob(ctx context.Context, root string, workflow ciWorkflow, name
 			}
 			checkedState.action, checkedState.tracer = handWritten.Reference, handWritten.Tracer
 			checkedState.site = finding.SetupSite
+			checkedState.caveats = append(slices.Clone(checkedState.caveats), finding.SetupCaveats...)
 		}
 		findings = append(findings, evaluateRuntimeTest(ctx, root, workflow, job, checked, row, resolution, checkedState, finding, resolveNode, resolve, frameworks...))
 	}
@@ -816,6 +821,15 @@ func evaluateRuntimeTest(ctx context.Context, root string, workflow ciWorkflow, 
 	finding.Requirement = requirement.Node
 	finding.SetupCaveats = slices.Clone(state.caveats)
 	finding.SetupSite = state.site
+	if configured, set := step.Env["DD_SITE"]; set {
+		finding.SetupCaveats = slices.DeleteFunc(finding.SetupCaveats, func(caveat string) bool { return strings.HasPrefix(caveat, "Datadog site:") })
+		finding.SetupSite, err = runtimeValue(configured, row)
+		if err != nil {
+			finding.SetupCaveats = append(finding.SetupCaveats, "Datadog site: the reporting site could not be resolved: "+err.Error()+". The existing CI setting is preserved; local validation does not verify delivery to that site.")
+		} else if finding.SetupSite == "" {
+			finding.SetupSite = defaultDatadogSite
+		}
+	}
 	if state.floating {
 		// The exception to an exact release: the mechanism cannot pin one.
 		finding.SetupCaveats = append(finding.SetupCaveats, "dd-trace version: the "+state.action+" installs the latest dd-trace release when each build runs and cannot pin one; ddtest checked the CI runtime against, and validated locally with, dd-trace@"+requirement.Version+", the latest release when it ran. A later release can change behavior or drop support for the CI Node version.")

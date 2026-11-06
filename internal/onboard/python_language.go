@@ -79,7 +79,7 @@ func (pythonDiscovery) localCommands(root, command, _ string) ([]TestCommand, bo
 func (pythonDiscovery) variantValue(workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any, key, _ string) (string, bool, error) {
 	switch key {
 	case "PYTEST_ADDOPTS":
-		value, err := pythonAddopts(workflow, job, step, row)
+		value, err := pythonAddopts(workflow, job, step, row, true)
 		return value, true, err
 	case "PYTHONPATH":
 		return pythonApplicationPath(workflow, job, step, row), true, nil

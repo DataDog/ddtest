@@ -769,7 +769,7 @@ func resolvePythonStep(root string, workflow ciWorkflow, job runtimeJob, step ru
 		if checkOnlyStep(shellquote.Join(words...)) {
 			continue
 		}
-		mayStart, known := pythonDiscovery{}.checkTool(root, directory, words)
+		mayStart, known := pythonDiscovery{}.checkTool(root, filepath.Join(root, directory), words)
 		if known && !mayStart || !known && pythonNonTestTool(words) {
 			result.ReviewReason = joinDiagnostic(result.ReviewReason, words[0]+" runs no tests; it is outside this validation.")
 			continue
@@ -1010,6 +1010,7 @@ func checkPythonCIRuntimes(ctx context.Context, root, localVersion, site string,
 					if action == "" && !shared {
 						handWritten = pythonHandWrittenSetup(root, provider, workflow, job, i, site)
 						if handWritten != nil {
+							pathEdit = ""
 							finding.Action = handWritten.Reference
 							finding.AgentReporting = handWritten.reportsThroughAgent()
 						}
@@ -1111,7 +1112,7 @@ func checkPythonCIRuntimes(ctx context.Context, root, localVersion, site string,
 								}
 								pythonFindingProblem(&finding, "incompatible", reason)
 							}
-							if status, reason := pythonInstrumentationOptions(root, workflow, job, resolved, row, python); status != "" {
+							if status, reason := pythonInstrumentationOptions(root, workflow, job, resolved, row, python, handWritten == nil); status != "" {
 								if !shared {
 									reason = strings.ReplaceAll(reason, "the action's", "the "+provider.setupName()+"'s")
 								}
@@ -1214,12 +1215,12 @@ func pythonFindingProblem(finding *RuntimeFinding, status, reason string) {
 	}
 }
 
-func pythonInstrumentationOptions(root string, workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any, python string) (string, string) {
+func pythonInstrumentationOptions(root string, workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any, python string, fromSetup bool) (string, string) {
 	env := map[string]string{}
 	for _, layer := range []map[string]string{workflow.Env, job.Env, step.Env} {
 		maps.Copy(env, layer)
 	}
-	value, err := pythonAddopts(workflow, job, step, row)
+	value, err := pythonAddopts(workflow, job, step, row, fromSetup)
 	if err != nil {
 		return "inconclusive", err.Error()
 	}
@@ -1317,6 +1318,9 @@ func pythonInstrumentationOptions(root string, workflow ciWorkflow, job runtimeJ
 			return "incompatible", "The pytest command or effective PYTEST_ADDOPTS explicitly disables Datadog instrumentation."
 		}
 		if !slices.Contains(options, "--ddtrace") {
+			if !fromSetup {
+				return "incompatible", "This pytest invocation does not enable the ddtrace plugin; enable --ddtrace for every test invocation."
+			}
 			return "incompatible", "The test step replaces the action's PYTEST_ADDOPTS; preserve --ddtrace and existing options."
 		}
 		plugins := []string{"ddtrace", "ddtrace.contrib.pytest.plugin", "ddtrace.contrib.internal.pytest.plugin", "ddtrace.testing.internal.pytest.entry_point"}
@@ -1366,7 +1370,7 @@ var pythonAddoptsReference = regexp.MustCompile(`\$\{\{\s*env\.PYTEST_ADDOPTS\s*
 
 // The action prepends --ddtrace to inherited options through GITHUB_ENV.
 // Test-step declarations override that export in both CI checks and replay.
-func pythonAddopts(workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any) (string, error) {
+func pythonAddopts(workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any, fromSetup bool) (string, error) {
 	value := ""
 	for _, layer := range []map[string]string{workflow.Env, job.Env} {
 		declared, ok := layer["PYTEST_ADDOPTS"]
@@ -1376,7 +1380,9 @@ func pythonAddopts(workflow ciWorkflow, job runtimeJob, step runtimeStep, row ma
 		parent := value
 		value = pythonAddoptsReference.ReplaceAllStringFunc(declared, func(string) string { return parent })
 	}
-	value = strings.TrimSpace("--ddtrace " + value)
+	if fromSetup {
+		value = strings.TrimSpace("--ddtrace " + value)
+	}
 	if declared, exists := step.Env["PYTEST_ADDOPTS"]; exists {
 		parent := value
 		value = pythonAddoptsReference.ReplaceAllStringFunc(declared, func(string) string { return parent })

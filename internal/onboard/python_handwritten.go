@@ -57,7 +57,7 @@ func pythonHandWrittenSetup(root string, provider ciProvider, workflow ciWorkflo
 	if unresolved != "" {
 		setup.unresolved(unresolved)
 	}
-	if version, pin := pythonHandWrittenTracer(setup, root, directory, job, index); version != "" {
+	if version, pin := pythonHandWrittenTracer(setup, root, directory, workflow, job, index); version != "" {
 		setup.Tracer, setup.Pin = version, pin
 		setup.Reference = handWrittenReference("ddtrace@"+version, mechanism)
 	}
@@ -160,94 +160,203 @@ func handWrittenCommandPrefix(words []string) ([]string, map[string]string) {
 	return words, assignments
 }
 
-// pythonHandWrittenTracer finds the exact ddtrace release a hand-written
-// setup loads in directory: one an install command of the job, before the
-// tests or with them, pins (pip install ddtrace==4.16.1); otherwise the one
-// a requirements file those commands install (-r) pins, the one a lockfile
-// at or above directory (uv.lock, poetry.lock, pdm.lock, Pipfile.lock)
-// locks, or the one the project's pyproject.toml or requirements.txt pins.
-// It records on setup why none is pinned.
-func pythonHandWrittenTracer(setup *handWrittenSetup, root, directory string, job runtimeJob, index int) (version, source string) {
-	var requirements []string
-	for _, step := range job.Steps[:index+1] {
+// pythonHandWrittenTracer follows dependency operations in order and records
+// the installation seen by every pytest invocation in the selected step.
+func pythonHandWrittenTracer(setup *handWrittenSetup, root, directory string, workflow ciWorkflow, job runtimeJob, index int) (version, source string) {
+	requested, pin, problem := "", "", ""
+	explicit, observed := false, false
+	selected, selectedPin, selectedProblem := "", "", ""
+	for stepIndex, step := range job.Steps[:index+1] {
 		commands, err := staticCommands(step.Run)
 		if err != nil {
 			continue
 		}
+		cwd := stepDirectory(workflow, job, step)
 		for _, words := range commands {
 			words, _ = handWrittenCommandPrefix(words)
-			arguments, ok := pythonHandWrittenInstall(words)
-			if !ok {
+			if len(words) == 2 && words[0] == "cd" && filepath.IsLocal(words[1]) {
+				cwd = filepath.Join(cwd, words[1])
 				continue
 			}
-			for i := 0; i < len(arguments); i++ {
-				argument := arguments[i]
-				file := ""
-				switch {
-				case (argument == "-r" || argument == "--requirement" || argument == "-c" || argument == "--constraint") && i+1 < len(arguments):
-					i++
-					file = arguments[i]
-				case strings.HasPrefix(argument, "--requirement=") || strings.HasPrefix(argument, "--constraint="):
-					_, file, _ = strings.Cut(argument, "=")
-				case strings.HasPrefix(argument, "-r") || strings.HasPrefix(argument, "-c"):
-					file = argument[2:]
-				}
-				if file != "" {
-					requirements = append(requirements, path.Join(filepath.ToSlash(directory), file))
-					continue
-				}
-				if requested, named := pythonRequirement(argument); named {
-					if release, exact := strings.CutPrefix(requested, "=="); exact && pythonHandWrittenRelease.MatchString(release) {
-						version, source = release, strings.Join(words, " ")
-						continue
+			// uv sync installs the lockfile into the environment, replacing an
+			// earlier pip selection. uv run does the same unless sync is off.
+			if len(words) > 1 && path.Base(words[0]) == "uv" && (words[1] == "sync" || words[1] == "run" && !slices.Contains(words, "--no-sync")) {
+				requested, pin = pythonLockedTracer(root, cwd)
+				problem, explicit = "", true
+			}
+			if pythonInvocation(words) && stepIndex == index {
+				current, currentPin := requested, pin
+				if !explicit {
+					current, currentPin = pythonLockedTracer(root, directory)
+					if currentPin == "" {
+						current, currentPin = pythonDeclaredTracer(root, directory)
 					}
-					setup.missing("The job installs ddtrace without an exact release (" + strings.Join(words, " ") + "), so each build can load another one: install an exact release, such as ddtrace==" + pythonHandWrittenExample + ".")
+				}
+				if observed && (selected != current || selectedProblem != problem) {
+					setup.unresolved("The pytest invocations in this step do not share one resolved ddtrace installation; validate each environment separately.")
 					return "", ""
+				}
+				selected, selectedPin, selectedProblem, observed = current, currentPin, problem, true
+			}
+			args, pip := pythonHandWrittenPip(words)
+			if !pip || len(args) == 0 {
+				continue
+			}
+			switch args[0] {
+			case "install":
+				explicit = true
+				next, nextPin, known := pythonInstallTracer(root, cwd, args[1:])
+				if !known {
+					requested, pin, problem = "", "", "The job changes Python dependencies with an installation ddtest cannot resolve statically ("+strings.Join(words, " ")+")."
+				} else if nextPin != "" {
+					requested, pin, problem = next, nextPin, ""
+					if pin == "install command" {
+						pin = strings.Join(words, " ")
+					}
+				}
+			case "uninstall":
+				for _, arg := range args[1:] {
+					if _, named := pythonRequirement(arg); named {
+						explicit = true
+						requested, pin, problem = "", "", "The job removes ddtrace ("+strings.Join(words, " ")+") before this pytest invocation; install an exact release again."
+					}
 				}
 			}
 		}
 	}
-	if version != "" {
-		return version, source
-	}
-	requested, file := "", ""
-	for _, requirement := range requirements {
-		if requested, file = pythonRequirementsPin(root, requirement); file != "" {
-			break
+	// Wrappers remain unresolved by the caller, but still describe the
+	// dependency state reached before the wrapper starts.
+	if !observed {
+		selected, selectedPin, selectedProblem = requested, pin, problem
+		if !explicit {
+			selected, selectedPin = pythonLockedTracer(root, directory)
+			if selectedPin == "" {
+				selected, selectedPin = pythonDeclaredTracer(root, directory)
+			}
 		}
 	}
-	if file == "" {
-		requested, file = pythonLockedTracer(root, directory)
+	if selectedProblem != "" {
+		setup.unresolved(selectedProblem)
+		return "", ""
 	}
-	if file == "" {
-		requested, file = pythonDeclaredTracer(root, directory)
-	}
-	if file == "" {
+	if selectedPin == "" {
 		setup.missing("No requirements file, lockfile or install command of the job pins ddtrace, so the tests load whatever ddtrace their environment has: add ddtrace==<exact release> (such as " + pythonHandWrittenExample + ") to the requirements the job installs, or lock it.")
 		return "", ""
 	}
-	if release, exact := strings.CutPrefix(requested, "=="); exact && pythonHandWrittenRelease.MatchString(release) {
-		return release, file
+	if release, exact := strings.CutPrefix(selected, "=="); exact && pythonHandWrittenRelease.MatchString(release) {
+		return release, selectedPin
 	}
-	setup.missing(file + " requires ddtrace " + strings.TrimSpace(requested) + ", which is not an exact release, so each build can load another one: pin an exact release, such as ddtrace==" + pythonHandWrittenExample + ".")
+	setup.missing(selectedPin + " requires ddtrace " + strings.TrimSpace(selected) + ", which is not an exact release, so each build can load another one: pin an exact release, such as ddtrace==" + pythonHandWrittenExample + ".")
 	return "", ""
 }
 
-// pythonHandWrittenInstall reads a pip command that installs packages (pip
-// install, python -m pip install, uv pip install): its arguments.
-func pythonHandWrittenInstall(words []string) ([]string, bool) {
+// pythonHandWrittenPip returns pip's subcommand and arguments, retaining
+// uninstall operations as well as install operations.
+func pythonHandWrittenPip(words []string) ([]string, bool) {
+	if len(words) == 0 {
+		return nil, false
+	}
+	var args []string
 	switch {
-	case len(words) > 2 && (path.Base(words[0]) == "pip" || path.Base(words[0]) == "pip3") && words[1] == "install":
-		return words[2:], true
-	case len(words) > 3 && path.Base(words[0]) == "uv" && words[1] == "pip" && words[2] == "install":
-		return words[3:], true
-	case len(words) > 1 && strings.HasPrefix(path.Base(words[0]), "python"):
-		index, module := PythonModule(words[1:])
-		if index >= 0 && len(module) > 2 && module[0] == "pip" && module[1] == "install" {
-			return module[2:], true
+	case pipExecutable.MatchString(path.Base(words[0])):
+		args = words[1:]
+	case len(words) > 1 && path.Base(words[0]) == "uv" && words[1] == "pip":
+		args = words[2:]
+	case strings.HasPrefix(path.Base(words[0]), "python"):
+		if index, module := PythonModule(words[1:]); index >= 0 && module[0] == "pip" {
+			args = module[1:]
+		} else {
+			return nil, false
+		}
+	default:
+		return nil, false
+	}
+	for len(args) > 0 && strings.HasPrefix(args[0], "-") {
+		option, _, assigned := strings.Cut(args[0], "=")
+		if slices.Contains(pipGeneralValueOptions, option) && !assigned {
+			if len(args) < 2 {
+				return []string{"unresolved"}, true
+			}
+			args = args[1:]
+		} else if !slices.Contains(pipGeneralValueOptions, option) && !slices.Contains(pipGeneralFlags, option) && !pipVerbosity.MatchString(option) {
+			return nil, true
+		}
+		args = args[1:]
+	}
+	return args, true
+}
+
+// pythonRequirementFile reads both long and compact -r/-c forms. Constraints
+// restrict versions; they are never evidence that pip installs a package.
+func pythonRequirementFile(argument string) (constraint bool, file string, ok bool) {
+	for _, prefix := range []string{"--requirement", "--constraint", "-r", "-c"} {
+		if rest, found := strings.CutPrefix(argument, prefix); found {
+			if len(prefix) > 2 && rest != "" && !strings.HasPrefix(rest, "=") && !strings.HasPrefix(rest, " ") {
+				continue
+			}
+			return prefix == "-c" || prefix == "--constraint", strings.TrimSpace(strings.TrimPrefix(rest, "=")), true
 		}
 	}
-	return nil, false
+	return false, "", false
+}
+
+func pythonInstallTracer(root, directory string, args []string) (string, string, bool) {
+	var packages, requirements, constraints []string
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if constraint, file, ok := pythonRequirementFile(arg); ok {
+			if file == "" {
+				i++
+				if i >= len(args) {
+					return "", "", false
+				}
+				file = args[i]
+			}
+			file = path.Join(filepath.ToSlash(directory), file)
+			if constraint {
+				constraints = append(constraints, file)
+			} else {
+				requirements = append(requirements, file)
+			}
+			continue
+		}
+		option, value, assigned := strings.Cut(arg, "=")
+		if option == "-e" || option == "--editable" {
+			if !assigned {
+				i++
+				if i >= len(args) {
+					return "", "", false
+				}
+				value = args[i]
+			}
+			packages = append(packages, value)
+			continue
+		}
+		if slices.Contains(pipInstallValueOptions, option) || slices.Contains(pipGeneralValueOptions, option) {
+			if !assigned {
+				i++
+				if i >= len(args) {
+					return "", "", false
+				}
+			}
+			continue
+		}
+		if strings.HasPrefix(arg, "-") {
+			if slices.Contains(pipInstallFlags, option) || slices.Contains(pipGeneralFlags, option) || pipInstallCluster.MatchString(arg) {
+				continue
+			}
+			return "", "", false
+		}
+		packages = append(packages, arg)
+	}
+	for _, pkg := range packages {
+		if pkg == "." || strings.HasPrefix(pkg, ".[") {
+			if spec, file := pythonDeclaredTracer(root, directory); file != "" {
+				packages = append(packages, "ddtrace"+spec)
+			}
+		}
+	}
+	return pythonRequirementSelection(root, packages, requirements, constraints)
 }
 
 // pythonRequirementName is a requirement's project name, before its extras,
@@ -264,38 +373,102 @@ func pythonRequirement(requirement string) (specifier string, named bool) {
 	return strings.Join(strings.Fields(match[2]), ""), true
 }
 
-// pythonRequirementsPin is ddtrace's requirement in a requirements file
-// (repository path file), following its -r and -c includes; file is empty
-// when the file does not name ddtrace.
+// pythonRequirementsPin reads installed requirements, with constraints applied
+// only when those requirements actually name ddtrace.
 func pythonRequirementsPin(root, file string) (specifier, source string) {
-	seen := map[string]bool{}
-	var read func(string) (string, string)
-	read = func(file string) (string, string) {
-		file = path.Clean(file)
-		if seen[file] || strings.HasPrefix(file, "..") || path.IsAbs(file) {
-			return "", ""
-		}
-		seen[file] = true
-		data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(file)))
-		if err != nil {
-			return "", ""
-		}
-		for line := range strings.SplitSeq(string(data), "\n") {
-			line = strings.TrimSpace(line)
-			for _, prefix := range []string{"-r", "--requirement", "-c", "--constraint"} {
-				if included, ok := strings.CutPrefix(line, prefix); ok && (strings.HasPrefix(included, " ") || strings.HasPrefix(included, "=")) {
-					if specifier, source := read(path.Join(path.Dir(file), strings.TrimSpace(strings.TrimPrefix(included, "=")))); source != "" {
-						return specifier, source
-					}
-				}
-			}
-			if specifier, named := pythonRequirement(line); named {
-				return specifier, file
-			}
-		}
+	specifier, source, known := pythonRequirementSelection(root, nil, []string{file}, nil)
+	if !known {
 		return "", ""
 	}
-	return read(file)
+	return specifier, source
+}
+
+func pythonRequirementSelection(root string, packages, requirements, constraints []string) (specifier, source string, known bool) {
+	known = true
+	constrained, constraintSource := "", ""
+	selectPin := func(spec, file string, constraint bool) {
+		selected, from := &specifier, &source
+		if constraint {
+			selected, from = &constrained, &constraintSource
+		}
+		if *from != "" {
+			if spec == "" {
+				return
+			}
+			if *selected != "" && *selected != spec {
+				known = false
+			}
+		}
+		*selected, *from = spec, file
+	}
+	for _, pkg := range packages {
+		if spec, named := pythonRequirement(pkg); named {
+			if strings.Contains(pkg, ";") {
+				known = false
+			}
+			selectPin(spec, "install command", false)
+		}
+	}
+	seen := map[string]bool{}
+	var read func(string, bool, int)
+	read = func(file string, constraint bool, depth int) {
+		file = path.Clean(file)
+		key := file
+		if constraint {
+			key = "constraint:" + file
+		}
+		if seen[key] || depth >= 16 {
+			known = false
+			return
+		}
+		seen[key] = true
+		info, ok := repositoryFile(root, root, filepath.FromSlash(file))
+		if !ok || info.Size() > 1<<20 {
+			known = false
+			return
+		}
+		data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(file)))
+		if err != nil {
+			known = false
+			return
+		}
+		text := strings.ReplaceAll(string(data), "\\\n", " ")
+		for line := range strings.SplitSeq(text, "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			if nested, included, ok := pythonRequirementFile(line); ok {
+				if included == "" {
+					known = false
+					continue
+				}
+				read(path.Join(path.Dir(file), included), constraint || nested, depth+1)
+			} else if spec, named := pythonRequirement(line); named {
+				if strings.Contains(line, ";") {
+					known = false
+				}
+				selectPin(spec, file, constraint)
+			}
+		}
+	}
+	for _, file := range requirements {
+		read(file, false, 0)
+	}
+	for _, file := range constraints {
+		read(file, true, 0)
+	}
+	if source == "" {
+		return "", "", known
+	}
+	if constraintSource != "" {
+		if specifier == "" {
+			specifier, source = constrained, constraintSource
+		} else if constrained != "" && constrained != specifier {
+			known = false
+		}
+	}
+	return specifier, source, known
 }
 
 // pythonLockedTracer is the ddtrace release a lockfile at or above

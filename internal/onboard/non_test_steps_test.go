@@ -531,9 +531,10 @@ func TestPytestJobsKeepOnlyTheirTestPath(t *testing.T) {
 `)
 	scope, err := DiscoverValidationScope(root, "pytest")
 	require.NoError(t, err)
-	// Safe build and Docker steps after pytest are outside its test path;
-	// twine is independently classified as a reporting-only tool.
-	require.Contains(t, strings.Join(scope.Caveats, "\n"), ".github/workflows/ci.yml / test: step 4 (python -m build), step 6 (docker build -t x .) run after the job's last pytest test and can't start pytest; outside this validation.")
+	// Docker after pytest is outside its test path; the safe Python build
+	// and twine are independently classified as non-test tools.
+	require.Contains(t, strings.Join(scope.Caveats, "\n"), ".github/workflows/ci.yml / test: step 6 (docker build -t x .) runs after the job's last pytest test and can't start pytest; outside this validation.")
+	require.Contains(t, strings.Join(scope.Review, "\n"), "python runs no tests")
 	require.NotContains(t, strings.Join(scope.Caveats, "\n"), "twine")
 	unresolved := strings.Join(scope.Unresolved, "\n")
 	require.NotContains(t, unresolved, "twine")
