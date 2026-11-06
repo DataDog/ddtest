@@ -227,6 +227,30 @@ class RunnerTests(unittest.TestCase):
             remote = subprocess.check_output(["git", "-C", str(trial / "repo"), "remote", "get-url", "origin"], text=True).strip()
             self.assertEqual(remote, expected.stdout.strip())
 
+    def test_preparation_never_runs_an_agent_and_records_phase_timings(self):
+        self.args.prepare_cache = "a" * 64
+        capture = [sys.executable, "-c", "print('captured fixture cache')"]
+        with patch.object(run_eval.dependency_cache, "command", return_value=capture):
+            code, manifest = self.trial()
+        self.assertEqual(code, 0, manifest)
+        self.assertEqual(manifest["status"], "prepared")
+        self.assertEqual(manifest["agent_reporting"]["status"], "not run")
+        self.assertFalse((Path(manifest["checkout"]) / "observed.json").exists())
+        self.assertNotIn("agent", manifest["timings_seconds"]["commands"])
+        self.assertIn("dependency_cache_capture", manifest["timings_seconds"]["commands"])
+        for command in manifest["commands"]:
+            self.assertGreaterEqual(command["duration_seconds"], 0)
+            self.assertLessEqual(command["duration_seconds"], manifest["timings_seconds"]["total"])
+        events = [json.loads(line) for line in (self.args.output / "activity.jsonl").read_text().splitlines()]
+        self.assertTrue(all(isinstance(event["observed_at"], float) for event in events))
+
+    def test_preparation_refuses_model_credentials_before_creating_a_trial(self):
+        self.args.prepare_cache = "a" * 64
+        self.args.existing_login = True
+        with self.assertRaisesRegex(ValueError, "cannot use model credentials"):
+            run_eval.run(self.args)
+        self.assertFalse(self.args.output.exists())
+
     def test_relative_submodules_of_a_local_repository_without_origin_are_mirrored(self):
         # Without an origin, relative submodule URLs resolve against the
         # mirror, so each relative submodule's repository is mirrored beside

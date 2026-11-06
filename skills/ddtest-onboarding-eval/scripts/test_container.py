@@ -11,11 +11,13 @@ import subprocess
 import sys
 import tempfile
 import time
+import tarfile
 import unittest
 from unittest.mock import patch
 
 import isolation
 import run_eval
+import prepare_dependencies
 
 
 IMAGE=os.environ.get('DDTEST_EVAL_TEST_IMAGE')
@@ -87,6 +89,67 @@ class ContainerTests(unittest.TestCase):
         code,manifest=self.trial()
         self.assertEqual(code,0,manifest.get('error'))
         self.assertEqual(manifest['isolation']['cleanup'],'removed')
+
+    def test_dependency_cache_round_trip_keeps_source_and_agent_state_fresh(self):
+        import shlex
+        import uuid
+        key = 'a' * 64
+        self.args.prepare_cache = key
+        write = "import os,pathlib; p=pathlib.Path(os.environ['npm_config_cache'])/'cached-package'; p.write_text('public-package')"
+        self.args.setup_command = [shlex.join(['/usr/bin/python3', '-c', write])]
+        code, manifest = self.trial()
+        self.assertEqual(code, 0, manifest)
+        self.assertEqual(manifest['status'], 'prepared')
+        self.assertFalse((Path(manifest['checkout'])/'observed.json').exists())
+        context = self.root/'cache-image'
+        context.mkdir()
+        prepare_dependencies.copy_archive(Path(manifest['trial_directory']), context/'cache.tar', key)
+        tag = 'ddtest-eval-cache-test:' + uuid.uuid4().hex
+        try:
+            prepare_dependencies.build_image(context, IMAGE, tag, 120)
+            self.args.image = subprocess.check_output(['docker', 'image', 'inspect', '--format', '{{.Id}}', tag], text=True).strip()
+            self.args.prepare_cache = None
+            self.args.dependency_cache = key
+            self.args.output = self.root/'restored-evidence'
+            check = "import os,pathlib; assert (pathlib.Path(os.environ['npm_config_cache'])/'cached-package').read_text()=='public-package'; assert not pathlib.Path('observed.json').exists(); assert not (pathlib.Path(os.environ['HOME'])/'.codex/auth.json').exists()"
+            self.args.setup_command = [shlex.join(['/usr/bin/python3', '-c', check])]
+            code, restored = self.trial()
+            self.assertEqual(code, 0, restored)
+            self.assertEqual(restored['dependency_cache']['fingerprint'], key)
+            self.assertEqual(restored['commit'], manifest['commit'])
+            self.assertTrue((Path(restored['checkout'])/'observed.json').exists())
+            self.assertEqual(restored['isolation']['cleanup'], 'removed')
+            self.args.output = self.root/'mismatched-evidence'
+            self.args.dependency_cache = 'b' * 64
+            self.args.login_json = self.root/'model-login-must-not-be-read.json'
+            code, mismatch = self.trial()
+            self.assertEqual(code, 1)
+            self.assertEqual(mismatch['failure_stage'], 'dependency_cache_restore')
+            self.assertEqual(mismatch['isolation']['cleanup'], 'removed')
+            self.assertNotIn('authentication', mismatch)
+            self.assertFalse((Path(mismatch['checkout'])/'observed.json').exists())
+        finally:
+            subprocess.run(['docker', 'image', 'rm', tag], capture_output=True)
+
+    def test_failed_cache_build_preserves_an_untagged_base_image(self):
+        import uuid
+        context = self.root/'failed-cache-image'
+        context.mkdir()
+        archive = context/'cache.tar'
+        with tarfile.open(archive, 'w'):
+            pass
+        base = subprocess.check_output([
+            'docker', 'image', 'import', '--change', 'LABEL ddtest.eval.fixture=' + uuid.uuid4().hex,
+            str(archive)], text=True).strip()
+        try:
+            tags = subprocess.check_output(['docker', 'image', 'inspect', '--format', '{{json .RepoTags}}', base], text=True)
+            self.assertFalse(json.loads(tags))
+            with self.assertRaises(subprocess.CalledProcessError):
+                prepare_dependencies.build_image(context, base, 'INVALID/OUTPUT', 120)
+            result = subprocess.run(['docker', 'image', 'inspect', base], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, 'Failed preparation removed the caller\'s base image: ' + result.stderr)
+        finally:
+            subprocess.run(['docker', 'image', 'rm', '--force', base], capture_output=True)
 
     def test_changes_patch_excludes_trim_commits_made_in_the_container(self):
         import run_catalog

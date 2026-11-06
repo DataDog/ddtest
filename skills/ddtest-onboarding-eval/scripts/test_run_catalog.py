@@ -116,6 +116,17 @@ class ArgvTests(unittest.TestCase):
         self.assertIn("Eval trim (optional_speed)", trimmed[1])
         self.assertEqual(trimmed[2:], ["npm ci --no-audit --no-fund"])
 
+    def test_dependency_image_preserves_fresh_source_setup_and_readiness(self):
+        case = self.cases["E17-feel-scala"]
+        original = run_catalog.build_argv(case, "base", "/binary", "/output")
+        cached = run_catalog.build_argv(case, "base", "/binary", "/output", dependency_image="cached")
+        self.assertEqual(cached[cached.index("--image") + 1], "cached")
+        key = cached[cached.index("--dependency-cache") + 1]
+        self.assertRegex(key, r"^[0-9a-f]{64}$")
+        self.assertEqual(setup_commands(cached), setup_commands(original))
+        self.assertEqual(cached[cached.index("--ref") + 1], case["commit"])
+        self.assertEqual(cached[cached.index("--readiness-command") + 1], "mvn -B -q dependency:go-offline")
+
     def test_required_then_speed_trims_then_setup(self):
         required = setup_commands(self.argv("E09-lux-design-system"))
         self.assertEqual(len(scratch_commits(self.argv("E09-lux-design-system"))), 1)
@@ -161,6 +172,16 @@ class MainTests(unittest.TestCase):
         code, output = self.main("--dry-run", "E02", "--ddtest-label", "b7a9d2ba")
         trial = shlex.split(next(line for line in output.splitlines() if "run_eval.py" in line))
         self.assertEqual(trial[trial.index("--ddtest-label") + 1], "b7a9d2ba")
+
+    def test_cached_dry_run_requires_the_base_for_an_exact_recipe_fingerprint(self):
+        with self.assertRaises(SystemExit):
+            self.main("--dry-run", "E17", "--dependency-image", "E17=cached")
+        code, output = self.main("--dry-run", "E17", "--image-map", "java17=base",
+                                 "--dependency-image", "E17=cached")
+        self.assertEqual(code, 0)
+        trial = shlex.split(next(line for line in output.splitlines() if "run_eval.py --image" in line))
+        self.assertEqual(trial[trial.index("--image") + 1], "cached")
+        self.assertRegex(trial[trial.index("--dependency-cache") + 1], r"^[0-9a-f]{64}$")
 
     def test_dry_run_prints_the_image_builds_the_selection_needs(self):
         code, output = self.main("--dry-run", "E01", "E14")
