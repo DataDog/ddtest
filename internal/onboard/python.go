@@ -16,8 +16,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/DataDog/ddtest/internal/environment"
 	"github.com/DataDog/ddtest/internal/platform"
+	"github.com/DataDog/ddtest/internal/testcommand"
 	"github.com/kballard/go-shellquote"
 	"go.yaml.in/yaml/v3"
 )
@@ -129,7 +129,7 @@ func pythonStepCandidate(root string, workflow ciWorkflow, job runtimeJob, step 
 	if resolution.Review || resolution.Reason == "" {
 		return false
 	}
-	if environment.LooksLikeTestCommand(root, step.Run, "python", "pytest") || pythonTestReference.MatchString(step.Run) {
+	if testcommand.Matches(root, step.Run, "python", "pytest") || pythonTestReference.MatchString(step.Run) {
 		return true // Conditional shell code remains unresolved, never replayed.
 	}
 	commands, _ := pythonStepCommands(step.Run)
@@ -780,7 +780,7 @@ func resolvePythonStep(root string, workflow ciWorkflow, job runtimeJob, step ru
 			result.ReviewReason = joinDiagnostic(result.ReviewReason, words[0]+" runs no tests; it is outside this validation.")
 			continue
 		}
-		if !environment.LooksLikeTestCommand(root, shellquote.Join(words...), "python", "pytest") && (slices.Contains(words, "tox") || slices.Contains(words, "nox")) {
+		if !testcommand.Matches(root, shellquote.Join(words...), "python", "pytest") && (slices.Contains(words, "tox") || slices.Contains(words, "nox")) {
 			return commandResolution{Review: true, Reason: "This wrapper does not identify a pytest test environment; review it separately."}
 		}
 		return unresolvedCommand("Unresolved Python entry point: " + shellquote.Join(words...) + ". For tox/nox or other wrappers, activate the selected test environment and pass its Python/pytest command explicitly.")

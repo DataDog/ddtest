@@ -22,10 +22,10 @@ var onboardCmd = newOnboardCommand(nil)
 
 func newOnboardCommand(run func(io.Writer) error) *cobra.Command {
 	var apply, yes, instructions, allowDirty, agent bool
-	var version, facts, site, format, resume, ciProvider string
+	var version, facts, site, format, resume string
 	var timeout time.Duration
 	var reviewed, substitute bool
-	var ciRuntimes, ciFacts []string
+	var ci ciOptions
 	command := &cobra.Command{
 		Use:   "onboard",
 		Short: "Start here: onboard this repository to Test Optimization",
@@ -52,12 +52,9 @@ func newOnboardCommand(run func(io.Writer) error) *cobra.Command {
 			if apply && instructions {
 				return fail("invalid_options", fmt.Errorf("--apply and --instructions are mutually exclusive"))
 			}
-			if err := resolveCIProvider(cmd, ciProvider); err != nil {
-				// Without --instructions, onboarding answers non-terminals in the agent protocol.
-				return ciProviderFailure(cmd, structured || (!instructions && !apply && !isTerminalWriter(cmd.OutOrStdout())), err)
-			}
-			if err := resolveCIStatements(ciRuntimes, ciFacts); err != nil {
-				return ciStatementFailure(cmd, structured || (!instructions && !apply && !isTerminalWriter(cmd.OutOrStdout())), err)
+			// Without --instructions, onboarding answers non-terminals in the agent protocol.
+			if err := ci.resolve(cmd, structured || (!instructions && !apply && !isTerminalWriter(cmd.OutOrStdout()))); err != nil {
+				return err
 			}
 			// start returns the onboarding handoff: the next command, or for a
 			// language whose CI setup the agent applies, the setup to apply first.
@@ -147,8 +144,7 @@ func newOnboardCommand(run func(io.Writer) error) *cobra.Command {
 	command.Flags().StringVar(&facts, "facts", "", "JSON build/service facts bound to input_fingerprint; must be outside the checkout")
 	command.Flags().StringVar(&site, "site", "", "Datadog site for a new action (default DD_SITE, otherwise datadoghq.com)")
 	command.Flags().StringVar(&format, "format", "agent", "Result rendering: agent or json for direct host consumption")
-	command.Flags().StringVar(&ciProvider, "ci-provider", "", ciProviderFlagUsage())
-	ciStatementFlags(command, &ciRuntimes, &ciFacts)
+	ci.addFlags(command)
 
 	command.Flags().BoolVar(&allowDirty, "allow-dirty", false, "Explicitly extend uncommitted target-file edits after showing their exact diff")
 	agentHelp(command)

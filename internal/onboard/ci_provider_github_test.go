@@ -3,16 +3,63 @@
 // This product includes software developed at Datadog (https://www.datadoghq.com/).
 // Copyright 2026 Datadog, Inc.
 
-package environment
+package onboard
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
+
+func TestGitHubInstructionsIgnoreExpressionEnvironments(t *testing.T) {
+	for _, scope := range []string{"workflow", "job", "step"} {
+		for _, configured := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/configured=%t", scope, configured), func(t *testing.T) {
+				workflow := `jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - run: npm test
+`
+				const environment = "env: ${{ fromJSON(vars.TEST_ENV) }}\n"
+				switch scope {
+				case "workflow":
+					workflow = environment + workflow
+				case "job":
+					workflow = strings.Replace(workflow, "    runs-on:", "    "+environment+"    runs-on:", 1)
+				case "step":
+					workflow += "        " + environment
+				}
+				if configured {
+					workflow = strings.Replace(workflow, "    steps:\n", "    steps:\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: js}\n", 1)
+				}
+				root := newJestRepository(t, workflow)
+				useCIProvider(t, "github")
+				t.Chdir(root)
+
+				var output bytes.Buffer
+				require.NoError(t, Run(&output))
+				require.Contains(t, output.String(), "DDTest found javascript, jest, and GitHub Actions.")
+				require.Contains(t, output.String(), ".github/workflows/test.yml")
+				require.Equal(t, configured, strings.Contains(output.String(), "already appears in every detected test workflow"))
+				if !configured {
+					require.Contains(t, output.String(), "languages: js")
+				}
+
+				// Manual guidance must not make unresolved environments acceptable
+				// to full discovery and validation.
+				_, err := (gitHubActions{}).readWorkflows(root)
+				require.ErrorContains(t, err, "cannot unmarshal")
+				require.ErrorContains(t, err, "into map[string]string")
+			})
+		}
+	}
+}
 
 func TestGitHubFindTestWorkflowsWorkingDirectories(t *testing.T) {
 	for _, tc := range []struct {
@@ -54,7 +101,7 @@ jobs:
 `, tc.workflow, tc.job, tc.step)
 			require.NoError(t, os.MkdirAll(filepath.Join(root, ".github/workflows"), 0755))
 			require.NoError(t, os.WriteFile(filepath.Join(root, ".github/workflows/test.yml"), []byte(workflow), 0644))
-			workflows, configured, err := NewGitHub().FindTestWorkflows(root, "javascript", "jest")
+			workflows, configured, err := (gitHubActions{}).findTestWorkflows(root, "javascript", "jest")
 			require.NoError(t, err)
 			require.Equal(t, tc.found, len(workflows) == 1)
 			require.Equal(t, tc.found, len(configured) == 1)
@@ -98,7 +145,7 @@ func TestGitHubFindTestWorkflowsCommandKinds(t *testing.T) {
 			path := filepath.Join(root, ".github/workflows/test.yml")
 			workflow := fmt.Sprintf("jobs:\n  tests:\n    steps:\n      - run: %s\n", tc.command)
 			require.NoError(t, os.WriteFile(path, []byte(workflow), 0644))
-			workflows, configured, err := NewGitHub().FindTestWorkflows(root, tc.language, tc.framework)
+			workflows, configured, err := (gitHubActions{}).findTestWorkflows(root, tc.language, tc.framework)
 			require.NoError(t, err)
 			require.Equal(t, tc.tests, len(workflows) == 1)
 			require.Empty(t, configured)
@@ -107,7 +154,7 @@ func TestGitHubFindTestWorkflowsCommandKinds(t *testing.T) {
 			// that run after the Datadog action.
 			workflow += "      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: all}\n      - run: " + tc.framework + " run\n"
 			require.NoError(t, os.WriteFile(path, []byte(workflow), 0644))
-			workflows, configured, err = NewGitHub().FindTestWorkflows(root, tc.language, tc.framework)
+			workflows, configured, err = (gitHubActions{}).findTestWorkflows(root, tc.language, tc.framework)
 			require.NoError(t, err)
 			require.Len(t, workflows, 1)
 			require.Equal(t, !tc.tests, len(configured) == 1)
@@ -133,10 +180,41 @@ func TestGitHubFindTestWorkflowsRecognizesMavenTestPhases(t *testing.T) {
 			require.NoError(t, os.MkdirAll(filepath.Join(root, ".github/workflows"), 0755))
 			workflow := fmt.Sprintf("jobs:\n  tests:\n    steps:\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: java}\n      - run: %s\n", tc.command)
 			require.NoError(t, os.WriteFile(filepath.Join(root, ".github/workflows/test.yml"), []byte(workflow), 0644))
-			workflows, configured, err := NewGitHub().FindTestWorkflows(root, "java", "junit5")
+			workflows, configured, err := (gitHubActions{}).findTestWorkflows(root, "java", "junit5")
 			require.NoError(t, err)
 			require.Equal(t, tc.tests, len(workflows) == 1)
 			require.Equal(t, tc.tests, len(configured) == 1, "the action selects java")
 		})
 	}
+}
+
+func TestGitHubWorkflowLoadingIsShared(t *testing.T) {
+	root := t.TempDir()
+	provider := gitHubActions{}
+	files, err := provider.configurationFiles(root)
+	require.NoError(t, err)
+	require.Empty(t, files)
+	for _, name := range []string{"z.yml", "a.yaml", "notes.txt"} {
+		writeFile(t, root, ".github/workflows/"+name, "jobs:\n  tests:\n    steps:\n      - run: jest\n")
+	}
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".github/workflows/directory.yml"), 0700))
+	files, err = provider.configurationFiles(root)
+	require.NoError(t, err)
+	require.Equal(t, []string{".github/workflows/a.yaml", ".github/workflows/z.yml"}, files)
+	workflows, err := provider.readWorkflows(root)
+	require.NoError(t, err)
+	require.Len(t, workflows, len(files))
+	for i, workflow := range workflows {
+		require.Equal(t, files[i], workflow.Path)
+	}
+	found, _, err := findTestWorkflows(provider, root, "javascript", "jest")
+	require.NoError(t, err)
+	require.Equal(t, files, found)
+
+	writeFile(t, root, files[0], "jobs: [invalid")
+	_, validationErr := provider.readWorkflows(root)
+	_, _, instructionErr := findTestWorkflows(provider, root, "javascript", "jest")
+	require.Error(t, validationErr)
+	require.EqualError(t, instructionErr, validationErr.Error())
+	require.Contains(t, validationErr.Error(), "parse "+filepath.Join(root, files[0]))
 }

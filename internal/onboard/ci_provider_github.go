@@ -10,9 +10,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
-	"github.com/DataDog/ddtest/internal/environment"
+	"github.com/DataDog/ddtest/internal/testcommand"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -60,24 +61,15 @@ func (g gitHubActions) configurationFiles(root string) ([]string, error) {
 	return paths, err
 }
 
-func (g gitHubActions) readWorkflows(root string) ([]ciWorkflow, error) {
-	names, err := g.workflowEntries(root)
+func (gitHubActions) readWorkflows(root string) ([]ciWorkflow, error) {
+	files, err := readGitHubWorkflowFiles[ciWorkflow](root)
 	if err != nil {
 		return nil, err
 	}
 	var workflows []ciWorkflow
-	directory := filepath.Join(root, ".github", "workflows")
-	for _, name := range names {
-		path := filepath.Join(directory, name)
-		contents, err := os.ReadFile(path)
-		if err != nil {
-			return nil, fmt.Errorf("read %s: %w", path, err)
-		}
-		var workflow ciWorkflow
-		if err := yaml.Unmarshal(contents, &workflow); err != nil {
-			return nil, fmt.Errorf("parse %s: %w", path, err)
-		}
-		workflow.Path = ".github/workflows/" + name
+	for _, file := range files {
+		workflow := file.workflow
+		workflow.Path = file.path
 		for jobName, job := range workflow.Jobs {
 			job.Steps = expandCompositeSteps(root, workflow.Path, job.Steps)
 			workflow.Jobs[jobName] = job
@@ -87,8 +79,113 @@ func (g gitHubActions) readWorkflows(root string) ([]ciWorkflow, error) {
 	return workflows, nil
 }
 
+type gitHubWorkflowFile[T any] struct {
+	path     string
+	workflow T
+}
+
+// readGitHubWorkflowFiles shares file loading and parse errors while letting
+// manual instructions decode fewer fields than full discovery and validation.
+func readGitHubWorkflowFiles[T any](root string) ([]gitHubWorkflowFile[T], error) {
+	names, err := (gitHubActions{}).workflowEntries(root)
+	if err != nil {
+		return nil, err
+	}
+	var workflows []gitHubWorkflowFile[T]
+	directory := filepath.Join(root, ".github", "workflows")
+	for _, name := range names {
+		path := filepath.Join(directory, name)
+		contents, err := os.ReadFile(path)
+		if err != nil {
+			return nil, fmt.Errorf("read %s: %w", path, err)
+		}
+		var workflow T
+		if err := yaml.Unmarshal(contents, &workflow); err != nil {
+			return nil, fmt.Errorf("parse %s: %w", path, err)
+		}
+		workflows = append(workflows, gitHubWorkflowFile[T]{path: ".github/workflows/" + name, workflow: workflow})
+	}
+	return workflows, nil
+}
+
+// Manual instructions inspect only literal commands, directories and setup
+// languages. Other fields, including expression-valued environments, must not
+// prevent guidance; full validation still decodes the complete ciWorkflow.
+type gitHubInstructionDefaults struct {
+	Run struct {
+		WorkingDirectory string `yaml:"working-directory"`
+	} `yaml:"run"`
+}
+
+type gitHubInstructionWorkflow struct {
+	Defaults gitHubInstructionDefaults `yaml:"defaults"`
+	Jobs     map[string]struct {
+		Defaults gitHubInstructionDefaults `yaml:"defaults"`
+		Steps    []struct {
+			Run              string `yaml:"run"`
+			Uses             string `yaml:"uses"`
+			If               string `yaml:"if"`
+			WorkingDirectory string `yaml:"working-directory"`
+			With             struct {
+				Languages string `yaml:"languages"`
+			} `yaml:"with"`
+		} `yaml:"steps"`
+	} `yaml:"jobs"`
+}
+
 func (gitHubActions) findTestWorkflows(root, language, framework string) ([]string, []string, error) {
-	return environment.NewGitHub().FindTestWorkflows(root, language, framework)
+	workflows, err := readGitHubWorkflowFiles[gitHubInstructionWorkflow](root)
+	if err != nil {
+		return nil, nil, err
+	}
+	var found, configured []string
+	for _, file := range workflows {
+		tests, setup := inspectLiteralTestJobs(root, file.workflow, language, framework)
+		if tests {
+			found = append(found, file.path)
+			if setup {
+				configured = append(configured, file.path)
+			}
+		}
+	}
+	return found, configured, nil
+}
+
+// inspectLiteralTestJobs preserves the conservative action and command checks
+// used by manual onboarding. Full validation uses resolved commands instead.
+func inspectLiteralTestJobs(root string, workflow gitHubInstructionWorkflow, language, name string) (foundTests, configured bool) {
+	actionLanguage := setupActionLanguage(language)
+	for _, job := range workflow.Jobs {
+		jobConfigured := false
+		for _, step := range job.Steps {
+			condition := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(strings.TrimSpace(step.If), "${{"), "}}"))
+			if condition == "false" {
+				continue
+			}
+			directory := step.WorkingDirectory
+			if directory == "" {
+				directory = job.Defaults.Run.WorkingDirectory
+			}
+			if directory == "" {
+				directory = workflow.Defaults.Run.WorkingDirectory
+			}
+			if !filepath.IsAbs(directory) {
+				directory = filepath.Join(root, directory)
+			}
+			if testcommand.Matches(directory, step.Run, language, name) {
+				foundTests = true
+				if !jobConfigured {
+					return true, false
+				}
+			}
+			action, _, hasVersion := strings.Cut(strings.ToLower(step.Uses), "@")
+			if action == githubAction && hasVersion && (condition == "" || condition == "true" || condition == "success()") && !strings.Contains(step.With.Languages, "${{") {
+				languages := strings.Fields(step.With.Languages)
+				jobConfigured = jobConfigured || step.With.Languages == "all" || slices.Contains(languages, actionLanguage)
+			}
+		}
+	}
+	return foundTests, foundTests
 }
 
 func (gitHubActions) editsSetup() bool { return true }

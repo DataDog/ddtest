@@ -369,27 +369,6 @@ func fillStatedRuntimes(workflows []ciWorkflow) {
 	}
 }
 
-// readProviderWorkflows reads a provider's configuration with the user's
-// runtime statements recorded on its jobs.
-func readProviderWorkflows(provider ciProvider, root string) ([]ciWorkflow, error) {
-	workflows, err := provider.readWorkflows(root)
-	if err == nil {
-		fillStatedRuntimes(workflows)
-		checkFallbackPrerequisites(provider, workflows)
-		checkout := []string{ciProjectDirectory, "${{github.workspace}}"}
-		if name := provider.checkoutVariable(); name != "" {
-			checkout = append(checkout, "$"+name, "${"+name+"}")
-		}
-		for _, workflow := range workflows {
-			for name, job := range workflow.Jobs {
-				job.Checkout = append(slices.Clone(checkout), job.Checkout...)
-				workflow.Jobs[name] = job
-			}
-		}
-	}
-	return workflows, err
-}
-
 // runtimeHost describes where a job whose configuration selects no runtime
 // runs on a matrix row (nil: the job without a row), for a person who knows
 // that host's runtime; empty when ddtest does not take the user's statement

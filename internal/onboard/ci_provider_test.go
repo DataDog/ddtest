@@ -404,7 +404,7 @@ func TestUnknownActiveProviderFails(t *testing.T) {
 // Provider files parse CI configuration into neutral facts; language decisions
 // stay behind discoveryLanguage.
 func TestCIProviderFilesNameNoLanguage(t *testing.T) {
-	languageguard.CheckNeutral(t, ".", "ci_provider*.go", "ci_providers.go")
+	languageguard.CheckNeutral(t, ".", "ci_provider*.go", "ci_providers.go", "ci_selection.go", "ci_setup.go", "ci_workflows.go")
 }
 
 // A run without the selected provider's configuration consults no CI, so the

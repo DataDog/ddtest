@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -516,4 +517,66 @@ func repositoryScript(root, directory, name string) (os.FileInfo, error) {
 func excludedFingerprintPath(name string) bool {
 	name = filepath.ToSlash(name)
 	return name == ".testoptimization" || strings.HasPrefix(name, ".testoptimization/")
+}
+
+func reattachSetupFacts(updated *onboard.ValidationScope, previous onboard.ValidationScope, afterEdit bool) error {
+	matched := map[string]bool{}
+	identity := func(entry onboard.TestCommand) string {
+		// The owned editor may partition instrumentation while preserving the
+		// original command/setup. Each resulting row retains its own new ID.
+		entry.CIInstrumentationExcluded = false
+		entry.Environment = maps.Clone(entry.Environment)
+		if entry.Environment["NODE_OPTIONS"] == "" {
+			delete(entry.Environment, "NODE_OPTIONS")
+		}
+		if len(entry.Environment) == 0 {
+			entry.Environment = nil
+		}
+		scope := onboard.ValidationScope{Commands: []onboard.TestCommand{entry}}
+		onboard.AssignConfigurationIDs(&scope)
+		return scope.Commands[0].ID
+	}
+	for i := range updated.Commands {
+		current := updated.Commands[i]
+		match := slices.IndexFunc(previous.Commands, func(entry onboard.TestCommand) bool { return entry.ID == current.ID })
+		if match < 0 && afterEdit {
+			match = slices.IndexFunc(previous.Commands, func(entry onboard.TestCommand) bool { return identity(entry) == identity(current) })
+			if match < 0 && strings.HasPrefix(current.Command, "nyc -- ") {
+				// The bounded editor may add this exact coverage wrapper. Match an
+				// existing wrapped command first, before considering its old leaf.
+				current.Command = strings.TrimPrefix(current.Command, "nyc -- ")
+				match = slices.IndexFunc(previous.Commands, func(entry onboard.TestCommand) bool { return identity(entry) == identity(current) })
+			}
+		}
+		if match < 0 {
+			continue
+		}
+		entry := previous.Commands[match]
+		matched[entry.ID] = true
+		updated.Commands[i].Services = entry.Services
+		updated.Commands[i].PortOverride = entry.PortOverride
+
+		for _, build := range entry.Prerequisites {
+			if build.FactSource != "" {
+				pending := slices.IndexFunc(updated.Commands[i].Prerequisites, func(candidate onboard.BuildCommand) bool {
+					return candidate.Kind == onboard.PreparationNeedsFacts && candidate.Command == build.Command && candidate.Directory == build.Directory
+				})
+				if pending >= 0 {
+					updated.Commands[i].Prerequisites[pending] = build
+				} else {
+					updated.Commands[i].Prerequisites = append(updated.Commands[i].Prerequisites, build)
+				}
+			}
+		}
+	}
+	for _, entry := range previous.Commands {
+		hasFacts := len(entry.Services) > 0 || entry.PortOverride != nil || len(entry.LocalOverrides) > 0
+		for _, build := range entry.Prerequisites {
+			hasFacts = hasFacts || build.FactSource != ""
+		}
+		if hasFacts && !matched[entry.ID] {
+			return fmt.Errorf("accepted facts for %s could not be reattached", entry.ID)
+		}
+	}
+	return nil
 }

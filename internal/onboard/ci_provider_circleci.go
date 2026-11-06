@@ -82,15 +82,6 @@ func (c circleCI) readWorkflows(root string) ([]ciWorkflow, error) {
 	return []ciWorkflow{config.workflow()}, nil
 }
 
-func (c circleCI) findTestWorkflows(root, language, framework string) ([]string, []string, error) {
-	workflows, err := c.readWorkflows(root)
-	if err != nil {
-		return nil, nil, err
-	}
-	found, configured := testWorkflowsWithSetup(root, workflows, language, framework)
-	return found, configured, nil
-}
-
 func (circleCI) setupStep(step runtimeStep) (ciSetup, bool) {
 	if step.Setup == nil {
 		return ciSetup{}, false

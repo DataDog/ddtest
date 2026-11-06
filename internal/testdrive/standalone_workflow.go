@@ -23,7 +23,9 @@ import (
 // results, then runs the standalone validation and returns its verdict with
 // the report's final_response. It keeps no checkpoint, so it takes neither
 // --resume nor --facts.
-func (t *Testdrive) standaloneWorkflow(ctx context.Context, output io.Writer, options WorkflowOptions, result *onboard.AgentResult, recoveryCommand []string, fail func(status, code, reason, needs string) error, finalResponse *string) error {
+func (t *Testdrive) standaloneWorkflow(ctx context.Context, attempt *workflowAttempt, fail func(status, code, reason, needs string) error) error {
+	output, options := attempt.output, attempt.options
+	result, recoveryCommand := attempt.result, attempt.recoveryCommand
 	name := t.framework.Name()
 	if options.Resume != "" || options.FactsFile != "" {
 		result.NextCommand = nil
@@ -48,15 +50,8 @@ func (t *Testdrive) standaloneWorkflow(ctx context.Context, output io.Writer, op
 		return onboard.RenderAgentResult(output, *result, options.Format)
 	}
 	// Only the user can tell these; nothing runs before they answer.
-	if required := onboard.RequiredCIRuntimes(ctx, t.repositoryRoot, t.language, name); required != nil {
-		asked := onboard.CIRuntimeRequiredResult(required)
-		result.Location, result.RequiredInput, result.Instruction = asked.Location, asked.RequiredInput, asked.Instruction
-		return fail("needs_input", asked.Code, asked.Reason, asked.Instruction)
-	}
-	if required := onboard.RequiredCIConfirmations(t.repositoryRoot, t.language, name); required != nil {
-		asked := onboard.CIConfirmationRequiredResult(required)
-		result.Location, result.RequiredInput, result.Instruction = asked.Location, asked.RequiredInput, asked.Instruction
-		return fail("needs_input", asked.Code, asked.Reason, asked.Instruction)
+	if err := attempt.checkCIStatements(ctx, t); err != nil {
+		return err
 	}
 	// A test command that drops what the setup sets runs untraced in CI:
 	// the exact edit comes first, then this same command.
@@ -67,16 +62,9 @@ func (t *Testdrive) standaloneWorkflow(ctx context.Context, output io.Writer, op
 	}
 	if !options.ExplicitVersion && t.projectTracer == "" {
 		// The handoff cannot name the release the CI setup pins; validate it.
-		pin := ""
-		for _, job := range t.lang().ciRuntimes(ctx, t.repositoryRoot, name).Jobs {
-			if candidate := t.lang().ciPinnedTracer(job); candidate != "" {
-				if pin != "" && pin != candidate {
-					result.Location = job.Workflow + " / " + job.Job
-					result.RequiredInput = []string{"one intended CI tracer release, or separate explicitly scoped runs"}
-					return fail("needs_input", "multiple_ci_tracers", "CI selects different tracer releases.", "Preserve every configuration and align the intended tracer selection explicitly.")
-				}
-				pin = candidate
-			}
+		pin, err := attempt.ciPinnedTracer(ctx, t)
+		if err != nil {
+			return err
 		}
 		if pin != "" && pin != t.tracerVersion {
 			prepared, err := Prepare(PrepareOptions{TracerVersion: pin, CheckOnly: t.checkOnly, All: t.allConfigurations, Timeout: t.commandTimeout, AllowReviewedBuilds: t.allowReviewedBuilds, AcceptSubstituteRuntime: t.acceptSubstituteRuntime})
@@ -122,7 +110,7 @@ func (t *Testdrive) standaloneWorkflow(ctx context.Context, output io.Writer, op
 		result.FinalResponse = validation.Summary.FinalResponse
 		return onboard.RenderAgentResult(output, *result, options.Format)
 	}
-	*finalResponse = validation.Summary.FinalResponse
+	attempt.finalResponse = validation.Summary.FinalResponse
 	result.ResumeCommand = append([]string{}, recoveryCommand...)
 	result.RequiredInput = nil
 	reportOnly, actionable := splitTracerOnlyBlockers(validation)

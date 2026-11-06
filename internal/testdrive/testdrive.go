@@ -238,123 +238,19 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 	if frameworkFeaturePolicies[runner.Name()].Configurations && !all {
 		scope, scopeErr = onboard.DiscoverValidationScope(repositoryRoot, runner.Name())
 	}
-	if runner.Name() == "jest" && !all {
-		var selected string
-		if configurationOnly {
-			var entry onboard.TestCommand
-			entry, err = onboard.JestConfigurationCommand(repositoryRoot, strings.TrimSpace(settings.GetCommand()))
-			selected, preflightEnvironment = entry.Command, entry.Environment
-		} else if override := strings.TrimSpace(settings.GetCommand()); override != "" {
-			selectedPlan, err = onboard.ForwardJestExecution(repositoryRoot, override)
-			selected = selectedPlan.Command
-		} else {
-			selectedPlan, err = onboard.JestExecutionCommand(repositoryRoot)
-			selected = selectedPlan.Command
-		}
-		if err != nil {
-			discoveryError = err
-		}
-		if selected != "" {
-			words, err := shellquote.Split(selected)
-			if err != nil || len(words) == 0 {
-				discoveryError = fmt.Errorf("invalid Jest command: %s", selected)
-			} else {
-				command, args = words[0], words[1:]
-				if command == "npx" && !slices.Contains(args, "--no-install") {
-					args = append([]string{"--no-install"}, args...)
-				}
-			}
-
-		}
-	}
-	// A failed discovery still runs startup recovery and replaces the earlier
-	// report after confirmation, so a stale PASSED result never stays current.
-	if runner.Name() == "playwright" && !all {
-		selected, resolveErr := onboard.PlaywrightValidationCommandInScope(repositoryRoot, strings.TrimSpace(settings.GetCommand()), scope, scopeErr)
-		if resolveErr != nil {
-			discoveryError = resolveErr
-		} else if selected != "" {
-			words, splitErr := shellquote.Split(selected)
-			if splitErr != nil || len(words) == 0 {
-				discoveryError = fmt.Errorf("invalid Playwright command: %s", selected)
-			} else {
-				command, args = words[0], words[1:]
-			}
-		}
-	}
-	if runner.Name() == "cypress" && !all {
-		selectedPlan, err = onboard.CypressExecutionCommandInScope(repositoryRoot, strings.TrimSpace(settings.GetCommand()), scope, scopeErr)
-		if err != nil {
-			discoveryError = err
-		} else if selectedPlan.Cypress != nil {
-			command, args = "node", nil
-		} else {
-			words, splitErr := shellquote.Split(selectedPlan.Command)
-			if splitErr != nil || len(words) == 0 {
-				discoveryError = fmt.Errorf("invalid Cypress command: %s", selectedPlan.Command)
-			} else {
-				command, args = words[0], words[1:]
-			}
-		}
-	}
-	if runner.Name() == "cucumber" && !all {
-		var resolveErr error
-		selectedPlan, resolveErr = onboard.CucumberExecutionCommand(repositoryRoot, strings.TrimSpace(settings.GetCommand()))
-		selected := selectedPlan.Command
-		if resolveErr != nil {
-			discoveryError = resolveErr
-		} else if selected != "" {
-			words, splitErr := shellquote.Split(selected)
-			if splitErr != nil || len(words) == 0 {
-				discoveryError = fmt.Errorf("invalid Cucumber command: %s", selected)
-			} else {
-				command, args = words[0], words[1:]
-			}
-		}
-	}
-	if runner.Name() == "webdriverio" && !all {
-		selected, resolveErr := onboard.WebdriverIOValidationCommand(repositoryRoot, strings.TrimSpace(settings.GetCommand()))
-		if resolveErr != nil {
-			discoveryError = resolveErr
-		} else if selected != "" {
-			words, splitErr := shellquote.Split(selected)
-			if splitErr != nil || len(words) == 0 {
-				discoveryError = fmt.Errorf("invalid WebdriverIO command: %s", selected)
-			} else {
-				command, args = words[0], words[1:]
-			}
-		}
-	}
-	if runner.Name() == "mocha" && !all {
-		selected, resolveErr := onboard.MochaValidationCommandInScope(repositoryRoot, strings.TrimSpace(settings.GetCommand()), scope, scopeErr)
-		if resolveErr != nil {
-			discoveryError = resolveErr
-		} else if selected != "" {
-			words, splitErr := shellquote.Split(selected)
-			if splitErr != nil || len(words) == 0 {
-				discoveryError = fmt.Errorf("invalid Mocha command: %s", selected)
-			} else {
-				command, args = words[0], words[1:]
-			}
-		}
+	if language == "javascript" && !all {
+		selected, selectionErr := selectJavaScriptCommand(javascriptCommandRequest{
+			root: repositoryRoot, framework: runner.Name(), override: strings.TrimSpace(settings.GetCommand()),
+			checkOnly: configurationOnly, scope: scope, scopeErr: scopeErr,
+		}, command, args)
+		command, args = selected.command, selected.args
+		selectedPlan, preflightEnvironment, discoveryError = selected.plan, selected.environment, selectionErr
 	}
 	label := selectedLanguage.tracerPackage() + "@" + version
 
 	session := workspace.PlanSession()
 	if !supportsValidationFramework(runner.Name()) {
 		session.Persist(filepath.Join(repositoryRoot, ".testoptimization", "testdrive", session.ID()))
-	}
-	if runner.Name() == "vitest" && !all {
-		selectedPlan, discoveryError = onboard.VitestValidationCommandInScope(repositoryRoot, strings.TrimSpace(settings.GetCommand()), scope, scopeErr)
-		if discoveryError == nil {
-			words, splitErr := shellquote.Split(selectedPlan.Command)
-			if splitErr != nil || len(words) == 0 {
-				discoveryError = fmt.Errorf("invalid Vitest command: %s", selectedPlan.Command)
-			} else {
-				command, args = words[0], words[1:]
-			}
-			preflightEnvironment = selectedPlan.Environment
-		}
 	}
 	originalCommand := shellquote.Join(append([]string{command}, args...)...)
 	if selectedPlan.Cypress != nil {
@@ -391,9 +287,7 @@ func Prepare(configuration PrepareOptions) (*Testdrive, error) {
 		if matched != nil {
 			matched = onboard.WithCIProviderDefaults(matched)
 		}
-		configurationEnvironment = mergeConfigurationEnvironment(matched, preflightEnvironment)
-		configurationEnvironment = mergeConfigurationEnvironment(configurationEnvironment, selectedPlan.Environment)
-		configurationEnvironment = mergeConfigurationEnvironment(configurationEnvironment, commandAssignments)
+		configurationEnvironment = mergeConfigurationEnvironment(matched, preflightEnvironment, selectedPlan.Environment, commandAssignments)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

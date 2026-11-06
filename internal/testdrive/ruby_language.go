@@ -159,9 +159,7 @@ func (rubyLanguage) pairedFrameworks() map[string]pairedFramework {
 		features: func(t *Testdrive, ctx context.Context, output io.Writer, session *workspace.Session, _ string, baseline validationRun, result *validationResult) error {
 			return t.runRubyFeatures(ctx, output, session, baseline, result)
 		},
-		preflight: func(t *Testdrive) func(context.Context, io.Writer, *validationResult) error {
-			return t.checkRubyPreflight
-		},
+		preflight:             (*Testdrive).checkRubyPreflight,
 		telemetry:             verifyRubyTelemetry,
 		preflightAfterInstall: true,
 		missingCoverage:       "Ruby application coverage was not observed. Inspect the selected Gemfile/runtime and native suite output; setup failures before tests start cannot validate compatibility or features. Check datadog-ci coverage settings after the native suite runs.",

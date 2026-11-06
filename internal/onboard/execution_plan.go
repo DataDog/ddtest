@@ -59,6 +59,21 @@ func AssignConfigurationIDs(scope *ValidationScope) {
 	}
 }
 
+// Setup facts describe local prerequisites bound to an input fingerprint.
+// They add setup to discovered commands without overriding validation.
+type PrerequisiteFact struct {
+	ForCommand    string   `json:"for_command"`
+	Directory     string   `json:"directory,omitempty"`
+	Argv          []string `json:"argv"`
+	ExpectedFiles []string `json:"expected_files"`
+}
+type SetupFacts struct {
+	SchemaVersion  int                 `json:"schema_version"`
+	Fingerprint    string              `json:"input_fingerprint"`
+	Prerequisites  []PrerequisiteFact  `json:"prerequisites"`
+	Configurations []ConfigurationFact `json:"configurations,omitempty"`
+}
+
 // ServiceCommand describes a repository-owned application, not the test runner.
 // PortEnvironment is an existing shared app/test override. A free port is chosen
 // only when that explicit override is supplied; arbitrary config rewriting is not.
