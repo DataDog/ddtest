@@ -102,7 +102,7 @@ func (tr *TestRunner) Run(ctx context.Context) error {
 	workerEnvMap := settings.GetWorkerEnvMap()
 	var recorder *payloadRecorder
 	if payloadsDir := settings.GetRecordPayloads(); payloadsDir != "" {
-		recorder, err = startPayloadRecorder(payloadsDir)
+		recorder, err = startPayloadRecorder(payloadsDir, recordOnUnixSocket(settings.GetRecordPayloadsTransport(), tr.platform))
 		if err != nil {
 			return err
 		}

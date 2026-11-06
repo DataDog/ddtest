@@ -153,6 +153,17 @@ func TestPlatformSanityChecksPropagateContext(t *testing.T) {
 	}
 }
 
+// The languages whose tracing libraries ddtest run --record-payloads reaches
+// over a Unix domain socket by default; see each platform's
+// ReachesAgentOnUnixSocket for the versions checked.
+func TestPlatformsReachAgentOnUnixSocket(t *testing.T) {
+	reaches := map[string]bool{}
+	for _, p := range []Platform{NewJavaScript(), NewPython(), NewRuby(settings.TestSkippingLevelTest), NewJava()} {
+		reaches[p.Name()] = p.ReachesAgentOnUnixSocket()
+	}
+	require.Equal(t, map[string]bool{"javascript": true, "java": true, "python": false, "ruby": false}, reaches)
+}
+
 func TestDetectPlatformUnsupported(t *testing.T) {
 	viper.Reset()
 	t.Cleanup(func() {

@@ -235,14 +235,32 @@ ddtest run --ci-node 3 --record-payloads /tmp/payloads
 ```
 
 DDTest serves the local stand-in for the Datadog Agent that
-[`ddtest record`](../README.md#ddtest-record) runs, on a free `127.0.0.1` port,
-and sets `DD_TRACE_AGENT_URL` to it and `DD_CIVISIBILITY_AGENTLESS_ENABLED` to
-`false` for every worker, overriding `--worker-env` and the environment.
+[`ddtest record`](../README.md#ddtest-record) runs, on a free `127.0.0.1` port
+or a Unix domain socket (below), and sets `DD_TRACE_AGENT_URL` to it and
+`DD_CIVISIBILITY_AGENTLESS_ENABLED` to `false` for every worker, overriding
+`--worker-env` and the environment.
 Configuration requests are answered from the plan's HTTP cache. After the
 workers finish, DDTest waits for the payloads in progress, so the directory
 holds every payload the libraries sent. If the directory can't be created,
 DDTest stops with `run_payload_recorder_failed` before running any test.
 Without the flag, workers send their payloads as usual.
+
+A Unix domain socket takes no port, and goes in a directory of its own under
+`/tmp` that only the user running DDTest can open.
+`--record-payloads-transport` (or
+`DD_TEST_OPTIMIZATION_RUNNER_RECORD_PAYLOADS_TRANSPORT`) picks the transport:
+`tcp`, `unix`, or `auto`, the default, which uses a Unix domain socket for the
+languages whose tracing libraries reach an agent on one, and TCP for the
+others and on Windows:
+
+| Language | `auto` | Checked with |
+| --- | --- | --- |
+| JavaScript | `unix` | dd-trace 6.24.0 and Jest |
+| Java | `unix` | dd-java-agent 1.68.1 and JUnit 5 |
+| Python | `tcp` | ddtrace 4.16.1 turns Test Optimization off with an agent on a Unix domain socket; fixed in DataDog/dd-trace-py#21544 |
+| Ruby | `tcp` | datadog-ci 1.42.0 connects to the agent over TCP only, and the run fails with a `unix://` URL |
+
+With `unix`, `DD_TRACE_AGENT_URL` is `unix://` and the socket's path.
 
 ## Custom Commands
 

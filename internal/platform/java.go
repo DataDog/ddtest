@@ -92,6 +92,10 @@ func (j *Java) declaredFrameworks() ([]string, error) {
 
 func (j *Java) TestSkippingLevel() settings.TestSkippingLevel { return settings.TestSkippingLevelTest }
 
+// ReachesAgentOnUnixSocket is true: dd-java-agent 1.68.1 sent JUnit 5's test
+// events to an agent on a Unix domain socket.
+func (j *Java) ReachesAgentOnUnixSocket() bool { return true }
+
 func (j *Java) SanityCheck(ctx context.Context) error {
 	if output, err := j.executor.CombinedOutput(ctx, "java", []string{"-version"}, nil); err != nil {
 		return runtimeTagProbeError("check Java runtime", output, err)

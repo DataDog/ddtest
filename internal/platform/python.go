@@ -99,6 +99,11 @@ func (p *Python) TestSkippingLevel() settings.TestSkippingLevel {
 	return settings.NormalizeTestSkippingLevel(p.testSkippingLevel)
 }
 
+// ReachesAgentOnUnixSocket is false: ddtrace 4.16.1 requests the socket's path
+// followed by /info from such an agent and turns Test Optimization off on the
+// 404 (DataDog/dd-trace-py#21544).
+func (p *Python) ReachesAgentOnUnixSocket() bool { return false }
+
 // baseEnv returns environment variables required for Python commands.
 // It appends --ddtrace to PYTEST_ADDOPTS to load the ddtrace pytest plugin.
 func (p *Python) baseEnv() map[string]string {

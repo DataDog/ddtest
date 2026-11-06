@@ -23,6 +23,11 @@ type Platform interface {
 	TracerInstallCommand(options TracerOptions) (string, []string, error)
 	InstallTestdriveTracer(ctx context.Context, options TracerOptions) (TracerInstallation, error)
 	TestSkippingLevel() settings.TestSkippingLevel
+	// ReachesAgentOnUnixSocket reports whether the platform's tracing library
+	// sends Test Optimization's payloads to an agent on a Unix domain socket
+	// (DD_TRACE_AGENT_URL=unix://...), which ddtest run --record-payloads
+	// then uses unless told otherwise.
+	ReachesAgentOnUnixSocket() bool
 }
 
 func detectAnyFile(repositoryRoot string, filenames ...string) (bool, error) {

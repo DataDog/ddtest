@@ -587,6 +587,7 @@ func TestPrintDDTestSettingsReport_AllSupportedSettings(t *testing.T) {
 	config.RuntimeTags = `{"runtime.version":"3.3.4"}`
 	config.ReportEnabled = false
 	config.RecordPayloads = "/tmp/payloads"
+	config.PayloadsTransport = settings.PayloadsTransportUnix
 	config.DurationsFile = "/tmp/durations.json"
 	config.TestDurationsFile = "/tmp/test-durations.json"
 	config.SplitFilesOver = 30 * time.Second
@@ -632,6 +633,7 @@ func TestPrintDDTestSettingsReport_AllSupportedSettings(t *testing.T) {
 		"Runtime tags",
 		"Report enabled",
 		"Record payloads",
+		"Record payloads transport",
 		"Durations file",
 		"Test durations file",
 		"Split files over",

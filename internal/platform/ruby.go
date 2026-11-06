@@ -87,6 +87,11 @@ func (r *Ruby) TestSkippingLevel() settings.TestSkippingLevel {
 	return r.testSkippingLevel
 }
 
+// ReachesAgentOnUnixSocket is false: datadog-ci 1.42.0's transport opens a TCP
+// connection to the agent's host and port, which a unix:// URL doesn't have,
+// and the test run fails.
+func (r *Ruby) ReachesAgentOnUnixSocket() bool { return false }
+
 // baseEnv returns environment variables required for Ruby commands.
 // It sets RUBYOPT to auto-instrument with datadog-ci if not already set.
 func (r *Ruby) baseEnv() map[string]string {

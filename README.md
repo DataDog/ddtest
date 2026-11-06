@@ -333,7 +333,10 @@ EVP proxy. ddtest writes them as JSON under `tests/`, `coverage/` and
 Configuration requests are answered from the plan's HTTP cache in
 `.testoptimization/cache/http/` (change it with `--plan-dir`), or with every
 feature off when there is no cache, and git uploads are answered as if Datadog
-already had the commits.
+already had the commits. `--listen unix:///path/to/agent.sock` listens on a
+Unix domain socket instead (`DD_TRACE_AGENT_URL=unix:///path/to/agent.sock`),
+for the tracing libraries that reach an agent on one (see
+[docs/running.md](docs/running.md)).
 
 To record the payloads of `ddtest run`'s own workers, pass
 `--record-payloads <dir>` to `ddtest run` instead; see

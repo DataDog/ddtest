@@ -99,6 +99,10 @@ func (j *JavaScript) TestSkippingLevel() settings.TestSkippingLevel {
 	return settings.TestSkippingLevelSuite
 }
 
+// ReachesAgentOnUnixSocket is true: dd-trace 6.24.0 sent Jest's test events to
+// an agent on a Unix domain socket.
+func (j *JavaScript) ReachesAgentOnUnixSocket() bool { return true }
+
 // baseEnv returns environment variables required for JS commands.
 func (j *JavaScript) baseEnv() map[string]string {
 	// Jest and Vitest need CI initialization.
