@@ -276,6 +276,24 @@ class ContainerTests(unittest.TestCase):
         time.sleep(3)
         self.assertFalse(sentinel.exists())
 
+    def test_default_datadog_intakes_resolve_only_to_loopback(self):
+        trial=self.root/'intake-guard';trial.mkdir()
+        container=isolation.Container(trial,IMAGE)
+        env=isolation.environment(trial);env['PATH']=container.path
+        script="""import os,socket
+hosts=['instrumentation-telemetry-intake.datadoghq.com','citestcycle-intake.datadoghq.com','cicov-intake.datadoghq.com','api.datadoghq.com']
+for host in hosts:
+    addresses={row[4][0] for row in socket.getaddrinfo(host,443)}
+    assert addresses=={'127.0.0.1'},(host,addresses)
+assert os.environ.get('DD_INSTRUMENTATION_TELEMETRY_ENABLED')=='false'
+"""
+        try:
+            container.start()
+            self.assertEqual(container.execute(['/usr/bin/python3','-c',script],trial,env,10,
+                                               lambda _:None,None,run_eval.execute),0)
+        finally:
+            container.close()
+
     def test_forwarded_environment_is_exact_and_absent_from_docker_argv(self):
         trial=self.root/'env-trial';trial.mkdir()
         container=isolation.Container(trial,IMAGE)

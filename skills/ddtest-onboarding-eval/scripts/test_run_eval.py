@@ -568,7 +568,9 @@ class RunnerTests(unittest.TestCase):
                 self.assertEqual(manifest["evaluation"], "pending")
                 self.assertEqual(manifest["ci_execution"], "not exercised")
                 self.assertEqual(observed["prompt"], manifest["prompt"])
-                self.assertEqual(observed["dd_env"], [])
+                self.assertEqual(observed["dd_env"], ["DD_INSTRUMENTATION_TELEMETRY_ENABLED"])
+                self.assertEqual(observed["environment"]["DD_INSTRUMENTATION_TELEMETRY_ENABLED"], "false")
+                self.assertEqual(manifest["isolation"]["intake_guard"], "us1-defaults-v1")
                 self.assertEqual(observed["npm_unknown_config"], [])
                 for directory in observed["cache_environment"].values():
                     self.assertTrue(Path(directory).is_relative_to(checkout.parent / "caches"))

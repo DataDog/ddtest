@@ -11,7 +11,7 @@ def expand(cases, trials):
             for case in cases for trial in range(1, trials + 1)]
 
 
-def oracle(cases, agents, speed_trims, model=None):
+def oracle(cases, agents, speed_trims, model=None, intake_guard=None):
     def expected(value):
         return {key: value.get(key) for key in ('verdict', 'blockers')}
     values = []
@@ -24,6 +24,8 @@ def oracle(cases, agents, speed_trims, model=None):
     document = {'schema_version': 1, 'speed_trims': speed_trims, 'cases': values}
     if model:
         document['requested_model'] = model
+    if intake_guard:
+        document['intake_guard'] = intake_guard
     encoded = json.dumps(document, sort_keys=True, separators=(',', ':')).encode()
     return {**document, 'sha256': hashlib.sha256(encoded).hexdigest()}
 

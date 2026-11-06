@@ -25,7 +25,7 @@ from urllib.parse import unquote
 
 from model_auth import ModelLogin, login_directory, install_login, remove_login
 
-from isolation import Container, check_socket_budget, cleanup, environment, interrupted, mark_trial, trial_root, validate_image, check_interrupted, begin_teardown, termination_signal
+from isolation import INTAKE_GUARD_VERSION, Container, check_socket_budget, cleanup, environment, interrupted, mark_trial, trial_root, validate_image, check_interrupted, begin_teardown, termination_signal
 
 import user_answers
 import dependency_cache
@@ -1155,7 +1155,7 @@ def run(args):
     started = time.monotonic()
     phase = "preflight"
     phase_totals = {}
-    manifest = {"isolation": {"kind":"container", "image":getattr(args,"image",None), "name":container.name,"git_safe_directory":str(checkout)}, "repository": args.repo, "requested_ref": args.ref,
+    manifest = {"isolation": {"kind":"container", "image":getattr(args,"image",None), "name":container.name,"git_safe_directory":str(checkout),"intake_guard":INTAKE_GUARD_VERSION}, "repository": args.repo, "requested_ref": args.ref,
                 "trial_directory": str(trial), "checkout": str(checkout),
                 "ddtest_sha256": hashlib.sha256(binary.read_bytes()).hexdigest(),
                 "agent": args.agent, "requested_model": args.model, "resolved_model": None,

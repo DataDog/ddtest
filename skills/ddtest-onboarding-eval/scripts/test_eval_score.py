@@ -85,3 +85,29 @@ class ScoreTests(unittest.TestCase):
             eval_score.freeze(path, first)
             with self.assertRaises(ValueError):
                 eval_score.freeze(path, second, evaluate_only=True)
+
+
+    def test_intake_guard_change_requires_a_new_frozen_run(self):
+        case = run_catalog.load_catalog()['cases'][0]
+        before = eval_score.oracle([case], ['codex'], False)
+        after = eval_score.oracle([case], ['codex'], False, intake_guard='us1-defaults-v1')
+        self.assertNotEqual(before['sha256'], after['sha256'])
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'oracle.json'
+            eval_score.freeze(path, before)
+            with self.assertRaises(ValueError):
+                eval_score.freeze(path, after)
+
+
+    def test_single_trial_reevaluation_keeps_recorded_guard_identity(self):
+        from test_catalog_check import write_evidence, real_report
+        case = next(c for c in run_catalog.load_catalog()['cases'] if c['id']=='E02-pipeline-schema')
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            write_evidence(root/(case['id']+'-codex'), testdrive=real_report('E02'),
+                           run={'isolation': {'cleanup': 'removed', 'intake_guard': 'us1-defaults-v1'}})
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(run_catalog.main([case['id'],'--evaluate-only','--output',str(root)]),0)
+            result=json.loads((root/'results.json').read_text())
+            expected=eval_score.oracle([case],['codex'],False,intake_guard='us1-defaults-v1')
+            self.assertEqual(result['oracle_sha256'],expected['sha256'])

@@ -806,12 +806,37 @@ def main(argv=None):
     if missing_cache_bases:
         parser.error("dependency images require the original base --image-map/--image-file, even with --dry-run: "
                      + ", ".join(missing_cache_bases))
-    oracle = eval_score.oracle([{**case, "image": cached.get(case["id"], images.get(case["id"] if args.case_image else case["image"], case["image"]))}
-                               for case in oracle_cases], agents, args.speed_trims, model=args.model)
-    image_keys = {case.get("catalog_id", case["id"]) if args.case_image else case["image"] for case in cases}
-    missing = sorted(image_keys - set(images))
     if args.evaluate_only and not args.output:
         parser.error("--evaluate-only requires --output, the folder holding <id>-<agent> evidence")
+    guard = run_eval.INTAKE_GUARD_VERSION
+    if args.evaluate_only:
+        # Old evidence keeps its original boundary; never certify a guard that
+        # was added after its models ran.
+        saved = Path(args.output) / "oracle.json"
+        try:
+            if saved.exists():
+                guard = json.loads(saved.read_text()).get("intake_guard")
+            else:
+                versions = set()
+                selected_agents = catalog_check.AGENTS if args.agent in (None, "both") else (args.agent,)
+                for case in cases:
+                    for agent in selected_agents:
+                        manifest = Path(args.output) / f"{case['id']}-{agent}" / "run.json"
+                        if manifest.is_file():
+                            try:
+                                value = json.loads(manifest.read_text()).get("isolation", {}).get("intake_guard")
+                                versions.add(value if isinstance(value, str) else None)
+                            except (OSError, ValueError, AttributeError, TypeError):
+                                pass  # The evidence checker classifies malformed manifests.
+                if len(versions) > 1:
+                    parser.error("Evidence uses different intake guards; evaluate the run folders separately")
+                guard = next(iter(versions), None)
+        except (OSError, ValueError) as error:
+            parser.error(str(error))
+    oracle = eval_score.oracle([{**case, "image": cached.get(case["id"], images.get(case["id"] if args.case_image else case["image"], case["image"]))}
+                               for case in oracle_cases], agents, args.speed_trims, model=args.model, intake_guard=guard)
+    image_keys = {case.get("catalog_id", case["id"]) if args.case_image else case["image"] for case in cases}
+    missing = sorted(image_keys - set(images))
     if not args.dry_run and not args.evaluate_only:
         if missing:
             parser.error("no image for: " + ", ".join(missing) + " (pass --image-map KEY=IMAGE)")

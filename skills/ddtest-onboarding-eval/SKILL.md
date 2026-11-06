@@ -12,6 +12,14 @@ alone is not isolation.** The container has network access for public source,
 packages and the selected model service. Do not publish, run real CI, or use a
 real Datadog intake in these trials.
 
+The runner disables instrumentation telemetry by default and maps the default
+US1 test-cycle, coverage, API and instrumentation-telemetry intake hostnames to
+container loopback. It records intake_guard in run.json and new frozen repeated-run
+oracles. Older evidence remains identified as unguarded. Changing the guard requires
+a new run folder; do not pool guard regimes without disclosing that difference.
+The guard covers those normal tracer hostnames; custom endpoints, other sites and
+direct IP connections remain outside it.
+
 **Egress is not restricted.** The container can reach the Docker host's bridge
 gateway, the local network and any cloud instance metadata endpoint. Run trials on
 a dedicated machine or VM with no local Datadog Agent, databases, other services
