@@ -21,42 +21,32 @@ type ciTestJob struct {
 		Matrix   struct{ Shard []any }
 	}
 	Steps []struct {
-		Name, Run, Uses string
-		ID              string `yaml:"id"`
-		Env             map[string]string
-		With            map[string]string
+		Name, Run, Uses, If string
+		ID                  string `yaml:"id"`
+		Env                 map[string]string
+		With                map[string]string
 	}
 }
 
-func TestCompilerCachesRefreshAndKeepInstrumentationSeparate(t *testing.T) {
-	jobs := ciTestJobs(t)
-	keys := make(map[string]string)
-	for _, name := range []string{"test-shards", "test-ddtest-instrument-shards"} {
-		job := jobs[name]
-		for _, step := range job.Steps {
-			if step.Name == "Set up Go" {
-				require.Equal(t, "go", step.ID)
-				require.Equal(t, "false", step.With["cache"])
-			}
-			if step.Name == "Cache Go modules" {
-				key := step.With["key"]
-				for _, input := range []string{"runner.os", "runner.arch", "steps.go.outputs.go-version", "github.sha"} {
-					require.Contains(t, key, "${{ "+input+" }}", name)
-				}
-				require.Contains(t, step.With["path"], "~/.cache/go-build")
-				require.NotEmpty(t, step.With["restore-keys"])
-				require.Equal(t, strings.TrimSuffix(key, "${{ github.sha }}"), strings.Split(strings.TrimSpace(step.With["restore-keys"]), "\n")[0])
-				keys[name] = key
-			}
-			if strings.HasPrefix(step.Uses, "datadog/test-visibility-github-action@") {
-				require.Equal(t, "false", step.With["cache"], "avoid a second overlapping module-cache restore")
-				require.Equal(t, "${{ env.ORCHESTRION_VERSION }}", step.With["go-tracer-version"])
-				require.NotEmpty(t, job.Env["ORCHESTRION_VERSION"])
-			}
+func TestCompilerCacheRefreshesForEachRevision(t *testing.T) {
+	job := ciTestJobs(t)["test-shards"]
+	key := ""
+	for _, step := range job.Steps {
+		if step.Name == "Set up Go" {
+			require.Equal(t, "go", step.ID)
+			require.Equal(t, "false", step.With["cache"])
 		}
-		require.NotEmpty(t, keys[name])
+		if step.Name == "Cache Go modules" {
+			key = step.With["key"]
+			for _, input := range []string{"runner.os", "runner.arch", "steps.go.outputs.go-version", "github.sha"} {
+				require.Contains(t, key, "${{ "+input+" }}")
+			}
+			require.Contains(t, step.With["path"], "~/.cache/go-build")
+			require.NotEmpty(t, step.With["restore-keys"])
+			require.Equal(t, strings.TrimSuffix(key, "${{ github.sha }}"), strings.Split(strings.TrimSpace(step.With["restore-keys"]), "\n")[0])
+		}
 	}
-	require.NotEqual(t, keys["test-shards"], keys["test-ddtest-instrument-shards"])
+	require.NotEmpty(t, key)
 }
 
 func TestReleaseUsesTheSameCIAndRetainsTheInstrumentationGate(t *testing.T) {
@@ -106,48 +96,49 @@ func TestRequiredCIChecksRejectFailedCancelledAndSkippedShards(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("the CI gates run in Ubuntu bash")
 	}
-	jobs := ciTestJobs(t)
-	for _, name := range []string{"test", "test-ddtest-instrument"} {
-		job := jobs[name]
-		require.Equal(t, "${{ always() }}", job.If)
-		require.NotEmpty(t, job.Steps)
-		gate := job.Steps[0]
-		dependency := "test-shards"
-		if name == "test" {
-			require.Equal(t, []any{"test-shards", "test-support"}, job.Needs)
-			require.Equal(t, "${{ needs.test-support.result }}", gate.Env["SUPPORT_RESULT"])
-		} else {
-			dependency = "test-ddtest-instrument-shards"
-			require.Equal(t, dependency, job.Needs)
-		}
-		require.Equal(t, "${{ needs."+dependency+".result }}", gate.Env["SHARDS_RESULT"])
-		for _, shard := range []string{"success", "failure", "cancelled", "skipped"} {
-			for _, support := range []string{"success", "failure", "cancelled", "skipped"} {
-				command := exec.CommandContext(t.Context(), "bash", "-eu", "-c", gate.Run)
-				command.Env = append(os.Environ(), "SHARDS_RESULT="+shard, "SUPPORT_RESULT="+support)
-				err := command.Run()
-				passed := shard == "success" && (name != "test" || support == "success")
-				require.Equal(t, passed, err == nil, "%s: shards=%s support=%s", name, shard, support)
-			}
+	job := ciTestJobs(t)["test"]
+	require.Equal(t, "${{ always() }}", job.If)
+	require.Equal(t, []any{"test-shards", "test-support"}, job.Needs)
+	require.NotEmpty(t, job.Steps)
+	gate := job.Steps[0]
+	require.Equal(t, "${{ needs.test-shards.result }}", gate.Env["SHARDS_RESULT"])
+	require.Equal(t, "${{ needs.test-support.result }}", gate.Env["SUPPORT_RESULT"])
+	for _, shard := range []string{"success", "failure", "cancelled", "skipped"} {
+		for _, support := range []string{"success", "failure", "cancelled", "skipped"} {
+			command := exec.CommandContext(t.Context(), "bash", "-eu", "-c", gate.Run)
+			command.Env = append(os.Environ(), "SHARDS_RESULT="+shard, "SUPPORT_RESULT="+support)
+			err := command.Run()
+			passed := shard == "success" && support == "success"
+			require.Equal(t, passed, err == nil, "shards=%s support=%s", shard, support)
 		}
 	}
 }
 
-func TestGoCIShardsKeepRaceCoverageAndBothInstrumentationPaths(t *testing.T) {
-	jobs := ciTestJobs(t)
-	for _, name := range []string{"test-shards", "test-ddtest-instrument-shards"} {
-		job := jobs[name]
-		require.Equal(t, []any{1, 2, 3}, job.Strategy.Matrix.Shard)
-		require.False(t, job.Strategy.FailFast)
-		command := ""
-		for _, step := range job.Steps {
-			if step.Name == "Run tests" {
-				command = step.Run
-			}
+func TestGoCIShardsReportThroughDdtestInstrumentWithRaceCoverage(t *testing.T) {
+	job := ciTestJobs(t)["test-shards"]
+	require.Equal(t, []any{1, 2, 3}, job.Strategy.Matrix.Shard)
+	require.False(t, job.Strategy.FailFast)
+	command := ""
+	for _, step := range job.Steps {
+		require.NotContains(t, step.Uses, "test-visibility-github-action", "Orchestrion must not report the suite")
+		if step.Name == "Run tests" {
+			command = step.Run
 		}
-		for _, flag := range []string{"-race", "-coverpkg=./...", "-coverprofile=coverage.out", "-covermode=atomic", "-run"} {
-			require.Contains(t, command, flag, name)
-		}
-		require.Equal(t, name == "test-ddtest-instrument-shards", strings.HasPrefix(command, "ddtest instrument go test"))
 	}
+	require.True(t, strings.HasPrefix(command, "ddtest instrument go test"), command)
+	for _, flag := range []string{"-race", "-coverpkg=./...", "-coverprofile=coverage.out", "-covermode=atomic", "-run"} {
+		require.Contains(t, command, flag)
+	}
+}
+
+// Test Impact Analysis skips tests everywhere except the default branch, so a
+// report from any other branch would understate coverage.
+func TestCoverageReportUploadsOnlyFromTheDefaultBranch(t *testing.T) {
+	for _, step := range ciTestJobs(t)["test"].Steps {
+		if strings.HasPrefix(step.Uses, "DataDog/coverage-upload-github-action@") {
+			require.Contains(t, step.If, "github.ref == 'refs/heads/main'")
+			return
+		}
+	}
+	t.Fatal("the test job uploads no coverage report")
 }
