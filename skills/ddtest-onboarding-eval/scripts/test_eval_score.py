@@ -198,3 +198,43 @@ class ScoreTests(unittest.TestCase):
                 self.assertIn(unrelated, result['cases'])
                 self.assertNotIn(stale, result['cases'])
                 self.assertEqual(result['merged_entries_kept'], 1)
+
+
+    def test_frozen_score_excludes_unselected_merged_records(self):
+        from test_catalog_check import write_evidence, real_report
+        case = next(c for c in run_catalog.load_catalog()['cases'] if c['id'] == 'E02-pipeline-schema')
+        image = 'sha256:' + 'a' * 64
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            oracle = eval_score.oracle([{**case, 'image': image}], ['codex'], False)
+            eval_score.freeze(root / 'oracle.json', oracle)
+            for trial in range(1, 4):
+                write_evidence(root / f"{case['id']}-trial-{trial:02d}-codex", testdrive=real_report('E02'))
+            argv = [case['id'], '--evaluate-only', '--trials', '3', '--output', str(root),
+                    '--image-map', case['image'] + '=' + image]
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(run_catalog.main(argv), 0)
+            baseline = root / 'baseline.json'
+            baseline.write_text((root / 'results.json').read_text())
+            original = json.loads(baseline.read_text())
+            sample = original['cases'][0]
+            extras = [{**sample, 'id': identifier, 'catalog_id': catalog, 'agent': agent,
+                       'outcome': 'agent_failure', 'trajectory': {'status': 'review'}}
+                      for identifier, catalog, agent in [(case['id'], case['id'], 'codex'),
+                          ('unrelated-case-trial-01', 'unrelated-case', 'codex'),
+                          (sample['id'], case['id'], 'claude')]]
+            original['cases'].extend(extras)
+            (root / 'results.json').write_text(json.dumps(original))
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(run_catalog.main(argv), 0)
+            result = json.loads((root / 'results.json').read_text())
+            self.assertEqual(result['score']['trials'], 3)
+            self.assertEqual(result['score']['expected_pass_rate'], 1)
+            self.assertEqual(result['score']['rigorous_pass_rate'], 1)
+            self.assertEqual(result['merged_entries_kept'], len(extras))
+            self.assertTrue(all(extra in result['cases'] for extra in extras))
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(run_catalog.main([*argv, '--compare-results', str(baseline)]), 0)
+            result = json.loads((root / 'results.json').read_text())
+            self.assertEqual(result['comparison']['expected_pass_rate_delta'], 0)
+            self.assertEqual(result['comparison']['rigorous_pass_rate_delta'], 0)

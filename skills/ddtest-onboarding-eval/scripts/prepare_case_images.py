@@ -38,7 +38,7 @@ def dockerfile(case, base):
     def run(argv):
         lines.append('RUN ' + json.dumps(argv))
     run(['mkdir', '-p', *directories])
-    run(['node', '-e', "const fs=require('fs'); fs.mkdirSync('/trial/caches/xdg-config/pnpm',{recursive:true}); fs.writeFileSync('/trial/caches/xdg-config/pnpm/rc', 'store-dir=/trial/caches/pnpm-store\\ncache-dir=/trial/caches/pnpm\\n');"])
+    run(['node', '-e', "const fs=require('fs'); fs.mkdirSync('/trial/caches/xdg-config/pnpm',{recursive:true}); fs.writeFileSync('/trial/caches/xdg-config/pnpm/rc', 'store-dir=/trial/caches/pnpm-store\\ncache-dir=/trial/caches/pnpm\\n'); fs.writeFileSync('/trial/caches/xdg-config/pnpm/config.yaml', 'storeDir: /trial/caches/pnpm-store\\ncacheDir: /trial/caches/pnpm\\n');"])
     run(['git', 'init', '-q', '/trial/repo'])
     lines.append('WORKDIR /trial/repo')
     run(['git', 'remote', 'add', 'origin', case['repo']])

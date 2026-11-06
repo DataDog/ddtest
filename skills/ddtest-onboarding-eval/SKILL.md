@@ -484,7 +484,10 @@ other entries stay, and `outcomes`, `agents_disagree` and `exit_code` are
 recomputed over all of them (`merged_entries_kept` counts the kept ones). With
 `--all`, the batch replaces every entry of the agents it covers. A
 `results.json` written for another output folder is refused; pass a new
-`--results`. The process exit status covers only the cases of this invocation.
+`--results`. The process exit status covers only the cases of this invocation. The score and
+baseline comparison also cover only its selected trial slots (including missing
+ones); retained entries from other plans remain visible without entering that
+sample.
 
 `--evaluate-only` checks existing evidence and runs nothing: `run_catalog.py
 --evaluate-only E02 --output <folder holding E02-pipeline-schema-codex>`.

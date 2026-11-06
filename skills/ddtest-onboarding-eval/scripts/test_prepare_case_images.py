@@ -5,6 +5,9 @@ import json
 import os
 from pathlib import Path
 import shlex
+import shutil
+import subprocess
+import tarfile
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -45,6 +48,53 @@ class CaseImageBuilderTests(unittest.TestCase):
         self.assertIn('COPY --from=prepare /trial/venv /opt/ddtest-case/venv', text)
         self.assertIn('git status --porcelain --untracked-files=all', text)
         self.assertIn('RUN ' + json.dumps(['chmod', '-R', 'a+rX', '/trial']), text)
+
+
+    def test_prepared_pnpm_store_survives_trial_yaml_configuration(self):
+        node, pnpm = shutil.which('node'), shutil.which('pnpm')
+        if not node or not pnpm:
+            self.skipTest('Node and the catalog pnpm 12 fixture are required')
+        pnpm = str(Path(pnpm).resolve())
+        version = subprocess.check_output([pnpm, '--version'], text=True).strip()
+        if not version.startswith('12.'):
+            self.skipTest('The catalog pnpm 12 fixture is required')
+        commands = [json.loads(line[4:]) for line in prepare_case_images.dockerfile(self.case(), BASE).splitlines()
+                    if line.startswith('RUN [')]
+        configure = next(command for command in commands
+                         if command[0] == 'node' and 'xdg-config/pnpm/rc' in command[-1])
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name in ('home', 'repo', 'tmp', 'pnpm-home'):
+                (root / name).mkdir()
+            (root / 'npmrc').write_text('')
+            (root / 'global-npmrc').write_text('')
+            env = {'PATH': os.environ['PATH'], 'HOME': str(root / 'home'),
+                   'XDG_CONFIG_HOME': str(root / 'caches/xdg-config'), 'XDG_DATA_HOME': str(root / 'data'),
+                   'XDG_CACHE_HOME': str(root / 'cache'), 'PNPM_HOME': str(root / 'pnpm-home'),
+                   'NPM_CONFIG_USERCONFIG': str(root / 'npmrc'), 'NPM_CONFIG_GLOBALCONFIG': str(root / 'global-npmrc'),
+                   'NPM_CONFIG_CACHE': str(root / 'npm-cache'), 'TMPDIR': str(root / 'tmp'), 'CI': 'true'}
+            subprocess.run([node, '-e', configure[-1].replace('/trial', str(root))], env=env, check=True)
+            for name in ('fixture-a', 'fixture-b'):
+                package = root / name
+                package.mkdir()
+                (package / 'package.json').write_text(json.dumps({'name': name, 'version': '1.0.0'}))
+                with tarfile.open(root / (name + '.tgz'), 'w:gz') as archive:
+                    archive.add(package / 'package.json', arcname='package/package.json')
+            repo = root / 'repo'
+            (repo / 'package.json').write_text(json.dumps({'name': 'fixture', 'version': '1.0.0',
+                                                        'dependencies': {'fixture-a': 'file:../fixture-a.tgz'}}))
+            prepared_store = subprocess.check_output([pnpm, 'store', 'path'], cwd=repo, env=env, text=True).strip()
+            subprocess.run([pnpm, 'install', '--offline', '--ignore-scripts', '--no-frozen-lockfile'],
+                           cwd=repo, env=env, check=True, capture_output=True)
+            # Restored trials write this YAML configuration, in addition to rc.
+            (root / 'caches/xdg-config/pnpm/config.yaml').write_text(
+                'storeDir: ' + str(root / 'caches/pnpm-store') + '\ncacheDir: ' + str(root / 'caches/pnpm') + '\n')
+            restored_store = subprocess.check_output([pnpm, 'store', 'path'], cwd=repo, env=env, text=True).strip()
+            self.assertEqual(prepared_store, restored_store)
+            added = subprocess.run([pnpm, 'add', '--offline', '--ignore-scripts', 'file:../fixture-b.tgz'],
+                                   cwd=repo, env=env, text=True, capture_output=True)
+            self.assertEqual(added.returncode, 0, added.stdout + added.stderr)
+
 
     def test_full_source_and_immutable_base_are_required(self):
         case = self.case()

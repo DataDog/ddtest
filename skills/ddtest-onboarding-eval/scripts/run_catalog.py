@@ -593,7 +593,7 @@ def merge(previous, records, replaced_agents=(), order=None):
                                                        if r["agent"] in catalog_check.AGENTS else len(catalog_check.AGENTS)))
 
 
-def write_results(path, catalog, output, records, code, ddtest_label=None, not_evaluated=(), kept=0, oracle=None, comparison=None):
+def write_results(path, catalog, output, records, code, ddtest_label=None, not_evaluated=(), kept=0, oracle=None, comparison=None, score_records=None):
     """Write results.json; exit_code covers every entry, merged ones included (None while running)."""
     counts = {}
     for record in records:
@@ -606,7 +606,7 @@ def write_results(path, catalog, output, records, code, ddtest_label=None, not_e
     document = {"catalog": str(catalog), "output": str(output), "ddtest_label": ddtest_label, "exit_code": code,
                 "outcomes": counts, "merged_entries_kept": kept, "agents_disagree": catalog_check.disagreements(records),
                 "questions_not_scriptable": questions, "not_evaluated": list(not_evaluated), "cases": records}
-    scored = records + [{**item, "outcome": "not_evaluated"} for item in not_evaluated]
+    scored = (records if score_records is None else score_records) + [{**item, "outcome": "not_evaluated"} for item in not_evaluated]
     document["score"] = eval_score.score(scored)
     document["oracle_sha256"] = oracle["sha256"] if oracle else None
     if comparison is not None and code is not None:
@@ -905,7 +905,7 @@ def main(argv=None):
                              for agent, plans in lanes.items() for case, _, _ in plans
                              if (case["id"], agent) not in covered]
         kept = len(merged) - len(records)
-        write_results(results, args.catalog, output, merged, code, args.ddtest_label, not_evaluated, kept, oracle, comparison)
+        write_results(results, args.catalog, output, merged, code, args.ddtest_label, not_evaluated, kept, oracle, comparison, score_records=records)
         return kept
 
     if args.evaluate_only:
