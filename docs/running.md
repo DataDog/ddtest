@@ -257,8 +257,8 @@ others and on Windows:
 | --- | --- | --- |
 | JavaScript | `unix` | dd-trace 6.24.0 and Jest |
 | Java | `unix` | dd-java-agent 1.68.1 and JUnit 5 |
-| Python | `tcp` | ddtrace 4.16.1 turns Test Optimization off with an agent on a Unix domain socket; fixed in DataDog/dd-trace-py#21544 |
-| Ruby | `tcp` | datadog-ci 1.42.0 connects to the agent over TCP only, and the run fails with a `unix://` URL |
+| Python | `tcp` | ddtrace 4.16.1 turns Test Optimization off with an agent on a Unix domain socket; fixed in DataDog/dd-trace-py#21566 |
+| Ruby | `tcp` | datadog-ci 1.42.0 connects to the agent over TCP only, and the run fails with a `unix://` URL; fixed in DataDog/datadog-ci-rb#678 |
 
 With `unix`, `DD_TRACE_AGENT_URL` is `unix://` and the socket's path.
 
