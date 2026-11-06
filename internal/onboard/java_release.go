@@ -131,16 +131,6 @@ func javaReleaseNote(release string) string {
 	return "The setup installs dd-java-agent " + release + ", the exact release ddtest selected (the latest on Maven Central, or --tracer-version), which local validation runs: write it as shown, never a floating or other release. To set up another exact release, rerun onboard with --tracer-version <release>."
 }
 
-// SelectTracerRelease applies --tracer-version (requested, "" when not
-// given) to the setup of language, and returns the selector the handoff's
-// commands carry. For Java, it selects the release every setup names (see
-// SelectJavaRelease), and latest becomes that exact release: the setup pins
-// it, so validation, resumed in another run, must compare that release with
-// the CI pin, not latest. Other languages select theirs elsewhere, where
-// latest stays the release their registry tags latest when it installs.
-func SelectTracerRelease(language, requested string) (string, error) {
-	if language != "java" || requested == "" {
-		return requested, nil
-	}
+func (javaDiscovery) selectTracerRelease(requested string) (string, error) {
 	return SelectJavaRelease(requested)
 }

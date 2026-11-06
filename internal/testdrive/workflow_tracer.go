@@ -15,7 +15,7 @@ import (
 )
 
 func (t *Testdrive) selectWorkflowTracer(ctx context.Context, scope onboard.ValidationScope, explicit bool) (string, error) {
-	ci := onboard.CheckCIRuntimes(ctx, t.repositoryRoot, t.framework.Name())
+	ci := onboard.CheckCIRuntimes(ctx, t.repositoryRoot, t.framework.Name()).WithSiteCaveats(t.selectedSite)
 	if t.workflowPlan != nil {
 		t.workflowPlan.CIRuntime = &ci
 	}

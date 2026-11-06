@@ -56,6 +56,7 @@ func (t *Testdrive) runConfigurationChecks(ctx context.Context, output io.Writer
 	}
 	result.Scope = &scope
 	check := checkConfigurationCIRuntimes(ctx, t.repositoryRoot, t.framework.Name())
+	check = check.WithSiteCaveats(t.selectedSite)
 	result.CIRuntime = &check
 	t.defaultToCITracer(check)
 	result.Tracer = t.tracerLabel

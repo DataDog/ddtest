@@ -12,6 +12,7 @@ import (
 // Commands under test create workflow locks and checkpoints under the
 // temporary folder; keep them out of the user's real one.
 func TestMain(m *testing.M) {
+	onboard.SetPythonReleaseResolver(func(context.Context) (string, error) { return "4.16.1", nil })
 	// Java setups name a fixed latest dd-java-agent release, read offline.
 	onboard.SetJavaReleaseResolver(func(context.Context) (string, error) { return "1.68.1", nil })
 	if os.Getenv("DDTEST_ISOLATED_TEST_TMP") == "1" {

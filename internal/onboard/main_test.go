@@ -18,6 +18,7 @@ const testJavaRelease = "1.68.1"
 // Tests never read Maven Central: the latest dd-java-agent release is
 // testJavaRelease.
 func TestMain(m *testing.M) {
+	SetPythonReleaseResolver(func(context.Context) (string, error) { return "4.16.1", nil })
 	SetJavaReleaseResolver(func(context.Context) (string, error) { return testJavaRelease, nil })
 	os.Exit(m.Run())
 }

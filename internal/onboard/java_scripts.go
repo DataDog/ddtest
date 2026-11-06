@@ -85,7 +85,7 @@ func javaLaunchMayRunTests(root, directory string, call *syntax.CallExpr, start 
 	case "git":
 		return javaCommandMayRunTests(words, false, false, javaUnreadDocker)
 	default:
-		if slices.Contains(javaInterpreters, name) {
+		if slices.Contains(javaInterpreters, name) || registeredScriptInterpreter(name) {
 			// Any code it runs may; a version or help query doesn't.
 			return len(words) == 1 || slices.ContainsFunc(words[1:], func(arg string) bool { return !slices.Contains(interpreterMetadataFlags, arg) })
 		}

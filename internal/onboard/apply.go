@@ -635,8 +635,8 @@ func SupportsAutomaticSetup(framework string) bool {
 // existingActionDifference names the first way an existing Datadog action
 // differs from the setup this applier would write.
 func existingActionDifference(step runtimeStep, duplicate, afterTests bool, condition, guard, version string) string {
-	// Its optional site input defaults to datadoghq.com; --site only applies to
-	// a new action, so an existing one keeps its own.
+	// Existing actions keep their site; runtime validation reports a mismatch
+	// with --site as a caveat.
 	switch {
 	case duplicate:
 		return "more than one Datadog action runs in this job"

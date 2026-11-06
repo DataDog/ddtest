@@ -21,9 +21,8 @@ import (
 // as ddtrace's documentation shows: pytest --ddtrace, PYTEST_ADDOPTS=--ddtrace
 // or --ddtrace in the pytest configuration's addopts, with ddtrace from the
 // project's dependencies and the DD_* configuration in the job's
-// environment. ddtest recognizes such a setup and lists what it lacks, but
-// the pytest CI check does not read it yet (see
-// pythonDiscovery.validatesHandWrittenSetup), so it is never certified.
+// environment. The pytest CI check validates simple forms and reports what
+// remains missing or cannot be read statically.
 
 // pythonHandWrittenRelease is one exact ddtrace release (PEP 440 final or
 // pre-release), never a range.

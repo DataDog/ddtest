@@ -180,10 +180,9 @@ func pythonSelectsShellRuntime(words []string) bool {
 // the tests' environment receives them without a step's own value: other
 // languages' commands, after a setup for several, keep their environment.
 func pythonSetupExports(current map[string]string) (environment, references map[string]string) {
-	tracerPath := pythonTracerPath
-	if existing := current["PYTHONPATH"]; existing != "" {
-		tracerPath += ":" + existing
-	}
+	// The installer always appends :$PYTHONPATH, including an empty entry
+	// when it was unset. Python interprets that entry as the working directory.
+	tracerPath := pythonTracerPath + ":" + current["PYTHONPATH"]
 	return pythonExports(current, tracerPath, strings.TrimSpace("--ddtrace "+current["PYTEST_ADDOPTS"]))
 }
 
@@ -500,7 +499,7 @@ func pythonMissingSetupReason(provider ciProvider) string {
 // that installs the latest ddtrace when each build runs.
 func pythonFloatingCaveat(setup ciSetup, version string) []string {
 	return append(slices.Clone(setup.Caveats), "ddtrace version: the "+setup.Reference+" runs pip install -U ddtrace on the build agent when each build runs and cannot pin a release; ddtest checked the CI Python against, and validated locally with, ddtrace@"+version+", the latest release when it ran. A later release can change behavior or drop support for the agents' Python.",
-		"PYTHONPATH: the "+setup.Reference+" ends its PYTHONPATH with a separator, which also puts each test process's working directory on its import path; local validation does not.")
+		"PYTHONPATH: the "+setup.Reference+" ends its PYTHONPATH with a separator, which also puts each test process's working directory on its import path; local validation preserves that entry as . (the working directory).")
 }
 
 // pythonSetupRequest is the Python part of an installer setup (the GitLab
@@ -516,9 +515,9 @@ func pythonInstallNote(terms ciSetupTerms) string {
 }
 
 func pythonSetupRequest(root, framework, site string, terms ciSetupTerms) ciSetupRequest {
-	request := ciSetupRequest{Language: "python", Site: site, TracerInput: "python-tracer-version", TracerVersion: "<exact ddtrace release>"}
+	request := ciSetupRequest{Language: "python", Site: site, TracerInput: "python-tracer-version", TracerVersion: pythonSetupRelease()}
 	request.Notes = []string{
-		"Replace <exact ddtrace release> with an exact ddtrace release that supports every instrumented Python, such as " + pythonExampleRelease + " (which requires Python >=3.9,<3.15); when the tests' environment already installs ddtrace, use that release. Local validation runs that release (ddtest testdrive --tracer-version), and a floating one cannot be validated. Keep the existing requirements, lockfiles, Python images, virtualenv, uv, poetry and tox commands, pytest options and test arguments.",
+		pythonReleaseNote(request.TracerVersion) + " Keep the existing requirements, lockfiles, Python images, virtualenv, uv, poetry and tox commands, pytest options and test arguments.",
 		pythonInstallNote(terms) + " and exports PYTHONPATH (the tracer before the job's PYTHONPATH) and PYTEST_ADDOPTS=--ddtrace (before the job's options) for " + terms.Later + ". The tests keep their own environment (virtualenv, uv run, poetry run): PYTHONPATH adds the tracer to it. Its compiled modules load only on the Python version that installed them, so put " + terms.SetupEntry + " where python and pip on PATH are the tests' Python version: after any step that selects another Python, such as pyenv, conda activate or a uv-managed Python.",
 		"A later command that sets PYTHONPATH or PYTEST_ADDOPTS must extend them with " + terms.Persist(`export PYTHONPATH="${PYTHONPATH:+$PYTHONPATH:}<paths>"`) + " (likewise PYTEST_ADDOPTS), never replace them. Do not add --ddtrace or set DD_CIVISIBILITY_ENABLED yourself. If CI disables pytest plugin autoload (PYTEST_DISABLE_PLUGIN_AUTOLOAD or --disable-plugin-autoload), load the plugin explicitly with -p ddtrace in the existing pytest command.",
 		"If CI runs pytest through tox, the " + terms.Installer + "'s variables must reach the tox environment: extend its pass_env (passenv in INI) with DD_*, PYTHONPATH and PYTEST_ADDOPTS, preserving its entries, and run tox on the same Python version as " + terms.Entry + ". For nox or another wrapper, the same variables must reach its pytest process.",

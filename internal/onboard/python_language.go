@@ -61,7 +61,7 @@ func (pythonDiscovery) agentInstructions(framework, site string) string {
 	if site != "" && site != defaultDatadogSite {
 		setup = strings.Replace(setup, "site: "+defaultDatadogSite, "site: "+site, 1)
 	}
-	return strings.TrimSpace(strings.Replace(setup, "'<resolved-release>'", "'<exact ddtrace release>'", 1)) + "\n\nReplace <exact ddtrace release> with an exact ddtrace release that supports every instrumented Python, such as " + pythonExampleRelease + "; when the tests' environment already installs ddtrace, use that release. " + GitReportExclusion + "\n\n" + standaloneAgentValidation(framework)
+	return strings.TrimSpace(strings.ReplaceAll(setup, "<resolved-release>", pythonSetupRelease())) + "\n\n" + pythonReleaseNote(pythonSetupRelease()) + " " + GitReportExclusion + "\n\n" + standaloneAgentValidation(framework)
 }
 
 func (pythonDiscovery) frameworks() []string { return []string{"pytest"} }
@@ -89,7 +89,9 @@ func (pythonDiscovery) variantValue(workflow ciWorkflow, job runtimeJob, step ru
 
 func (pythonDiscovery) skipsUnsupportedNode() bool { return false }
 
-func (pythonDiscovery) instructions(string) string { return pytestInstructions }
+func (pythonDiscovery) instructions(string) string {
+	return strings.ReplaceAll(pytestInstructions, "<resolved-release>", pythonSetupRelease()) + "\n\n" + pythonReleaseNote(pythonSetupRelease())
+}
 
 func (pythonDiscovery) onboardingScope(string) (bool, bool) { return true, true }
 
@@ -146,10 +148,9 @@ func (pythonDiscovery) handWrittenSetup(root string, provider ciProvider, workfl
 	return pythonHandWrittenSetup(root, provider, workflow, job, index, site)
 }
 
-// The pytest CI check reads only the Datadog setup outside GitHub Actions
-// (see checkPythonCIRuntimes): a hand-written ddtrace setup is recognized,
-// kept and reported, never certified, until it reads that setup too.
-func (pythonDiscovery) validatesHandWrittenSetup() bool { return false }
+// The pytest CI check validates simple hand-written setups with the same
+// runtime, exact release and reporting checks as a provider setup.
+func (pythonDiscovery) validatesHandWrittenSetup() bool { return true }
 
 func (pythonDiscovery) runtimeVariable(name string) bool {
 	return name == "PYTHONPATH" || name == "PYTHONHOME"
@@ -293,3 +294,12 @@ func (pythonDiscovery) ciFallbackTool() string { return "python and pip" }
 
 // Python images carry pip.
 func (pythonDiscovery) ciFallbackUnavailable(string) string { return "" }
+
+// The POSIX fallback avoids the official installer's empty PYTHONPATH entry.
+func (pythonDiscovery) fallbackShellExports(current map[string]string) (map[string]string, map[string]string) {
+	path := pythonTracerPath
+	if existing := current["PYTHONPATH"]; existing != "" {
+		path += ":" + existing
+	}
+	return pythonExports(current, path, strings.TrimSpace("--ddtrace "+current["PYTEST_ADDOPTS"]))
+}

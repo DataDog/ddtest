@@ -1842,3 +1842,53 @@ func TestStatusSubshellKeepsTheShellsStatusVariable(t *testing.T) {
 		}
 	}
 }
+
+func TestJenkinsScopedContainerCommandCompletesSetup(t *testing.T) {
+	tests := cucumberScopedOptions + " " + cucumberImpactedWorkaround + " npx --no-install nyc -- ./node_modules/.bin/cucumber-js ./features --format json:cucumber-report.json"
+	for name, command := range map[string]string{
+		"direct":      tests,
+		"report pipe": statusSubshell("cucumber-report.json", tests, "cat cucumber-report.json | ./node_modules/.bin/cucumber-junit > junit.xml"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := scopedRepository(t, scopedProvider{name: jenkinsProvider, file: "Jenkinsfile"}, jenkinsSuiteStage(jenkinsLiterals[3].script(command)), scopedFrameworks[0].pkg, nil)
+			plan, err := PlanJavaScriptSetup(root, "cucumber", "5.133.0", "datadoghq.com", ">=18")
+			require.NoError(t, err)
+			changes, err := plan.Apply(true)
+			require.NoError(t, err)
+			require.NotEmpty(t, changes)
+			plan, err = PlanJavaScriptSetup(root, "cucumber", "5.133.0", "datadoghq.com", ">=18")
+			require.NoError(t, err)
+			changes, err = plan.Apply(true)
+			require.NoError(t, err)
+			require.Empty(t, changes)
+		})
+	}
+}
+
+func TestJenkinsSetupInstructionsKeepTheStepsGroovyLiteral(t *testing.T) {
+	for _, image := range []string{"node:22", "node:22-alpine"} {
+		for _, literal := range jenkinsLiterals {
+			t.Run(image+"/"+literal.name, func(t *testing.T) {
+				command := "./node_modules/.bin/cucumber-js ./features"
+				config := strings.Replace(jenkinsSuiteStage(literal.script(command)), "node:22", image, 1)
+				root := scopedRepository(t, scopedProvider{name: jenkinsProvider, file: "Jenkinsfile"}, config, scopedFrameworks[0].pkg, nil)
+				text := providerSetupInstructions(root, jenkins{}, "javascript", "cucumber", "datadoghq.com", true)
+				require.NotContains(t, text, "Write that script as a single-quoted")
+				_, after, found := strings.Cut(text, "```groovy\n")
+				require.True(t, found, text)
+				fragment, _, found := strings.Cut(after, "\n```")
+				require.True(t, found, text)
+				quote := map[string]string{"double-quoted": `"`, "triple-double-quoted": `"""`, "single-quoted": "'", "triple-single-quoted": "'''"}[literal.name]
+				snippet, expressions := jenkinsWritten(t, "sh "+quote+fragment+quote+"\n")
+				require.Empty(t, expressions, "only the shell expands the inserted snippet")
+				require.Contains(t, snippet, "DD_API_KEY")
+				ending, _ := jenkinsCommand(quote, "\n"+command)
+				applied := jenkinsReplaceCommand(t, config, literal.script, command, fragment+ending)
+				written, expressions := jenkinsWritten(t, applied)
+				require.Equal(t, literal.first+snippet+"\n"+command, written)
+				require.Equal(t, literal.interpolated, expressions)
+				requireJenkinsKeepsBuildNumber(t, applied, literal.first, literal.interpolated, snippet+"\n"+command)
+			})
+		}
+	}
+}

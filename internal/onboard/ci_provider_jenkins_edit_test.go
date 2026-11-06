@@ -148,11 +148,9 @@ func TestJenkinsJavaScriptHandsOffToApply(t *testing.T) {
 	require.NotContains(t, result.Instruction, "ddtest onboard --apply")
 }
 
-// A plugin confirmed to report to another site than the selected one (DD_SITE
-// by default) is a setup onboard --apply refuses to leave, so onboarding
-// gives the instructions naming the mismatch instead of handing off to it.
-func TestJenkinsJavaScriptSiteMismatchIsNotHandedToApply(t *testing.T) {
-	jenkinsApplyRepository(t, "jest", "pipeline {\n  agent any\n"+jenkinsDatadogOption+"  stages { stage('Test') { steps { sh 'npm test' } } }\n}\n")
+// An existing plugin keeps its site, and validation reports a mismatch as a caveat.
+func TestJenkinsJavaScriptSiteMismatchIsPreservedWithACaveat(t *testing.T) {
+	root := jenkinsApplyRepository(t, "jest", "pipeline {\n  agent any\n"+jenkinsDatadogOption+"  stages { stage('Test') { steps { sh 'npm test' } } }\n}\n")
 	useCIStatements(t, []string{"node=22"}, "jenkins-plugin", "jenkins-plugin-mode=agentless:datadoghq.eu")
 	start := func(options StartOptions) AgentResult {
 		t.Helper()
@@ -162,14 +160,18 @@ func TestJenkinsJavaScriptSiteMismatchIsNotHandedToApply(t *testing.T) {
 		require.NoError(t, json.Unmarshal(out.Bytes(), &result), out.String())
 		return result
 	}
-	mismatch := "The Datadog Jenkins plugin reports to datadoghq.eu (--ci-confirm jenkins-plugin-mode=agentless:datadoghq.eu), but the selected Datadog site is datadoghq.com"
+
 	t.Setenv("DD_SITE", "datadoghq.com")
 	for name, options := range map[string]StartOptions{"DD_SITE": {Format: "json"}, "--site": {Format: "json", Site: "datadoghq.com"}} {
 		result := start(options)
-		require.Equal(t, "ci_setup_required", result.Code, name)
-		require.Contains(t, result.Reason, mismatch, name)
-		require.Empty(t, result.NextCommand, name)
-		require.NotContains(t, result.Instruction, "ddtest onboard --apply", name)
+		require.Equal(t, "ready", result.Status, name)
+		plan, err := PlanProviderSetup(root, "jest", "datadoghq.com")
+		require.NoError(t, err)
+		require.True(t, plan.Configured())
+		check := checkCIRuntimes(t.Context(), root, nil, func(context.Context, string, string) (tracerRequirement, error) {
+			return tracerRequirement{Version: "5.133.0", Node: ">=18"}, nil
+		}).WithSiteCaveats("datadoghq.com")
+		require.Contains(t, strings.Join(CISetupCaveats(&check), "\n"), "reports to datadoghq.eu, but --site selects datadoghq.com")
 	}
 
 	t.Setenv("DD_SITE", "datadoghq.eu")

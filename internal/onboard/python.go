@@ -296,9 +296,10 @@ func pythonApplicationPath(workflow ciWorkflow, job runtimeJob, step runtimeStep
 				if result != "" {
 					parts = append(parts, result)
 				}
-			case part == pythonTracerPath, part == "" && afterTracer:
-				// The installer's or CI plugin's tracer path, and the empty
-				// entry the plugin's trailing separator adds, are CI's own.
+			case part == pythonTracerPath:
+				// Local validation provides its own tracer.
+			case part == "" && afterTracer:
+				parts = append(parts, ".")
 			default:
 				parts = append(parts, part)
 			}
@@ -546,17 +547,13 @@ func pythonIgnoresEnvironment(words []string) bool {
 	return slices.Contains(options, "-E") || slices.Contains(options, "-I")
 }
 
-// pythonNonTestTools are linters, type checkers, formatters, builders and
+// pythonNonTestTools are linters, type checkers, formatters and
 // uploaders Python CI runs beside pytest, which never start it.
 // Documentation builders are not among them: Sphinx executes the project's
 // conf.py and MkDocs its hooks, which may run anything (see
 // pythonCheckTools). Nor is pre-commit, whose hooks may run pytest (see
 // checkAndPackageTools).
-var pythonNonTestTools = []string{"flake8", "black", "isort", "mypy", "ruff", "pylint", "bandit", "safety", "pyright", "pydocstyle", "twine", "codecov", "coveralls", "check-manifest", "pip-audit", "build"}
-
-// pythonSetupCommands are setup.py commands that build or check a
-// distribution; setup.py test runs tests.
-var pythonSetupCommands = []string{"sdist", "bdist", "bdist_wheel", "bdist_egg", "build", "build_py", "build_ext", "egg_info", "check"}
+var pythonNonTestTools = []string{"flake8", "black", "isort", "mypy", "ruff", "pylint", "bandit", "safety", "pyright", "pydocstyle", "twine", "codecov", "coveralls", "pip-audit"}
 
 // pythonNonTestTool reports a command that runs one of those tools, or
 // coverage's reporting commands, which read results a test run left.
@@ -564,11 +561,7 @@ func pythonNonTestTool(words []string) bool {
 	if len(words) == 0 {
 		return false
 	}
-	if platform.IsPythonExecutable(words[0]) && len(words) > 2 && filepath.Base(words[1]) == "setup.py" {
-		return !slices.ContainsFunc(words[2:], func(command string) bool {
-			return !strings.HasPrefix(command, "-") && !slices.Contains(pythonSetupCommands, command)
-		})
-	}
+
 	name := filepath.Base(words[0])
 	if platform.IsPythonExecutable(words[0]) {
 		index, module := PythonModule(words[1:])
@@ -776,7 +769,8 @@ func resolvePythonStep(root string, workflow ciWorkflow, job runtimeJob, step ru
 		if checkOnlyStep(shellquote.Join(words...)) {
 			continue
 		}
-		if pythonNonTestTool(words) {
+		mayStart, known := pythonDiscovery{}.checkTool(root, directory, words)
+		if known && !mayStart || !known && pythonNonTestTool(words) {
 			result.ReviewReason = joinDiagnostic(result.ReviewReason, words[0]+" runs no tests; it is outside this validation.")
 			continue
 		}
@@ -1012,6 +1006,14 @@ func checkPythonCIRuntimes(ctx context.Context, root, localVersion, site string,
 					}
 					commands, commandsErr := pythonStepCommands(resolved.Run)
 					pathEdit := pythonInlinePathEdit(provider, commands, restorePath[i])
+					var handWritten *handWrittenSetup
+					if action == "" && !shared {
+						handWritten = pythonHandWrittenSetup(root, provider, workflow, job, i, site)
+						if handWritten != nil {
+							finding.Action = handWritten.Reference
+							finding.AgentReporting = handWritten.reportsThroughAgent()
+						}
+					}
 					finding.pathEdit = pathEdit
 					switch {
 					case conditionErr != nil:
@@ -1028,21 +1030,23 @@ func checkPythonCIRuntimes(ctx context.Context, root, localVersion, site string,
 						finding.Reason = r.Reason
 					case commandsErr != nil:
 						finding.Reason = "Python shell command requires review: " + commandsErr.Error()
-					case action == "" && !shared && (skipped || engine != ""):
+					case action == "" && handWritten == nil && !shared && (skipped || engine != ""):
 						finding.Status, finding.Code = "excluded", CodeExcludedRuntime
 						finding.Reason = "The " + provider.setupName() + " is explicitly skipped for this matrix entry. Its tests still run without instrumentation; this runtime is not validated with the tracer."
 						if !skipped {
 							finding.Reason = "This job runs " + engine + " (image " + job.Image + "), which the tracer cannot instrument, without the " + provider.setupName() + ". Its tests still run without instrumentation; this runtime is not validated with the tracer."
 						}
-					case action == "" && !shared && python != "" && pythonUnsupportedRuntime(python, localVersion, selectRelease):
+					case action == "" && handWritten == nil && !shared && python != "" && pythonUnsupportedRuntime(python, localVersion, selectRelease):
 						selection, _ := selectRelease(localVersion)
 						finding.Status, finding.Code = "excluded", CodeExcludedRuntime
 						finding.Reason = "This job runs Python " + python + ", which ddtrace@" + selection.Version + " does not support (" + selection.RequiresPython + "), without the " + provider.setupName() + ". Its tests still run without instrumentation; this runtime is not validated with the tracer."
-					case action == "":
+					case action == "" && handWritten == nil:
 						finding.Status, finding.Code, finding.Reason = "incompatible", "missing_instrumentation", pythonMissingSetupReason(provider)
 						if expired != "" {
 							finding.Reason = "The " + provider.setupName() + " at " + expired + " runs in another shell than this pytest command, and its exports reach only the later commands of its own shell; run it in the same shell, before the test command."
 						}
+					case handWritten != nil && handWritten.problem() != "":
+						finding.Code, finding.Reason = handWritten.code(), handWritten.problem()
 					case !shared && engine != "":
 						finding.Status = "incompatible"
 						finding.Reason = "This job runs " + engine + " (image " + job.Image + "), which the tracer cannot instrument; keep its tests in a job without the " + provider.setupName() + "."
@@ -1072,6 +1076,10 @@ func checkPythonCIRuntimes(ctx context.Context, root, localVersion, site string,
 						// The setup precedes it, so the edit is all that is missing.
 						finding.Status, finding.Code, finding.Reason = "incompatible", CodeCIEditRequired, pathEdit
 					default:
+						if handWritten != nil {
+							requested = handWritten.Tracer
+							finding.TracerRequested = requested
+						}
 						selection, selectionErr := selectRelease(requested)
 						if selectionErr != nil {
 							finding.Reason = selectionErr.Error()
@@ -1096,7 +1104,7 @@ func checkPythonCIRuntimes(ctx context.Context, root, localVersion, site string,
 							}
 							if plugin != "" {
 								pythonFindingProblem(&finding, "incompatible", plugin)
-							} else if value, ok := step.Env["PYTHONPATH"]; ok && !pythonKeepsTracerPath(value) {
+							} else if value, ok := step.Env["PYTHONPATH"]; handWritten == nil && ok && !pythonKeepsTracerPath(value) {
 								reason := "The test step replaces the action's PYTHONPATH; preserve the injected tracer package path."
 								if !shared {
 									reason = "This test command's PYTHONPATH replaces the one the " + provider.setupName() + " exported, which carries the tracer. Extend it instead, with " + provider.setupTerms().Persist(`export PYTHONPATH="${PYTHONPATH:+$PYTHONPATH:}<paths>"`) + "."

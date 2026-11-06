@@ -53,7 +53,7 @@ func TestPythonOnboardingPrintsScopeAndInstructions(t *testing.T) {
 				return
 			}
 			require.Error(t, err)
-			for _, text := range []string{"python -m pytest", "pass_env", "resume_command", "final_response unchanged", "never COMPLETE LOCALLY", "<exact ddtrace release>"} {
+			for _, text := range []string{"python -m pytest", "pass_env", "resume_command", "final_response unchanged", "never COMPLETE LOCALLY", "4.16.1"} {
 				require.Contains(t, result.Instruction, text)
 			}
 			require.NotContains(t, result.Instruction, "--check-only")
