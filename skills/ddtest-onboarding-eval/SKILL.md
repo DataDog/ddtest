@@ -340,6 +340,73 @@ commits and setup, so it holds only the agent's changes.
 certificates) always applies; `trims.optional_speed` applies only with
 `--speed-trims`, and changes what the agent sees, so compare like with like.
 
+### Faster repeated runs
+
+Keep the full suite as the default. For frequent iteration, the existing
+`--speed-trims` selects the catalog's reviewed smaller fixtures. For example,
+E10's WebdriverIO fixture keeps five specs / 40 tests: a same-container
+measurement took 139.2 seconds full and 12.8 / 11.4 seconds trimmed. A direct
+trimmed testdrive passed paired 40/40 native results and all five supported
+feature checks; skipping remained unsupported. This preserves the observed
+DDTest checks, not every upstream assertion. Keep the same configurations,
+runtime scope, supported/unsupported features and expected blockers, and use
+the full catalog for release and fixture-change acceptance. A normal testdrive
+runs the real suite twice and selects controlled probes afterward; do not
+multiply a native suite saving by the total number of controls.
+
+Dependency-cache images avoid repeating public package downloads without
+reusing test results or compiled project output. Build one from the same
+immutable base image that the case normally uses:
+
+```sh
+S=skills/ddtest-onboarding-eval/scripts
+BASE=$(python3 -c 'import json; print(json.load(open("images.json"))["java17"])')
+python3 "$S/prepare_dependencies.py" E17 --image "$BASE" \
+  --ddtest /absolute/path/to/ddtest-linux --tag ddtest-eval-e17-cache \
+  --output /absolute/path/to/new-cache-preparation
+# Read the printed --dependency-image argument, or dependency-image.json:
+CACHED=$(docker image inspect --format '{{.Id}}' ddtest-eval-e17-cache)
+python3 "$S/run_catalog.py" E17 --image-file images.json \
+  --dependency-image "E17=$CACHED" --ddtest /absolute/path/to/ddtest-linux \
+  --existing-login --output /absolute/path/to/new-evidence
+```
+
+Preparation uses the normal container boundary and does not load model
+credentials or start an agent. It runs setup/readiness, then the case's optional
+`prepared_image.warmup_commands` in container-native throwaway copies. Java
+warmups resolve compiler/provider/plugin dependencies a `go-offline` or
+`testClasses` alone can miss. `<output>/evidence/run.json` says `status: prepared`;
+it does not certify onboarding. The preparation trial is cleaned up even if building the
+local image fails. Nothing is published.
+
+The cache contains only allowlisted package caches, Maven/Gradle user-home
+data, Ruby's private bundle and its generated Git-ignored lockfile. It does
+not snapshot the checkout, `node_modules`, venv, CLI profiles, credentials,
+tracers, reports or project build output. Every evaluation still clones the
+pinned source and runs every trim, setup and readiness command before the
+unchanged agent prompt. In particular, `npm ci` still creates a fresh install.
+The `prepared_image.bake` notes also describe possible complete-install
+snapshots; this command implements dependency caching only.
+
+The cache fingerprint binds the public source commit, immutable base image,
+harness settings, setup/readiness/warmup commands and selected trims. Supply
+the original base `--image-map`/`--image-file` as well as each cached image.
+Use `--speed-trims` for both preparation and evaluation, or neither. A stale
+or mismatched cache is an environment failure before setup or the agent;
+rebuild it instead of changing expected outcomes. Caches are copied into each
+trial's private storage and never shared writable between agent lanes. E12's
+repository-local Maven cache remains a distinct CI behavior: a warmed HOME
+does not warm the `.m2/repository` its CI environment selects.
+
+`run.json` now records a `phase` and monotonic `duration_seconds` for commands,
+`timings_seconds` totals by command phase, container start/cleanup times and
+model preflight time when used. Public activity events have `observed_at`
+timestamps. The `agent` phase includes both model time and tool execution;
+public event timestamps help distinguish them but are observation times,
+not native test timers. Docker image builds/pulls happen outside trial time;
+the runner still uses `--pull=never`. Both agent lanes keep their existing
+one-trial-at-a-time behavior.
+
 ### Expected outcomes
 
 `expected` is checked after every trial (`scripts/catalog_check.py`); the

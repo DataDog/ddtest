@@ -32,6 +32,7 @@ import threading
 import catalog_check
 import run_eval
 import user_answers
+import dependency_cache
 
 SCRIPTS = Path(__file__).resolve().parent
 CATALOG = SCRIPTS.parent / "catalog" / "cases.yaml"
@@ -113,6 +114,7 @@ def validate(catalog):
             if trim is not None and (not trim.get("reason") or not trim.get("commands")):
                 problems.append(f"{name}: trims.{kind} needs a reason and commands")
         commands = [*case.get("setup_commands", []), *case.get("readiness_commands", []),
+                    *case.get("prepared_image", {}).get("warmup_commands", []),
                     *(command for kind in TRIM_KINDS for command in (trims.get(kind) or {}).get("commands", []))]
         for command in commands:
             try:
@@ -180,9 +182,11 @@ def trim_commands(case, speed_trims=False):
 
 
 def build_argv(case, image, ddtest, output, agent="codex", existing_login=False, timeout=DEFAULT_TIMEOUT,
-               speed_trims=False, model=None, ddtest_label=None):
-    argv = [sys.executable, str(RUN_EVAL), "--image", image, "--repo", case["repo"], "--ref", case["commit"],
+               speed_trims=False, model=None, ddtest_label=None, dependency_image=None):
+    argv = [sys.executable, str(RUN_EVAL), "--image", dependency_image or image, "--repo", case["repo"], "--ref", case["commit"],
             "--ddtest", str(ddtest), "--agent", agent, "--timeout", str(timeout), "--output", str(output)]
+    if dependency_image:
+        argv += ["--dependency-cache", dependency_cache.fingerprint(case, image, speed_trims)]
     if ddtest_label:
         argv += ["--ddtest-label", ddtest_label]
     if existing_login:
@@ -750,6 +754,8 @@ def main(argv=None):
     parser.add_argument("--image-map", action="append", default=[], metavar="KEY=IMAGE",
                         help="Image for a catalog image key (repeatable); overrides --image-file")
     parser.add_argument("--image-file", help=f"JSON/YAML mapping of image key to image (default: ${IMAGES_VARIABLE})")
+    parser.add_argument("--dependency-image", action="append", default=[], metavar="CASE=IMAGE",
+                        help="Repeatable per-case dependency-cache image from prepare_dependencies.py; base --image-map is still required")
     parser.add_argument("--ddtest", type=Path, help="Linux ddtest executable for the images' architecture")
     parser.add_argument("--ddtest-label",
                         help="Free-text ddtest provenance, such as its commit; recorded in run.json and results.json "
@@ -791,9 +797,22 @@ def main(argv=None):
         cases = selected
     try:
         images = resolve_images(args.image_map, args.image_file)
+        cached = {}
+        for pair in args.dependency_image:
+            identifier, separator, image = pair.partition("=")
+            matches = [case for case in catalog["cases"] if identifier in (case["id"], case["id"].split("-")[0])]
+            if not separator or len(matches) != 1 or not image:
+                raise ValueError("--dependency-image takes a known CASE=IMAGE")
+            if not args.dry_run:
+                run_eval.validate_image(image)
+            cached[matches[0]["id"]] = image
     except (OSError, ValueError) as error:
         parser.error(str(error))
     missing = sorted({case["image"] for case in cases} - set(images))
+    missing_cache_bases = sorted({case["image"] for case in cases if case["id"] in cached} - set(images))
+    if missing_cache_bases:
+        parser.error("dependency images require the original base --image-map/--image-file, even with --dry-run: "
+                     + ", ".join(missing_cache_bases))
     if args.evaluate_only and not args.output:
         parser.error("--evaluate-only requires --output, the folder holding <id>-<agent> evidence")
     if not args.dry_run and not args.evaluate_only:
@@ -810,7 +829,8 @@ def main(argv=None):
             evidence = output / f"{case['id']}-{agent}"
             lanes.setdefault(agent, []).append((case, evidence, build_argv(
                 case, images.get(case["image"], f"<image:{case['image']}>"), ddtest, evidence, agent,
-                args.existing_login, args.timeout, args.speed_trims, args.model, args.ddtest_label)))
+                args.existing_login, args.timeout, args.speed_trims, args.model, args.ddtest_label,
+                cached.get(case["id"]))))
     if args.dry_run:
         print("\n".join(image_builds(catalog["images"], {case["image"] for case in cases})) + "\n")
         for agent, plans in lanes.items():

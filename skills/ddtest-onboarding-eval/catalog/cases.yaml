@@ -38,11 +38,14 @@
 #                      browser/binary download; build = compile beyond the test command;
 #                      tests_full = one untrimmed CI-equivalent run with warm caches;
 #                      tests_trimmed = the same with every listed trim (null: no trim).
-#                      ddtest runs the suite ~10 times per configuration.
+#                      ddtest normally runs the real suite twice per configuration,
+#                      then selects controlled probes for feature checks.
 #   tests              test counts, full and trimmed.
 #   sizes              repository and dependency sizes.
 #   prepared_image     what a prepared image or snapshot would bake, and what to keep
-#                      out. Every case keeps out tracers, CI edits, .testoptimization
+#                      out. Optional warmup_commands prepare dependency caches in a
+#                      throwaway copy; they never replace trial setup/readiness.
+#                      Every case keeps out tracers, CI edits, .testoptimization
 #                      and build outputs, so ddtest still has real work to do.
 #   notes, risks
 #   expected           checked by run_catalog.py after every trial (see "Case catalog"
@@ -544,8 +547,8 @@ cases:
     install: 4.2
     browser: 0
     build: 0
-    tests_full: 130
-    tests_trimmed: 9.3
+    tests_full: 139.2
+    tests_trimmed: 12.1
   tests:
     full: 8 specs, 85 tests pass (game.spec.ts alone 2m04s)
     trimmed: 5 specs (auth, i18n, nav, profile, settings), 40 tests pass
@@ -559,6 +562,10 @@ cases:
   - 'specFileRetries: 1 when CI is set (ddtest''s webdriverio.go handles 9.21+ attempt numbering).'
   - Typecheck, lint and format:check steps precede the tests; Allure report/pages jobs follow.
   - package.json single-spec scripts (test:game etc.) still name trimmed specs; not used by CI.
+  - 'Remeasured 2026-11-06 in one linux/arm64 container (4 CPU, 6 GB limit, tmpfs): full 139.2s;
+    trimmed 12.8s and 11.4s (median 12.1s). Direct trimmed testdrive 59.8s: paired 40/40 results,
+    all five supported feature checks passed; skipping remains unsupported. This is fixture/DDTest
+    behavior coverage, not preservation of all 85 upstream assertions.'
   risks:
   - 'Personal repo with 0 stars (may disappear: mirror the pinned commit).'
   - CI Node 20 vs local Node 24.
@@ -886,6 +893,8 @@ cases:
     bake: Maven local repository under the trial HOME (/trial/home/.m2, from dependency:go-offline plus one `mvn
       test` in a throwaway copy for surefire providers).
     keep_out: null
+    warmup_commands:
+    - mvn -B test -Dgpg.skip=true
   notes:
   - 'ci_provider answer needed: .github/workflows/maven-release.yml also exists.'
   - '`-s $MAVEN_SETTINGS` names a CI-only settings file variable.'
@@ -1011,6 +1020,8 @@ cases:
   prepared_image:
     bake: GRADLE_USER_HOME with distribution + deps (incl. Groovy 4 / Spock).
     keep_out: null
+    warmup_commands:
+    - ./gradlew test --no-daemon -q
   notes:
   - install = wrapper 5.5s + testClasses 23.9s.
   - Large parameterized (@Unroll/where:) test counts exercise reporting identity matching.
@@ -1075,6 +1086,8 @@ cases:
   prepared_image:
     bake: GRADLE_USER_HOME warmed by `./gradlew build -x test` (as CI's build job).
     keep_out: null
+    warmup_commands:
+    - ./gradlew build -x test --no-daemon -q
   notes:
   - 'ci_provider answer needed: .github/workflows/pipeline.yml also runs the tests.'
   - 'Large CircleCI file: snyk orb, trivy, helm, OWASP ZAP, k6, dind jobs, workflows filtered to main; also azure-pipelines.yml,
@@ -1148,6 +1161,8 @@ cases:
   prepared_image:
     bake: ~/.m2 from dependency:go-offline plus one verify in a throwaway copy (28M of plugins go-offline misses).
     keep_out: null
+    warmup_commands:
+    - mvn -B verify -Dspring.profiles.active=test -Dgpg.skip=true
   notes:
   - Two workflows run the same command (push/PR to main and PR events).
   - Runner.path rather than @Karate.Test; karate-config.js and mock features under src/test/resources.
@@ -1218,6 +1233,8 @@ cases:
       scalafmt, license plugin come later). A warmed compile cannot be kept: every run is `clean` and ddtest uses
       fresh build output.'
     keep_out: 'compiled output: every run starts with clean'
+    warmup_commands:
+    - mvn -B clean -P checkFormat verify -Dgpg.skip=true
   notes:
   - build = first verify 69.1s minus warm 35.6s (downloads + zinc compiler bridge compile).
   - checkFormat profile runs scalafmt check; license header check runs too.

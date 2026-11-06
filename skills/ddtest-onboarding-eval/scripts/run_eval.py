@@ -28,6 +28,7 @@ from model_auth import ModelLogin, login_directory, install_login, remove_login
 from isolation import Container, check_socket_budget, cleanup, environment, interrupted, mark_trial, trial_root, validate_image, check_interrupted, begin_teardown, termination_signal
 
 import user_answers
+import dependency_cache
 
 
 # Characters kept of each text in activity.jsonl (--excerpt-limit). ddtest
@@ -985,6 +986,15 @@ def run(args):
     if not math.isfinite(args.timeout) or args.timeout <= 0 or not args.ref or args.ref.startswith("-"):
         raise ValueError("Use a positive finite timeout and a ref that does not start with '-'")
     validate_image(getattr(args,"image",None))
+    prepare_cache = getattr(args, "prepare_cache", None)
+    restore_cache = getattr(args, "dependency_cache", None)
+    if prepare_cache and (restore_cache or getattr(args, "existing_login", False) or getattr(args, "login_json", None)):
+        raise ValueError("--prepare-cache cannot use model credentials or another dependency cache")
+    for key in (prepare_cache, restore_cache):
+        if key:
+            dependency_cache.validate_fingerprint(key)
+    if getattr(args, "warmup_command", None) and not prepare_cache:
+        raise ValueError("--warmup-command requires --prepare-cache")
     LOGIN_SECRETS.clear()
     selected_limit = getattr(args, "excerpt_limit", None) or EXCERPT_LIMIT
     if not 1000 <= selected_limit <= 1024 * 1024:
@@ -1134,6 +1144,9 @@ def run(args):
     framework = getattr(args, "framework", None)
     scope = f" for {framework} only" if framework else ""
     prompt = f"Use ddtest in {bin_dir} and onboard this repository to test-optimization{scope}."
+    started = time.monotonic()
+    phase = "preflight"
+    phase_totals = {}
     manifest = {"isolation": {"kind":"container", "image":getattr(args,"image",None), "name":container.name,"git_safe_directory":str(checkout)}, "repository": args.repo, "requested_ref": args.ref,
                 "trial_directory": str(trial), "checkout": str(checkout),
                 "ddtest_sha256": hashlib.sha256(binary.read_bytes()).hexdigest(),
@@ -1201,7 +1214,7 @@ def run(args):
                 observations = manifest.setdefault("runtime_observations", [])
                 if len(observations) < 20:
                     observations.append({"source": "public ddtest command output", "version": version})
-        event = redact(event)
+        event = redact({**event, "observed_at": time.time()})
         encoded = json.dumps(event)
         activity.write(encoded + "\n")
         activity.flush()
@@ -1225,7 +1238,9 @@ def run(args):
     def command(argv, cwd=trial, agent=False, stdin=None, timeout=None, destination=None):
         nonlocal agent_failed
         limit = args.timeout if timeout is None else min(args.timeout, timeout)
-        record = {"argv": argv, "cwd": str(cwd), "started_at": time.time(), "timeout_seconds": limit}
+        command_started = time.monotonic()
+        record = {"argv": argv, "cwd": str(cwd), "started_at": time.time(), "timeout_seconds": limit,
+                  "phase": phase}
         if destination is None:
             manifest["commands"].append(record)
         emit({"type": "harness_command", **record})
@@ -1272,6 +1287,8 @@ def run(args):
             record["exit_code"] = container.execute(argv, cwd, {**env, **overrides} if agent else env, limit, line_received, stdin, execute)
         finally:
             record["finished_at"] = time.time()
+            record["duration_seconds"] = time.monotonic() - command_started
+            phase_totals[record["phase"]] = phase_totals.get(record["phase"], 0) + record["duration_seconds"]
             if not agent:
                 record["output_excerpt"] = tail
         if record["exit_code"] != 0:
@@ -1310,7 +1327,11 @@ def run(args):
         manifest["failure_stage"]="storage_readiness"
         if shutil.disk_usage(trial).free < 2*1024**3:
             raise RuntimeError("Evaluator storage has less than 2 GiB free; no clone or model session started")
-        container.start()
+        container_started_at = time.monotonic()
+        try:
+            container.start()
+        finally:
+            manifest["container_start_seconds"] = time.monotonic() - container_started_at
         container_started = True
         manifest.pop("failure_stage",None)
         if node is not None:
@@ -1351,6 +1372,12 @@ def run(args):
         if printed != inside(wrapper):
             emit({"type": "diagnostic", "text": "ddtest's printed commands do not name the recording wrapper; "
                                                 "ddtest calls made through them are not recorded"})
+        if restore_cache:
+            phase = "dependency_cache_check"
+            manifest["failure_stage"] = "dependency_cache_restore"
+            command(dependency_cache.command("check", restore_cache))
+            manifest.pop("failure_stage", None)
+            phase = "preflight"
         if getattr(args,"login_json",None) or getattr(args,"existing_login",False):
             manifest["failure_stage"] = "model_authentication"
             login.install()
@@ -1365,14 +1392,17 @@ def run(args):
                     observed.extend(public_events(event,args.agent))
                 except (ValueError,TypeError):
                     pass
+            auth_started = time.monotonic()
             code_auth = container.execute(preflight_argv, home, {**env,**overrides}, min(args.timeout,90), auth_line,
                 "Reply AUTH_OK only. Do not use tools or inspect files.",execute)
+            manifest["model_preflight_seconds"] = time.monotonic() - auth_started
             failed = any(event.get("type")=="agent_error" for event in observed)
             if code_auth or failed or not any("AUTH_OK" in str(event.get("text","")) for event in observed):
                 raise RuntimeError("Model authentication preflight failed before clone/install; no onboarding trial started")
             manifest["authentication"] = {"status":"passed", "source":"existing CLI model login" if getattr(args,"existing_login",False) else "selected login", "preflight":"model response before clone/install"}
             login.suspend()
             manifest.pop("failure_stage",None)
+        phase = "clone"
         source = args.repo
         local = Path(os.path.expanduser(str(args.repo)))
         if local.is_dir():
@@ -1406,6 +1436,12 @@ def run(args):
         for copy in copies:
             shutil.rmtree(copy, ignore_errors=True)
         manifest["commit"] = command(["git", "rev-parse", "HEAD"], cwd=checkout)
+        if restore_cache:
+            phase = "dependency_cache_restore"
+            manifest["failure_stage"] = phase
+            manifest["dependency_cache"] = json.loads(command(dependency_cache.command("restore", restore_cache)))
+            manifest.pop("failure_stage", None)
+        phase = "package_manager"
         if pnpm is not None:
             manifest["failure_stage"] = "package_manager"
             command(["npm", "install", "--prefix", str(tools), "--no-save", "--no-audit", "--no-fund", "pnpm@" + pnpm])
@@ -1420,6 +1456,7 @@ def run(args):
             requested_python_version = command([str(python), "-c", "import platform; print(platform.python_version())"])
             manifest["python_runtime"] = {"requested": str(python), "requested_version": requested_python_version}
             command([str(python), "-m", "venv", env["VIRTUAL_ENV"]])
+        phase = "setup"
         for setup in setup_commands:
             command(setup, cwd=checkout)
         if binstubs:
@@ -1440,6 +1477,7 @@ def run(args):
         status = command(["git", "status", "--porcelain"], cwd=checkout)
         if status:
             raise RuntimeError("Dependency setup changed the checkout; choose setup that leaves it clean")
+        phase = "readiness"
         manifest["failure_stage"] = "runtime_readiness"
         readiness = getattr(args,"readiness_command",[])
         for ready in readiness:
@@ -1451,43 +1489,55 @@ def run(args):
         # Setup may commit (catalog trims do): the agent's changes start here,
         # while "commit" stays the fetched ref's SHA.
         manifest["agent_baseline"] = command(["git", "rev-parse", "HEAD"], cwd=checkout)
-        # Setup descendants cannot mutate credential directories during installation.
-        if hasattr(container,"control"):
-            container.control("pause",container.name)
-        try:
-            login.resume()
-            login_installed = bool(login.initial)
-        finally:
+        if prepare_cache:
+            phase = "cache_warmup"
+            for warm in getattr(args, "warmup_command", None) or []:
+                command(dependency_cache.warmup(warm), cwd=checkout)
+            # Stop package-manager descendants before sealing their caches.
+            container.stop_processes()
+            phase = "dependency_cache_capture"
+            command(dependency_cache.command("capture", prepare_cache))
+            manifest["prepared_cache"] = prepare_cache
+            manifest["status"] = "prepared"
+        else:
+            phase = "agent"
+            # Setup descendants cannot mutate credential directories during installation.
             if hasattr(container,"control"):
-                container.control("unpause",container.name)
-        manifest["status"] = "agent_running"
-        turn_argv, turn_input = agent_argv, prompt
-        while True:
-            # Records from before this turn are logged but are not its result.
-            collect_ddtest_results(len(agent_argvs))
-            agent_completed, last_result, logged_result = False, None, None
-            agent_argvs.append(turn_argv)
-            command(turn_argv, cwd=checkout, agent=True, stdin=turn_input)
-            if background.unfinished():
-                manifest["unfinished_background_commands"] = background.unfinished()
-                manifest["failure_kind"] = "infrastructure"
-                manifest["retry_recommended"] = True
-                raise RuntimeError("CLI exited with unfinished Bash tasks; local validation was interrupted, not completed")
-            if not agent_completed and not agent_failed:
-                raise RuntimeError("CLI exited without a recognized completion event; inspect the activity")
-            if agent_failed:
-                break
-            # The turn ended at a question only the user can answer: reply in
-            # the same conversation, or stop and record the question.
-            # The harness log holds every ddtest result, including one the agent
-            # redirected to a file or reformatted; a tool output is the fallback.
-            logged_result = collect_ddtest_results(len(agent_argvs)) or logged_result
-            asked = user_answers.question(logged_result or last_result)
-            turn_input = answer_question(asked, "ddtest log" if logged_result else "tool output") if asked else None
-            if turn_input is None:
-                break
-            turn_argv = resume_command(args.agent, agent_argv, session_id)
-        manifest["status"] = "agent_failed" if agent_failed else "completed"
+                container.control("pause",container.name)
+            try:
+                login.resume()
+                login_installed = bool(login.initial)
+            finally:
+                if hasattr(container,"control"):
+                    container.control("unpause",container.name)
+            manifest["status"] = "agent_running"
+            turn_argv, turn_input = agent_argv, prompt
+            while True:
+                # Records from before this turn are logged but are not its result.
+                collect_ddtest_results(len(agent_argvs))
+                agent_completed, last_result, logged_result = False, None, None
+                agent_argvs.append(turn_argv)
+                command(turn_argv, cwd=checkout, agent=True, stdin=turn_input)
+                if background.unfinished():
+                    manifest["unfinished_background_commands"] = background.unfinished()
+                    manifest["failure_kind"] = "infrastructure"
+                    manifest["retry_recommended"] = True
+                    raise RuntimeError("CLI exited with unfinished Bash tasks; local validation was interrupted, not completed")
+                if not agent_completed and not agent_failed:
+                    raise RuntimeError("CLI exited without a recognized completion event; inspect the activity")
+                if agent_failed:
+                    break
+                # The turn ended at a question only the user can answer: reply in
+                # the same conversation, or stop and record the question.
+                # The harness log holds every ddtest result, including one the agent
+                # redirected to a file or reformatted; a tool output is the fallback.
+                logged_result = collect_ddtest_results(len(agent_argvs)) or logged_result
+                asked = user_answers.question(logged_result or last_result)
+                turn_input = answer_question(asked, "ddtest log" if logged_result else "tool output") if asked else None
+                if turn_input is None:
+                    break
+                turn_argv = resume_command(args.agent, agent_argv, session_id)
+            manifest["status"] = "agent_failed" if agent_failed else "completed"
         code = 1 if agent_failed else 0
     except (OSError, RuntimeError, TimeoutError, ValueError, KeyboardInterrupt, subprocess.SubprocessError) as error:
         manifest["status"] = "interrupted" if isinstance(error, KeyboardInterrupt) else "failed"
@@ -1499,7 +1549,7 @@ def run(args):
         if manifest.get("failure_stage")=="model_authentication":
             manifest["failure_kind"]="authentication"
             manifest["retry_recommended"]=False
-        elif manifest.get("failure_stage") in ("runtime_readiness","storage_readiness","package_manager","python_environment","bundle_binstubs"):
+        elif manifest.get("failure_stage") in ("runtime_readiness","storage_readiness","package_manager","python_environment","bundle_binstubs","dependency_cache_restore"):
             manifest["failure_kind"]="evaluator_environment"
             manifest["retry_recommended"]=False
         if manifest.get("status")=="preparing" and not manifest.get("failure_kind"):
@@ -1508,6 +1558,7 @@ def run(args):
         manifest["error"] = str(error) or "Interrupted"
         print(redact(manifest["error"]), file=sys.stderr)
     finally:
+        phase = "collection"
         begin_teardown()
         if container_started:
             # A timed-out or interrupted agent keeps running after its docker
@@ -1534,7 +1585,11 @@ def run(args):
                 except (OSError, subprocess.SubprocessError, RuntimeError, TimeoutError) as error:
                     code = finalization_failed(str(error))
         try:
-            container.close()
+            cleanup_started = time.monotonic()
+            try:
+                container.close()
+            finally:
+                manifest["container_cleanup_seconds"] = time.monotonic() - cleanup_started
             manifest["isolation"]["cleanup"] = "removed"
         except (OSError, RuntimeError, subprocess.SubprocessError) as error:
             manifest["isolation"]["cleanup"] = "failed"
@@ -1577,7 +1632,8 @@ def run(args):
         except (OSError, ValueError) as error:
             code = finalization_failed(str(error))
         try:
-            manifest["agent_reporting"] = reporting_verdict(final_response, report, inside(checkout))
+            manifest["agent_reporting"] = ({"status": "not run", "reason": "Dependency cache preparation only."}
+                                           if prepare_cache else reporting_verdict(final_response, report, inside(checkout)))
             manifest["ddtest_runtime"] = report_runtime(report, manifest.get("node_runtime", {}).get("version"))
             for language, name in (("ruby", "Ruby"), ("java", "Java"), ("python", "Python")):
                 if language+"_runtime" not in manifest:
@@ -1644,6 +1700,7 @@ def run(args):
             if manifest["status"] != "interrupted":
                 manifest["status"] = "failed"
         manifest["finished_at"] = time.time()
+        manifest["timings_seconds"] = {"total": time.monotonic() - started, "commands": phase_totals}
         (output / "run.json").write_text(json.dumps(redact(manifest), indent=2) + "\n")
         print(f"Evidence: {output}\nDisposable checkout retained for evaluation: {trial}")
     return code
@@ -1653,6 +1710,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--cleanup", type=Path, help="Remove the verified owned trial recorded in this output directory")
     parser.add_argument("--image", help="Prebuilt Docker image ID or repository@sha256 digest; required for trials")
+    parser.add_argument("--dependency-cache", help="Expected fingerprint of the dependency cache baked into --image")
+    parser.add_argument("--prepare-cache", help="Prepare dependencies without model authentication or an agent; write a cache archive")
+    parser.add_argument("--warmup-command", action="append", default=[],
+                        help="With --prepare-cache only: warm build dependencies in a disposable copy before capturing caches")
     parser.add_argument("--login-json", type=Path, help="Selected model login; refresh updates persist, never copies a profile")
     parser.add_argument("--existing-login", action="store_true", help="Reuse authorized existing CLI model authentication, including a managed Claude helper")
     parser.add_argument("--submodules", action="store_true", help="Initialize submodules at the requested commit")
