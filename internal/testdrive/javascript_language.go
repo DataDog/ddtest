@@ -33,7 +33,8 @@ func (javascriptLanguage) installedTracerVersion(detected string) string {
 // storage; an unusable folder would otherwise surface later as registry failures.
 func (javascriptLanguage) prepareStorage() error { return checkTemporaryStorage() }
 
-// Jest and the other runners select their commands in Prepare itself.
+// JavaScript command selection also needs the shared CI scope discovered later
+// in Prepare; selectJavaScriptCommand owns that phase.
 func (javascriptLanguage) selectCommand(commandRequest) (string, []string, bool, error) {
 	return "", nil, false, nil
 }
