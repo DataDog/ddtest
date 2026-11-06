@@ -41,7 +41,7 @@ func installExternalTestifyHelperWithTempDir(t *testing.T, dir string, tempDir f
 	t.Helper()
 	kit := tempDir()
 	for name, source := range map[string]string{
-		"go.mod": "module example.com/external-testkit\n\ngo 1.26.0\nrequire github.com/stretchr/testify v1.11.1\n",
+		"go.mod": "module example.com/external-testkit\n\ngo 1.25.0\nrequire github.com/stretchr/testify v1.11.1\n",
 		"run.go": "package testkit\nimport(\"testing\";\"github.com/stretchr/testify/suite\")\nfunc Run(t *testing.T,s suite.TestingSuite){suite.Run(t,s)}\n",
 	} {
 		if err := os.WriteFile(filepath.Join(kit, name), []byte(source), 0600); err != nil {

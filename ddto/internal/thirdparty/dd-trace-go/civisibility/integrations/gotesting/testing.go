@@ -130,6 +130,7 @@ type (
 
 	// commonInfo holds common information about tests and benchmarks.
 	commonInfo struct {
+		exclusions TestExclusions
 		moduleName string
 		suiteName  string
 		testName   string
@@ -741,6 +742,11 @@ func (ddm *M) executeInternalTest(testInfo *testingTInfo, wrapperOpts additional
 			execMeta = createTestMetadata(t, nil)
 			defer deleteTestMetadata(t)
 		}
+		setExecutionExclusions(t, execMeta, originalFunc, nil, exclusionsForFunc(originalFunc))
+		applyExecutionExclusions(execMeta)
+		if execMeta.exclusions.any() && execMeta.cleanupResult == nil {
+			execMeta.cleanupResult = &testCleanupResult{}
+		}
 		execMeta.identity = testInfo.identity
 		execMeta.quarantinedRaceProcess = wrapperOpts.quarantinedRaceProcess
 
@@ -848,16 +854,23 @@ func (ddm *M) executeInternalTest(testInfo *testingTInfo, wrapperOpts additional
 				return
 			}
 
-			unexpectedTermination := r == nil && processRetryUnexpectedTestTermination(t, bodyReturned)
-			duration := runAndApplyTestCleanupWithDuration(t, execMeta, bodyDuration)
-			if unexpectedTermination {
-				r = unexpectedTestTerminationMessage
+			bodyTerminal := r
+			bodyStack := ""
+			if r != nil && execMeta.cleanupResult != nil && execMeta.exclusions.any() {
+				bodyStack = utils.GetStacktrace(1)
 			}
+			unexpectedTermination := r == nil && processRetryUnexpectedTestTermination(t, bodyReturned)
+			duration := runAndApplyTestCleanupWithDurationOptions(t, execMeta, bodyDuration, execMeta.exclusions.any(), r != nil || unexpectedTermination)
+			r = resolveTestBodyTerminalAfterCleanup(t, execMeta, r, unexpectedTermination)
 			terminalStack := ""
 			if r != nil {
 				terminalStack = utils.GetStacktrace(1)
 			}
+			r, terminalStack = resolveTestCleanupDiagnostics(t, execMeta, bodyTerminal, bodyStack, r, terminalStack)
 			finalizeInstrumentedTestExecution(t, execMeta, test, suite, module, duration, nil, r, terminalStack, true)
+			if r == nil && execMeta.cleanupResult != nil {
+				r = execMeta.cleanupResult.panicData
+			}
 			if r != nil && !execMeta.hasAdditionalFeatureWrapper {
 				checkModuleAndSuite(module, suite)
 				if !requestCoverageShutdown(t) {
@@ -1345,6 +1358,15 @@ func setTestTagsFromExecutionMetadataNoClose(test integrations.Test, execMeta *t
 
 	// Set the Test Optimization test to the execution metadata
 	execMeta.test = test
+	bindProtectedFailureEvent(execMeta, test)
+	// Preserve effective suppression independently of retained assignment tags.
+	integrations.SetTestCrashFailureSuppression(test, execMeta.isQuarantined || execMeta.isDisabled)
+	if execMeta.exclusions.PreventFailureSuppression {
+		test.SetTag("test.test_management.prevent_failure_suppression", "true")
+	}
+	if execMeta.exclusions.NoAutoRetry {
+		test.SetTag("test.test_management.no_auto_retry", "true")
+	}
 	if execMeta.identity != nil && len(execMeta.identity.Segments) > 1 {
 		if log.DebugEnabled() {
 			log.Debug("setTestTagsFromExecutionMetadata assigned test for %s", execMeta.identity.FullName)
@@ -1382,18 +1404,20 @@ func setTestTagsFromExecutionMetadataNoClose(test integrations.Test, execMeta *t
 	}
 
 	// If the test is an attempt to fix we tag the test event
-	if execMeta.isAttemptToFix {
+	if execMeta.isAttemptToFix || execMeta.assignment.attemptToFix {
 		test.SetTag(constants.TestIsAttempToFix, "true")
 	}
 
 	// If the test is quarantined we tag the test event
-	if execMeta.isQuarantined {
+	if execMeta.isQuarantined || execMeta.assignment.quarantined {
 		test.SetTag(constants.TestIsQuarantined, "true")
 	}
 
 	// If the test is disabled we tag the test event
-	if execMeta.isDisabled {
+	if execMeta.isDisabled || execMeta.assignment.disabled {
 		test.SetTag(constants.TestIsDisabled, "true")
+	}
+	if execMeta.isDisabled {
 		if !execMeta.isAttemptToFix {
 			// Disabled test without ATF is always a final execution, set the final status
 			test.SetTag(constants.TestFinalStatus, constants.TestStatusSkip)

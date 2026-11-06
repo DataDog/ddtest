@@ -146,6 +146,9 @@ func executeFreshRetryAttemptIteration(execOpts *executionOptions) bool {
 		}
 		if execOpts.originalExecutionMetadata != nil {
 			execOpts.originalExecutionMetadata.test = execMeta.test
+			// Copy the current event binding without importing a historical
+			// failure bit from the original attempt into this event.
+			execOpts.originalExecutionMetadata.protectedFailureEvent.Store(execMeta.protectedFailureEvent.Load())
 		}
 		if execMeta.test == nil && execMeta.identity != nil {
 			log.Debug("execMeta.test nil for %s", execMeta.identity.FullName)

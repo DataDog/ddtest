@@ -28,8 +28,12 @@ func finalizeInstrumentedTestExecution(
 	terminalStack string,
 	markContainersOnTerminal bool,
 ) {
+	retainedFailure := applyRetainedExcludedFailure(t, execMeta)
 	if isAnEfdExecution(execMeta) && duration >= bucketBoundFiveM {
 		test.SetTag(constants.TestEarlyFlakeDetectionRetryAborted, "slow")
+	}
+	if execMeta.protectedDescendantFailure.Load() {
+		execMeta.isQuarantined, execMeta.isDisabled = false, false
 	}
 	logTestFinished(t, duration, terminal)
 
@@ -40,7 +44,10 @@ func finalizeInstrumentedTestExecution(
 		execMeta.panicStacktrace = terminalStack
 		finalExec := isFinalExecution(true, false, execMeta, duration)
 		if finalExec {
-			finalStatus := calculateFinalStatus(execMeta.anyExecutionPassed, true, false, execMeta.isQuarantined, execMeta.isDisabled, execMeta.isAttemptToFix)
+			if execMeta.exclusions.PreventFailureSuppression {
+				markProtectedFailureAncestors(t)
+			}
+			finalStatus := calculateFinalStatus(execMeta.anyExecutionPassed && !retainedFailure, true, false, execMeta.isQuarantined, execMeta.isDisabled, execMeta.isAttemptToFix)
 			test.SetTag(constants.TestFinalStatus, finalStatusValue(finalStatus))
 		}
 		if execMeta.isARetry && finalExec {
@@ -66,7 +73,10 @@ func finalizeInstrumentedTestExecution(
 	switch {
 	case failed:
 		if finalExec {
-			finalStatus := calculateFinalStatus(execMeta.anyExecutionPassed, true, false, execMeta.isQuarantined, execMeta.isDisabled, execMeta.isAttemptToFix)
+			if execMeta.exclusions.PreventFailureSuppression {
+				markProtectedFailureAncestors(t)
+			}
+			finalStatus := calculateFinalStatus(execMeta.anyExecutionPassed && !retainedFailure, true, false, execMeta.isQuarantined, execMeta.isDisabled, execMeta.isAttemptToFix)
 			test.SetTag(constants.TestFinalStatus, finalStatusValue(finalStatus))
 		}
 		if execMeta.isARetry && finalExec {
@@ -87,7 +97,7 @@ func finalizeInstrumentedTestExecution(
 		deferOrCloseInstrumentedTestEvent(execMeta, test, integrations.ResultStatusFail, "")
 	case skipped:
 		if finalExec {
-			finalStatus := calculateFinalStatus(execMeta.anyExecutionPassed, execMeta.anyExecutionFailed, true, execMeta.isQuarantined, execMeta.isDisabled, execMeta.isAttemptToFix)
+			finalStatus := calculateFinalStatus(execMeta.anyExecutionPassed && !retainedFailure, execMeta.anyExecutionFailed, true, execMeta.isQuarantined, execMeta.isDisabled, execMeta.isAttemptToFix)
 			test.SetTag(constants.TestFinalStatus, finalStatusValue(finalStatus))
 		}
 		if execMeta.isAttemptToFix && execMeta.isARetry && finalExec {

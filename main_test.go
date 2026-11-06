@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -149,11 +150,11 @@ func TestRunUsesOuterValidationStatusInsteadOfBuildExitCode(t *testing.T) {
 // TestDispatchHandsInstrumentToDdto runs ddtest instrument in a helper
 // process: ddto handles it, before ddtest sets anything, and exits.
 func TestDispatchHandsInstrumentToDdto(t *testing.T) {
-	stdout, _, code := dispatchHelper(t, "instrument", "--version")
+	stdout, _, code, _ := dispatchHelper(t, "instrument", "--version")
 	if code != 0 || !strings.Contains(stdout, " instrument v") || strings.Contains(stdout, "ddto") {
 		t.Fatalf("instrument --version: exit %d, stdout %q", code, stdout)
 	}
-	_, stderr, code := dispatchHelper(t, "instrument")
+	_, stderr, code, _ := dispatchHelper(t, "instrument")
 	if code != 2 || !strings.Contains(stderr, " instrument [go | orchestrion go") {
 		t.Fatalf("instrument without a command: exit %d, stderr %q", code, stderr)
 	}
@@ -163,12 +164,21 @@ func TestDispatchHandsInstrumentToDdto(t *testing.T) {
 // the environment that the process received: the SDK that ddto incorporates
 // sets its root session variable when it starts.
 func TestDispatchKeepsCallerEnvironment(t *testing.T) {
-	// The names of ddto's internal modes stay ddtest's: ddto runs them as ddtest instrument.
-	for _, command := range []string{"plan", "test-exec", "ci-git-worker", "tool-overlay", "go-shim-exec"} {
-		stdout, stderr, code := dispatchHelper(t, command)
-		if code != 0 || stdout != "root session unset\n" {
-			t.Fatalf("%s: exit %d, stdout %q, stderr %q", command, code, stdout, stderr)
-		}
+	for _, startup := range []struct{ name, output string }{
+		{name: "quiet"},
+		{name: "coverage output", output: "coverage: 0.5% of statements in ./..."},
+		{name: "startup output", output: "unrelated helper startup output"},
+	} {
+		t.Run(startup.name, func(t *testing.T) {
+			t.Setenv("DDTEST_DISPATCH_STARTUP_OUTPUT", startup.output)
+			// The names of ddto's internal modes stay ddtest's: ddto runs them as ddtest instrument.
+			for _, command := range []string{"plan", "test-exec", "ci-git-worker", "tool-overlay", "go-shim-exec"} {
+				stdout, stderr, code, rootSession := dispatchHelper(t, command)
+				if code != 0 || rootSession != "unset\n" {
+					t.Fatalf("%s: exit %d, root session %q, stdout %q, stderr %q", command, code, rootSession, stdout, stderr)
+				}
+			}
+		})
 	}
 }
 
@@ -177,30 +187,36 @@ func TestDispatchHelper(t *testing.T) {
 	if !ok {
 		t.Skip("runs only as dispatchHelper's process")
 	}
+	if output := os.Getenv("DDTEST_DISPATCH_STARTUP_OUTPUT"); output != "" {
+		fmt.Println(output)
+	}
 	dispatch(append([]string{os.Args[0]}, strings.Split(arguments, "\x1f")...))
+	state := "unset\n"
 	if _, set := os.LookupEnv("_DD_ROOT_GO_SESSION_ID"); set {
-		fmt.Println("root session set")
-	} else {
-		fmt.Println("root session unset")
+		state = "set\n"
+	}
+	if err := os.WriteFile(os.Getenv("DDTEST_DISPATCH_ROOT_SESSION_FILE"), []byte(state), 0600); err != nil {
+		t.Fatal(err)
 	}
 	os.Exit(0)
 }
 
 // dispatchHelper runs dispatch with args in a process of this test binary,
 // with the environment of a caller that started no root session.
-func dispatchHelper(t *testing.T, args ...string) (string, string, int) {
+func dispatchHelper(t *testing.T, args ...string) (string, string, int, string) {
 	t.Helper()
 	executable, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
 	}
+	rootSessionFile := filepath.Join(t.TempDir(), "root-session")
 	command := exec.Command(executable, "-test.run=^TestDispatchHelper$")
 	for _, entry := range helperEnvironment() {
 		if !strings.HasPrefix(entry, "_DD_ROOT_GO_SESSION_ID=") {
 			command.Env = append(command.Env, entry)
 		}
 	}
-	command.Env = append(command.Env, "DDTEST_DISPATCH_HELPER="+strings.Join(args, "\x1f"))
+	command.Env = append(command.Env, "DDTEST_DISPATCH_HELPER="+strings.Join(args, "\x1f"), "DDTEST_DISPATCH_ROOT_SESSION_FILE="+rootSessionFile)
 	var stdout, stderr strings.Builder
 	command.Stdout, command.Stderr = &stdout, &stderr
 	err = command.Run()
@@ -208,5 +224,12 @@ func dispatchHelper(t *testing.T, args ...string) (string, string, int) {
 	if err != nil && !errors.As(err, &exitErr) {
 		t.Fatal(err)
 	}
-	return stdout.String(), stderr.String(), command.ProcessState.ExitCode()
+	// Instrument commands exit inside dispatch and do not produce this report.
+	// Keep their stdout intact; startup coverage output must not be mistaken for
+	// the environment report from commands that return.
+	rootSession, reportErr := os.ReadFile(rootSessionFile)
+	if reportErr != nil && !os.IsNotExist(reportErr) {
+		t.Fatal(reportErr)
+	}
+	return stdout.String(), stderr.String(), command.ProcessState.ExitCode(), string(rootSession)
 }

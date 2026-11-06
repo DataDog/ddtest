@@ -64,7 +64,8 @@
       "TestSharedParityFixtureLifetime",
       "TestToolBypassHasNativeIdentityAndExit",
       "TestToolWrapperLifecycle",
-      "TestToolBypassProcessReplacement"
+      "TestToolBypassProcessReplacement",
+      "TestMiniDeclarationExclusions"
     ],
     "provision": [
       "TestCLIDebugEarlyLocalProvisioning",
@@ -167,7 +168,8 @@
       "TestTestifyRegularCallerDefaultCoverage",
       "TestTestifySupportedVersionsAndNativeSemantics",
       "TestTestifyUnsupportedEntryWarnsAndPreservesClientNames",
-      "TestTestifyUserOverlay"
+      "TestTestifyUserOverlay",
+      "TestMiniTestifyExclusionsKeepSiblingRetries"
     ],
     "fuzz": [
       "TestAlignMiniTestCommandsRequiresMiniForm",
@@ -261,7 +263,9 @@
       "TestMiniTemporaryDirectoryInsideModule",
       "TestMiniVendorSelectionMatchesGo",
       "TestMiniVendorTreeMatchesGo",
-      "TestMiniVendorWorkspaceLinksAndReusesBuildCache"
+      "TestMiniVendorWorkspaceLinksAndReusesBuildCache",
+      "TestMiniDeclarationExclusions",
+      "TestMiniTestifyExclusionsKeepSiblingRetries"
     ],
     "fuzz": [
       "TestMiniFuzzExampleLifecycle",
@@ -335,8 +339,10 @@
       ],
       [
         "orchestrion",
-        "sdk-orchestrion",
         "units"
+      ],
+      [
+        "sdk-orchestrion"
       ]
     ],
     "differential/ubuntu-latest/race": [

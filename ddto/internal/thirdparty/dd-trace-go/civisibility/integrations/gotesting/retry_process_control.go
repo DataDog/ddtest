@@ -50,19 +50,21 @@ var (
 )
 
 type processRetryControlConfig struct {
-	Version                int                        `json:"version"`
-	Transport              string                     `json:"transport"`
-	TestName               string                     `json:"test_name"`
-	Attempt                int                        `json:"attempt"`
-	RetryReason            string                     `json:"retry_reason"`
-	MRunEpoch              uint64                     `json:"m_run_epoch,omitempty"`
-	InvocationOrdinal      uint64                     `json:"invocation_ordinal,omitempty"`
-	ReadEndpoint           uint64                     `json:"read_endpoint"`
-	WriteEndpoint          uint64                     `json:"write_endpoint"`
-	ParentDeadlineUnixNano int64                      `json:"parent_deadline_unix_nano"`
-	ParentDeadlineOK       bool                       `json:"parent_deadline_ok"`
-	ObservedGOMAXPROCS     int                        `json:"observed_gomaxprocs"`
-	Subtree                *processRetrySubtreeConfig `json:"subtree,omitempty"`
+	ExclusionPolicy        *processRetrySubtreeConfig    `json:"exclusion_policy,omitempty"`
+	ExclusionResults       map[string]excludedTestResult `json:"exclusion_results,omitempty"`
+	Version                int                           `json:"version"`
+	Transport              string                        `json:"transport"`
+	TestName               string                        `json:"test_name"`
+	Attempt                int                           `json:"attempt"`
+	RetryReason            string                        `json:"retry_reason"`
+	MRunEpoch              uint64                        `json:"m_run_epoch,omitempty"`
+	InvocationOrdinal      uint64                        `json:"invocation_ordinal,omitempty"`
+	ReadEndpoint           uint64                        `json:"read_endpoint"`
+	WriteEndpoint          uint64                        `json:"write_endpoint"`
+	ParentDeadlineUnixNano int64                         `json:"parent_deadline_unix_nano"`
+	ParentDeadlineOK       bool                          `json:"parent_deadline_ok"`
+	ObservedGOMAXPROCS     int                           `json:"observed_gomaxprocs"`
+	Subtree                *processRetrySubtreeConfig    `json:"subtree,omitempty"`
 }
 
 type processRetryControlFrame struct {
@@ -136,6 +138,8 @@ func newParentProcessRetryControl(cmd *exec.Cmd, cfg processRetryChildConfig) (*
 	transport.config.ParentDeadlineUnixNano = cfg.ParentDeadlineUnixNano
 	transport.config.ParentDeadlineOK = cfg.ParentDeadlineOK
 	transport.config.ObservedGOMAXPROCS = cfg.ObservedGOMAXPROCS
+	transport.config.ExclusionResults = cfg.ExclusionResults
+	transport.config.ExclusionPolicy = cfg.ExclusionPolicy
 	transport.config.Subtree = cfg.Subtree
 	if transport.config.ObservedGOMAXPROCS < 1 {
 		transport.config.ObservedGOMAXPROCS = processRetryCurrentCPU()
@@ -578,6 +582,8 @@ func writeProcessRetryControlConfig(path string, cfg processRetryControlConfig) 
 		RetryReason:       cfg.RetryReason,
 		MRunEpoch:         cfg.MRunEpoch,
 		InvocationOrdinal: cfg.InvocationOrdinal,
+		ExclusionPolicy:   cfg.ExclusionPolicy,
+		ExclusionResults:  cfg.ExclusionResults,
 		Subtree:           cfg.Subtree,
 	}); err != nil {
 		return err
@@ -586,7 +592,7 @@ func writeProcessRetryControlConfig(path string, cfg processRetryControlConfig) 
 	if err != nil {
 		return err
 	}
-	if len(payload) > processRetryWireMaxBytes(cfg.Subtree != nil) {
+	if len(payload) > processRetryWireMaxBytes(cfg.Subtree != nil || cfg.ExclusionPolicy != nil || len(cfg.ExclusionResults) > 0) {
 		return errProcessRetryControlTooLarge
 	}
 	return os.WriteFile(path, payload, 0o600)
@@ -601,7 +607,9 @@ func readProcessRetryControlConfig(path string, expected processRetryChildConfig
 		return processRetryControlConfig{}, err
 	}
 	defer file.Close()
-	limit := processRetryWireMaxBytes(expected.RetryReason == processRetrySubtreeReason || expected.RetryReason == constants.AttemptToFixRetryReason)
+	// The payload announces whether it carries exclusion state. Read at most
+	// the existing extended budget, then retain the ordinary limit below.
+	limit := processRetryWireMaxBytes(true)
 	payload, err := io.ReadAll(io.LimitReader(file, int64(limit)+1))
 	if err != nil {
 		return processRetryControlConfig{}, err
@@ -617,6 +625,10 @@ func readProcessRetryControlConfig(path string, expected processRetryChildConfig
 	}
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		return processRetryControlConfig{}, errProcessRetryControlInvalid
+	}
+	extended := cfg.Subtree != nil || cfg.ExclusionPolicy != nil || len(cfg.ExclusionResults) > 0 || expected.RetryReason == processRetrySubtreeReason || expected.RetryReason == constants.AttemptToFixRetryReason
+	if len(payload) > processRetryWireMaxBytes(extended) {
+		return processRetryControlConfig{}, errProcessRetryControlTooLarge
 	}
 	if err := validateProcessRetryControlConfig(cfg, expected); err != nil {
 		return processRetryControlConfig{}, err
@@ -645,8 +657,22 @@ func validateProcessRetryControlConfig(cfg processRetryControlConfig, expected p
 		cfg.Subtree != nil && cfg.RetryReason != processRetrySubtreeReason && cfg.RetryReason != constants.AttemptToFixRetryReason {
 		return errProcessRetryControlInvalid
 	}
+	if err := validateProcessRetryExclusionPolicy(cfg.ExclusionPolicy, cfg.TestName); err != nil {
+		return err
+	}
+	if len(cfg.ExclusionResults) > 4096 {
+		return errors.New("too many excluded retry descendants")
+	}
+	for name := range cfg.ExclusionResults {
+		if !excludedResultWithinRoot(name, cfg.TestName) {
+			return errors.New("invalid excluded retry descendant")
+		}
+	}
 	if err := validateProcessRetrySubtreeConfig(cfg.Subtree, cfg.TestName); err != nil {
 		return errors.Join(errProcessRetryControlInvalid, err)
+	}
+	if expected.ExclusionResults != nil && !reflect.DeepEqual(cfg.ExclusionResults, expected.ExclusionResults) {
+		return errProcessRetryControlInvalid
 	}
 	if expected.Subtree != nil && !reflect.DeepEqual(cfg.Subtree, expected.Subtree) {
 		return errProcessRetryControlInvalid

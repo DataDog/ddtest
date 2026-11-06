@@ -35,7 +35,8 @@ type goPackage struct {
 	DepOnly                            bool // Listed by -deps only as a dependency of the named packages.
 	GoFiles, TestGoFiles, XTestGoFiles []string
 	Imports, TestImports, XTestImports []string
-	// ForTest and the other files are listed only for file coverage.
+	// CgoFiles also participates in declaration discovery; the remaining fields
+	// below are listed only for file coverage.
 	ForTest                                               string
 	CgoFiles, EmbedFiles, TestEmbedFiles, XTestEmbedFiles []string
 	EmbedPatterns, TestEmbedPatterns, XTestEmbedPatterns  []string
@@ -427,7 +428,7 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime, pro
 		return packages, goRejected(err)
 	}
 	list := func(patterns ...string) ([]goPackage, error) {
-		return listWith("Dir,Name,ImportPath,Standard,DepOnly,GoFiles,TestGoFiles,XTestGoFiles,Imports,TestImports,XTestImports,Module,Error", patterns...)
+		return listWith("Dir,Name,ImportPath,Standard,DepOnly,GoFiles,CgoFiles,TestGoFiles,XTestGoFiles,Imports,TestImports,XTestImports,Module,Error", patterns...)
 	}
 	if runtime == Mini && opts.mod != "mod" && plan.Workfile == "" {
 		plan.Modfile, e = preprovideMini(ctx, dir, opts, temp, replacements, progress)
@@ -637,6 +638,13 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime, pro
 	// Packages that the runtime imports keep it in an external test package,
 	// the only test package that may import them back.
 	runtimeImports := graph.imported(selectedRuntime)
+	exclusionGraph := graph
+	if runtime == Mini {
+		exclusionGraph, e = exclusionDependencyGraph(packages, graph, list)
+		if e != nil {
+			return plan, e
+		}
+	}
 	internalImports := 0
 	for _, p := range packages {
 		// ddto lists testing itself; only the caller's patterns select its tests.
@@ -669,6 +677,28 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime, pro
 			// The caller's compiler path identifies this package without baking
 			// its directory into the source. Identical packages still share files.
 			content = "package " + testPackage + "\nimport __dd_ci_runtime " + fmt.Sprintf("%q", runtimePackage) + "\nfunc init() { __dd_ci_runtime.RegisterTestPackage() }\n" + callerEnvironment
+		}
+		if runtime == Mini {
+			importedRegistrations, err := exclusionDependencyRegistrations(p, exclusionGraph, replacements, runtimeImports)
+			if err != nil {
+				return plan, err
+			}
+			content += importedRegistrations
+		}
+		if runtime == Mini {
+			registrations, err := exclusionRegistrationSourcesForBoundary(p, replacements, runtimePackage, runtimeImports[p.ImportPath])
+			if err != nil {
+				return plan, err
+			}
+			for pkg, source := range registrations {
+				filename := "zz_dd_ci_exclusions_test.go"
+				if pkg != p.Name {
+					filename = "zz_dd_ci_exclusions_external_test.go"
+				}
+				if e = add(filepath.Join(p.Dir, filename), source); e != nil {
+					return plan, e
+				}
+			}
 		}
 		if e = add(filepath.Join(p.Dir, "zz_dd_ci_visibility_test.go"), content); e != nil {
 			return plan, e
