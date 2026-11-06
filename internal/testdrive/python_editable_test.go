@@ -35,7 +35,7 @@ func TestPytestRejectsEditableImportsFromOriginalCheckout(t *testing.T) {
 			environment := filepath.Join(t.TempDir(), "venv")
 			output, err := exec.CommandContext(t.Context(), python, "-m", "venv", "--without-pip", environment).CombinedOutput()
 			require.NoError(t, err, string(output))
-			selected := environmentPython(environment)
+			selected := platform.PythonEnvironmentExecutable(environment)
 			site, err := exec.CommandContext(t.Context(), selected, "-c", "import sysconfig; print(sysconfig.get_paths()['purelib'])").Output()
 			require.NoError(t, err)
 			packages := strings.TrimSpace(string(site))

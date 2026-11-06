@@ -53,6 +53,9 @@ func javaShellMayRunTests(root, directory, text string, args []string, implicitG
 			words = append(words, shellWord(word))
 		}
 		words = mavenDaemonAsMaven(words)
+		if len(words) == 0 {
+			return false, true
+		}
 		if gradle.Command(words) || mavenCommand(words) {
 			return javaCommandMayRunTests(words, false, implicitGoals, javaUnreadDocker), true
 		}

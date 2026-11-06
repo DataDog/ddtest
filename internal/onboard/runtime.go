@@ -553,8 +553,12 @@ func (state *runtimeState) trackAction(step runtimeStep, row map[string]any) err
 	}
 	setup, _ := datadogSetup(step)
 	state.action = setup.Reference
-	state.floating, state.caveats = setup.Floating, setup.Caveats
-	state.site, _ = runtimeValue(setup.Inputs["site"], row)
+	state.floating, state.caveats = setup.Floating, slices.Clone(setup.Caveats)
+	var siteErr error
+	state.site, siteErr = runtimeValue(setup.Inputs["site"], row)
+	if siteErr != nil {
+		state.caveats = append(state.caveats, "Datadog site: the reporting site could not be resolved: "+siteErr.Error()+". The existing CI setting is preserved; local validation does not verify delivery to that site.")
+	}
 	if setup.Reference == jenkinsPluginReference && state.site == "" {
 		state.site, _ = jenkinsSetupSite(setup)
 	}

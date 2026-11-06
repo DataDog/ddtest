@@ -231,6 +231,9 @@ func javaCommandMayRunTests(words []string, installer, implicitGoals bool, docke
 		return false
 	}
 	words = mavenDaemonAsMaven(words)
+	if len(words) == 0 {
+		return false
+	}
 	args := words[1:]
 	name := filepath.Base(words[0])
 	switch {

@@ -43,7 +43,23 @@ func mavenDaemonAsMaven(words []string) []string {
 	if len(words) == 0 || !slices.Contains(mavenDaemonExecutables, filepath.Base(words[0])) {
 		return words
 	}
-	return append([]string{"mvn"}, words[1:]...)
+	args := []string{"mvn"}
+	for i := 1; i < len(words); i++ {
+		arg := words[i]
+		if maven.OptionTakesValue(arg) {
+			args = append(args, words[i:min(i+2, len(words))]...)
+			i++
+			continue
+		}
+		switch arg {
+		case "--status", "--stop":
+			return nil // Daemon lifecycle controls never run a Maven build.
+		case "--raw-streams": // Output-only switch with no stock Maven equivalent.
+		default:
+			args = append(args, arg)
+		}
+	}
+	return args
 }
 
 // resolveJavaStep resolves one CI step into the Maven command that validates
@@ -88,6 +104,7 @@ func resolveJavaStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 			parts[i] = mavenDaemonAsMaven(words)
 		}
 	}
+	parts = slices.DeleteFunc(parts, func(words []string) bool { return len(words) == 0 })
 	// Release steps read project metadata, as in VERSION=$(mvn help:evaluate …),
 	// unless an inherited MAVEN_ARGS adds goals.
 	if parseErr != nil && javaMetadataScript(step.Run) && workflow.Env["MAVEN_ARGS"] == "" && job.Env["MAVEN_ARGS"] == "" && step.Env["MAVEN_ARGS"] == "" &&

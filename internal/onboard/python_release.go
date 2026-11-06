@@ -8,86 +8,113 @@ package onboard
 import (
 	"context"
 	"fmt"
+	"os"
 	"sync"
 	"time"
+
+	"github.com/DataDog/ddtest/internal/framework"
+	"github.com/DataDog/ddtest/internal/platform"
+	"github.com/DataDog/ddtest/internal/settings"
 )
 
-// pythonReleaseResolver reads the latest exact ddtrace release. Tests
-// replace it (see SetPythonReleaseResolver), so they never reach the network.
 var pythonReleaseResolver = latestPythonRelease
+var pythonInstalledReleaseResolver = installedPythonRelease
 
-// pythonRelease is the ddtrace release this run prescribes, once
-// selected or resolved.
+// The CLI prescribes one release per run, including any installed tracer that
+// validation reuses. Tests replace both metadata sources to stay offline.
 var pythonRelease struct {
 	sync.Mutex
-	value string
+	value, installed string
+	probed           bool
 }
 
-// SetPythonReleaseResolver replaces how ddtest reads the latest ddtrace
-// release, forgetting any release already selected, and returns the call
-// that restores the previous resolver. Tests use it to stay offline.
-func SetPythonReleaseResolver(resolve func(context.Context) (string, error)) (restore func()) {
+// SetPythonReleaseResolver replaces the latest-release lookup and clears the
+// run's selection. The returned call restores the previous state.
+func SetPythonReleaseResolver(resolve func(context.Context) (string, error)) func() {
 	pythonRelease.Lock()
 	defer pythonRelease.Unlock()
-	previous, selected := pythonReleaseResolver, pythonRelease.value
-	pythonReleaseResolver, pythonRelease.value = resolve, ""
+	previous, value, installed, probed := pythonReleaseResolver, pythonRelease.value, pythonRelease.installed, pythonRelease.probed
+	pythonReleaseResolver, pythonRelease.value, pythonRelease.installed, pythonRelease.probed = resolve, "", "", false
 	return func() {
 		pythonRelease.Lock()
 		defer pythonRelease.Unlock()
-		pythonReleaseResolver, pythonRelease.value = previous, selected
+		pythonReleaseResolver, pythonRelease.value, pythonRelease.installed, pythonRelease.probed = previous, value, installed, probed
 	}
 }
 
-// SelectPythonRelease selects the ddtrace release every Python setup
-// instruction, snippet and message of this run names, which validation then
-// runs as the release CI pins: requested (--tracer-version) when it is an
-// exact release, otherwise, for latest or empty, the latest release on PyPI
-// (see pythonSetupRelease). Any other selector is an error: a floating
-// release cannot be validated.
-func SelectPythonRelease(requested string) (string, error) {
-	if requested != "" && requested != "latest" {
-		if !exactPythonRelease.MatchString(requested) {
-			return "", fmt.Errorf("the Python tracer version must be an exact ddtrace release, such as %s, or latest: %s", pythonExampleRelease, requested)
-		}
-		pythonRelease.Lock()
-		defer pythonRelease.Unlock()
-		pythonRelease.value = requested
-		return requested, nil
-	}
-	return pythonSetupRelease(), nil
-}
-
-// pythonSetupRelease is the release SelectPythonRelease selected, or else the
-// latest release on PyPI, read once per run where a Python setup is
-// first written, as the other languages resolve their tracer when they need
-// it. When PyPI can't be read, it is pythonExampleRelease, an
-// exact release ddtest has validated: the instructions still name one exact
-// release, which validation then downloads.
-func pythonSetupRelease() string {
+// SetPythonInstalledReleaseResolver replaces the selected interpreter's tracer
+// lookup. Tests use it without executing a local Python or uv process.
+func SetPythonInstalledReleaseResolver(resolve func(context.Context) (string, error)) func() {
 	pythonRelease.Lock()
 	defer pythonRelease.Unlock()
-	if pythonRelease.value == "" {
+	previous, value, installed, probed := pythonInstalledReleaseResolver, pythonRelease.value, pythonRelease.installed, pythonRelease.probed
+	pythonInstalledReleaseResolver, pythonRelease.value, pythonRelease.installed, pythonRelease.probed = resolve, "", "", false
+	return func() {
+		pythonRelease.Lock()
+		defer pythonRelease.Unlock()
+		pythonInstalledReleaseResolver, pythonRelease.value, pythonRelease.installed, pythonRelease.probed = previous, value, installed, probed
+	}
+}
+
+// SelectPythonRelease matches validation's installed-tracer precedence. Without
+// an installed exact release, an exact selector wins; latest/empty resolves once
+// through PyPI and falls back to the validated example when it is unavailable.
+func SelectPythonRelease(requested string) (string, error) {
+	if requested != "" && requested != "latest" && !exactPythonRelease.MatchString(requested) {
+		return "", fmt.Errorf("the Python tracer version must be an exact ddtrace release, such as %s, or latest: %s", pythonExampleRelease, requested)
+	}
+	pythonRelease.Lock()
+	defer pythonRelease.Unlock()
+	if !pythonRelease.probed {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
+		installed, err := pythonInstalledReleaseResolver(ctx)
+		cancel()
+		if err == nil && exactPythonRelease.MatchString(installed) {
+			pythonRelease.installed = installed
+		}
+		pythonRelease.probed = true
+	}
+	if pythonRelease.installed != "" {
+		pythonRelease.value = pythonRelease.installed
+	} else if requested != "" && requested != "latest" {
+		pythonRelease.value = requested
+	} else if pythonRelease.value == "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		release, err := pythonReleaseResolver(ctx)
+		cancel()
 		if err != nil || !exactPythonRelease.MatchString(release) {
 			release = pythonExampleRelease
 		}
 		pythonRelease.value = release
 	}
-	return pythonRelease.value
+	return pythonRelease.value, nil
 }
 
-// latestPythonRelease uses the same PyPI metadata lookup as validation.
+func pythonSetupRelease() string {
+	release, _ := SelectPythonRelease("")
+	return release
+}
+
+func installedPythonRelease(ctx context.Context) (string, error) {
+	root, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	selected := platform.NewPython()
+	command, args := framework.NewPytest(selected).Command()
+	command, args, _ = platform.PythonTestCommand(root, command, args, settings.GetCommand() != "")
+	return selected.DetectTracer(ctx, platform.TracerOptions{Command: command, Args: args, Environment: map[string]string{
+		"DD_INSTRUMENTATION_TELEMETRY_ENABLED": "false", "DD_TRACE_ENABLED": "false", "DD_CIVISIBILITY_ENABLED": "false",
+	}})
+}
+
 func latestPythonRelease(ctx context.Context) (string, error) {
 	release, err := ResolvePythonRelease(ctx, "latest")
 	return release.Version, err
 }
 
-// pythonReleaseNote says, in a setup's notes, which ddtrace release the
-// setup installs and why it is exact.
 func pythonReleaseNote(release string) string {
-	return "The setup installs ddtrace " + release + ", the exact release ddtest selected (the latest on PyPI, or --tracer-version), which local validation runs: write it as shown, never a floating or other release. To set up another exact release, rerun onboard with --tracer-version <release>."
+	return "The setup installs ddtrace " + release + ", the exact release ddtest selected, which local validation runs: write it as shown, never a floating or other release. An exact ddtrace already installed in the selected test environment takes precedence, as it does during validation. Otherwise ddtest uses --tracer-version or the latest PyPI release; rerun onboard with --tracer-version <release> to change that fallback."
 }
 
 func (pythonDiscovery) selectTracerRelease(requested string) (string, error) {

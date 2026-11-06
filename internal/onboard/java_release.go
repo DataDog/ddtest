@@ -132,5 +132,8 @@ func javaReleaseNote(release string) string {
 }
 
 func (javaDiscovery) selectTracerRelease(requested string) (string, error) {
+	if requested == "" {
+		return "", nil
+	}
 	return SelectJavaRelease(requested)
 }

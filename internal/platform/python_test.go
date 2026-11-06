@@ -519,8 +519,8 @@ func TestPythonDefaultFrameworkDoesNotInspectConfiguration(t *testing.T) {
 func TestPythonTracerDetectionUsesSelectedEnvironment(t *testing.T) {
 	executor := &mockCommandExecutor{combinedOutput: []byte("3.0.0\n"), onCombinedOutput: func(name string, args []string, env map[string]string) {
 		require.Equal(t, "uv", name)
-		require.Equal(t, []string{"run", "python", "-c"}, args[:3])
-		require.Equal(t, detectPythonTracer, args[3])
+		require.Equal(t, []string{"run", "--no-sync", "python", "-c"}, args[:4])
+		require.Equal(t, detectPythonTracer, args[4])
 	}}
 	version, err := (&Python{executor: executor}).DetectTracer(context.Background(), TracerOptions{Command: "uv", Args: []string{"run", "python"}})
 	require.NoError(t, err)
@@ -580,7 +580,7 @@ func TestPythonInterpreterUsesRunnerCommand(t *testing.T) {
 	}{
 		{command: "python3.12", args: []string{"-m", "pytest"}, wantCommand: "python3.12"},
 		{command: ".venv/bin/pytest", wantCommand: filepath.Join(".venv", "bin", "python")},
-		{command: "uv", args: []string{"run", "pytest"}, wantCommand: "uv", wantPrefix: []string{"run", "python"}},
+		{command: "uv", args: []string{"run", "pytest"}, wantCommand: "uv", wantPrefix: []string{"run", "--no-sync", "python"}},
 		{command: "poetry", args: []string{"run", "pytest"}, wantCommand: "poetry", wantPrefix: []string{"run", "python"}},
 	} {
 		command, prefix := pythonInterpreter(test.command, test.args)
@@ -602,7 +602,7 @@ func TestPythonTracerVersions(t *testing.T) {
 			_, err := installer.InstallTestdriveTracer(t.Context(), TracerOptions{Directory: t.TempDir(), Command: "uv", Args: []string{"run", "pytest"}, Version: tt.version})
 			require.NoError(t, err)
 			require.Equal(t, "uv", executor.commands[1].name)
-			require.Equal(t, []string{"run", "python", "-m", "venv"}, executor.commands[1].args[:4])
+			require.Equal(t, []string{"run", "--no-sync", "python", "-m", "venv"}, executor.commands[1].args[:5])
 			require.Equal(t, []string{"-m", "pip", "install", "--disable-pip-version-check", tt.spec}, executor.commands[2].args)
 		})
 	}
@@ -622,7 +622,7 @@ func TestPythonReusesProjectTracer(t *testing.T) {
 			require.Equal(t, TracerInstallation{Project: true}, result)
 			require.Len(t, executor.commands, 1)
 			require.Equal(t, "uv", executor.commands[0].name)
-			require.Equal(t, []string{"run", "python", "-c"}, executor.commands[0].args[:3])
+			require.Equal(t, []string{"run", "--no-sync", "python", "-c"}, executor.commands[0].args[:4])
 			entries, err := os.ReadDir(directory)
 			require.NoError(t, err)
 			require.Empty(t, entries)
