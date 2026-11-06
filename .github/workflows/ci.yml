@@ -169,8 +169,13 @@ jobs:
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
           "$RUNNER_TEMP/bin/ddtest" instrument --version
 
+      # ddtest instrument keeps per-test coverage in memory only when -coverpkg
+      # cannot reach its runtime. ./... looks as if it could, because ddto's
+      # directory lies below this one, and the slower text profiles that it
+      # falls back to take this suite past the timeout once Test Impact Analysis
+      # is on.
       - name: Run tests
-        run: ddtest instrument go test -timeout=20m -race -coverpkg=./... -coverprofile=coverage.out -covermode=atomic $(cat "$RUNNER_TEMP/go-test-packages")
+        run: ddtest instrument go test -timeout=20m -race -coverpkg=github.com/DataDog/ddtest,github.com/DataDog/ddtest/internal/... -coverprofile=coverage.out -covermode=atomic $(cat "$RUNNER_TEMP/go-test-packages")
         env:
           DD_CIVISIBILITY_ENABLED: ${{ env.DATADOG_API_KEY_CONFIGURED == 'true' && 'parent' || 'false' }}
           DD_CIVISIBILITY_AGENTLESS_ENABLED: "true"

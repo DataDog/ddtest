@@ -126,12 +126,27 @@ func TestGoCIShardsReportThroughDdtestInstrumentWithRaceCoverage(t *testing.T) {
 		}
 	}
 	require.True(t, strings.HasPrefix(command, "ddtest instrument go test"), command)
-	for _, flag := range []string{"-race", "-coverpkg=./...", "-coverprofile=coverage.out", "-covermode=atomic"} {
+	for _, flag := range []string{"-race", "-coverpkg=" + coveredPackages, "-coverprofile=coverage.out", "-covermode=atomic"} {
 		require.Contains(t, command, flag)
 	}
 	// ddtest instrument backfills the coverage of skipped tests only without
 	// flags that narrow the run, so the shards split by package.
 	for _, flag := range []string{"-run", "-skip", "-short"} {
 		require.NotContains(t, command, " "+flag)
+	}
+}
+
+// coveredPackages names the module's packages without ./..., which keeps ddtest
+// instrument from using its in-memory per-test coverage: ddto's directory lies
+// below the module's.
+const coveredPackages = "github.com/DataDog/ddtest,github.com/DataDog/ddtest/internal/..."
+
+func TestCoveredPackagesIncludeEveryPackageOfTheModule(t *testing.T) {
+	output, err := exec.CommandContext(t.Context(), "go", "list", "../../...").Output()
+	require.NoError(t, err)
+	for _, name := range strings.Fields(string(output)) {
+		if name != "github.com/DataDog/ddtest" {
+			require.True(t, strings.HasPrefix(name, "github.com/DataDog/ddtest/internal/"), "%s is outside -coverpkg", name)
+		}
 	}
 }
