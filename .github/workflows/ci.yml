@@ -181,6 +181,7 @@ jobs:
           DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
           DD_SITE: datadoghq.com
           DD_SERVICE: ddtest
+          DD_TEST_SESSION_NAME: test-shards (shard ${{ matrix.shard }}/3)
           DD_ENV: ci
           JOB_CHECK_RUN_ID: ${{ job.check_run_id }}
           DDTEST_REQUIRE_PROJECT_RUNTIMES: "1"
