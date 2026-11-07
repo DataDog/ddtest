@@ -62,7 +62,7 @@ class ScoreTests(unittest.TestCase):
         image = 'sha256:' + 'a' * 64
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            oracle = eval_score.oracle([{**case, 'image': image}], ['codex', 'claude'], False)
+            oracle = eval_score.oracle([{**case, 'image': image}], ['codex', 'claude'], False, trials=3)
             eval_score.freeze(root / 'oracle.json', oracle)
             with contextlib.redirect_stdout(io.StringIO()):
                 code = run_catalog.main([case['id'], '--evaluate-only', '--agent', 'both', '--trials', '3',
@@ -121,7 +121,7 @@ class ScoreTests(unittest.TestCase):
             for missing in (False, True):
                 with self.subTest(agents=agents, missing=missing), tempfile.TemporaryDirectory() as directory:
                     root = Path(directory)
-                    oracle = eval_score.oracle([{**case, 'image': image}], agents, False)
+                    oracle = eval_score.oracle([{**case, 'image': image}], agents, False, trials=3)
                     eval_score.freeze(root / 'oracle.json', oracle)
                     for trial in range(1, 4):
                         for agent in agents:
@@ -159,7 +159,7 @@ class ScoreTests(unittest.TestCase):
         for agents in [('claude',), ('codex', 'claude')]:
             with self.subTest(agents=agents), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
-                oracle = eval_score.oracle([{**case, 'image': image}], agents, False)
+                oracle = eval_score.oracle([{**case, 'image': image}], agents, False, trials=3)
                 eval_score.freeze(root / 'oracle.json', oracle)
                 for trial in range(1, 4):
                     for agent in agents:
@@ -206,7 +206,7 @@ class ScoreTests(unittest.TestCase):
         image = 'sha256:' + 'a' * 64
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            oracle = eval_score.oracle([{**case, 'image': image}], ['codex'], False)
+            oracle = eval_score.oracle([{**case, 'image': image}], ['codex'], False, trials=3)
             eval_score.freeze(root / 'oracle.json', oracle)
             for trial in range(1, 4):
                 write_evidence(root / f"{case['id']}-trial-{trial:02d}-codex", testdrive=real_report('E02'))
@@ -238,3 +238,58 @@ class ScoreTests(unittest.TestCase):
             result = json.loads((root / 'results.json').read_text())
             self.assertEqual(result['comparison']['expected_pass_rate_delta'], 0)
             self.assertEqual(result['comparison']['rigorous_pass_rate_delta'], 0)
+
+
+    def test_repeated_plan_cannot_be_resized_after_freezing(self):
+        from unittest.mock import patch
+        from test_catalog_check import write_evidence, real_report
+        case = next(c for c in run_catalog.load_catalog()['cases'] if c['id'] == 'E02-pipeline-schema')
+        image = 'sha256:' + 'a' * 64
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for trial in range(1, 4):
+                write_evidence(root / f"{case['id']}-trial-{trial:02d}-codex", testdrive=real_report('E02'))
+            argv = [case['id'], '--evaluate-only', '--agent', 'codex', '--trials', '3',
+                    '--output', str(root), '--image-map', case['image'] + '=' + image]
+            freeze = eval_score.freeze
+            # Seed a pre-model oracle for this synthetic evidence without a model run.
+            with patch.object(eval_score, 'freeze', side_effect=lambda path, document, evaluate_only=False: freeze(path, document)), contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(run_catalog.main(argv), 0)
+            original = (root / 'oracle.json').read_bytes()
+            baseline = root / 'baseline.json'
+            baseline.write_bytes((root / 'results.json').read_bytes())
+            for trials in (2, 5, 1):
+                for compare in (False, True):
+                    with self.subTest(trials=trials, compare=compare):
+                        changed = list(argv)
+                        changed[changed.index('--trials') + 1] = str(trials)
+                        if compare:
+                            changed += ['--compare-results', str(baseline)]
+                        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as raised:
+                            run_catalog.main(changed)
+                        self.assertEqual(raised.exception.code, 2)
+                        self.assertEqual((root / 'oracle.json').read_bytes(), original)
+                        self.assertEqual((root / 'results.json').read_bytes(), baseline.read_bytes())
+
+
+    def test_trial_count_changes_oracle_identity(self):
+        case = run_catalog.load_catalog()['cases'][0]
+        documents = [eval_score.oracle([case], ['codex'], False, trials=count) for count in (1, 2, 3, 5)]
+        self.assertEqual(len({document['sha256'] for document in documents}), 4)
+        self.assertEqual([document['trials_per_case_agent'] for document in documents], [1, 2, 3, 5])
+        self.assertTrue(all(document['schema_version'] == 2 for document in documents))
+        with self.assertRaises(ValueError):
+            eval_score.oracle([case], ['codex'], False, trials=0)
+
+    def test_legacy_oracle_is_preserved_without_inventing_a_trial_count(self):
+        case = run_catalog.load_catalog()['cases'][0]
+        document = eval_score.oracle([case], ['codex'], False, trials=3)
+        legacy = {key: value for key, value in document.items() if key != 'trials_per_case_agent'}
+        legacy['schema_version'] = 1
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'oracle.json'
+            path.write_text(json.dumps(legacy))
+            original = path.read_bytes()
+            with self.assertRaisesRegex(ValueError, 'predates planned trial counts'):
+                eval_score.freeze(path, document, evaluate_only=True)
+            self.assertEqual(path.read_bytes(), original)

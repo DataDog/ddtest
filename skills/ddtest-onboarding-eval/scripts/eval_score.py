@@ -11,7 +11,9 @@ def expand(cases, trials):
             for case in cases for trial in range(1, trials + 1)]
 
 
-def oracle(cases, agents, speed_trims, model=None, intake_guard=None):
+def oracle(cases, agents, speed_trims, model=None, intake_guard=None, trials=1):
+    if trials < 1:
+        raise ValueError("--trials must be at least 1")
     def expected(value):
         return {key: value.get(key) for key in ('verdict', 'blockers')}
     values = []
@@ -21,7 +23,7 @@ def oracle(cases, agents, speed_trims, model=None, intake_guard=None):
                        'image': case['image'], 'setup': case['setup_commands'], 'readiness': case['readiness_commands'],
                        'trims': case['trims'], 'harness': case['harness'],
                        'expected': {agent: expected({**base, **(base.get('agents', {}).get(agent) or {})}) for agent in agents}})
-    document = {'schema_version': 1, 'speed_trims': speed_trims, 'cases': values}
+    document = {'schema_version': 2, 'speed_trims': speed_trims, 'trials_per_case_agent': trials, 'cases': values}
     if model:
         document['requested_model'] = model
     if intake_guard:
@@ -32,8 +34,11 @@ def oracle(cases, agents, speed_trims, model=None, intake_guard=None):
 
 def freeze(path, document, evaluate_only=False):
     if path.exists():
-        if json.loads(path.read_text()) != document:
-            raise ValueError('The frozen oracle differs from the requested cases or expectations; use a new output folder')
+        saved = json.loads(path.read_text())
+        if 'trials_per_case_agent' not in saved:
+            raise ValueError('The frozen oracle predates planned trial counts; use its original evaluator for historical evidence or a new output folder for a new experiment')
+        if saved != document:
+            raise ValueError('The frozen oracle differs from the requested cases, expectations or trial count; use a new output folder')
     elif evaluate_only:
         raise ValueError('Repeated-trial evaluation requires the oracle saved before the trials')
     else:

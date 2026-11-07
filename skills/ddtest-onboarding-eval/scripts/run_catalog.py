@@ -843,7 +843,7 @@ def main(argv=None):
         except (OSError, ValueError, KeyError, TypeError, AttributeError) as error:
             parser.error(str(error))
     oracle = eval_score.oracle([{**case, "image": cached.get(case["id"], images.get(case["id"] if args.case_image else case["image"], case["image"]))}
-                               for case in oracle_cases], agents, args.speed_trims, model=args.model, intake_guard=guard)
+                               for case in oracle_cases], agents, args.speed_trims, model=args.model, intake_guard=guard, trials=args.trials)
     image_keys = {case.get("catalog_id", case["id"]) if args.case_image else case["image"] for case in cases}
     missing = sorted(image_keys - set(images))
     if not args.dry_run and not args.evaluate_only:
@@ -872,7 +872,7 @@ def main(argv=None):
                 print(shlex.join(arguments))
                 print(shlex.join([sys.executable, str(RUN_EVAL), "--cleanup", str(evidence)]) + "\n")
         return 0
-    if args.trials > 1:
+    if args.trials > 1 or (output / "oracle.json").exists():
         try:
             eval_score.freeze(output / "oracle.json", oracle, args.evaluate_only)
         except (OSError, ValueError) as error:

@@ -53,7 +53,7 @@ class CatalogImageModesTests(unittest.TestCase):
     def test_cache_image_is_bound_to_the_repeated_trial_oracle(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            expected = eval_score.oracle([{**self.case, 'image': self.cached}], ['codex'], False)
+            expected = eval_score.oracle([{**self.case, 'image': self.cached}], ['codex'], False, trials=3)
             eval_score.freeze(root / 'oracle.json', expected)
             code, _ = self.main('E02', '--evaluate-only', '--trials', '3', '--output', str(root),
                                 '--image-map', self.case['image'] + '=' + self.base,

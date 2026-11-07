@@ -509,6 +509,12 @@ retain a copy of the catalog used before execution and pass it with `--catalog`
 when reevaluating those reports. Update expectations for future fresh output
 folders; improvements stay visible in the original repeated-run score.
 
+Oracle schema 2 also freezes `trials_per_case_agent`. Reevaluation and comparison
+require the original trial count, including when requesting a single trial in
+a repeated-run folder. Older oracles without a planned count remain unchanged;
+use their original evaluator for historical reevaluation, and start a new output
+folder for a new experiment rather than rewriting the old oracle.
+
 To add or replace a case:
 
 - Keep one case per framework in `run_eval.py`'s `--framework` list, and keep
