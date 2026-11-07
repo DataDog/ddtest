@@ -1,6 +1,7 @@
 package onboard
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -66,6 +67,90 @@ func TestPythonHandWrittenProjectInstallSelectsDependencies(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := handWrittenPythonEvidenceRepository(t, []string{tc.command}, "python -m pytest --ddtrace tests", "", map[string]string{"pyproject.toml": project + tc.metadata})
+			check := pythonRuntimeCheck(t, root)
+			require.Equal(t, tc.compatible, check.Status == StatusCompatible, "%+v", check)
+		})
+	}
+}
+
+func TestPythonHandWrittenDoesNotInferUninstalledDeclarations(t *testing.T) {
+	for name, files := range map[string]map[string]string{
+		"requirements":   {"requirements.txt": "ddtrace==4.16.0\n"},
+		"optional extra": {"pyproject.toml": "[project]\nname='app'\n[project.optional-dependencies]\ntracing=['ddtrace==4.16.0']\n"},
+		"lockfile":       {"uv.lock": "version=1\n[[package]]\nname='ddtrace'\nversion='4.16.0'\n"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := handWrittenPythonEvidenceRepository(t, nil, "python -m pytest --ddtrace tests", "", files)
+			check := pythonRuntimeCheck(t, root)
+			require.NotEqual(t, StatusCompatible, check.Status, "%+v", check)
+			require.NotContains(t, check.Jobs[0].Tracer, "ddtrace@")
+			root = handWrittenPythonEvidenceRepository(t, nil, "make test", "--ddtrace", files)
+			provider, err := currentCIProvider(root)
+			require.NoError(t, err)
+			workflows, err := readProviderWorkflows(provider, root)
+			require.NoError(t, err)
+			workflow := workflows[0]
+			job := workflow.Jobs["test"]
+			setup := pythonHandWrittenSetup(root, provider, workflow, job, len(job.Steps)-1, "datadoghq.com")
+			require.NotNil(t, setup)
+			require.Empty(t, setup.Tracer, "a wrapper must not infer a declared tracer either")
+		})
+	}
+}
+
+func TestPythonHandWrittenEnvironmentSwitchInvalidatesInstallation(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		before     []string
+		command    string
+		compatible bool
+	}{
+		{"fresh environment", []string{"pip install ddtrace==4.16.0 pytest", "python -m venv venv", "source venv/bin/activate", "pip install pytest"}, "python -m pytest --ddtrace tests", false},
+		{"fresh environment same step", []string{"pip install ddtrace==4.16.0 pytest", "python -m venv venv"}, "source venv/bin/activate && pip install pytest && python -m pytest --ddtrace tests", false},
+		{"install after activation", []string{"python -m venv venv", "source venv/bin/activate", "pip install ddtrace==4.16.0 pytest"}, "python -m pytest --ddtrace tests", true},
+		{"deactivated environment", []string{"python -m venv venv", "source venv/bin/activate", "pip install ddtrace==4.16.0 pytest", "deactivate"}, "python -m pytest --ddtrace tests", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := handWrittenPythonEvidenceRepository(t, tc.before, tc.command, "", nil)
+			check := pythonRuntimeCheck(t, root)
+			require.Equal(t, tc.compatible, check.Status == StatusCompatible, "%+v", check)
+		})
+	}
+}
+
+func TestPythonHandWrittenUVSyncNeedsSelectedDependencyEvidence(t *testing.T) {
+	files := map[string]string{
+		"pyproject.toml": "[project]\nname='app'\nversion='1.0.0'\ndependencies=['pytest']\n[project.optional-dependencies]\ntracing=['ddtrace==4.16.0']\n",
+		"uv.lock":        "version=1\n[[package]]\nname='ddtrace'\nversion='4.16.0'\n",
+	}
+	for _, tc := range []struct {
+		before  []string
+		command string
+	}{
+		{[]string{"uv sync"}, "python -m pytest --ddtrace tests"},
+		{nil, "uv run python -m pytest --ddtrace tests"},
+		{[]string{"pip install ddtrace==4.16.0 pytest", "uv sync"}, "python -m pytest --ddtrace tests"},
+	} {
+		t.Run(tc.command+" after "+strings.Join(tc.before, "; "), func(t *testing.T) {
+			root := handWrittenPythonEvidenceRepository(t, tc.before, tc.command, "", files)
+			check := pythonRuntimeCheck(t, root)
+			require.NotEqual(t, StatusCompatible, check.Status, "%+v", check)
+			require.NotContains(t, check.Jobs[0].Tracer, "ddtrace@")
+		})
+	}
+}
+
+func TestPythonHandWrittenSharedRequirementsAreNotCycles(t *testing.T) {
+	for _, tc := range []struct {
+		name, dev  string
+		compatible bool
+	}{
+		{"shared include", "-r requirements.txt\npytest\n", true},
+		{"recursion", "-r requirements-dev.txt\n", false},
+		{"conflicting pin", "-r requirements.txt\nddtrace==4.17.0\n", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := handWrittenPythonEvidenceRepository(t, []string{"pip install -r requirements.txt -r requirements-dev.txt"}, "python -m pytest --ddtrace tests", "", map[string]string{"requirements.txt": "ddtrace==4.16.0\n", "requirements-dev.txt": tc.dev})
 			check := pythonRuntimeCheck(t, root)
 			require.Equal(t, tc.compatible, check.Status == StatusCompatible, "%+v", check)
 		})

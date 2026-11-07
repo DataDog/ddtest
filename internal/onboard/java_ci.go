@@ -52,8 +52,8 @@ func mavenDaemonAsMaven(words []string) []string {
 			continue
 		}
 		switch arg {
-		case "--status", "--stop":
-			return nil // Daemon lifecycle controls never run a Maven build.
+		case "--status", "--stop", "--diag":
+			return nil // Daemon client controls never run a Maven build.
 		case "--raw-streams": // Output-only switch with no stock Maven equivalent.
 		default:
 			args = append(args, arg)

@@ -108,7 +108,8 @@ func TestMavenDaemonSpecificOptionsDoNotChangeReplayScope(t *testing.T) {
 		require.True(t, resolution.Matched, resolution.Reason)
 		require.Len(t, resolution.Tests, 1)
 		require.Equal(t, "mvn -B test", resolution.Tests[0].Command)
-		for _, control := range []string{"--status", "--stop"} {
+		require.Equal(t, []string{"mvn", "--log-file", "--diag", "test"}, mavenDaemonAsMaven([]string{executable, "--log-file", "--diag", "test"}))
+		for _, control := range []string{"--status", "--stop", "--diag"} {
 			command := executable + " " + control
 			resolution = javaStep(t, root, command)
 			require.False(t, resolution.Matched, command)

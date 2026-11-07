@@ -6,7 +6,6 @@
 package onboard
 
 import (
-	"encoding/json"
 	"os"
 	"path"
 	"path/filepath"
@@ -57,7 +56,7 @@ func pythonHandWrittenSetup(root string, provider ciProvider, workflow ciWorkflo
 	if unresolved != "" {
 		setup.unresolved(unresolved)
 	}
-	if version, pin := pythonHandWrittenTracer(setup, root, directory, workflow, job, index); version != "" {
+	if version, pin := pythonHandWrittenTracer(setup, root, workflow, job, index); version != "" {
 		setup.Tracer, setup.Pin = version, pin
 		setup.Reference = handWrittenReference("ddtrace@"+version, mechanism)
 	}
@@ -162,36 +161,50 @@ func handWrittenCommandPrefix(words []string) ([]string, map[string]string) {
 
 // pythonHandWrittenTracer follows dependency operations in order and records
 // the installation seen by every pytest invocation in the selected step.
-func pythonHandWrittenTracer(setup *handWrittenSetup, root, directory string, workflow ciWorkflow, job runtimeJob, index int) (version, source string) {
+func pythonHandWrittenTracer(setup *handWrittenSetup, root string, workflow ciWorkflow, job runtimeJob, index int) (version, source string) {
 	requested, pin, problem := "", "", ""
-	explicit, observed := false, false
+	active, observed := false, false
 	selected, selectedPin, selectedProblem := "", "", ""
 	for stepIndex, step := range job.Steps[:index+1] {
+		if !step.sameShell && active {
+			// Activation ends with its shell; its installations are not
+			// evidence for the next shell's Python environment.
+			requested, pin, problem, active = "", "", "", false
+		}
 		commands, err := staticCommands(step.Run)
 		if err != nil {
+			if pythonActivationText.MatchString(step.Run) {
+				requested, pin = "", ""
+				problem = "The job changes Python environments in a command ddtest cannot resolve statically; install an exact ddtrace release in the selected environment before pytest."
+				active = true
+			}
 			continue
 		}
 		cwd := stepDirectory(workflow, job, step)
 		for _, words := range commands {
 			words, _ = handWrittenCommandPrefix(words)
+			if len(words) == 0 {
+				continue
+			}
 			if len(words) == 2 && words[0] == "cd" && filepath.IsLocal(words[1]) {
 				cwd = filepath.Join(cwd, words[1])
 				continue
 			}
-			// uv sync installs the lockfile into the environment, replacing an
-			// earlier pip selection. uv run does the same unless sync is off.
+			if pythonActivates(words) || words[0] == "deactivate" && len(words) == 1 {
+				// An installation in the previous environment does not
+				// establish what this environment contains.
+				requested, pin, problem = "", "", ""
+				active = words[0] != "deactivate"
+				continue
+			}
 			if len(words) > 1 && path.Base(words[0]) == "uv" && (words[1] == "sync" || words[1] == "run" && !slices.Contains(words, "--no-sync")) {
-				requested, pin = pythonLockedTracer(root, cwd)
-				problem, explicit = "", true
+				// A lockfile includes unselected extras and groups. Until
+				// their selection is resolved, sync cannot certify a pin.
+				requested, pin = "", ""
+				problem = "The job syncs a uv environment whose selected dependencies ddtest cannot resolve statically; the lockfile alone does not establish that ddtrace is installed."
 			}
 			if pythonInvocation(words) && stepIndex == index {
 				current, currentPin := requested, pin
-				if !explicit {
-					current, currentPin = pythonLockedTracer(root, directory)
-					if currentPin == "" {
-						current, currentPin = pythonDeclaredTracer(root, directory)
-					}
-				}
 				if observed && (selected != current || selectedProblem != problem) {
 					setup.unresolved("The pytest invocations in this step do not share one resolved ddtrace installation; validate each environment separately.")
 					return "", ""
@@ -204,7 +217,6 @@ func pythonHandWrittenTracer(setup *handWrittenSetup, root, directory string, wo
 			}
 			switch args[0] {
 			case "install":
-				explicit = true
 				next, nextPin, known, dryRun := pythonInstallTracer(root, cwd, args[1:])
 				if dryRun {
 					continue
@@ -220,7 +232,6 @@ func pythonHandWrittenTracer(setup *handWrittenSetup, root, directory string, wo
 			case "uninstall":
 				removes, known := pythonUninstallTracer(root, cwd, args[1:])
 				if !known || removes {
-					explicit = true
 					requested, pin = "", ""
 					if known {
 						problem = "The job removes ddtrace (" + strings.Join(words, " ") + ") before this pytest invocation; install an exact release again."
@@ -235,19 +246,13 @@ func pythonHandWrittenTracer(setup *handWrittenSetup, root, directory string, wo
 	// dependency state reached before the wrapper starts.
 	if !observed {
 		selected, selectedPin, selectedProblem = requested, pin, problem
-		if !explicit {
-			selected, selectedPin = pythonLockedTracer(root, directory)
-			if selectedPin == "" {
-				selected, selectedPin = pythonDeclaredTracer(root, directory)
-			}
-		}
 	}
 	if selectedProblem != "" {
 		setup.unresolved(selectedProblem)
 		return "", ""
 	}
 	if selectedPin == "" {
-		setup.missing("No requirements file, lockfile or install command of the job pins ddtrace, so the tests load whatever ddtrace their environment has: add ddtrace==<exact release> (such as " + pythonHandWrittenExample + ") to the requirements the job installs, or lock it.")
+		setup.missing("No observed installation command of the job pins ddtrace in this test environment, so ddtest cannot certify which ddtrace the tests load: add ddtrace==<exact release> (such as " + pythonHandWrittenExample + ") to the requirements the job installs, or lock it.")
 		return "", ""
 	}
 	if release, exact := strings.CutPrefix(selected, "=="); exact && pythonHandWrittenRelease.MatchString(release) {
@@ -567,16 +572,6 @@ func pythonRequirement(requirement string) (specifier string, named bool) {
 	return strings.Join(strings.Fields(match[2]), ""), true
 }
 
-// pythonRequirementsPin reads installed requirements, with constraints applied
-// only when those requirements actually name ddtrace.
-func pythonRequirementsPin(root, file string) (specifier, source string) {
-	specifier, source, known := pythonRequirementSelection(root, nil, []string{file}, nil)
-	if !known {
-		return "", ""
-	}
-	return specifier, source
-}
-
 func pythonRequirementSelection(root string, packages, requirements, constraints []string) (specifier, source string, known bool) {
 	known = true
 	constrained, constraintSource := "", ""
@@ -616,6 +611,7 @@ func pythonRequirementSelection(root string, packages, requirements, constraints
 			return
 		}
 		seen[key] = true
+		defer delete(seen, key)
 		info, ok := repositoryFile(root, root, filepath.FromSlash(file))
 		if !ok || info.Size() > 1<<20 {
 			known = false
@@ -663,85 +659,4 @@ func pythonRequirementSelection(root string, packages, requirements, constraints
 		}
 	}
 	return specifier, source, known
-}
-
-// pythonLockedTracer is the ddtrace release a lockfile at or above
-// directory locks (uv.lock, poetry.lock, pdm.lock, Pipfile.lock), as an
-// == specifier; source is empty without one.
-func pythonLockedTracer(root, directory string) (specifier, source string) {
-	for current := directory; ; current = filepath.Dir(current) {
-		for _, name := range []string{"uv.lock", "poetry.lock", "pdm.lock", "Pipfile.lock"} {
-			data, err := os.ReadFile(filepath.Join(root, current, name))
-			if err != nil {
-				continue
-			}
-			file := path.Join(filepath.ToSlash(current), name)
-			if name == "Pipfile.lock" {
-				var lock map[string]map[string]struct{ Version string }
-				if json.Unmarshal(data, &lock) == nil {
-					for _, section := range []string{"default", "develop"} {
-						if entry, ok := lock[section]["ddtrace"]; ok {
-							return entry.Version, file
-						}
-					}
-				}
-				continue
-			}
-			var lock struct {
-				Package []struct{ Name, Version string } `toml:"package"`
-			}
-			if toml.Unmarshal(data, &lock) == nil {
-				for _, entry := range lock.Package {
-					if strings.EqualFold(entry.Name, "ddtrace") {
-						return "==" + entry.Version, file
-					}
-				}
-			}
-		}
-		if current == "." || current == "" {
-			return "", ""
-		}
-	}
-}
-
-// pythonDeclaredTracer is ddtrace's requirement in the pyproject.toml
-// ([project] dependencies, optional-dependencies or dependency-groups) or
-// requirements.txt at or above directory; source is empty without one.
-func pythonDeclaredTracer(root, directory string) (specifier, source string) {
-	for current := directory; ; current = filepath.Dir(current) {
-		file := path.Join(filepath.ToSlash(current), "pyproject.toml")
-		if data, err := os.ReadFile(filepath.Join(root, current, "pyproject.toml")); err == nil {
-			var project struct {
-				Project struct {
-					Dependencies         []string            `toml:"dependencies"`
-					OptionalDependencies map[string][]string `toml:"optional-dependencies"`
-				} `toml:"project"`
-				DependencyGroups map[string][]any `toml:"dependency-groups"`
-			}
-			if toml.Unmarshal(data, &project) == nil {
-				requirements := slices.Clone(project.Project.Dependencies)
-				for _, group := range project.Project.OptionalDependencies {
-					requirements = append(requirements, group...)
-				}
-				for _, group := range project.DependencyGroups {
-					for _, entry := range group {
-						if requirement, ok := entry.(string); ok {
-							requirements = append(requirements, requirement)
-						}
-					}
-				}
-				for _, requirement := range requirements {
-					if specifier, named := pythonRequirement(requirement); named {
-						return specifier, file
-					}
-				}
-			}
-		}
-		if specifier, source := pythonRequirementsPin(root, path.Join(filepath.ToSlash(current), "requirements.txt")); source != "" {
-			return specifier, source
-		}
-		if current == "." || current == "" {
-			return "", ""
-		}
-	}
 }

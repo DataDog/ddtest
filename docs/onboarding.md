@@ -1321,17 +1321,22 @@ to write instead (an edit-then-apply gap); native ESM Cucumber needs
 `NODE_OPTIONS` (or in every selected script), and `onboard --apply` stops with
 a setup gap before any edit until it is there.
 
-Java hand-written setups are validated as above; Python ones are recognized
-but not validated yet: the pytest CI check reads only the provider's setup.
+Java hand-written setups are validated as above; the pytest CI check also
+validates simple Python hand-written setups.
 Where no provider setup precedes the test command, ddtest recognizes:
 
 - Python: pytest runs with the ddtrace plugin enabled, through `--ddtrace` in
   the command, `PYTEST_ADDOPTS` (also as a prefix of the command) or the
   pytest configuration's `addopts`. ddtrace comes from an exact `pip install
   ddtrace==<release>` in the job, a requirements file the job installs (`-r`,
-  following its `-r`/`-c` includes), a lockfile (`uv.lock`, `poetry.lock`,
-  `pdm.lock`, `Pipfile.lock`), or the project's `pyproject.toml` or
-  `requirements.txt`.
+  following its `-r`/`-c` includes), or dependencies selected by an observed
+  project installation. Constraints alone and uninstalled declarations do not
+  prove that ddtrace is installed. Environment activation or deactivation
+  invalidates an earlier installation's evidence; install the exact release in
+  the environment that runs pytest. uv sync and automatically syncing uv run
+  remain inconclusive because a lockfile can include unselected extras and
+  groups. Dry runs do not install a tracer, and alternate installation
+  destinations remain unresolved.
 - Java: `-javaagent:` with a `dd-java-agent` JAR in `JAVA_TOOL_OPTIONS`,
   `MAVEN_OPTS` or `GRADLE_OPTS`, `-Dorg.gradle.jvmargs` or
   `gradle.properties`, with `DD_CIVISIBILITY_ENABLED=true` (or the matching
@@ -1347,13 +1352,10 @@ Where no provider setup precedes the test command, ddtest recognizes:
   `onboard --apply` leaves a stage with such a setup alone and refuses a plugin
   option that would reach it.
 
-For Python, ddtest checks the same rules as above and lists what each setup
-lacks, but never certifies such a setup and never replaces it with the
-provider's setup: onboarding and testdrive return `status: unsupported` with
-`code: ci_setup_unsupported`, naming each job, its setup and what it lacks,
-and tell the coding agent to keep the setup as it is and report the result.
-This applies on every provider without the shared workflow syntax, even where
-ddtest does not set up the language yet.
+For Python, ddtest checks the runtime, installed tracer release and reporting
+configuration on providers without the shared workflow syntax. It preserves
+hand-written setups and reports missing or unresolved evidence for each job;
+CI execution and dependency provisioning remain untested.
 
 The GitLab setup script, the CircleCI orb and the Buildkite snippet run the
 installer outside GitHub Actions, where it appends its preload to
