@@ -465,3 +465,35 @@ func TestJenkinsNativeESMCucumberGetsTheIstanbulLoader(t *testing.T) {
 	request = javascriptDiscovery{}.ciSetupRequest(root, "cucumber", "datadoghq.com", jenkins{}.setupTerms())
 	require.Equal(t, []string{pluginESMImportCommand}, request.After)
 }
+
+// An explicit but unresolved plugin site must not be replaced with its raw
+// expression; confirmation applies only when the setup omits DD_SITE.
+func TestJenkinsJavaScriptUnresolvedSiteRemainsUnknown(t *testing.T) {
+	for _, site := range []string{unresolvedCIValue("$SITE"), "${{ vars.DD_SITE }}", "datadoghq.eu", ""} {
+		t.Run(site, func(t *testing.T) {
+			useCIProvider(t, "jenkins")
+			useCIStatements(t, nil, "jenkins-plugin", "jenkins-plugin-mode=agentless:datadoghq.eu")
+			setup := ciSetup{Reference: jenkinsPluginReference, Inputs: map[string]string{"languages": "js", "site": site}}
+			_, siteErr := runtimeValue(site, nil)
+			if strings.Contains(site, "$") {
+				require.Error(t, siteErr, "the fixture must exercise a resolution failure")
+			} else {
+				require.NoError(t, siteErr)
+			}
+			state := runtimeState{}
+			require.NoError(t, state.trackAction(runtimeStep{Setup: &setup}, nil))
+			check := (RuntimeCheck{Jobs: []RuntimeFinding{{Workflow: "Jenkinsfile", Job: "Test", SetupSite: state.site, SetupCaveats: state.caveats}}}).WithSiteCaveats("datadoghq.com")
+			caveats := strings.Join(CISetupCaveats(&check), "\n")
+			if siteErr != nil {
+				require.Empty(t, check.Jobs[0].SetupSite)
+				require.Contains(t, caveats, "could not be resolved")
+				require.NotContains(t, caveats, "reports to ")
+			} else {
+				require.Equal(t, "datadoghq.eu", check.Jobs[0].SetupSite)
+				require.Contains(t, caveats, "reports to datadoghq.eu, but --site selects datadoghq.com")
+				require.NotContains(t, caveats, "could not be resolved")
+			}
+			require.Equal(t, site, setup.Inputs["site"], "preserve the existing Jenkins setting")
+		})
+	}
+}
