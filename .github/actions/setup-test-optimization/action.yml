@@ -1,0 +1,42 @@
+name: Set up root Go Test Optimization
+description: Reuse the release CLI and configure reporting for a root Go test job.
+inputs:
+  session-name:
+    description: Test session name identifying the job and its matrix configuration.
+    required: true
+runs:
+  using: composite
+  steps:
+    - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      with:
+        name: ${{ runner.os == 'Windows' && 'integration-cli-windows' || 'integration-cli' }}
+        path: ${{ runner.temp }}/test-binary
+    - name: Configure the shared CLI and test reporting
+      shell: bash
+      env:
+        SESSION_NAME: ${{ inputs.session-name }}
+        CHECK_RUN_ID: ${{ job.check_run_id }}
+      run: |
+        binary="$RUNNER_TEMP/test-binary/ddtest"
+        if [ "$RUNNER_OS" = Windows ]; then
+          binary="$binary.exe"
+        else
+          chmod +x "$binary"
+        fi
+        "$binary" instrument --version
+        echo "$RUNNER_TEMP/test-binary" >> "$GITHUB_PATH"
+        enabled=false
+        if [ -n "${DD_API_KEY:-}" ]; then
+          enabled=parent
+        fi
+        {
+          echo "DDTEST_TEST_BINARY=$binary"
+          echo "DD_CIVISIBILITY_ENABLED=$enabled"
+          echo 'DD_CIVISIBILITY_AGENTLESS_ENABLED=true'
+          echo 'DD_SITE=datadoghq.com'
+          echo 'DD_SERVICE=ddtest'
+          echo 'DD_ENV=ci'
+          echo "DD_TEST_SESSION_NAME=$SESSION_NAME"
+          echo "JOB_CHECK_RUN_ID=$CHECK_RUN_ID"
+          echo 'DD_CIVISIBILITY_CODE_COVERAGE_REPORT_UPLOAD_ENABLED=false'
+        } >> "$GITHUB_ENV"

@@ -59,12 +59,19 @@ func TestReleaseUsesTheSameCIAndRetainsTheInstrumentationGate(t *testing.T) {
 	require.Equal(t, []any{"ci", "compatibility"}, workflow.Jobs["release"].Needs)
 }
 
-func TestPublicCLIJobsShareOneExecutable(t *testing.T) {
+func TestRootGoTestJobsUseTestOptimization(t *testing.T) {
 	jobs := ciTestJobs(t)
-	for _, name := range []string{"jest-testdrive-workflow", "testdrive-language-workflow", "ruby-testdrive",
-		"java-testdrive", "testdrive-vitest-workflow", "onboard-apply-workflow", "testdrive-mocha-workflow",
-		"testdrive-playwright-workflow", "testdrive-cypress-workflow", "testdrive-cucumber-workflow", "testdrive-webdriverio-workflow"} {
-		job := jobs[name]
+	for name, job := range jobs {
+		if name == "test-shards" {
+			continue // Its instrumenting build and coverage flags are checked below.
+		}
+		hasTests := false
+		for _, step := range job.Steps {
+			hasTests = hasTests || strings.Contains(step.Run, "go test")
+		}
+		if !hasTests {
+			continue
+		}
 		switch dependencies := job.Needs.(type) {
 		case string:
 			require.Equal(t, "test-binary", dependencies, name)
@@ -73,13 +80,18 @@ func TestPublicCLIJobsShareOneExecutable(t *testing.T) {
 		default:
 			t.Fatalf("%s has no shared binary dependency", name)
 		}
-		artifact, executable := false, false
+		require.Equal(t, "${{ secrets.DATADOG_API_KEY }}", job.Env["DD_API_KEY"], name)
+		configured := false
 		for _, step := range job.Steps {
-			artifact = artifact || strings.HasPrefix(step.Uses, "actions/download-artifact@")
-			executable = executable || strings.Contains(step.Run, "DDTEST_TEST_BINARY=")
+			if step.Uses == "./.github/actions/setup-test-optimization" {
+				configured = true
+				require.True(t, strings.HasPrefix(step.With["session-name"], name), name)
+			}
+			if strings.Contains(step.Run, "go test") {
+				require.True(t, configured, "%s tests run before reporting is configured", name)
+				require.NotContains(t, strings.ReplaceAll(step.Run, "ddtest instrument go test", ""), "go test", name)
+			}
 		}
-		require.True(t, artifact, name)
-		require.True(t, executable, name)
 	}
 }
 

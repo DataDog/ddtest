@@ -14,16 +14,26 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
         with:
           go-version-file: go.mod
-      - name: Build the CLI once for the public integration journeys
+      - name: Build release CLIs for root Go tests and public integration journeys
         env:
           CGO_ENABLED: '0'
         run: |
+          version="dogfood-${GITHUB_SHA::12}"
+          go -C ddto run ./scripts/release -main .. -name ddtest -command instrument \
+            -version "v0.0.0-$version" -ldflags "-X github.com/DataDog/ddtest/internal/buildinfo.Version=$version" \
+            -target linux/amd64,windows/amd64 -o "$RUNNER_TEMP/dist"
           mkdir -p "$RUNNER_TEMP/test-binary"
-          go build -o "$RUNNER_TEMP/test-binary/ddtest" .
+          mv "$RUNNER_TEMP/dist/ddtest-linux-amd64" "$RUNNER_TEMP/test-binary/ddtest"
+          mv "$RUNNER_TEMP/dist/ddtest-windows-amd64.exe" "$RUNNER_TEMP/test-binary/ddtest.exe"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: integration-cli
           path: ${{ runner.temp }}/test-binary/ddtest
+          if-no-files-found: error
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: integration-cli-windows
+          path: ${{ runner.temp }}/test-binary/ddtest.exe
           if-no-files-found: error
 
   test-support:
@@ -73,8 +83,8 @@ jobs:
       - name: Test install scripts
         run: python -m unittest discover -s scripts -p 'test_*.py'
 
-  # Dogfooding: the only job that reports tests to Datadog. It runs the suite
-  # with ddtest instrument, built from this checkout as a release builds it.
+  # The main suite and the dedicated root Go integration jobs report through
+  # ddtest instrument, built from this checkout as a release builds it.
   test-shards:
     runs-on: ubuntu-latest
     strategy:
@@ -231,6 +241,7 @@ jobs:
           version: v5.19.0
 
   rspec-compatibility:
+    needs: test-binary
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -241,6 +252,8 @@ jobs:
           - rspec: "3.13.2"
             datadog_ci: "1.37.0"
 
+    env:
+      DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -254,17 +267,22 @@ jobs:
         with:
           ruby-version: "3.4"
 
+      - name: Set up Test Optimization
+        uses: ./.github/actions/setup-test-optimization
+        with:
+          session-name: rspec-compatibility (RSpec ${{ matrix.rspec }}, tracer ${{ matrix.datadog_ci }})
       - name: Test RSpec adapter
         run: |
           gem install datadog-ci --version "${{ matrix.datadog_ci }}" --no-document
           gem install rspec --version "${{ matrix.rspec }}" --no-document
           DDTEST_RSPEC_VERSION="${{ matrix.rspec }}" \
             DDTEST_DATADOG_CI_VERSION="${{ matrix.datadog_ci }}" \
-            go test -v ./internal/compatibility -run '^TestRSpecAdapterIntegration$'
+            ddtest instrument go test -v ./internal/compatibility -run '^TestRSpecAdapterIntegration$'
           DDTEST_RUBY_PLATFORM_VERSION="${{ matrix.datadog_ci }}" \
-            go test -v ./internal/compatibility -run '^TestRubyPlatformIntegration$'
+            ddtest instrument go test -v ./internal/compatibility -run '^TestRubyPlatformIntegration$'
 
   minitest-compatibility:
+    needs: test-binary
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -275,6 +293,8 @@ jobs:
           - minitest: "6.0.6"
             datadog_ci: "1.37.0"
 
+    env:
+      DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -288,6 +308,10 @@ jobs:
         with:
           ruby-version: "3.4"
 
+      - name: Set up Test Optimization
+        uses: ./.github/actions/setup-test-optimization
+        with:
+          session-name: minitest-compatibility (Minitest ${{ matrix.minitest }}, tracer ${{ matrix.datadog_ci }})
       - name: Test Minitest adapter
         run: |
           gem install datadog-ci --version "${{ matrix.datadog_ci }}" --no-document
@@ -295,9 +319,10 @@ jobs:
           gem install rake --version "13.2.1" --no-document
           DDTEST_MINITEST_VERSION="${{ matrix.minitest }}" \
             DDTEST_DATADOG_CI_VERSION="${{ matrix.datadog_ci }}" \
-            go test -v ./internal/compatibility -run '^TestMinitestAdapterIntegration$'
+            ddtest instrument go test -v ./internal/compatibility -run '^TestMinitestAdapterIntegration$'
 
   pytest-compatibility:
+    needs: test-binary
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -308,6 +333,8 @@ jobs:
           - pytest: "9.1.1"
             ddtrace: "4.14.0"
 
+    env:
+      DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -321,23 +348,30 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Set up Test Optimization
+        uses: ./.github/actions/setup-test-optimization
+        with:
+          session-name: pytest-compatibility (pytest ${{ matrix.pytest }}, tracer ${{ matrix.ddtrace }})
       - name: Test pytest adapter
         run: |
           python -m pip install "ddtrace==${{ matrix.ddtrace }}" "pytest==${{ matrix.pytest }}" pytest-cov pytest-xdist
           DDTEST_PYTHON_BINARY="$(command -v python)" \
-            go test -v ./internal/compatibility -run '^TestPyTest(AdapterIntegration|SuiteModeSelectorBatches)$'
+            ddtest instrument go test -v ./internal/compatibility -run '^TestPyTest(AdapterIntegration|SuiteModeSelectorBatches)$'
           DDTEST_PYTHON_PLATFORM_INTEGRATION=1 \
-            go test -v ./internal/compatibility -run '^TestPythonPlatformIntegration$'
+            ddtest instrument go test -v ./internal/compatibility -run '^TestPythonPlatformIntegration$'
           DDTEST_PYTEST_PYTHON="$(command -v python)" \
-            go test -v ./internal/testdrive/... -run '^TestPytest(RealValidation|CoverageExecutesOnlyInsideCopy|LoggingExecutesOnlyInsideCopy|RejectsEditableImportsFromOriginalCheckout|CoverageDataExecutesOnlyInsideCopy|IgnoredConfigurationUsesRoot|ObserverKeepsConcurrentDuplicateExecutions|PreflightReportsSelectedEnvironment)$'
+            ddtest instrument go test -v ./internal/testdrive/... -run '^TestPytest(RealValidation|CoverageExecutesOnlyInsideCopy|LoggingExecutesOnlyInsideCopy|RejectsEditableImportsFromOriginalCheckout|CoverageDataExecutesOnlyInsideCopy|IgnoredConfigurationUsesRoot|ObserverKeepsConcurrentDuplicateExecutions|PreflightReportsSelectedEnvironment)$'
 
   javascript-platform-compatibility:
+    needs: test-binary
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         dd_trace: ["5.111.0", "6.15.0"]
 
+    env:
+      DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -351,20 +385,27 @@ jobs:
         with:
           node-version: "22"
 
+      - name: Set up Test Optimization
+        uses: ./.github/actions/setup-test-optimization
+        with:
+          session-name: javascript-platform-compatibility (tracer ${{ matrix.dd_trace }})
       - name: Test JavaScript platform
         run: |
           dd_trace_dir="${RUNNER_TEMP}/dd-trace-${{ matrix.dd_trace }}"
           npm install --prefix "${dd_trace_dir}" "dd-trace@${{ matrix.dd_trace }}"
           DDTEST_DD_TRACE_NODE_MODULES="${dd_trace_dir}/node_modules" \
-            go test -v ./internal/compatibility -run '^TestJavaScript(Platform|ActionPreload)Integration$'
+            ddtest instrument go test -v ./internal/compatibility -run '^TestJavaScript(Platform|ActionPreload)Integration$'
 
   jest-compatibility:
+    needs: test-binary
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         jest: ["27.5.1", "28.1.3", "29.4.3", "29.7.0", "30.5.1"]
 
+    env:
+      DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -378,22 +419,29 @@ jobs:
         with:
           node-version: "22"
 
+      - name: Set up Test Optimization
+        uses: ./.github/actions/setup-test-optimization
+        with:
+          session-name: jest-compatibility (Jest ${{ matrix.jest }})
       - name: Test Jest adapter
         run: |
           jest_dir="${RUNNER_TEMP}/jest-${{ matrix.jest }}"
           npm install --prefix "${jest_dir}" "jest@${{ matrix.jest }}" dd-trace@5.86.0
           DDTEST_JEST_NODE_MODULES="${jest_dir}/node_modules" \
-            go test -v ./internal/compatibility -run '^TestJest(Adapter|Testdrive)Integration$'
+            ddtest instrument go test -v ./internal/compatibility -run '^TestJest(Adapter|Testdrive)Integration$'
           DDTEST_JEST_NODE_MODULES="${jest_dir}/node_modules" \
-            go test -v ./internal/testdrive -run '^TestJestCheckOnlyIntegration$'
+            ddtest instrument go test -v ./internal/testdrive -run '^TestJestCheckOnlyIntegration$'
 
   vitest-compatibility:
+    needs: test-binary
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         vitest: ["1.6.1", "2.1.9", "3.2.7", "4.1.11", "5.0.5"]
 
+    env:
+      DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -407,6 +455,10 @@ jobs:
         with:
           node-version: "22"
 
+      - name: Set up Test Optimization
+        uses: ./.github/actions/setup-test-optimization
+        with:
+          session-name: vitest-compatibility (Vitest ${{ matrix.vitest }})
       - name: Test Vitest adapter
         run: |
           vitest_dir="${RUNNER_TEMP}/vitest-${{ matrix.vitest }}"
@@ -415,17 +467,20 @@ jobs:
           npx --yes npm@11.11.1 install --prefix "${vitest_dir}" "vitest@${{ matrix.vitest }}" "@vitest/coverage-v8@${{ matrix.vitest }}" "dd-trace@5.132.0"
           DDTEST_VITEST_NODE_MODULES="${vitest_dir}/node_modules" \
           DDTEST_DD_TRACE_NODE_MODULES="${vitest_dir}/node_modules" \
-            go test -v ./internal/compatibility -run '^TestVitest(Adapter|Tracing)Integration$'
+            ddtest instrument go test -v ./internal/compatibility -run '^TestVitest(Adapter|Tracing)Integration$'
           DDTEST_VITEST_NODE_MODULES="${vitest_dir}/node_modules" \
-            go test -v ./internal/testdrive -run '^TestVitest(Configuration|ValidationArguments|MultiProjectRejectionKeepsConfigurationEvidence|RepeatedRunOptionIsNormalized)Integration$'
+            ddtest instrument go test -v ./internal/testdrive -run '^TestVitest(Configuration|ValidationArguments|MultiProjectRejectionKeepsConfigurationEvidence|RepeatedRunOptionIsNormalized)Integration$'
 
   mocha-compatibility:
+    needs: test-binary
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         mocha: ["8.4.0", "9.2.2", "10.8.2", "11.7.6", "12.0.0"]
 
+    env:
+      DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -439,22 +494,29 @@ jobs:
         with:
           node-version: "22"
 
+      - name: Set up Test Optimization
+        uses: ./.github/actions/setup-test-optimization
+        with:
+          session-name: mocha-compatibility (Mocha ${{ matrix.mocha }})
       - name: Test Mocha adapter
         run: |
           mocha_dir="${RUNNER_TEMP}/mocha-${{ matrix.mocha }}"
           npm install --prefix "${mocha_dir}" "mocha@${{ matrix.mocha }}"
           DDTEST_MOCHA_NODE_MODULES="${mocha_dir}/node_modules" \
-            go test -v ./internal/compatibility -run '^TestMocha.*Integration$'
+            ddtest instrument go test -v ./internal/compatibility -run '^TestMocha.*Integration$'
           DDTEST_MOCHA_NODE_MODULES="${mocha_dir}/node_modules" \
-            go test -v ./internal/testdrive -run '^TestMochaNativeObserverIntegration$'
+            ddtest instrument go test -v ./internal/testdrive -run '^TestMochaNativeObserverIntegration$'
 
   cypress-compatibility:
+    needs: test-binary
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         cypress: ["12.17.4", "13.17.0", "14.5.4", "15.21.1", "16.0.0"]
 
+    env:
+      DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -468,6 +530,10 @@ jobs:
         with:
           node-version: "22"
 
+      - name: Set up Test Optimization
+        uses: ./.github/actions/setup-test-optimization
+        with:
+          session-name: cypress-compatibility (Cypress ${{ matrix.cypress }})
       - name: Test Cypress adapter
         run: |
           cypress_dir="${RUNNER_TEMP}/cypress-${{ matrix.cypress }}"
@@ -475,15 +541,18 @@ jobs:
           DDTEST_CYPRESS_BINARY="${cypress_dir}/node_modules/.bin/cypress" \
             DDTEST_CYPRESS_NODE_MODULES="${cypress_dir}/node_modules" \
             DDTEST_CYPRESS_XVFB="$(command -v xvfb-run)" \
-            go test -v ./internal/compatibility -run '^TestCypressAdapter.*Integration$'
+            ddtest instrument go test -v ./internal/compatibility -run '^TestCypressAdapter.*Integration$'
 
   playwright-compatibility:
+    needs: test-binary
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         playwright: ["1.18.0", "1.31.1", "1.38.0", "1.59.1", "1.60.0", "1.62.1", "1.63.0"]
 
+    env:
+      DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -497,6 +566,10 @@ jobs:
         with:
           node-version: "22"
 
+      - name: Set up Test Optimization
+        uses: ./.github/actions/setup-test-optimization
+        with:
+          session-name: playwright-compatibility (Playwright ${{ matrix.playwright }})
       - name: Test Playwright adapter
         env:
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
@@ -505,15 +578,18 @@ jobs:
           npm install --prefix "${playwright_dir}" "@playwright/test@${{ matrix.playwright }}"
           DDTEST_PLAYWRIGHT_BINARY="${playwright_dir}/node_modules/.bin/playwright" \
             DDTEST_PLAYWRIGHT_NODE_MODULES="${playwright_dir}/node_modules" \
-            go test -v ./internal/compatibility -run '^TestPlaywrightAdapterIntegration$'
+            ddtest instrument go test -v ./internal/compatibility -run '^TestPlaywrightAdapterIntegration$'
 
   cucumber-compatibility:
+    needs: test-binary
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         cucumber: ["7.0.0", "8.11.1", "9.6.0", "10.9.0", "11.3.0", "12.9.0", "13.2.1"]
 
+    env:
+      DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -527,6 +603,10 @@ jobs:
         with:
           node-version: "22"
 
+      - name: Set up Test Optimization
+        uses: ./.github/actions/setup-test-optimization
+        with:
+          session-name: cucumber-compatibility (Cucumber ${{ matrix.cucumber }})
       - name: Test Cucumber adapter
         run: |
           cucumber_dir="${RUNNER_TEMP}/cucumber-${{ matrix.cucumber }}"
@@ -534,9 +614,9 @@ jobs:
           DDTEST_CUCUMBER_BINARY="${cucumber_dir}/node_modules/.bin/cucumber-js" \
             DDTEST_CUCUMBER_NODE_MODULES="${cucumber_dir}/node_modules" \
             DDTEST_CUCUMBER_VERSION="${{ matrix.cucumber }}" \
-            go test -v ./internal/compatibility -run '^TestCucumberAdapterIntegration$'
+            ddtest instrument go test -v ./internal/compatibility -run '^TestCucumberAdapterIntegration$'
           DDTEST_CUCUMBER_NODE_MODULES="${cucumber_dir}/node_modules" \
-            go test -v ./internal/testdrive -run '^TestCucumberSupportMetadataIntegration$'
+            ddtest instrument go test -v ./internal/testdrive -run '^TestCucumberSupportMetadataIntegration$'
 
   lint:
     runs-on: ubuntu-latest
@@ -575,16 +655,10 @@ jobs:
           - {node: '20', jest: '29.7.0', tracer: '5.132.0', typescript: 'ts-jest@29 typescript@5 @types/jest@29', group: testdrive, shard: '2/2', tests: 'TestPublicJestTestdrive'}
           - {node: '20', jest: '29.7.0', tracer: '5.132.0', typescript: 'ts-jest@29 typescript@5 @types/jest@29', group: packages, shard: '1/1', tests: 'TestPublicJest(PackageConfiguration|ForwardedConfiguration)|TestPublicCoordinatorJestFactsAndFreshReport'}
           - {node: '20', jest: '29.7.0', tracer: '5.132.0', typescript: 'ts-jest@29 typescript@5 @types/jest@29', group: configurations, shard: '1/1', tests: 'TestPublicJest(Configurations|TwoPackageConfiguration|LoaderConfiguration)'}
+    env:
+      DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: integration-cli
-          path: ${{ runner.temp }}/test-binary
-      - name: Make the shared CLI executable
-        run: |
-          chmod +x "$RUNNER_TEMP/test-binary/ddtest"
-          echo "DDTEST_TEST_BINARY=$RUNNER_TEMP/test-binary/ddtest" >> "$GITHUB_ENV"
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
         with:
           go-version-file: go.mod
@@ -596,21 +670,32 @@ jobs:
         with:
           directory: ${{ runner.temp }}/jest-testdrive
           dependencies: jest@${{ matrix.jest }} dd-trace@${{ matrix.tracer }} ${{ matrix.typescript }} typescript@5
+      - name: Set up Test Optimization
+        uses: ./.github/actions/setup-test-optimization
+        with:
+          session-name: jest-testdrive-workflow (Node ${{ matrix.node }}, Jest ${{ matrix.jest }}, tracer ${{ matrix.tracer }}, ${{ matrix.group }}, shard ${{ matrix.shard }})
       - name: Validate paired outcomes, all feature probes and cleanup
         env:
           DDTEST_JEST_NODE_MODULES: ${{ runner.temp }}/jest-testdrive/node_modules
           DDTEST_TEST_SHARD: ${{ matrix.shard }}
-        run: go test -v ./internal/testdrive -run '^(${{ matrix.tests }})$' -count=1 -timeout=12m
+        run: ddtest instrument go test -v ./internal/testdrive -run '^(${{ matrix.tests }})$' -count=1 -timeout=12m
 
   windows-probe-diagnostics:
+    needs: test-binary
     runs-on: windows-latest
+    env:
+      DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
         with:
           go-version-file: go.mod
+      - name: Set up Test Optimization
+        uses: ./.github/actions/setup-test-optimization
+        with:
+          session-name: windows-probe-diagnostics
       - name: Test Windows probe filesystem diagnostics
-        run: go test ./internal/testdrive -run '^(TestProbePublicationExplainsWindowsFilesystemErrors|TestReportsCanReplaceExistingDestinationTwice)$' -count=1
+        run: ddtest instrument go test ./internal/testdrive -run '^(TestProbePublicationExplainsWindowsFilesystemErrors|TestReportsCanReplaceExistingDestinationTwice)$' -count=1
 
 
   testdrive-language-workflow:
@@ -621,27 +706,25 @@ jobs:
       fail-fast: false
       matrix:
         framework: [pytest]
+    env:
+      DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: integration-cli
-          path: ${{ runner.temp }}/test-binary
-      - name: Make the shared CLI executable
-        run: |
-          chmod +x "$RUNNER_TEMP/test-binary/ddtest"
-          echo "DDTEST_TEST_BINARY=$RUNNER_TEMP/test-binary/ddtest" >> "$GITHUB_ENV"
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
         with:
           go-version-file: go.mod
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: '3.12'
+      - name: Set up Test Optimization
+        uses: ./.github/actions/setup-test-optimization
+        with:
+          session-name: testdrive-language-workflow (${{ matrix.framework }})
       - name: Run Python testdrive
         env:
           DDTEST_RUN_FRAMEWORK_INTEGRATION_TEST: '1'
           DDTEST_FRAMEWORK_REPORTS: ${{ runner.temp }}/ddtest-workflow-reports
-        run: go test -v ./internal/testdrive -run '^TestPublicPythonRubyTestdrives/${{ matrix.framework }}$' -count=1 -timeout=20m
+        run: ddtest instrument go test -v ./internal/testdrive -run '^TestPublicPythonRubyTestdrives/${{ matrix.framework }}$' -count=1 -timeout=20m
       - name: Retain failed testdrive reports
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -668,16 +751,10 @@ jobs:
             minitest: "5.27.0"
             rake: "13.4.2"
           - name: latest
+    env:
+      DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: integration-cli
-          path: ${{ runner.temp }}/test-binary
-      - name: Make the shared CLI executable
-        run: |
-          chmod +x "$RUNNER_TEMP/test-binary/ddtest"
-          echo "DDTEST_TEST_BINARY=$RUNNER_TEMP/test-binary/ddtest" >> "$GITHUB_ENV"
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
         with:
           go-version-file: go.mod
@@ -698,6 +775,10 @@ jobs:
           install rake "$RAKE"
           gem install activesupport --conservative --no-document
           gem list | grep -E '^(datadog-ci|rspec-core|minitest|rake|activesupport) '
+      - name: Set up Test Optimization
+        uses: ./.github/actions/setup-test-optimization
+        with:
+          session-name: ruby-testdrive (${{ matrix.name }})
       - name: Run Ruby testdrive integration tests
         env:
           DDTEST_RUN_FRAMEWORK_INTEGRATION_TEST: '1'
@@ -705,8 +786,8 @@ jobs:
           DDTEST_RUN_RUBY_FORK_INTEGRATION_TEST: '1'
           DDTEST_FRAMEWORK_REPORTS: ${{ runner.temp }}/ddtest-workflow-reports
         run: |
-          go test -v ./internal/testdrive -run '^TestPublicPythonRubyTestdrives$/^(rspec|minitest)$' -count=1 -timeout=20m
-          go test -v ./internal/testdrive -run '^TestRuby.+Integration$' -skip '^TestRubyValidationIntegration$' -count=1 -timeout=20m
+          ddtest instrument go test -v ./internal/testdrive -run '^TestPublicPythonRubyTestdrives$/^(rspec|minitest)$' -count=1 -timeout=20m
+          ddtest instrument go test -v ./internal/testdrive -run '^TestRuby.+Integration$' -skip '^TestRubyValidationIntegration$' -count=1 -timeout=20m
       - name: Retain failed testdrive reports
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -735,16 +816,10 @@ jobs:
           - name: latest
             java: '21'
             tracer: latest
+    env:
+      DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: integration-cli
-          path: ${{ runner.temp }}/test-binary
-      - name: Make the shared CLI executable
-        run: |
-          chmod +x "$RUNNER_TEMP/test-binary/ddtest"
-          echo "DDTEST_TEST_BINARY=$RUNNER_TEMP/test-binary/ddtest" >> "$GITHUB_ENV"
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
         with:
           go-version-file: go.mod
@@ -766,6 +841,10 @@ jobs:
       - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
         with:
           gradle-version: '8.10.2'
+      - name: Set up Test Optimization
+        uses: ./.github/actions/setup-test-optimization
+        with:
+          session-name: java-testdrive (${{ matrix.name }}, Java ${{ matrix.java }}, tracer ${{ matrix.tracer }}, shard ${{ matrix.shard }})
       - name: Run Java testdrive integration tests
         env:
           DDTEST_RUN_JAVA_INTEGRATION_TEST: '1'
@@ -775,7 +854,7 @@ jobs:
           # Every validation starts Maven many times; short-lived Maven JVMs
           # start faster without the optimizing compiler. Both runs inherit it.
           MAVEN_OPTS: -XX:+TieredCompilation -XX:TieredStopAtLevel=1
-        run: go test -v ./internal/testdrive -run '^TestJavaValidationIntegration$' -count=1 -timeout=20m
+        run: ddtest instrument go test -v ./internal/testdrive -run '^TestJavaValidationIntegration$' -count=1 -timeout=20m
       - name: Retain failed testdrive reports
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -801,16 +880,10 @@ jobs:
             tracer: '6.21.0'
           - vitest: 'latest'
             tracer: '6.21.0'
+    env:
+      DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: integration-cli
-          path: ${{ runner.temp }}/test-binary
-      - name: Make the shared CLI executable
-        run: |
-          chmod +x "$RUNNER_TEMP/test-binary/ddtest"
-          echo "DDTEST_TEST_BINARY=$RUNNER_TEMP/test-binary/ddtest" >> "$GITHUB_ENV"
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
         with:
           go-version-file: go.mod
@@ -822,36 +895,38 @@ jobs:
           version=$(npm view "vitest@${{ matrix.vitest }}" version)
           echo "Vitest $version"
           echo "DDTEST_VITEST_VERSION=$version" >> "$GITHUB_ENV"
+      - name: Set up Test Optimization
+        uses: ./.github/actions/setup-test-optimization
+        with:
+          session-name: testdrive-vitest-workflow (Vitest ${{ matrix.vitest }}, tracer ${{ matrix.tracer }})
       - name: Validate Vitest CLI and Node API paths against local intake
         env:
           DDTEST_RUN_FRAMEWORK_INTEGRATION_TEST: '1'
           DDTEST_VITEST_TRACER_VERSION: ${{ matrix.tracer }}
-        run: go test -v ./internal/testdrive -run '^TestPublicVitestRunnerTestdrive$' -count=1 -timeout=15m
+        run: ddtest instrument go test -v ./internal/testdrive -run '^TestPublicVitestRunnerTestdrive$' -count=1 -timeout=15m
 
   onboard-apply-workflow:
     needs: test-binary
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    env:
+      DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: integration-cli
-          path: ${{ runner.temp }}/test-binary
-      - name: Make the shared CLI executable
-        run: |
-          chmod +x "$RUNNER_TEMP/test-binary/ddtest"
-          echo "DDTEST_TEST_BINARY=$RUNNER_TEMP/test-binary/ddtest" >> "$GITHUB_ENV"
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
         with:
           go-version-file: go.mod
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24'
+      - name: Set up Test Optimization
+        uses: ./.github/actions/setup-test-optimization
+        with:
+          session-name: onboard-apply-workflow
       - name: Validate generated workflow edits with actionlint
         run: |
           go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
-          DDTEST_ACTIONLINT="$(go env GOPATH)/bin/actionlint" go test -v ./internal/onboard -run '^TestGeneratedSetupWorkflow.*Actionlint$' -count=1
+          DDTEST_ACTIONLINT="$(go env GOPATH)/bin/actionlint" ddtest instrument go test -v ./internal/onboard -run '^TestGeneratedSetupWorkflow.*Actionlint$' -count=1
       - name: Install apply fixture dependencies
         run: npm install --prefix "$RUNNER_TEMP/apply-testdrive" vitest@4.1.11 mocha@11.7.6 nyc@17.1.0 dd-trace@6.20.1 @cucumber/cucumber@12.2.0 @wdio/cli@9.20.0 @wdio/local-runner@9.20.0 @wdio/mocha-framework@9.20.0 --no-audit --no-fund
       - name: Apply setup and validate against local intake
@@ -861,7 +936,7 @@ jobs:
           DDTEST_WEBDRIVERIO_NODE_MODULES: ${{ runner.temp }}/apply-testdrive/node_modules
           DDTEST_CUCUMBER_NODE_MODULES: ${{ runner.temp }}/apply-testdrive/node_modules
           DDTEST_CHROME_BINARY: /usr/bin/google-chrome
-        run: DDTEST_ACTIONLINT="$(go env GOPATH)/bin/actionlint" go test -v ./internal/testdrive -run '^TestPublic(OnboardApply|MochaApply|WebdriverIOApply|CucumberApply)$' -count=1 -timeout=8m
+        run: DDTEST_ACTIONLINT="$(go env GOPATH)/bin/actionlint" ddtest instrument go test -v ./internal/testdrive -run '^TestPublic(OnboardApply|MochaApply|WebdriverIOApply|CucumberApply)$' -count=1 -timeout=8m
 
   testdrive-mocha-workflow:
     needs: test-binary
@@ -872,16 +947,10 @@ jobs:
       matrix:
         mocha: ['11.7.6', 'latest']
         shard: ['1/2', '2/2']
+    env:
+      DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: integration-cli
-          path: ${{ runner.temp }}/test-binary
-      - name: Make the shared CLI executable
-        run: |
-          chmod +x "$RUNNER_TEMP/test-binary/ddtest"
-          echo "DDTEST_TEST_BINARY=$RUNNER_TEMP/test-binary/ddtest" >> "$GITHUB_ENV"
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
         with:
           go-version-file: go.mod
@@ -892,11 +961,15 @@ jobs:
         run: |
           npm install --prefix "$RUNNER_TEMP/mocha-testdrive" "mocha@${{ matrix.mocha }}" nyc@17.1.0 c8@12.0.0 dd-trace@6.21.0 --no-audit --no-fund
           npm ls --prefix "$RUNNER_TEMP/mocha-testdrive" --depth=0
+      - name: Set up Test Optimization
+        uses: ./.github/actions/setup-test-optimization
+        with:
+          session-name: testdrive-mocha-workflow (Mocha ${{ matrix.mocha }}, shard ${{ matrix.shard }})
       - name: Validate CLI, programmatic runner, existing failures and coverage gate
         env:
           DDTEST_MOCHA_NODE_MODULES: ${{ runner.temp }}/mocha-testdrive/node_modules
           DDTEST_TEST_SHARD: ${{ matrix.shard }}
-        run: go test -v ./internal/testdrive -run '^(TestPublicMochaTestdrive|TestMochaProbeCoverageThresholdControls|TestMochaDelayedCommandUsesSharedTimeout|TestMochaPreflightResolvesSelectedPackage)$' -count=1 -timeout=10m
+        run: ddtest instrument go test -v ./internal/testdrive -run '^(TestPublicMochaTestdrive|TestMochaProbeCoverageThresholdControls|TestMochaDelayedCommandUsesSharedTimeout|TestMochaPreflightResolvesSelectedPackage)$' -count=1 -timeout=10m
 
   playwright-latest:
     runs-on: ubuntu-latest
@@ -920,17 +993,10 @@ jobs:
     container:
       image: mcr.microsoft.com/playwright:v${{ matrix.playwright == 'latest' && needs.playwright-latest.outputs.version || matrix.playwright }}-noble
     env:
+      DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
       PLAYWRIGHT_VERSION: ${{ matrix.playwright == 'latest' && needs.playwright-latest.outputs.version || matrix.playwright }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: integration-cli
-          path: ${{ runner.temp }}/test-binary
-      - name: Make the shared CLI executable
-        run: |
-          chmod +x "$RUNNER_TEMP/test-binary/ddtest"
-          echo "DDTEST_TEST_BINARY=$RUNNER_TEMP/test-binary/ddtest" >> "$GITHUB_ENV"
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
         with:
           go-version-file: go.mod
@@ -947,11 +1013,15 @@ jobs:
         run: |
           npm install --prefix "$RUNNER_TEMP/playwright-testdrive" "@playwright/test@$PLAYWRIGHT_VERSION" dd-trace@6.20.1 --no-audit --no-fund
           npm ls --prefix "$RUNNER_TEMP/playwright-testdrive" --depth=0
+      - name: Set up Test Optimization
+        uses: ./.github/actions/setup-test-optimization
+        with:
+          session-name: testdrive-playwright-workflow (Playwright ${{ matrix.playwright }}, shard ${{ matrix.shard }})
       - name: Validate browser execution, existing failures and supervised cleanup
         env:
           DDTEST_PLAYWRIGHT_NODE_MODULES: ${{ runner.temp }}/playwright-testdrive/node_modules
           DDTEST_TEST_SHARD: ${{ matrix.shard }}
-        run: go test -v ./internal/testdrive -run '^(TestPublicPlaywrightTestdrive|TestPlaywrightDiscoveryOwnsImportSideEffects|TestPlaywrightDiscoveryKeepsConfiguredReportsOutOfTheCheckout)$' -count=1 -timeout=12m
+        run: ddtest instrument go test -v ./internal/testdrive -run '^(TestPublicPlaywrightTestdrive|TestPlaywrightDiscoveryOwnsImportSideEffects|TestPlaywrightDiscoveryKeepsConfiguredReportsOutOfTheCheckout)$' -count=1 -timeout=12m
 
   testdrive-cypress-workflow:
     needs: test-binary
@@ -964,16 +1034,10 @@ jobs:
         # once per Cypress version.
         cypress: ['15.1.0', 'latest']
         shard: ['1/5', '2/5', '3/5', '4/5', '5/5']
+    env:
+      DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: integration-cli
-          path: ${{ runner.temp }}/test-binary
-      - name: Make the shared CLI executable
-        run: |
-          chmod +x "$RUNNER_TEMP/test-binary/ddtest"
-          echo "DDTEST_TEST_BINARY=$RUNNER_TEMP/test-binary/ddtest" >> "$GITHUB_ENV"
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
         with:
           go-version-file: go.mod
@@ -995,12 +1059,16 @@ jobs:
         run: |
           npm install --prefix "$RUNNER_TEMP/cypress-testdrive" "cypress@${{ matrix.cypress }}" dd-trace@6.20.1 typescript@5.9.3 --save-exact --no-audit --no-fund
           npm ls --prefix "$RUNNER_TEMP/cypress-testdrive" --depth=0
+      - name: Set up Test Optimization
+        uses: ./.github/actions/setup-test-optimization
+        with:
+          session-name: testdrive-cypress-workflow (Cypress ${{ matrix.cypress }}, shard ${{ matrix.shard }})
       - name: Validate original CLI, action API and matching failures with TIA deferred
         env:
           DDTEST_CYPRESS_NODE_MODULES: ${{ runner.temp }}/cypress-testdrive/node_modules
           CYPRESS_CACHE_FOLDER: ${{ runner.temp }}/cypress-testdrive-cache
           DDTEST_TEST_SHARD: ${{ matrix.shard }}
-        run: xvfb-run -a go test -v ./internal/testdrive -run '^(TestPublicCypressTestdrive|TestCypressTypeScriptWrapperTranspilesToCommonJS)$' -failfast -count=1 -timeout=12m
+        run: xvfb-run -a ddtest instrument go test -v ./internal/testdrive -run '^(TestPublicCypressTestdrive|TestCypressTypeScriptWrapperTranspilesToCommonJS)$' -failfast -count=1 -timeout=12m
 
   # Resolve floating dependencies before expanding the matrix. Identical aliases
   # share locked fixtures and jobs within this comprehensive run.
@@ -1035,16 +1103,10 @@ jobs:
       fail-fast: false
       matrix:
         configuration: ${{ fromJSON(needs.cucumber-matrix.outputs.matrix).include }}
+    env:
+      DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: integration-cli
-          path: ${{ runner.temp }}/test-binary
-      - name: Make the shared CLI executable
-        run: |
-          chmod +x "$RUNNER_TEMP/test-binary/ddtest"
-          echo "DDTEST_TEST_BINARY=$RUNNER_TEMP/test-binary/ddtest" >> "$GITHUB_ENV"
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
         with:
           go-version-file: go.mod
@@ -1065,12 +1127,16 @@ jobs:
         uses: ./.github/actions/node-test-fixture
         with:
           directory: ${{ runner.temp }}/cucumber-testdrive
+      - name: Set up Test Optimization
+        uses: ./.github/actions/setup-test-optimization
+        with:
+          session-name: testdrive-cucumber-workflow (Node ${{ matrix.configuration.node }}, Cucumber ${{ matrix.configuration.version }}, shard ${{ matrix.configuration.shard }})
       - name: Validate native scenarios, matching failures and source coverage
         env:
           DDTEST_CUCUMBER_NODE_MODULES: ${{ runner.temp }}/cucumber-testdrive/node_modules
           DDTEST_TEST_SHARD: ${{ matrix.configuration.shard }}
         run: |
-          go test -v ./internal/testdrive -run '${{ matrix.configuration.tests }}' -failfast -count=1 -timeout=12m
+          ddtest instrument go test -v ./internal/testdrive -run '${{ matrix.configuration.tests }}' -failfast -count=1 -timeout=12m
 
   testdrive-webdriverio-workflow:
     needs: test-binary
@@ -1092,16 +1158,10 @@ jobs:
           - {package-manager: npm, wdio: 'latest', tracer: 'latest', shard: '2/4'}
           - {package-manager: npm, wdio: 'latest', tracer: 'latest', shard: '3/4'}
           - {package-manager: npm, wdio: 'latest', tracer: 'latest', shard: '4/4'}
+    env:
+      DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: integration-cli
-          path: ${{ runner.temp }}/test-binary
-      - name: Make the shared CLI executable
-        run: |
-          chmod +x "$RUNNER_TEMP/test-binary/ddtest"
-          echo "DDTEST_TEST_BINARY=$RUNNER_TEMP/test-binary/ddtest" >> "$GITHUB_ENV"
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
         with:
           go-version-file: go.mod
@@ -1118,6 +1178,10 @@ jobs:
             npm install --prefix "$RUNNER_TEMP/wdio-testdrive" @wdio/cli@${{ matrix.wdio }} @wdio/local-runner@${{ matrix.wdio }} @wdio/mocha-framework@${{ matrix.wdio }} @wdio/jasmine-framework@${{ matrix.wdio }} @wdio/spec-reporter@${{ matrix.wdio }} dd-trace@${{ matrix.tracer }} --save-exact --no-audit --no-fund
           fi
           npm ls --prefix "$RUNNER_TEMP/wdio-testdrive" --depth=0
+      - name: Set up Test Optimization
+        uses: ./.github/actions/setup-test-optimization
+        with:
+          session-name: testdrive-webdriverio-workflow (${{ matrix.package-manager }}, WebdriverIO ${{ matrix.wdio }}, tracer ${{ matrix.tracer }}, shard ${{ matrix.shard }})
       - name: Validate real browser outcomes with Linux Xvfb supervision
         env:
           DDTEST_WEBDRIVERIO_NODE_MODULES: ${{ runner.temp }}/wdio-testdrive/node_modules
@@ -1126,12 +1190,12 @@ jobs:
         run: |
           command -v xvfb-run
           if [ '${{ matrix.package-manager }}' = 'pnpm' ]; then
-            go test -v ./internal/testdrive -run '^TestPublicWebdriverIOTestdrive$/^passing$' -failfast -count=1 -timeout=8m
+            ddtest instrument go test -v ./internal/testdrive -run '^TestPublicWebdriverIOTestdrive$/^passing$' -failfast -count=1 -timeout=8m
           else
-            go test -v ./internal/testdrive -run '^TestPublicWebdriverIOTestdrive$' -failfast -count=1 -timeout=12m
+            ddtest instrument go test -v ./internal/testdrive -run '^TestPublicWebdriverIOTestdrive$' -failfast -count=1 -timeout=12m
           fi
           if [ '${{ matrix.shard }}' = '1/4' ] || [ '${{ matrix.package-manager }}' = 'pnpm' ]; then
-            go test -v ./internal/framework ./internal/testdrive -run '^TestWebdriverIO' -failfast -count=1 -timeout=5m
+            ddtest instrument go test -v ./internal/framework ./internal/testdrive -run '^TestWebdriverIO' -failfast -count=1 -timeout=5m
           fi
 
   onboarding-evaluator-isolation:
