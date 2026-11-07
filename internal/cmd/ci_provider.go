@@ -105,6 +105,14 @@ func ciProviderFailure(cmd *cobra.Command, structured bool, err error) error {
 	var invalid invalidCIProvider
 	var choice *onboard.CIProviderChoice
 	switch {
+	case errors.As(err, &invalid):
+		observeUsage(cmd, "failed", "options", "invalid_options")
+	case errors.As(err, &choice):
+		observeUsage(cmd, "needs_input", "discovery", "ci_provider_required")
+	default:
+		observeUsage(cmd, "needs_input", "discovery", "ci_discovery")
+	}
+	switch {
 	case !structured:
 		return err
 	case errors.As(err, &invalid):
@@ -161,6 +169,14 @@ func ciStatementFailure(cmd *cobra.Command, structured bool, err error) error {
 	var invalid invalidCIStatement
 	var conflict *onboard.CIRuntimeConflict
 	var ambiguity *onboard.CIRuntimeAmbiguity
+	switch {
+	case errors.As(err, &invalid), errors.As(err, &ambiguity):
+		observeUsage(cmd, "failed", "options", "invalid_options")
+	case errors.As(err, &conflict):
+		observeUsage(cmd, "needs_input", "discovery", "ci_runtime_conflict")
+	default:
+		observeUsage(cmd, "needs_input", "discovery", "ci_discovery")
+	}
 	switch {
 	case !structured:
 		return err

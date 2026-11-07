@@ -11,14 +11,15 @@ import (
 )
 
 func protocolFailure(cmd *cobra.Command, phase, code string, err error, next []string) error {
+	observeUsage(cmd, "needs_input", phase, code)
 	cmd.SilenceErrors, cmd.SilenceUsage = true, true
 	var choice *onboard.CIProviderChoice
 	if errors.As(err, &choice) {
-		return errors.Join(err, onboard.WriteAgentResult(cmd.OutOrStdout(), onboard.ProviderChoiceResult(choice)))
+		return errors.Join(err, onboard.WriteAgentResult(usageWriter(cmd), onboard.ProviderChoiceResult(choice)))
 	}
 	var unsupported *onboard.CIProviderUnsupportedError
 	if errors.As(err, &unsupported) {
-		return errors.Join(err, onboard.WriteAgentResult(cmd.OutOrStdout(), onboard.ProviderUnsupportedResult(unsupported)))
+		return errors.Join(err, onboard.WriteAgentResult(usageWriter(cmd), onboard.ProviderUnsupportedResult(unsupported)))
 	}
 	action := "supply_input"
 	status := "needs_input"
@@ -31,7 +32,7 @@ func protocolFailure(cmd *cobra.Command, phase, code string, err error, next []s
 	if code == "consent_required" && len(next) > 0 {
 		action = "run_command"
 	}
-	return errors.Join(err, onboard.WriteAgentResult(cmd.OutOrStdout(), onboard.AgentResult{Status: status, Phase: phase, Code: code, Reason: err.Error(), NextAction: action, NextCommand: next}))
+	return errors.Join(err, onboard.WriteAgentResult(usageWriter(cmd), onboard.AgentResult{Status: status, Phase: phase, Code: code, Reason: err.Error(), NextAction: action, NextCommand: next}))
 }
 
 func confirmedCommand(cmd *cobra.Command) []string {
@@ -51,16 +52,22 @@ func confirmedCommand(cmd *cobra.Command) []string {
 func configureProtocolErrors(command *cobra.Command) {
 	original := command.Args
 	command.Args = func(cmd *cobra.Command, args []string) error {
+		beginUsage(cmd, usageMode(cmd))
 		if original == nil {
 			return nil
 		}
 		err := original(cmd, args)
+		if err != nil {
+			observeUsage(cmd, "failed", "options", "invalid_options")
+		}
 		if err != nil && usesProtocol(cmd) {
 			return protocolFailure(cmd, "options", "invalid_options", err, nil)
 		}
 		return err
 	}
 	command.SetFlagErrorFunc(func(cmd *cobra.Command, err error) error {
+		beginUsage(cmd, usageModeArguments(cmd, os.Args[1:]))
+		observeUsage(cmd, "failed", "options", "invalid_options")
 		if usesProtocol(cmd) {
 			return protocolFailure(cmd, "options", "invalid_options", err, nil)
 		}

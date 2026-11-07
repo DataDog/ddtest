@@ -190,6 +190,7 @@ func bindPersistentFlags(cmd *cobra.Command, bindings []persistentFlagBinding) e
 func runPersistentPreRun(cmd *cobra.Command, _ []string) error {
 	if err := git.CheckAvailable(); err != nil {
 		if cmd.Name() == "onboard" || cmd.Name() == "testdrive" {
+			observeUsage(cmd, "blocked_environment", "preparation", "git_unavailable")
 			agent, _ := cmd.Flags().GetBool("agent")
 			if agent || cmd.Flags().Changed("format") {
 				return protocolFailure(cmd, "preparation", "git_unavailable", err, nil)
@@ -334,7 +335,7 @@ func commandSignalContext(parent context.Context) (context.Context, func()) {
 func Execute() error {
 	ctx, stop := commandSignalContext(context.Background())
 	defer stop()
-	return rootCmd.ExecuteContext(ctx)
+	return executeWithUsage(ctx, rootCmd)
 }
 
 // Resolve selection once. Execution requires tracer prerequisites; planning

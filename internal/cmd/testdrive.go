@@ -60,6 +60,7 @@ func newTestdriveCommand() *cobra.Command {
 	command.RunE = func(cmd *cobra.Command, _ []string) error {
 		structured := agent || cmd.Flags().Changed("format")
 		fail := func(code string, err error) error {
+			observeUsage(cmd, "needs_input", "preparation", code)
 			if structured {
 				return protocolFailure(cmd, "preparation", code, err, nil)
 			}
@@ -88,9 +89,9 @@ func newTestdriveCommand() *cobra.Command {
 		if report {
 			cmd.SilenceErrors = true
 			if detail != "" {
-				return testdrive.RenderWorkflowDetail(commandContext(cmd), cmd.OutOrStdout(), resume, detail)
+				return testdrive.RenderWorkflowDetail(commandContext(cmd), usageWriter(cmd), resume, detail)
 			}
-			return testdrive.RenderReport(commandContext(cmd), cmd.OutOrStdout(), format)
+			return testdrive.RenderReport(commandContext(cmd), usageWriter(cmd), format)
 		}
 		if facts != "" && !all {
 			return fail("invalid_options", fmt.Errorf("--facts requires --all; facts cannot replace or narrow the discovered scope"))
@@ -113,7 +114,7 @@ func newTestdriveCommand() *cobra.Command {
 			return fail("validation_preparation", err)
 		}
 
-		output := cmd.OutOrStdout()
+		output := usageWriter(cmd)
 		if !agent && !cmd.Flags().Changed("format") {
 			execution.Preview(output)
 		}
@@ -124,9 +125,11 @@ func newTestdriveCommand() *cobra.Command {
 		if !yes {
 			confirmed, err := confirmTestdrive(cmd.InOrStdin(), output, isTerminal(cmd.InOrStdin()), rerunWithYes(cmd))
 			if err != nil {
+				observeUsage(cmd, "needs_input", "consent", "consent_required")
 				return err
 			}
 			if !confirmed {
+				observeUsage(cmd, "cancelled", "consent", "")
 				_, _ = fmt.Fprintln(output, "Testdrive cancelled.")
 				return nil
 			}
