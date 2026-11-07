@@ -93,6 +93,7 @@ func TestUsageCoversCommandErrorsAndPreservesProtocol(t *testing.T) {
 		args                      []string
 	}{
 		{"invalid flags", "validation", "failed", "invalid_options", newTestdriveCommand, []string{"--agent", "--unknown"}},
+		{"parsed report flag", "report", "failed", "invalid_options", newTestdriveCommand, []string{"--agent", "--report", "--unknown"}},
 		{"invalid arguments", "discovery", "failed", "invalid_options", func() *cobra.Command { return newOnboardCommand(nil) }, []string{"--agent", "unexpected"}},
 		{"missing consent", "validation", "blocked", "consent_required", newTestdriveCommand, []string{"--format", "json"}},
 		{"failed preparation", "apply", "blocked", "validation_preparation", func() *cobra.Command { return newOnboardCommand(nil) }, []string{"--agent", "--apply", "--yes"}},
@@ -118,6 +119,48 @@ func TestUsageCoversCommandErrorsAndPreservesProtocol(t *testing.T) {
 			require.Equal(t, tc.code, finished.Code)
 			require.Equal(t, ExitCode(err), finished.ExitCode)
 			require.Same(t, &output, command.OutOrStdout(), "preserve the caller's writer")
+		})
+	}
+}
+
+func TestUsageFlagFailureKeepsRequestedMode(t *testing.T) {
+	for _, tc := range []struct {
+		name, command, mode string
+		args                []string
+	}{
+		{"report after error", "testdrive", "report", []string{"--unknown", "--report"}},
+		{"report before error", "testdrive", "report", []string{"--report", "--unknown"}},
+		{"check after error", "testdrive", "configuration_check", []string{"--unknown", "--check-only"}},
+		{"check before error", "testdrive", "configuration_check", []string{"--check-only", "--unknown"}},
+		{"apply after error", "onboard", "apply", []string{"--unknown", "--apply"}},
+		{"apply before error", "onboard", "apply", []string{"--apply", "--unknown"}},
+		{"instructions after error", "onboard", "instructions", []string{"--unknown", "--instructions"}},
+		{"instructions before error", "onboard", "instructions", []string{"--instructions", "--unknown"}},
+		{"explicit true", "testdrive", "report", []string{"--unknown", "--report=true"}},
+		{"explicit false", "testdrive", "validation", []string{"--unknown", "--report=false"}},
+		{"last occurrence wins", "testdrive", "validation", []string{"--report", "--unknown", "--report=false"}},
+		{"mode precedence", "testdrive", "report", []string{"--unknown", "--check-only", "--report"}},
+		{"string value", "testdrive", "validation", []string{"--unknown", "--command", "--report"}},
+		{"attached string value", "onboard", "discovery", []string{"--unknown", "--command=--apply"}},
+		{"argument terminator", "testdrive", "validation", []string{"--unknown", "--", "--report"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			events := captureUsage(t)
+			root := &cobra.Command{Use: "ddtest"}
+			root.PersistentFlags().String("command", "", "test command")
+			root.AddCommand(newOnboardCommand(nil), newTestdriveCommand())
+			args := append([]string{tc.command}, tc.args...)
+			root.SetArgs(args)
+			root.SetOut(io.Discard)
+			root.SetErr(io.Discard)
+			originalArgs := os.Args
+			os.Args = append([]string{"ddtest"}, args...)
+			t.Cleanup(func() { os.Args = originalArgs })
+			require.Error(t, executeWithUsage(t.Context(), root))
+			finished := finishedUsage(t, events, tc.command, tc.mode)
+			require.Equal(t, "failed", finished.Outcome)
+			require.Equal(t, "invalid_options", finished.Code)
+			require.Equal(t, 1, finished.ExitCode)
 		})
 	}
 }

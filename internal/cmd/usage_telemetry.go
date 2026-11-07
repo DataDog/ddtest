@@ -8,6 +8,8 @@ package cmd
 import (
 	"context"
 	"io"
+	"strconv"
+	"strings"
 
 	"github.com/DataDog/ddtest/internal/buildinfo"
 	"github.com/DataDog/ddtest/internal/usagetelemetry"
@@ -46,18 +48,58 @@ func executeWithUsage(ctx context.Context, root *cobra.Command) error {
 
 // beginUsage runs during argument validation (after help/version handling), or
 // in the flag-error handler. Both precede prerequisite checks and source edits.
-func beginUsage(command *cobra.Command) {
+func beginUsage(command *cobra.Command, mode string) {
 	usage, _ := commandContext(command.Root()).Value(usageCommandKey{}).(*usageCommand)
 	if usage == nil || usage.command != nil {
 		return
 	}
 	usage.command = command
-	usage.attempt = newUsageAttempt(command.Name(), usageMode(command))
+	usage.attempt = newUsageAttempt(command.Name(), mode)
 }
 
 func usageMode(command *cobra.Command) string {
 	flag := func(name string) bool { value, _ := command.Flags().GetBool(name); return value }
-	if command.Name() == "onboard" {
+	return resolveUsageMode(command.Name(), flag)
+}
+
+// usageModeArguments reads mode flags even after the option that stopped Cobra
+// parsing. Known option values and arguments after -- are never mode flags.
+// It does not mutate Cobra's partially parsed flags or retain raw arguments.
+func usageModeArguments(command *cobra.Command, args []string) string {
+	values := make(map[string]bool)
+	for _, name := range []string{"instructions", "apply", "report", "check-only"} {
+		values[name], _ = command.Flags().GetBool(name)
+	}
+	for i := 0; i < len(args); i++ {
+		if args[i] == "--" {
+			break
+		}
+		name, long := strings.CutPrefix(args[i], "--")
+		if !long {
+			continue
+		}
+		name, value, assigned := strings.Cut(name, "=")
+		flag := command.Flag(name)
+		if flag == nil {
+			continue
+		}
+		if !assigned {
+			value = flag.NoOptDefVal
+			if value == "" {
+				i++
+			}
+		}
+		if flag.Value.Type() == "bool" {
+			if enabled, err := strconv.ParseBool(value); err == nil {
+				values[name] = enabled
+			}
+		}
+	}
+	return resolveUsageMode(command.Name(), func(name string) bool { return values[name] })
+}
+
+func resolveUsageMode(command string, flag func(string) bool) string {
+	if command == "onboard" {
 		if flag("instructions") {
 			return "instructions"
 		}

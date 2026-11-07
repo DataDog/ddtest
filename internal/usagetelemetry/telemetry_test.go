@@ -178,6 +178,12 @@ func TestUsageOutcomesAndAllowlist(t *testing.T) {
 		{"selected validation", "validation", "selected_passed", "complete", "", "succeeded", 0, false},
 		{"configuration check", "configuration_check", "ready", "configuration_check", "", "succeeded", 0, false},
 		{"blocked", "apply", "needs_input", "consent", "consent_required", "blocked", 1, false},
+		{"metadata network", "validation", "blocked_environment", "preflight", "metadata_network", "blocked", 1, false},
+		{"metadata errno", "validation", "blocked_environment", "preflight", "ENOTFOUND", "blocked", 1, false},
+		{"preflight blocker", "validation", "needs_input", "preflight", "preflight_unresolved", "blocked", 1, false},
+		{"open file exhaustion", "validation", "blocked_environment", "validation", "file_descriptors_exhausted", "blocked", 1, false},
+		{"plain saved report", "report", "validation_failed", "report", "plain_report", "failed", 1, false},
+		{"setup editing blocker", "apply", "needs_input", "apply", "dirty_workflow", "blocked", 1, false},
 		{"invalid options", "discovery", "needs_input", "options", "invalid_options", "failed", 1, false},
 		{"unsupported", "validation", "unsupported", "discovery", "framework_unsupported", "unsupported", 1, false},
 		{"plain unsupported", "validation", "needs_input", "preparation", "framework_unsupported", "unsupported", 1, false},
@@ -209,6 +215,7 @@ func TestUsageOutcomesAndAllowlist(t *testing.T) {
 				require.Equal(t, "unknown", finished.Phase)
 				require.Equal(t, "unknown", finished.Code)
 			} else {
+				require.Equal(t, tc.phase, finished.Phase)
 				require.Equal(t, tc.code, finished.Code)
 			}
 		})

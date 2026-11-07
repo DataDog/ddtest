@@ -52,7 +52,7 @@ func confirmedCommand(cmd *cobra.Command) []string {
 func configureProtocolErrors(command *cobra.Command) {
 	original := command.Args
 	command.Args = func(cmd *cobra.Command, args []string) error {
-		beginUsage(cmd)
+		beginUsage(cmd, usageMode(cmd))
 		if original == nil {
 			return nil
 		}
@@ -66,7 +66,7 @@ func configureProtocolErrors(command *cobra.Command) {
 		return err
 	}
 	command.SetFlagErrorFunc(func(cmd *cobra.Command, err error) error {
-		beginUsage(cmd)
+		beginUsage(cmd, usageModeArguments(cmd, os.Args[1:]))
 		observeUsage(cmd, "failed", "options", "invalid_options")
 		if usesProtocol(cmd) {
 			return protocolFailure(cmd, "options", "invalid_options", err, nil)

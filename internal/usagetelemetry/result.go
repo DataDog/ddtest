@@ -34,7 +34,7 @@ func (a *Attempt) ObserveResult(status, phase, code string) {
 		a.event.Outcome = "failed"
 	}
 	switch phase {
-	case "options", "preparation", "discovery", "onboarding", "consent", "preflight",
+	case "options", "preparation", "discovery", "onboarding", "apply", "consent", "preflight",
 		"configuration_check", "validation", "verification", "complete", "report":
 		a.event.Phase = phase
 	default:
@@ -51,7 +51,15 @@ func (a *Attempt) ObserveResult(status, phase, code string) {
 		"coordination_unavailable", "repository_unavailable", "runtime_unavailable", "local_runtime_mismatch",
 		"preparation_review_required", "project_dependencies_missing", "setup_dependencies_missing",
 		"substitute_runtime_unaccepted", "report_exclusions_required", "report_invalid", "report_write_failed",
-		"report_unavailable", "report_unreadable", "stale_report", "dirty_workflow", "transient_executable":
+		"report_unavailable", "report_unreadable", "stale_report", "dirty_workflow", "transient_executable",
+		"checkpoint_cleanup_failed", "checkpoint_unavailable", "ci_edit_unavailable", "ci_runtime_incompatible",
+		"dependency_readiness_unavailable", "execution_result_conflict", "input_snapshot_unavailable",
+		"metadata_network", "multiple_ci_tracers", "plain_report", "preflight_unresolved",
+		"probe_recovery_failed", "process_recovery_failed", "scope_after_edit", "service_setup_unresolved",
+		"session_recovery_failed", "validation_report_unavailable", "standalone_validation",
+		"file_descriptors_exhausted", "process_unavailable", "ownership_connection_failed", "unsupported_detached_spawn",
+		"registry_metadata_failed", "ENOTFOUND", "EAI_AGAIN", "ENETUNREACH", "ECONNREFUSED", "ECONNRESET",
+		"ETIMEDOUT", "FETCH_ERROR", "EACCES", "EPERM", "EROFS", "ENOSPC":
 		a.event.Code = code
 	default:
 		a.event.Code = "unknown"
