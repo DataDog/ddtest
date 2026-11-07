@@ -205,7 +205,10 @@ func pythonHandWrittenTracer(setup *handWrittenSetup, root, directory string, wo
 			switch args[0] {
 			case "install":
 				explicit = true
-				next, nextPin, known := pythonInstallTracer(root, cwd, args[1:])
+				next, nextPin, known, dryRun := pythonInstallTracer(root, cwd, args[1:])
+				if dryRun {
+					continue
+				}
 				if !known {
 					requested, pin, problem = "", "", "The job changes Python dependencies with an installation ddtest cannot resolve statically ("+strings.Join(words, " ")+")."
 				} else if nextPin != "" {
@@ -215,10 +218,14 @@ func pythonHandWrittenTracer(setup *handWrittenSetup, root, directory string, wo
 					}
 				}
 			case "uninstall":
-				for _, arg := range args[1:] {
-					if _, named := pythonRequirement(arg); named {
-						explicit = true
-						requested, pin, problem = "", "", "The job removes ddtrace ("+strings.Join(words, " ")+") before this pytest invocation; install an exact release again."
+				removes, known := pythonUninstallTracer(root, cwd, args[1:])
+				if !known || removes {
+					explicit = true
+					requested, pin = "", ""
+					if known {
+						problem = "The job removes ddtrace (" + strings.Join(words, " ") + ") before this pytest invocation; install an exact release again."
+					} else {
+						problem = "The job uninstalls Python dependencies with a command ddtest cannot resolve statically (" + strings.Join(words, " ") + ")."
 					}
 				}
 			}
@@ -300,15 +307,19 @@ func pythonRequirementFile(argument string) (constraint bool, file string, ok bo
 	return false, "", false
 }
 
-func pythonInstallTracer(root, directory string, args []string) (string, string, bool) {
-	var packages, requirements, constraints []string
+// pythonInstallTracer reads installation evidence and whether the command is
+// a dry run. A dry run changes no installation, including when its metadata
+// or alternate destination cannot be verified.
+func pythonInstallTracer(root, directory string, args []string) (string, string, bool, bool) {
+	var packages, requirements, constraints, groups []string
+	dryRun, noDeps, alternate := false, false, false
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		if constraint, file, ok := pythonRequirementFile(arg); ok {
 			if file == "" {
 				i++
 				if i >= len(args) {
-					return "", "", false
+					return "", "", false, dryRun
 				}
 				file = args[i]
 			}
@@ -321,22 +332,43 @@ func pythonInstallTracer(root, directory string, args []string) (string, string,
 			continue
 		}
 		option, value, assigned := strings.Cut(arg, "=")
-		if option == "-e" || option == "--editable" {
+		if strings.HasPrefix(arg, "-t") && len(arg) > 2 {
+			option, value, assigned = "-t", arg[2:], true
+		}
+		if strings.HasPrefix(arg, "-e") && len(arg) > 2 {
+			option, value, assigned = "-e", arg[2:], true
+		}
+		if option == "--dry-run" {
+			dryRun = true
+			continue
+		}
+		if option == "--no-deps" {
+			noDeps = true
+			continue
+		}
+		if slices.Contains([]string{"-t", "--target", "--prefix", "--root", "--python", "--user"}, option) {
+			alternate = true
+		}
+		if option == "-e" || option == "--editable" || option == "--group" {
 			if !assigned {
 				i++
 				if i >= len(args) {
-					return "", "", false
+					return "", "", false, dryRun
 				}
 				value = args[i]
 			}
-			packages = append(packages, value)
+			if option == "--group" {
+				groups = append(groups, value)
+			} else {
+				packages = append(packages, value)
+			}
 			continue
 		}
 		if slices.Contains(pipInstallValueOptions, option) || slices.Contains(pipGeneralValueOptions, option) {
 			if !assigned {
 				i++
 				if i >= len(args) {
-					return "", "", false
+					return "", "", false, dryRun
 				}
 			}
 			continue
@@ -345,18 +377,180 @@ func pythonInstallTracer(root, directory string, args []string) (string, string,
 			if slices.Contains(pipInstallFlags, option) || slices.Contains(pipGeneralFlags, option) || pipInstallCluster.MatchString(arg) {
 				continue
 			}
-			return "", "", false
+			return "", "", false, dryRun
+		}
+		if strings.ContainsAny(arg, "$`") {
+			return "", "", false, dryRun
 		}
 		packages = append(packages, arg)
 	}
+	if dryRun {
+		return "", "", true, true
+	}
+	if alternate {
+		return "", "", false, false
+	}
 	for _, pkg := range packages {
-		if pkg == "." || strings.HasPrefix(pkg, ".[") {
-			if spec, file := pythonDeclaredTracer(root, directory); file != "" {
-				packages = append(packages, "ddtrace"+spec)
+		if !noDeps && (pkg == "." || strings.HasPrefix(pkg, ".[")) {
+			dependencies, known := pythonProjectRequirements(root, directory, pkg, "")
+			if !known {
+				return "", "", false, false
+			}
+			packages = append(packages, dependencies...)
+		}
+	}
+	for _, group := range groups {
+		dependencies, known := pythonProjectRequirements(root, directory, "", group)
+		if !known {
+			return "", "", false, false
+		}
+		packages = append(packages, dependencies...)
+	}
+	spec, source, known := pythonRequirementSelection(root, packages, requirements, constraints)
+	return spec, source, known, false
+}
+
+// Uninstall requirements name packages to remove; unreadable files or unknown
+// arguments cannot preserve a previously certified installation.
+func pythonUninstallTracer(root, directory string, args []string) (bool, bool) {
+	var packages, requirements []string
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if constraint, file, ok := pythonRequirementFile(arg); ok {
+			if constraint {
+				return false, false
+			}
+			if file == "" {
+				i++
+				if i >= len(args) {
+					return false, false
+				}
+				file = args[i]
+			}
+			requirements = append(requirements, path.Join(filepath.ToSlash(directory), file))
+			continue
+		}
+		option, _, assigned := strings.Cut(arg, "=")
+		if option == "--python" {
+			return false, false
+		}
+		if slices.Contains(pipGeneralValueOptions, option) || option == "--root-user-action" {
+			if !assigned {
+				i++
+				if i >= len(args) {
+					return false, false
+				}
+			}
+			continue
+		}
+		if slices.Contains([]string{"-y", "--yes", "--break-system-packages"}, option) || slices.Contains(pipGeneralFlags, option) || pipVerbosity.MatchString(option) {
+			continue
+		}
+		if strings.HasPrefix(arg, "-") || strings.ContainsAny(arg, "$`") {
+			return false, false
+		}
+		packages = append(packages, arg)
+	}
+	_, source, known := pythonRequirementSelection(root, packages, requirements, nil)
+	return source != "", known
+}
+
+// Read only the mandatory dependencies of an installed project, its selected
+// extras, or one explicitly selected dependency group. Other declarations do
+// not install packages. Dynamic metadata remains unresolved.
+func pythonProjectRequirements(root, directory, pkg, group string) ([]string, bool) {
+	file := path.Join(filepath.ToSlash(directory), "pyproject.toml")
+	if groupFile, name, found := strings.Cut(group, ":"); found {
+		file, group = path.Join(filepath.ToSlash(directory), groupFile), name
+		if path.Base(file) != "pyproject.toml" {
+			return nil, false
+		}
+	}
+	info, ok := repositoryFile(root, root, filepath.FromSlash(file))
+	if !ok || info.Size() > 1<<20 {
+		return nil, false
+	}
+	data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(file)))
+	if err != nil {
+		return nil, false
+	}
+	var project struct {
+		Project *struct {
+			Dependencies         []string            `toml:"dependencies"`
+			OptionalDependencies map[string][]string `toml:"optional-dependencies"`
+			Dynamic              []string            `toml:"dynamic"`
+		} `toml:"project"`
+		DependencyGroups map[string][]any `toml:"dependency-groups"`
+	}
+	if toml.Unmarshal(data, &project) != nil {
+		return nil, false
+	}
+	normalize := func(name string) string {
+		return strings.ToLower(strings.NewReplacer("_", "-", ".", "-").Replace(name))
+	}
+	var requirements []string
+	if pkg != "" {
+		if project.Project == nil || slices.Contains(project.Project.Dynamic, "dependencies") {
+			return nil, false
+		}
+		requirements = append(requirements, project.Project.Dependencies...)
+		if extras, selected := strings.CutPrefix(pkg, ".["); selected {
+			if !strings.HasSuffix(extras, "]") || slices.Contains(project.Project.Dynamic, "optional-dependencies") {
+				return nil, false
+			}
+			for _, name := range strings.Split(strings.TrimSuffix(extras, "]"), ",") {
+				matches := 0
+				for extra, dependencies := range project.Project.OptionalDependencies {
+					if normalize(extra) == normalize(strings.TrimSpace(name)) {
+						requirements = append(requirements, dependencies...)
+						matches++
+					}
+				}
+				if matches > 1 {
+					return nil, false
+				}
 			}
 		}
 	}
-	return pythonRequirementSelection(root, packages, requirements, constraints)
+	if group != "" {
+		groups := map[string][]any{}
+		for name, entries := range project.DependencyGroups {
+			name = normalize(name)
+			if _, duplicate := groups[name]; duplicate {
+				return nil, false
+			}
+			groups[name] = entries
+		}
+		active := map[string]bool{}
+		var include func(string, int) bool
+		include = func(name string, depth int) bool {
+			name = normalize(name)
+			entries, found := groups[name]
+			if !found || active[name] || depth >= 16 {
+				return false
+			}
+			active[name] = true
+			defer delete(active, name)
+			for _, entry := range entries {
+				switch entry := entry.(type) {
+				case string:
+					requirements = append(requirements, entry)
+				case map[string]any:
+					next, ok := entry["include-group"].(string)
+					if !ok || len(entry) != 1 || !include(next, depth+1) {
+						return false
+					}
+				default:
+					return false
+				}
+			}
+			return true
+		}
+		if !include(group, 0) {
+			return nil, false
+		}
+	}
+	return requirements, true
 }
 
 // pythonRequirementName is a requirement's project name, before its extras,
