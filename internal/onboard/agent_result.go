@@ -74,8 +74,12 @@ type WorkflowCheck struct {
 	Reason  string   `json:"reason,omitempty"`
 }
 
-func WriteAgentResult(output io.Writer, result AgentResult) error {
+func observeAgentResult(output io.Writer, result AgentResult) {
 	usagetelemetry.ObserveResult(output, result.Status, result.Phase, result.Code)
+}
+
+func WriteAgentResult(output io.Writer, result AgentResult) error {
+	observeAgentResult(output, result)
 	result.SchemaVersion = 2
 	return json.NewEncoder(output).Encode(result)
 }
@@ -104,7 +108,7 @@ func RenderAgentResult(output io.Writer, result AgentResult, format string) erro
 		result.Instruction = strings.TrimSpace(result.Instruction + " " + ReadWholeInstruction)
 	}
 	if format == "verbose" {
-		usagetelemetry.ObserveResult(output, result.Status, result.Phase, result.Code)
+		observeAgentResult(output, result)
 		return writeAgentText(output, result)
 	}
 	return WriteAgentResult(output, result)

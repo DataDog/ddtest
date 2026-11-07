@@ -100,6 +100,10 @@ func Start(command, mode string, config Config) *Attempt {
 	if config.Transport != nil {
 		client.Transport = config.Transport
 	}
+	endpoint := url.URL{
+		Scheme: "https", Host: "browser-http-intake.logs." + config.IntakeSite,
+		Path: "/api/v2/logs", RawQuery: url.Values{"dd-api-key": {config.ClientToken}}.Encode(),
+	}
 	a := &Attempt{
 		event: event{
 			SchemaVersion: 1, Service: "ddtest-cli", Source: "ddtest",
@@ -107,7 +111,7 @@ func Start(command, mode string, config Config) *Attempt {
 			Version: config.Version, OS: runtime.GOOS, Arch: runtime.GOARCH,
 		},
 		started:  now,
-		endpoint: "https://http-intake.logs." + config.IntakeSite + "/v1/input/" + url.PathEscape(config.ClientToken),
+		endpoint: endpoint.String(),
 		client:   client,
 	}
 	a.send("ddtest.command.started", now)

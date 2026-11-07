@@ -13,6 +13,8 @@ and select the receiving site with
 The default receiving site is `datadoghq.com`. Supported destinations also include
 US3, US5, EU, AP1, AP2 and UK1. Unsupported destinations disable reporting.
 The receiving site is independent of the customer's `DD_SITE` or `--site`.
+Logs use `https://browser-http-intake.logs.<site>/api/v2/logs` with the public
+client token in the `dd-api-key` query parameter.
 
 ## Events and outcomes
 

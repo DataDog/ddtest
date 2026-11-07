@@ -70,6 +70,7 @@ func StartWithOptions(output io.Writer, options StartOptions) error {
 			case errors.As(err, &choice):
 				return errors.Join(err, WriteAgentResult(output, ProviderChoiceResult(choice)))
 			case errors.As(err, &unsupported) && options.Human:
+				observeAgentResult(output, ProviderUnsupportedResult(unsupported))
 				return err
 			case errors.As(err, &unsupported):
 				return errors.Join(err, WriteAgentResult(output, ProviderUnsupportedResult(unsupported)))
@@ -96,6 +97,7 @@ func StartWithOptions(output io.Writer, options StartOptions) error {
 		// name; ask before any setup is prescribed for it.
 		if required := RequiredCIRuntimes(context.Background(), root, detected.Name(), frameworkName); required != nil {
 			if options.Human {
+				observeAgentResult(output, CIRuntimeRequiredResult(required))
 				return fmt.Errorf("%w Rerun with --ci-runtime %s=<version> (or <job>:%s=<version> per job) once you know it", required, required.Flag, required.Flag)
 			}
 			return errors.Join(required, WriteAgentResult(output, CIRuntimeRequiredResult(required)))
@@ -103,6 +105,7 @@ func StartWithOptions(output io.Writer, options StartOptions) error {
 		// Facts only the CI server shows come next, once the setup is there.
 		if required := RequiredCIConfirmations(root, detected.Name(), frameworkName); required != nil && (!options.SetupApplied || discoveryLanguageNamed(detected.Name()).ciSetupConfigured(root, frameworkName, options.Site)) {
 			if options.Human {
+				observeAgentResult(output, CIConfirmationRequiredResult(required))
 				return fmt.Errorf("%w Rerun with --ci-confirm <fact>[=<value>] for each fact once you know it", required)
 			}
 			return errors.Join(required, WriteAgentResult(output, CIConfirmationRequiredResult(required)))

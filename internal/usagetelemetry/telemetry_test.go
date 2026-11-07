@@ -45,11 +45,40 @@ func localConfig(t *testing.T, handler http.Handler) Config {
 	}
 }
 
+func TestUsageUsesClientTokenIntake(t *testing.T) {
+	enabledEnvironment(t)
+	for _, site := range []string{"datadoghq.com", "us3.datadoghq.com", "us5.datadoghq.com", "datadoghq.eu", "ap1.datadoghq.com", "ap2.datadoghq.com", "uk1.datadoghq.com"} {
+		t.Run(site, func(t *testing.T) {
+			const token = "test token/+?&"
+			requests := make(chan string, 2)
+			a := Start("onboard", "discovery", Config{
+				Version: "test", ClientToken: token, IntakeSite: site,
+				Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+					// Inspect the production URL without rewriting it to a local server.
+					requests <- r.URL.String()
+					return &http.Response{StatusCode: http.StatusAccepted, Body: io.NopCloser(strings.NewReader(""))}, nil
+				}),
+			})
+			require.NotNil(t, a)
+			a.Finish(0, false)
+			require.Len(t, requests, 2)
+			for range 2 {
+				endpoint, err := url.Parse(<-requests)
+				require.NoError(t, err)
+				require.Equal(t, "https", endpoint.Scheme)
+				require.Equal(t, "browser-http-intake.logs."+site, endpoint.Host)
+				require.Equal(t, "/api/v2/logs", endpoint.Path)
+				require.Equal(t, url.Values{"dd-api-key": {token}}, endpoint.Query())
+			}
+		})
+	}
+}
+
 func TestAttemptReportsLifecycleWithoutCustomerData(t *testing.T) {
 	var mu sync.Mutex
 	var events []event
 	config := localConfig(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/v1/input/test-token" || r.Header.Get("Content-Type") != "application/json" {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v2/logs" || r.URL.Query().Get("dd-api-key") != "test-token" || r.Header.Get("Content-Type") != "application/json" {
 			t.Errorf("unexpected usage request: %s %s", r.Method, r.URL.Path)
 		}
 		if r.Header.Get("DD-API-KEY") != "" || r.Header.Get("Authorization") != "" {
@@ -152,6 +181,7 @@ func TestUsageOutcomesAndAllowlist(t *testing.T) {
 		{"invalid options", "discovery", "needs_input", "options", "invalid_options", "failed", 1, false},
 		{"unsupported", "validation", "unsupported", "discovery", "framework_unsupported", "unsupported", 1, false},
 		{"plain unsupported", "validation", "needs_input", "preparation", "framework_unsupported", "unsupported", 1, false},
+		{"unsupported CI setup", "discovery", "unsupported", "onboarding", "ci_setup_unsupported", "unsupported", 1, false},
 		{"validation failure", "validation", "validation_failed", "validation", "validation_incomplete", "failed", 1, false},
 		{"declined", "validation", "cancelled", "consent", "", "cancelled", 0, false},
 		{"interrupted", "validation", "needs_input", "validation", "", "cancelled", 130, true},
@@ -178,6 +208,8 @@ func TestUsageOutcomesAndAllowlist(t *testing.T) {
 			if tc.name == "unclassified error" {
 				require.Equal(t, "unknown", finished.Phase)
 				require.Equal(t, "unknown", finished.Code)
+			} else {
+				require.Equal(t, tc.code, finished.Code)
 			}
 		})
 	}

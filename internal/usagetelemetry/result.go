@@ -44,7 +44,7 @@ func (a *Attempt) ObserveResult(status, phase, code string) {
 	case "", "invalid_options", "git_unavailable", "platform_unresolved", "framework_unresolved",
 		"framework_unsupported", "validation_preparation", "consent_required", "ci_discovery",
 		"ci_provider_required", "ci_provider_unsupported", "ci_runtime_required", "ci_runtime_conflict",
-		"ci_setup_required", "ci_setup_confirmation_required", "ci_edit_required", "ci_edit_unsupported",
+		"ci_setup_required", "ci_setup_unsupported", "ci_setup_confirmation_required", "ci_edit_required", "ci_edit_unsupported",
 		"configuration_check_failed", "configuration_setup_failed", "validation_incomplete",
 		"scope_unresolved", "scope_decision_required", "setup_unresolved", "facts_invalid",
 		"facts_refresh_required", "resume_invalid", "resume_not_found", "workflow_busy",
