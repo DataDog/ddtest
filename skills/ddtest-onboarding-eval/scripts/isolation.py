@@ -23,7 +23,7 @@ def environment(home):
     """Never forward credentials, parent sessions, or arbitrary npm options."""
     result = {key: os.environ[key] for key in BASE_ENVIRONMENT if key in os.environ}
     result.update(HOME=str(home), GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL="/dev/null",
-                  GIT_TERMINAL_PROMPT="0")
+                  GIT_TERMINAL_PROMPT="0", DD_INSTRUMENTATION_TELEMETRY_ENABLED="false")
     return result
 
 
@@ -56,6 +56,16 @@ def docker_control(*arguments, check=True):
 # into every container's initial environment. Empty values prevent that.
 PROXY_OVERRIDES = [argument for name in ("HTTP_PROXY", "HTTPS_PROXY", "FTP_PROXY", "ALL_PROXY", "NO_PROXY")
                    for variable in (name, name.lower()) for argument in ("--env", variable + "=")]
+
+
+# Block the catalog's default US1 tracer endpoints even when an agent runs a
+# tracer outside ddtest's loopback-only coordinator.
+INTAKE_GUARD_VERSION = "us1-defaults-v1"
+INTAKE_HOSTS = ("instrumentation-telemetry-intake.datadoghq.com",
+                "citestcycle-intake.datadoghq.com", "cicov-intake.datadoghq.com",
+                "api.datadoghq.com")
+INTAKE_HOST_OVERRIDES = [argument for host in INTAKE_HOSTS
+                         for argument in ("--add-host", host + "=127.0.0.1")]
 
 
 class Container:
@@ -102,7 +112,7 @@ class Container:
                      "--user", f"{os.getuid()}:{os.getgid()}",
                      "--mount", f"type=bind,src={self.trial},dst=/trial",
                      "--tmpfs", "/tmp:rw,exec,nosuid,nodev,size=2g", "--entrypoint", "/bin/sh",
-                     *PROXY_OVERRIDES, self.image, "-c", "cat >/dev/null")
+                     *PROXY_OVERRIDES, *INTAKE_HOST_OVERRIDES, self.image, "-c", "cat >/dev/null")
 
     def attach(self):
         # Closing this input on controller death also ends PID 1, including all

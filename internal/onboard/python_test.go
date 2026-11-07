@@ -105,7 +105,7 @@ func TestPythonAddoptsPreservesParentOptionsLocallyAndInCIChecks(t *testing.T) {
 	workflow := ciWorkflow{Env: map[string]string{"PYTEST_ADDOPTS": "-k selected"}}
 	job := runtimeJob{Env: map[string]string{"PYTEST_ADDOPTS": "${{env.PYTEST_ADDOPTS}} --cov=app"}}
 	step := runtimeStep{Run: "python -m pytest", Env: map[string]string{"PYTEST_ADDOPTS": "${{ env.PYTEST_ADDOPTS }} -p ddtrace -q"}}
-	value, err := pythonAddopts(workflow, job, step, nil)
+	value, err := pythonAddopts(workflow, job, step, nil, true)
 	require.NoError(t, err)
 	require.Equal(t, "--ddtrace -k selected --cov=app -p ddtrace -q", value)
 	_, environment, err := resolveVariantStep(workflow, job, step, nil, "pytest")

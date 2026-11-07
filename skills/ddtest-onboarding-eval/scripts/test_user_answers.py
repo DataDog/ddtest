@@ -495,3 +495,20 @@ class TrialTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SubstituteRuntimeTests(unittest.TestCase):
+    def test_only_the_named_substitute_decision_is_answered(self):
+        result = {"schema_version": 1, "status": "needs_input", "next_action": "report_result",
+                  "code": "substitute_runtime_unaccepted", "required_input": ["User decision: accept the substitute Java runtime"]}
+        asked = user_answers.question(result)
+        self.assertIsNotNone(asked)
+        self.assertIsNone(user_answers.unscriptable(result))
+        self.assertIsNone(user_answers.reply(asked, [])["reply"])
+        answers = user_answers.load_answers(["substitute_runtime=accept"])
+        self.assertEqual(user_answers.reply(asked, answers)["reply"], "I accept validation on the compatible substitute runtime.")
+        self.assertIsNone(user_answers.reply({**asked, "code": "scope_decision_required"}, answers)["reply"])
+        self.assertIsNone(user_answers.question({**result, "status": "complete"}))
+        for invalid in ("substitute_runtime=yes", "substitute_runtime=", "substitute_runtime=reject"):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                user_answers.parse_answer(invalid)

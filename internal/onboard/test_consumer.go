@@ -23,6 +23,17 @@ var frameworkExecutables = map[string][]string{
 	"cypress": {"cypress"}, "cucumber": {"cucumber", "cucumber-js"}, "webdriverio": {"wdio", "webdriverio"},
 }
 
+// scriptInterpreter lets a language register its interpreter without naming it
+// in another language's discovery rules.
+func registeredScriptInterpreter(name string) bool {
+	for _, language := range discoveryLanguages {
+		if registered, ok := language.(interface{ scriptInterpreter(string) bool }); ok && registered.scriptInterpreter(name) {
+			return true
+		}
+	}
+	return false
+}
+
 // Task runners and package binaries runners that can start any test suite.
 var taskRunners = []string{"npx", "bunx", "make", "just", "task", "nx", "turbo", "lerna", "rush", "gulp", "grunt"}
 

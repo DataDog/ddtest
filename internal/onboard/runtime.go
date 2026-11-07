@@ -82,6 +82,8 @@ type RuntimeFinding struct {
 	// SetupCaveats are what ddtest could not check about the setup that
 	// precedes this entry, such as a tracer release it cannot pin.
 	SetupCaveats []string `json:"setup_caveats,omitempty"`
+	// SetupSite is the existing JavaScript setup's resolved reporting site.
+	SetupSite string `json:"setup_site,omitempty"`
 	// setupInputs are the inputs of the Datadog setup action that precedes
 	// this entry, for a language's own setup checks. Not serialized.
 	setupInputs map[string]string
@@ -507,8 +509,8 @@ func checkCIRuntimes(ctx context.Context, root string, resolveNode nodeResolver,
 }
 
 type runtimeState struct {
-	node, source, platform, action, tracer string
-	skippedAction                          bool
+	node, source, platform, action, tracer, site string
+	skippedAction                                bool
 	// floating marks a setup that cannot pin the tracer, and caveats what
 	// ddtest could not check about it.
 	floating bool
@@ -551,7 +553,18 @@ func (state *runtimeState) trackAction(step runtimeStep, row map[string]any) err
 	}
 	setup, _ := datadogSetup(step)
 	state.action = setup.Reference
-	state.floating, state.caveats = setup.Floating, setup.Caveats
+	state.floating, state.caveats = setup.Floating, slices.Clone(setup.Caveats)
+	var siteErr error
+	state.site, siteErr = runtimeValue(setup.Inputs["site"], row)
+	if siteErr != nil {
+		state.caveats = append(state.caveats, "Datadog site: the reporting site could not be resolved: "+siteErr.Error()+". The existing CI setting is preserved; local validation does not verify delivery to that site.")
+	}
+	if setup.Reference == jenkinsPluginReference && setup.Inputs["site"] == "" {
+		state.site, _ = jenkinsSetupSite(setup)
+	}
+	if state.site == "" && setup.Inputs["site"] == "" && setup.Reference != jenkinsPluginReference {
+		state.site = defaultDatadogSite
+	}
 	state.tracer, err = runtimeValue(setup.Inputs["js-tracer-version"], row)
 	if _, explicit := setup.Inputs["js-tracer-version"]; (explicit || setup.DefaultLatest) && state.tracer == "" {
 		state.tracer = "latest"
@@ -706,6 +719,14 @@ func checkRuntimeJob(ctx context.Context, root string, workflow ciWorkflow, name
 		}
 		if handWritten != nil {
 			finding.Action, finding.TracerRequested = handWritten.Reference, handWritten.Tracer
+			var siteErr error
+			finding.SetupSite, siteErr = runtimeValue(handWrittenEnvironment(workflow, job, step)["DD_SITE"], row)
+			if siteErr != nil {
+				finding.SetupCaveats = append(finding.SetupCaveats, "Datadog site: the reporting site could not be resolved: "+siteErr.Error()+". The existing CI setting is preserved; local validation does not verify delivery to that site.")
+			}
+			if siteErr == nil && finding.SetupSite == "" && !handWritten.reportsThroughAgent() {
+				finding.SetupSite = defaultDatadogSite
+			}
 			finding.AgentReporting = handWritten.reportsThroughAgent()
 			if problem := handWritten.problem(); problem != "" {
 				finding.Status, finding.Code, finding.Reason = StatusInconclusive, handWritten.code(), problem
@@ -713,6 +734,8 @@ func checkRuntimeJob(ctx context.Context, root string, workflow ciWorkflow, name
 				continue
 			}
 			checkedState.action, checkedState.tracer = handWritten.Reference, handWritten.Tracer
+			checkedState.site = finding.SetupSite
+			checkedState.caveats = append(slices.Clone(checkedState.caveats), finding.SetupCaveats...)
 		}
 		findings = append(findings, evaluateRuntimeTest(ctx, root, workflow, job, checked, row, resolution, checkedState, finding, resolveNode, resolve, frameworks...))
 	}
@@ -797,6 +820,16 @@ func evaluateRuntimeTest(ctx context.Context, root string, workflow ciWorkflow, 
 	finding.TracerFloating = finding.TracerRequested != "" && strings.TrimPrefix(finding.TracerRequested, "v") != requirement.Version
 	finding.Requirement = requirement.Node
 	finding.SetupCaveats = slices.Clone(state.caveats)
+	finding.SetupSite = state.site
+	if configured, set := step.Env["DD_SITE"]; set {
+		finding.SetupCaveats = slices.DeleteFunc(finding.SetupCaveats, func(caveat string) bool { return strings.HasPrefix(caveat, "Datadog site:") })
+		finding.SetupSite, err = runtimeValue(configured, row)
+		if err != nil {
+			finding.SetupCaveats = append(finding.SetupCaveats, "Datadog site: the reporting site could not be resolved: "+err.Error()+". The existing CI setting is preserved; local validation does not verify delivery to that site.")
+		} else if finding.SetupSite == "" {
+			finding.SetupSite = defaultDatadogSite
+		}
+	}
 	if state.floating {
 		// The exception to an exact release: the mechanism cannot pin one.
 		finding.SetupCaveats = append(finding.SetupCaveats, "dd-trace version: the "+state.action+" installs the latest dd-trace release when each build runs and cannot pin one; ddtest checked the CI runtime against, and validated locally with, dd-trace@"+requirement.Version+", the latest release when it ran. A later release can change behavior or drop support for the CI Node version.")
@@ -1052,4 +1085,24 @@ func jobSelectsSetup(job runtimeJob, token string) bool {
 		}
 	}
 	return false
+}
+
+// WithSiteCaveats preserves an existing JavaScript setup's site and reports
+// its disagreement with the selected site without blocking local validation.
+func (check RuntimeCheck) WithSiteCaveats(site string) RuntimeCheck {
+	if site == "" {
+		return check
+	}
+	check.Jobs = slices.Clone(check.Jobs)
+	for i := range check.Jobs {
+		finding := &check.Jobs[i]
+		if finding.SetupSite == "" || finding.SetupSite == site {
+			continue
+		}
+		caveat := "Datadog site: " + finding.Workflow + " / " + finding.Job + " reports to " + finding.SetupSite + ", but --site selects " + site + ". The existing CI site is preserved; local validation does not verify delivery to that site."
+		if !slices.Contains(finding.SetupCaveats, caveat) {
+			finding.SetupCaveats = append(slices.Clone(finding.SetupCaveats), caveat)
+		}
+	}
+	return check
 }

@@ -747,3 +747,24 @@ func TestJavaCIConfigurationRequiresCallersToPassTheAPIKey(t *testing.T) {
 		})
 	}
 }
+
+func TestMavenDaemonReplaysWithMavenAndACaveat(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "pom.xml", javaJUnit5POM)
+	for _, executable := range mavenDaemonExecutables {
+		resolution := javaStep(t, root, executable+" -B test")
+		require.True(t, resolution.Matched, resolution.Reason)
+		require.Len(t, resolution.Tests, 1)
+		require.Equal(t, "mvn -B test", resolution.Tests[0].Command)
+		require.Contains(t, strings.Join(resolution.Tests[0].StepScopeNotes, " "), "Daemon-specific behavior is not validated")
+	}
+}
+
+func TestJavaRepositoryScriptMayLaunchRuby(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "pom.xml", javaJUnit5POM)
+	writeFile(t, root, "ci.sh", "#!/bin/sh\nruby ci/launch.rb\n")
+	require.True(t, javaStepScriptsMayRunTests(root, ciWorkflow{}, runtimeJob{}, runtimeStep{Run: "sh ci.sh"}))
+	require.Contains(t, javaStep(t, root, "sh ci.sh").Reason, "Repository script may run junit5 tests")
+	require.False(t, javaStepScriptsMayRunTests(root, ciWorkflow{}, runtimeJob{}, runtimeStep{Run: "ruby --version"}))
+}

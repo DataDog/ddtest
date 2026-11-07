@@ -30,6 +30,8 @@ text does not make a case fail.
 
 import fnmatch
 import json
+import hashlib
+import trajectory_check
 import os
 from pathlib import Path
 import re
@@ -311,6 +313,27 @@ def log_tail(log):
         return ""
 
 
+def independent_reporting_review(evidence, reporting):
+    """An evaluator may approve only a factual paraphrase awaiting review.
+
+    Explicit contradictions, unsupported claims and CLI failures cannot be
+    overridden. Both retained inputs must still match the independent review.
+    """
+    path = evidence / "reporting-review.json"
+    if not path.is_file() or reporting.get("status") != "review" or reporting.get("differences") or reporting.get("unsupported"):
+        return False
+    if reporting.get("missing") != ["unchanged summary.final_response"]:
+        return False
+    review = read_json(path)
+    if not isinstance(review, dict) or review.get("verdict") != "pass" or len(str(review.get("rationale", ""))) < 12:
+        return False
+    try:
+        return all(hashlib.sha256((evidence / name).read_bytes()).hexdigest() == review.get(key)
+                   for name, key in (("final-response.md", "final_response_sha256"), (REPORT, "report_sha256")))
+    except OSError:
+        return False
+
+
 def agent_problem(run, rows, report, evidence):
     results = [(number, row["result"]) for number, row in rows if isinstance(row.get("result"), dict)]
     if run.get("status") in ("agent_failed", "failed"):
@@ -323,7 +346,7 @@ def agent_problem(run, rows, report, evidence):
     if not (evidence / "final-response.md").is_file():
         return "no final-response.md: the agent ended without a final answer"
     reporting = run.get("agent_reporting") or {}
-    if reporting.get("status") != "pass":
+    if reporting.get("status") != "pass" and not independent_reporting_review(evidence, reporting):
         details = [*reporting.get("differences", []), *reporting.get("missing", []), *reporting.get("unsupported", [])]
         return ("run.json agent_reporting " + str(reporting.get("status", "missing")) + ": "
                 + one_line(reporting.get("reason", "no agent_reporting check"), 200)
@@ -347,7 +370,7 @@ def base_record(case, evidence, log=None, agent=None, ddtest_label=None):
     agent = agent or (evidence.name.rsplit("-", 1)[-1] if evidence.name.rsplit("-", 1)[-1] in AGENTS else None)
     expected = expected_for(case, agent)
     allowed = list(expected.get("blockers") or [])
-    record = {"id": case["id"], "agent": agent, "provider": case.get("ci_provider"), "framework": case.get("framework"),
+    record = {"id": case["id"], "catalog_id": case.get("catalog_id", case["id"]), "trial": case.get("trial", 1), "agent": agent, "provider": case.get("ci_provider"), "framework": case.get("framework"),
               "outcome": None, "direction": None,
               "expected": {key: expected.get(key) for key in ("verdict", "blockers", "reason", "run", "ddtest")},
               "actual": {"verdict": None, "blockers": [], "blocking_checks": [], "final_reason": None,
@@ -408,7 +431,7 @@ def report_shape(report):
     return None
 
 
-def evaluate(case, evidence, log=None, rerun=None, agent=None, ddtest_label=None):
+def evaluate_outcome(case, evidence, log=None, rerun=None, agent=None, ddtest_label=None):
     """Outcome record for one case's evidence folder (see the module docstring).
 
     Malformed evidence never raises: a report of the wrong shape is a
@@ -480,6 +503,8 @@ def classify(case, evidence, log, rerun, agent, ddtest_label):
                       f"row {row}) claims Onboarding validation: {claimed}; the verdict is never taken from "
                       "final_response", "", rerun)
     problem = agent_problem(run, rows, report, evidence)
+    if not problem and independent_reporting_review(evidence, run.get("agent_reporting") or {}):
+        record["notes"].append("Factual paraphrase independently approved in reporting-review.json; automatic reporting check retained unchanged.")
     if problem:
         return finish(record, "agent_failure", problem, "", rerun)
     want, got = expected.get("verdict"), actual["verdict"]
@@ -625,6 +650,8 @@ def disagreements(records):
     """Note cases whose agents reached different verdicts: agent behavior, not ddtest."""
     verdicts = {}
     for record in records:
+        if record["outcome"] == "harness_failure" or record["actual"]["verdict"] is None:
+            continue
         verdicts.setdefault(record["id"], {})[record["agent"]] = record["actual"]["verdict"]
     notes = []
     for identifier, by_agent in verdicts.items():
@@ -694,3 +721,14 @@ def report(records, stream):
         print(f"\nOnly improvements: update cases.yaml expected as each block says (exit {EXIT_IMPROVED}).", file=stream)
     stream.flush()
     return code
+
+
+def evaluate(case, evidence, log=None, rerun=None, agent=None, ddtest_label=None):
+    record = evaluate_outcome(case, evidence, log, rerun, agent, ddtest_label)
+    record["trajectory"] = trajectory_check.evaluate(evidence)
+    if Path(evidence).is_dir():
+        try:
+            (Path(evidence) / "trajectory.json").write_text(json.dumps(record["trajectory"], indent=2) + "\n")
+        except OSError as error:
+            record["notes"].append("Could not save trajectory review: " + str(error))
+    return record
