@@ -11,6 +11,7 @@ import (
 	"io"
 	"strings"
 
+	"github.com/DataDog/ddtest/internal/usagetelemetry"
 	"github.com/kballard/go-shellquote"
 )
 
@@ -74,6 +75,7 @@ type WorkflowCheck struct {
 }
 
 func WriteAgentResult(output io.Writer, result AgentResult) error {
+	usagetelemetry.ObserveResult(output, result.Status, result.Phase, result.Code)
 	result.SchemaVersion = 2
 	return json.NewEncoder(output).Encode(result)
 }
@@ -102,6 +104,7 @@ func RenderAgentResult(output io.Writer, result AgentResult, format string) erro
 		result.Instruction = strings.TrimSpace(result.Instruction + " " + ReadWholeInstruction)
 	}
 	if format == "verbose" {
+		usagetelemetry.ObserveResult(output, result.Status, result.Phase, result.Code)
 		return writeAgentText(output, result)
 	}
 	return WriteAgentResult(output, result)

@@ -401,6 +401,7 @@ of `releases/latest/download/` in the URL.
 - [Running DDTest](docs/running.md)
 - [Go tests with ddtest instrument](ddto/README.md)
 - [Settings](docs/settings.md)
+- [Onboarding usage telemetry](docs/usage-telemetry.md)
 - [Plan file layout](docs/layout.md)
 - [Third party test runners](docs/third-party-runners.md)
 - [GitHub Actions example](docs/examples/github-actions.md)
