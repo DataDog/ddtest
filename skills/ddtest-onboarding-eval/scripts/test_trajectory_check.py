@@ -34,6 +34,21 @@ class TrajectoryTests(unittest.TestCase):
         self.assertEqual(self.evaluate(prescription='Replace old with new in ci.yml.', review=True)['status'], 'pass')
         self.assertEqual(self.evaluate(prescription='too short', review=True)['status'], 'review')
 
+    def test_malformed_attestations_remain_unverified(self):
+        for entries in (None, 42, "bad", {}, [None, {"id": []}], [{"id": {}}]):
+            with self.subTest(entries=entries), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                records = json.dumps({'result': {'instruction': 'Replace old with new in ci.yml.'}}) + '\n'
+                (root / 'changes.patch').write_text(PATCH)
+                (root / 'ddtest-results.jsonl').write_text(records)
+                (root / 'status.txt').write_text(' M ci.yml\n')
+                (root / 'trajectory-review.json').write_text(json.dumps({
+                    'patch_sha256': trajectory_check.digest(PATCH.encode()),
+                    'prescriptions_sha256': trajectory_check.digest(records.encode()), 'hunks': entries}))
+                result = trajectory_check.evaluate(root)
+                self.assertEqual(result['status'], 'review')
+                self.assertEqual(result['hunks'][0]['status'], 'review')
+
     def test_an_extra_quoted_path_cannot_be_ignored_beside_a_prescribed_file(self):
         quoted = 'diff --git "a/extra\\tfile" "b/extra\\tfile"\n--- "a/extra\\tfile"\n+++ "b/extra\\tfile"\n@@ -1 +1 @@\n-old\n+unprescribed\n'
         result = self.evaluate(patch=PATCH + quoted, prescription=PATCH)

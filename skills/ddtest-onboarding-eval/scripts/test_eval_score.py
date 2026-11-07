@@ -139,6 +139,29 @@ class ScoreTests(unittest.TestCase):
                     self.assertEqual(len(result['not_evaluated']), int(missing))
                     self.assertEqual(json.loads((root / 'oracle.json').read_text()), oracle)
 
+    def test_malformed_trajectory_review_does_not_abort_batch_reevaluation(self):
+        from test_catalog_check import write_evidence, real_report
+        from test_trajectory_check import PATCH
+        import trajectory_check
+        case = next(c for c in run_catalog.load_catalog()['cases'] if c['id'] == 'E02-pipeline-schema')
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for agent in ('codex', 'claude'):
+                evidence = root / (case['id'] + '-' + agent)
+                write_evidence(evidence, testdrive=real_report('E02'))
+                if agent == 'codex':
+                    (evidence / 'changes.patch').write_text(PATCH)
+                    (evidence / 'status.txt').write_text(' M ci.yml\n')
+                    review = trajectory_check.evaluate(evidence)
+                    (evidence / 'trajectory-review.json').write_text(json.dumps({
+                        'patch_sha256': review['patch_sha256'],
+                        'prescriptions_sha256': review['prescriptions_sha256'], 'hunks': None}))
+            with contextlib.redirect_stdout(io.StringIO()):
+                run_catalog.main([case['id'], '--evaluate-only', '--agent', 'both', '--output', str(root)])
+            result = json.loads((root / 'results.json').read_text())
+            self.assertEqual(len(result['cases']), 2)
+            self.assertEqual(next(r for r in result['cases'] if r['agent'] == 'codex')['trajectory']['status'], 'review')
+
     def test_single_claude_trial_has_claude_oracle_identity(self):
         from test_catalog_check import write_evidence, real_report
         case = next(c for c in run_catalog.load_catalog()['cases'] if c['id'] == 'E02-pipeline-schema')

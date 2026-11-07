@@ -107,7 +107,9 @@ def evaluate(output):
     activity_path = output / 'activity.jsonl'
     activity = activity_path.read_bytes() if activity_path.is_file() else b''
     current = review.get('patch_sha256') == digest(patch) and review.get('prescriptions_sha256') == digest(records)
-    attestations = {item.get('id'): item for item in review.get('hunks', []) if isinstance(item, dict)} if current else {}
+    review_hunks = review.get('hunks', [])
+    attestations = {item['id']: item for item in review_hunks
+                    if isinstance(item, dict) and isinstance(item.get('id'), str)} if current and isinstance(review_hunks, list) else {}
     prescribed = {}
     for number, row in enumerate(rows, 1):
         for text in strings(row.get('result') or row.get('output')):
