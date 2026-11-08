@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/DataDog/ddtest/internal/constants"
 	"github.com/DataDog/ddtest/internal/discovery"
 	"github.com/DataDog/ddtest/internal/ext"
 	"github.com/DataDog/ddtest/internal/settings"
@@ -179,13 +180,19 @@ func (p *PyTest) HasUnskippableMarker(testFile string) bool {
 
 func (p *PyTest) RunTests(ctx context.Context, testFiles []string, envMap map[string]string) error {
 	command, args := p.Command()
-	slog.Info("Running tests with command", "command", command, "args", args)
-	args = withFrameworkFiles(command, args, "pytest", testFiles)
-
 	mergedEnv, err := p.platform.RunEnv(RuntimeOptions{Env: envMap})
 	if err != nil {
 		return err
 	}
+	if envMap[constants.TestRunPartialEnvVar] == "true" && syrupyFailsOnUnused(args) && p.syrupyInstalled(ctx, mergedEnv) {
+		// syrupy fails the session on unused snapshots. With the suite's files
+		// split over workers, the tests of the files other workers run use
+		// some of each snapshot directory, so every worker would fail.
+		args = append(args, "--snapshot-warn-unused")
+	}
+	slog.Info("Running tests with command", "command", command, "args", args)
+	args = withFrameworkFiles(command, args, "pytest", testFiles)
+
 	err = p.executor.Run(ctx, command, args, mergedEnv)
 	skippingPlatform, ok := p.platform.(interface {
 		TestSkippingLevel() settings.TestSkippingLevel
@@ -199,6 +206,31 @@ func (p *PyTest) RunTests(ctx context.Context, testFiles []string, envMap map[st
 		return nil
 	}
 	return err
+}
+
+// syrupyFailsOnUnused reports whether pytest's arguments leave syrupy failing
+// the session on unused snapshots: not when they already make it warn or update
+// the snapshots, or turn the plugin off.
+func syrupyFailsOnUnused(args []string) bool {
+	for i, arg := range args {
+		switch arg {
+		case "--snapshot-warn-unused", "--snapshot-update", "-pno:syrupy":
+			return false
+		case "-p":
+			if i+1 < len(args) && args[i+1] == "no:syrupy" {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// syrupyInstalled reports whether the tests' Python environment has syrupy.
+func (p *PyTest) syrupyInstalled(ctx context.Context, env map[string]string) bool {
+	_, err := p.executor.CombinedOutput(ctx, "python", []string{
+		"-c", "import importlib.util, sys; sys.exit(importlib.util.find_spec('syrupy') is None)",
+	}, env)
+	return err == nil
 }
 
 func (p *PyTest) Command() (string, []string) {

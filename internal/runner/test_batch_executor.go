@@ -43,10 +43,14 @@ func (r runExecutionReport) failure(err error) runExecutionResult {
 	return runExecutionResult{report: r, err: err}
 }
 
-// runBatch executes an already selected batch of test files in one worker.
-func (e testExecutor) runBatch(testFiles []string, nodeIndex int, workerIndex int) error {
+// runBatch executes an already selected batch of test files in one worker;
+// partial says whether the batch is only part of the suite's files.
+func (e testExecutor) runBatch(testFiles []string, nodeIndex int, workerIndex int, partial bool) error {
 	workerEnv := createWorkerEnv(e.workerEnvMap, nodeIndex, workerIndex)
 	workerEnv[constants.TestParallelizationEnabledEnvVar] = "true"
+	if partial {
+		workerEnv[constants.TestRunPartialEnvVar] = "true"
+	}
 
 	slog.Info("Running tests in worker", "nodeIndex", nodeIndex, "workerIndex", workerIndex, "testFilesCount", len(testFiles), "workerEnvKeys", workerEnvKeys(workerEnv))
 	return e.framework.RunTests(e.ctx, testFiles, workerEnv)

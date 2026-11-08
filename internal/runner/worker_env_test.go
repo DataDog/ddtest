@@ -56,7 +56,7 @@ func TestRunBatch_DefaultTestSessionName(t *testing.T) {
 		RunTestsCalls: []RunTestsCall{},
 	}
 
-	err := newTestExecutor(context.Background(), mockFramework, map[string]string{}, roundRobinTestPlanner{}).runBatch([]string{"test/file1_test.rb"}, 2, 4)
+	err := newTestExecutor(context.Background(), mockFramework, map[string]string{}, roundRobinTestPlanner{}).runBatch([]string{"test/file1_test.rb"}, 2, 4, false)
 	if err != nil {
 		t.Fatalf("runBatch() should not return error, got: %v", err)
 	}
@@ -80,7 +80,7 @@ func TestRunBatch_DefaultTestSessionNameUsesDDService(t *testing.T) {
 		RunTestsCalls: []RunTestsCall{},
 	}
 
-	err := newTestExecutor(context.Background(), mockFramework, map[string]string{}, roundRobinTestPlanner{}).runBatch([]string{"test/file1_test.rb"}, 3, 7)
+	err := newTestExecutor(context.Background(), mockFramework, map[string]string{}, roundRobinTestPlanner{}).runBatch([]string{"test/file1_test.rb"}, 3, 7, false)
 	if err != nil {
 		t.Fatalf("runBatch() should not return error, got: %v", err)
 	}
@@ -102,7 +102,7 @@ func TestRunBatch_UserTestSessionNameSupportsPlaceholders(t *testing.T) {
 		RunTestsCalls: []RunTestsCall{},
 	}
 
-	err := newTestExecutor(context.Background(), mockFramework, map[string]string{}, roundRobinTestPlanner{}).runBatch([]string{"test/file1_test.rb"}, 5, 8)
+	err := newTestExecutor(context.Background(), mockFramework, map[string]string{}, roundRobinTestPlanner{}).runBatch([]string{"test/file1_test.rb"}, 5, 8, false)
 	if err != nil {
 		t.Fatalf("runBatch() should not return error, got: %v", err)
 	}
@@ -127,7 +127,7 @@ func TestRunBatch_WorkerEnvTestSessionNameTakesPrecedence(t *testing.T) {
 		constants.TestOptimizationTestSessionNameEnvironmentVariable: "worker-node-{{nodeIndex}}-worker-{{workerIndex}}",
 	}
 
-	err := newTestExecutor(context.Background(), mockFramework, workerEnvMap, roundRobinTestPlanner{}).runBatch([]string{"test/file1_test.rb"}, 9, 1)
+	err := newTestExecutor(context.Background(), mockFramework, workerEnvMap, roundRobinTestPlanner{}).runBatch([]string{"test/file1_test.rb"}, 9, 1, false)
 	if err != nil {
 		t.Fatalf("runBatch() should not return error, got: %v", err)
 	}
@@ -148,7 +148,7 @@ func TestRunBatch_DefaultManifestFile(t *testing.T) {
 		RunTestsCalls: []RunTestsCall{},
 	}
 
-	err := newTestExecutor(context.Background(), mockFramework, map[string]string{}, roundRobinTestPlanner{}).runBatch([]string{"test/file1_test.rb"}, 2, 4)
+	err := newTestExecutor(context.Background(), mockFramework, map[string]string{}, roundRobinTestPlanner{}).runBatch([]string{"test/file1_test.rb"}, 2, 4, false)
 	if err != nil {
 		t.Fatalf("runBatch() should not return error, got: %v", err)
 	}
@@ -175,7 +175,7 @@ func TestRunBatch_ManifestFileUsesProcessEnv(t *testing.T) {
 		RunTestsCalls: []RunTestsCall{},
 	}
 
-	err := newTestExecutor(context.Background(), mockFramework, map[string]string{}, roundRobinTestPlanner{}).runBatch([]string{"test/file1_test.rb"}, 2, 4)
+	err := newTestExecutor(context.Background(), mockFramework, map[string]string{}, roundRobinTestPlanner{}).runBatch([]string{"test/file1_test.rb"}, 2, 4, false)
 	if err != nil {
 		t.Fatalf("runBatch() should not return error, got: %v", err)
 	}
@@ -197,7 +197,7 @@ func TestRunBatch_WorkerEnvManifestFileTakesPrecedence(t *testing.T) {
 		constants.TestOptimizationManifestFileEnvVar: "/tmp/worker-manifest.txt",
 	}
 
-	err := newTestExecutor(context.Background(), mockFramework, workerEnvMap, roundRobinTestPlanner{}).runBatch([]string{"test/file1_test.rb"}, 2, 4)
+	err := newTestExecutor(context.Background(), mockFramework, workerEnvMap, roundRobinTestPlanner{}).runBatch([]string{"test/file1_test.rb"}, 2, 4, false)
 	if err != nil {
 		t.Fatalf("runBatch() should not return error, got: %v", err)
 	}
@@ -223,7 +223,7 @@ func TestRunBatch_MetadataFileIsIndependentOfCustomManifest(t *testing.T) {
 				workerEnv[constants.TestOptimizationManifestFileEnvVar] = wantManifest
 			}
 			framework := &MockFramework{FrameworkName: "mocha"}
-			if err := newTestExecutor(context.Background(), framework, workerEnv, roundRobinTestPlanner{}).runBatch([]string{"test.js"}, 0, 0); err != nil {
+			if err := newTestExecutor(context.Background(), framework, workerEnv, roundRobinTestPlanner{}).runBatch([]string{"test.js"}, 0, 0, false); err != nil {
 				t.Fatal(err)
 			}
 			env := framework.GetRunTestsCalls()[0].EnvMap

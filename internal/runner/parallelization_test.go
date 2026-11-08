@@ -91,7 +91,7 @@ func TestTestRunner_Run_EnablesParallelizationForEveryWorker(t *testing.T) {
 func TestRunBatch_EnablesParallelizationWithoutPlanMetadata(t *testing.T) {
 	fw := &MockFramework{FrameworkName: "mocha"}
 	workerEnv := map[string]string{constants.TestParallelizationEnabledEnvVar: "false", "CI_JOB_ID": "run-789"}
-	if err := newTestExecutor(context.Background(), fw, workerEnv, roundRobinTestPlanner{}).runBatch([]string{"test.js"}, 0, 0); err != nil {
+	if err := newTestExecutor(context.Background(), fw, workerEnv, roundRobinTestPlanner{}).runBatch([]string{"test.js"}, 0, 0, false); err != nil {
 		t.Fatal(err)
 	}
 	env := fw.GetRunTestsCalls()[0].EnvMap
@@ -129,7 +129,7 @@ func TestRunBatch_ClearsRetiredPlanningEnvironment(t *testing.T) {
 				}
 			}
 			framework := &MockFramework{FrameworkName: "mocha"}
-			if err := newTestExecutor(context.Background(), framework, workerEnv, roundRobinTestPlanner{}).runBatch([]string{"test.js"}, 0, 0); err != nil {
+			if err := newTestExecutor(context.Background(), framework, workerEnv, roundRobinTestPlanner{}).runBatch([]string{"test.js"}, 0, 0, false); err != nil {
 				t.Fatal(err)
 			}
 			env := framework.GetRunTestsCalls()[0].EnvMap
@@ -168,5 +168,21 @@ func TestRunBatch_ClearsRetiredPlanningEnvironment(t *testing.T) {
 				t.Fatal("modified the parent process environment")
 			}
 		})
+	}
+}
+
+func TestRunBatch_MarksPartialBatches(t *testing.T) {
+	for _, partial := range []bool{true, false} {
+		fw := &MockFramework{FrameworkName: "pytest"}
+		if err := newTestExecutor(context.Background(), fw, map[string]string{}, roundRobinTestPlanner{}).runBatch([]string{"test_a.py"}, 0, 0, partial); err != nil {
+			t.Fatal(err)
+		}
+		value, ok := fw.GetRunTestsCalls()[0].EnvMap[constants.TestRunPartialEnvVar]
+		if partial && value != "true" {
+			t.Errorf("partial batch: %s = %q, want \"true\"", constants.TestRunPartialEnvVar, value)
+		}
+		if !partial && ok {
+			t.Errorf("whole-suite batch: %s set to %q", constants.TestRunPartialEnvVar, value)
+		}
 	}
 }

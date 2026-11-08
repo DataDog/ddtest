@@ -11,6 +11,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/DataDog/ddtest/internal/constants"
 	"github.com/DataDog/ddtest/internal/discovery"
 	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/testoptimization"
@@ -504,4 +505,57 @@ func TestIsUnderExcludedDir(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestPyTest_RunTests_SyrupyWarnsOnUnusedSnapshotsInPartialRuns(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		partial  bool
+		override []string
+		syrupy   bool
+		want     bool
+	}{
+		{name: "part of the suite with syrupy", partial: true, syrupy: true, want: true},
+		{name: "whole suite", partial: false, syrupy: true, want: false},
+		{name: "syrupy not installed", partial: true, syrupy: false, want: false},
+		{name: "already warns", partial: true, syrupy: true, override: []string{"python", "-m", "pytest", "--snapshot-warn-unused"}, want: false},
+		{name: "updates snapshots", partial: true, syrupy: true, override: []string{"python", "-m", "pytest", "--snapshot-update"}, want: false},
+		{name: "plugin off", partial: true, syrupy: true, override: []string{"python", "-m", "pytest", "-p", "no:syrupy"}, want: false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var runArgs []string
+			executor := &mockCommandExecutor{onExecution: func(name string, args []string) { runArgs = args }}
+			pytest := &PyTest{executor: &syrupyProbeExecutor{mockCommandExecutor: executor, installed: tt.syrupy}, commandOverride: tt.override, platform: &testPlatform{}}
+			env := map[string]string{}
+			if tt.partial {
+				env[constants.TestRunPartialEnvVar] = "true"
+			}
+			if err := pytest.RunTests(context.Background(), []string{"tests/test_a.py"}, env); err != nil {
+				t.Fatalf("RunTests failed: %v", err)
+			}
+			if got := slices.Contains(runArgs, "--snapshot-warn-unused") && !slices.Contains(tt.override, "--snapshot-warn-unused"); got != tt.want {
+				t.Errorf("--snapshot-warn-unused added = %v, want %v (args %v)", got, tt.want, runArgs)
+			}
+			if runArgs[len(runArgs)-1] != "tests/test_a.py" {
+				t.Errorf("test files no longer last: %v", runArgs)
+			}
+		})
+	}
+}
+
+// syrupyProbeExecutor answers the syrupy probe (python -c ...) as installed or
+// not and runs everything else through the mock.
+type syrupyProbeExecutor struct {
+	*mockCommandExecutor
+	installed bool
+}
+
+func (e *syrupyProbeExecutor) CombinedOutput(ctx context.Context, name string, args []string, envMap map[string]string) ([]byte, error) {
+	if slices.Contains(args, "-c") {
+		if e.installed {
+			return nil, nil
+		}
+		return nil, errors.New("exit status 1")
+	}
+	return e.mockCommandExecutor.CombinedOutput(ctx, name, args, envMap)
 }

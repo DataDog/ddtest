@@ -62,7 +62,7 @@ func (e testExecutor) runCINodeSingleWorker(ciNode int, testFiles []string) erro
 		slog.Info("No tests to run", "nodeIndex", ciNode, "workerIndex", 0)
 		return nil
 	}
-	if err := e.runBatch(testFiles, ciNode, 0); err != nil {
+	if err := e.runBatch(testFiles, ciNode, 0, true); err != nil {
 		return errcode.WithCode(errcode.RunCINodeTestsFailed, fmt.Errorf("failed to run tests for ci-node %d: %w", ciNode, err))
 	}
 	return nil
@@ -94,7 +94,7 @@ func (e testExecutor) runCINodeWorkerGroups(ciNode int, groups [][]string) error
 			"testFiles", groupFiles)
 
 		g.Go(func() error {
-			return e.runBatch(groupFiles, ciNode, workerIndex)
+			return e.runBatch(groupFiles, ciNode, workerIndex, true)
 		})
 	}
 

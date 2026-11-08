@@ -3,6 +3,11 @@ package constants
 const TestParallelizationEnabledEnvVar = "_DD_TEST_PARALLELIZATION_ENABLED"
 const TestParallelizationMetadataFileEnvVar = "_DD_TEST_PARALLELIZATION_METADATA_FILE"
 
+// TestRunPartialEnvVar is "true" in a worker's environment when the worker runs
+// part of the suite's files, as a CI node's or a parallel runner's share, so a
+// framework can relax whole-suite checks that the other parts would satisfy.
+const TestRunPartialEnvVar = "_DD_TEST_RUN_PARTIAL"
+
 // TestParallelizationPlanTags maps planning-job CI tags to the tracer tags written
 // to plan-metadata.json. Keep this allowlist free of secrets and machine-specific
 // metadata such as workspace paths.
