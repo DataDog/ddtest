@@ -34,7 +34,8 @@ runs:
           echo "DD_CIVISIBILITY_ENABLED=$enabled"
           echo 'DD_CIVISIBILITY_AGENTLESS_ENABLED=true'
           echo 'DD_SITE=datadoghq.com'
-          echo 'DD_SERVICE=ddtest'
+          # The Go tracer infers ddtest from the repository. Exporting DD_SERVICE
+          # also renames the modules reported by child ScalaTest fixtures.
           echo 'DD_ENV=ci'
           echo "DD_TEST_SESSION_NAME=$SESSION_NAME"
           echo "JOB_CHECK_RUN_ID=$CHECK_RUN_ID"

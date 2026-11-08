@@ -35,6 +35,8 @@ Their Go tests run through `ddtest instrument`, with session names identifying
 the job, runtime versions and shards. A configured Datadog API key enables
 agentless reporting; without one, the same commands run with reporting disabled.
 Child framework fixtures retain their own tracing and local intake settings.
+The outer Go tracer infers its service from the repository; exporting
+`DD_SERVICE` would also change the module identity of child ScalaTest fixtures.
 The Go test helper uses the shared executable
 across temporary customer checkouts. Outside CI, it builds the CLI once per test
 process; the test process's isolated temporary directory owns its cleanup.
