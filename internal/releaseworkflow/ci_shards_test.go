@@ -53,10 +53,29 @@ func TestCompilerCacheRefreshesForEachRevision(t *testing.T) {
 func TestReleaseRequiresGreenMainWithoutRerunningMatrices(t *testing.T) {
 	data, err := os.ReadFile("../../.github/workflows/release.yml")
 	require.NoError(t, err)
-	var workflow struct{ Jobs map[string]ciTestJob }
+	var workflow struct {
+		Jobs map[string]ciTestJob
+		On   struct {
+			Dispatch struct {
+				Inputs map[string]struct {
+					Type, Default string
+					Required      bool
+					Options       []string
+				}
+			} `yaml:"workflow_dispatch"`
+		}
+	}
 	require.NoError(t, yaml.Unmarshal(data, &workflow))
+	require.Len(t, workflow.On.Dispatch.Inputs, 1)
+	input := workflow.On.Dispatch.Inputs["release_type"]
+	require.Equal(t, "choice", input.Type)
+	require.Equal(t, "patch", input.Default)
+	require.True(t, input.Required)
+	require.Equal(t, []string{"patch", "minor"}, input.Options)
 	require.Len(t, workflow.Jobs, 1)
 	job := workflow.Jobs["release"]
+	require.Equal(t, "${{ inputs.release_type }}", job.Env["RELEASE_TYPE"])
+	require.NotContains(t, job.Env, "VERSION")
 	require.Equal(t, "read", job.Permissions["actions"])
 	checks, build, create := []int{}, -1, -1
 	for index, step := range job.Steps {

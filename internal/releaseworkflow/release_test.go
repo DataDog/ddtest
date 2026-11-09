@@ -10,10 +10,11 @@ import (
 
 func TestRelease(t *testing.T) {
 	tests := []struct {
-		name string
-		env  map[string]string
-		mode string
-		want string
+		name    string
+		env     map[string]string
+		mode    string
+		want    string
+		version string
 	}{
 		{name: "maintainer", mode: "validate"},
 		{name: "admin", mode: "validate", env: map[string]string{"MOCK_ROLE": "admin"}},
@@ -29,10 +30,19 @@ func TestRelease(t *testing.T) {
 		{name: "branch rejected", env: map[string]string{"GITHUB_REF": "refs/heads/feature"}, want: "dispatched from main"},
 		{name: "fork rejected", env: map[string]string{"GITHUB_REPOSITORY": "someone/ddtest"}, want: "dispatched from main"},
 		{name: "push rejected", env: map[string]string{"GITHUB_EVENT_NAME": "push"}, want: "dispatched from main"},
-		{name: "missing prefix", env: map[string]string{"VERSION": "1.8.0"}, want: "Version must"},
-		{name: "leading zero", env: map[string]string{"VERSION": "v01.8.0"}, want: "Version must"},
-		{name: "shell input", env: map[string]string{"VERSION": "v1.8.0$(exit 42)"}, want: "Version must"},
-		{name: "make input", env: map[string]string{"VERSION": "v1.8.0$(shell exit 42)"}, want: "Version must"},
+		{name: "minor resets patch", mode: "validate", env: map[string]string{"MOCK_LATEST_TAG": "v1.7.9"}},
+		{name: "patch", mode: "validate", env: map[string]string{"RELEASE_TYPE": "patch", "MOCK_LATEST_TAG": "v1.7.9"}, version: "v1.7.10"},
+		{name: "minor preserves major", mode: "validate", env: map[string]string{"MOCK_LATEST_TAG": "v2.9.9"}, version: "v2.10.0"},
+		{name: "missing release type", env: map[string]string{"RELEASE_TYPE": ""}, want: "Release type must"},
+		{name: "major rejected", env: map[string]string{"RELEASE_TYPE": "major"}, want: "Release type must"},
+		{name: "shell input", env: map[string]string{"RELEASE_TYPE": "patch$(exit 42)"}, want: "Release type must"},
+		{name: "make input", env: map[string]string{"RELEASE_TYPE": "patch$(shell exit 42)"}, want: "Release type must"},
+		{name: "missing prefix", env: map[string]string{"MOCK_LATEST_TAG": "1.7.0"}, want: "Expected a published stable release tag"},
+		{name: "leading zero", env: map[string]string{"MOCK_LATEST_TAG": "v01.7.0"}, want: "Expected a published stable release tag"},
+		{name: "baseline changed", mode: "create", env: map[string]string{"MOCK_LATEST_TAG": "v1.7.1"}, want: "changed since validation"},
+		{name: "version changed", mode: "create", env: map[string]string{"VERSION": "v1.9.0"}, want: "changed since validation"},
+		{name: "missing resolved version", mode: "create", env: map[string]string{"VERSION": ""}, want: "changed since validation"},
+		{name: "missing resolved baseline", mode: "create", env: map[string]string{"PREVIOUS_TAG": ""}, want: "changed since validation"},
 		{name: "create", mode: "create"},
 		{name: "latest stable lookup fails", mode: "create", env: map[string]string{"MOCK_LATEST_FAILURE": "1"}, want: "latest release lookup failed"},
 		{name: "no stable baseline", mode: "create", env: map[string]string{"MOCK_LATEST_TAG": ""}, want: "Expected a published stable release tag"},
@@ -100,6 +110,7 @@ esac
 				"GITHUB_REPOSITORY": "DataDog/ddtest", "GITHUB_REF": "refs/heads/main",
 				"GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_ACTOR": "original",
 				"GITHUB_TRIGGERING_ACTOR": "rerunner", "VERSION": "v1.8.0",
+				"RELEASE_TYPE": "minor", "PREVIOUS_TAG": "v1.7.0", "GITHUB_ENV": filepath.Join(dir, "env"),
 				"GITHUB_STEP_SUMMARY": filepath.Join(dir, "summary"), "MOCK_LOG": filepath.Join(dir, "calls"),
 				"MOCK_ROLE": "maintain", "MOCK_RERUN_ROLE": "maintain", "MOCK_REFS": "",
 				"MOCK_PERMISSION_FAILURE": "0", "MOCK_TAG_FAILURE": "0", "MOCK_CREATE_FAILURE": "0",
@@ -109,7 +120,11 @@ esac
 			for key, value := range tt.env {
 				env[key] = value
 			}
-			cmd := exec.Command("bash", "../../.github/scripts/release.sh", tt.mode)
+			mode := tt.mode
+			if mode == "" {
+				mode = "validate"
+			}
+			cmd := exec.Command("bash", "../../.github/scripts/release.sh", mode)
 			for key, value := range env {
 				cmd.Env = append(cmd.Env, key+"="+value)
 			}
@@ -122,6 +137,16 @@ esac
 				t.Fatalf("release failed: %v\n%s", err, output)
 			}
 			calls, _ := os.ReadFile(filepath.Join(dir, "calls"))
+			if mode == "validate" && tt.want == "" {
+				version := tt.version
+				if version == "" {
+					version = "v1.8.0"
+				}
+				resolved, err := os.ReadFile(env["GITHUB_ENV"])
+				if err != nil || string(resolved) != "VERSION="+version+"\nPREVIOUS_TAG="+env["MOCK_LATEST_TAG"]+"\n" {
+					t.Fatalf("resolved version: %s, error: %v", resolved, err)
+				}
+			}
 			if tt.mode == "create" && tt.want == "" {
 				// GitHub makes the release commit from its changed files on the
 				// checked-out commit, and both tags name it, ddto's first.
