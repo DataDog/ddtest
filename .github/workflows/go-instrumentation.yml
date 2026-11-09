@@ -8,8 +8,8 @@ name: Go instrumentation
 # Pull requests and pushes test the dd-trace-go and Orchestrion versions in
 # ddto/scripts/supported_versions.json. The nightly run tests the versions that
 # the module proxy has then, and fails when that file is out of date. The
-# release workflow calls this one with compatibility: full first: those
-# versions, each one run even when another has the same edited SDK packages.
+# manual compatibility: full run tests each version even when another has
+# the same edited SDK packages. Releases require a successful push run on main.
 on:
   push:
     branches: [main]
