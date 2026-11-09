@@ -576,9 +576,9 @@ func (m *MockCIProvider) Name() string {
 	return m.ProviderName
 }
 
-func (m *MockCIProvider) Configure(parallelRunners int) error {
+func (m *MockCIProvider) Configure(plan environment.CIPlan) error {
 	m.ConfigureCalled = true
-	m.ParallelRunners = parallelRunners
+	m.ParallelRunners = plan.ParallelRunners
 	return m.ConfigureErr
 }
 
@@ -2270,10 +2270,10 @@ func TestTestPlanner_Setup_CIProviderConfigureFailure(t *testing.T) {
 
 	runner := NewWithDependencies(mockPlatform, mockPlatform.Framework, mockOptimizationClient, mockCIProviderDetector)
 
-	// Run Setup - should succeed even if CI provider configuration fails
+	// Output failures must not let a missing has_tests gate silently skip runnable tests.
 	err := runner.Plan(context.Background())
-	if err != nil {
-		t.Fatalf("Setup() should not fail when CI provider configuration fails, got: %v", err)
+	if errcode.CodeOf(err) != errcode.PlanCIConfigurationFailed || !errors.Is(err, mockCIProvider.ConfigureErr) {
+		t.Fatalf("Plan() = %v, want wrapped CI configuration failure", err)
 	}
 
 	// Verify CI provider Configure was attempted

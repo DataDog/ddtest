@@ -65,9 +65,16 @@ type diagJobData struct {
 	} `json:"job"`
 }
 
+// CIPlan describes the runnable work separately from the compatible runner count.
+// Empty plans still have a positive ParallelRunners value; HasTests gates CI jobs.
+type CIPlan struct {
+	ParallelRunners int
+	HasTests        bool
+}
+
 type CIProvider interface {
 	Name() string
-	Configure(parallelRunners int) error
+	Configure(plan CIPlan) error
 }
 
 type CIProviderDetector interface {
@@ -106,8 +113,11 @@ func DetectCIProvider() (CIProvider, error) {
 }
 
 func newCIProvider(providerName string) CIProvider {
-	if providerName == "github" {
+	switch providerName {
+	case "github":
 		return NewGitHub()
+	case "circleci":
+		return &CircleCI{}
 	}
 	return &genericCIProvider{name: providerName}
 }
@@ -120,7 +130,7 @@ func (p *genericCIProvider) Name() string {
 	return p.name
 }
 
-func (p *genericCIProvider) Configure(_ int) error {
+func (p *genericCIProvider) Configure(_ CIPlan) error {
 	return nil
 }
 
@@ -132,7 +142,8 @@ func (g *GitHub) Name() string {
 	return "github"
 }
 
-func (g *GitHub) Configure(parallelRunners int) error {
+func (g *GitHub) Configure(plan CIPlan) error {
+	parallelRunners := plan.ParallelRunners
 	if parallelRunners <= 0 {
 		return fmt.Errorf("parallelRunners must be greater than 0, got %d", parallelRunners)
 	}
@@ -164,7 +175,9 @@ func (g *GitHub) Configure(parallelRunners int) error {
 	}
 
 	githubOutputPath := os.Getenv(githubOutputEnvVar)
-	if err := writeGitHubStepOutput(configContent); err != nil {
+	// Keep the existing single-assignment matrix artifact compatible with consumers
+	// that parse everything after "matrix=" as JSON. Step outputs carry the gate.
+	if err := writeGitHubStepOutput(fmt.Sprintf("%s\nhas_tests=%t", configContent, plan.HasTests)); err != nil {
 		return err
 	}
 

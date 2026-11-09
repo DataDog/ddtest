@@ -70,6 +70,7 @@ func TestFatalCodesAreUnique(t *testing.T) {
 		PlanSkippablePercentageWriteFailed,
 		PlanParallelRunnersWriteFailed,
 		PlanTestSplitsWriteFailed,
+		PlanCIConfigurationFailed,
 		RunGitUnavailable,
 		RunPlanningFailed,
 		RunPlanStatusCheckFailed,

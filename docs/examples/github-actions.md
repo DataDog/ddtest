@@ -21,6 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.dd_plan.outputs.matrix }}
+      has_tests: ${{ steps.dd_plan.outputs.has_tests }}
     steps:
       - uses: actions/checkout@v4
       - name: Download ddtest binary
@@ -53,6 +54,7 @@ jobs:
   dd_test:
     runs-on: ubuntu-latest
     needs: [dd_plan]
+    if: ${{ needs.dd_plan.outputs.has_tests == 'true' }}
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.dd_plan.outputs.matrix) }}
@@ -92,7 +94,20 @@ matrix={"include":[{"ci_node_index":0,"ci_node_total":3},{"ci_node_index":1,"ci_
 ```
 
 In GitHub Actions, `ddtest plan` also writes this matrix to `$GITHUB_OUTPUT`, so
-the plan step can expose it directly as `steps.dd_plan.outputs.matrix`.
+the plan step can expose it directly as `steps.dd_plan.outputs.matrix`. It also
+writes `has_tests=true` or `has_tests=false`, based on the final runnable files.
+Expose both step outputs as job outputs as shown above.
+
+The worker's **job-level** `if` is evaluated before matrix expansion, so an empty
+plan skips all worker jobs, including checkout and dependency/browser setup.
+Compare against the string `'true'`; step outputs are strings. A step-level guard
+would still allocate a worker. See [GitHub's job condition documentation](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idif).
+
+Existing matrix and runner-count artifacts retain their positive parallelism for
+compatibility, including empty plans. Upgrading DDTest alone does not skip worker
+jobs: add the output and job condition to your workflow. The planning job still
+runs. Planning or output-write failures fail the plan step rather than reporting
+an empty successful plan.
 
 ## Python / Pytest Variant
 
