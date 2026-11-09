@@ -3,7 +3,6 @@
 import json
 import os
 import subprocess
-import sys
 from urllib.parse import urlencode
 
 
@@ -58,7 +57,4 @@ def main():
 
 
 if __name__ == "__main__":
-    try:
-        main()
-    except (ValueError, KeyError, TypeError, subprocess.CalledProcessError) as error:
-        sys.exit(f"Release CI check failed: {error}")
+    main()
