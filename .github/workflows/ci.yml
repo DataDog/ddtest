@@ -852,7 +852,7 @@ jobs:
           go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
           DDTEST_ACTIONLINT="$(go env GOPATH)/bin/actionlint" go test -v ./internal/onboard -run '^TestGeneratedSetupWorkflow.*Actionlint$' -count=1
       - name: Install apply fixture dependencies
-        run: npm install --prefix "$RUNNER_TEMP/apply-testdrive" vitest@4.1.11 mocha@11.7.6 nyc@17.1.0 dd-trace@6.20.1 @cucumber/cucumber@12.2.0 @wdio/cli@9.20.0 @wdio/local-runner@9.20.0 @wdio/mocha-framework@9.20.0 --no-audit --no-fund
+        run: npm install --prefix "$RUNNER_TEMP/apply-testdrive" vitest@4.1.11 mocha@11.7.6 nyc@17.1.0 dd-trace@6.20.1 @cucumber/cucumber@12.2.0 @wdio/cli@9.33.1 @wdio/local-runner@9.33.1 @wdio/mocha-framework@9.33.1 --no-audit --no-fund
       - name: Apply setup and validate against local intake
         env:
           DDTEST_MOCHA_NODE_MODULES: ${{ runner.temp }}/apply-testdrive/node_modules
@@ -1078,15 +1078,16 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # v9.33.1 keeps worker IPC off the fd Ubuntu 26.04's xvfb-run closes.
         # npm runs every scenario across shards; pnpm checks its layout on one.
         # The latest lane also takes the latest tracer: support for a new
         # WebdriverIO major lands there first.
         include:
-          - {package-manager: npm, wdio: '9.20.0', tracer: '6.20.1', shard: '1/4'}
-          - {package-manager: npm, wdio: '9.20.0', tracer: '6.20.1', shard: '2/4'}
-          - {package-manager: npm, wdio: '9.20.0', tracer: '6.20.1', shard: '3/4'}
-          - {package-manager: npm, wdio: '9.20.0', tracer: '6.20.1', shard: '4/4'}
-          - {package-manager: pnpm, wdio: '9.20.0', tracer: '6.20.1', shard: '1/1'}
+          - {package-manager: npm, wdio: '9.33.1', tracer: '6.20.1', shard: '1/4'}
+          - {package-manager: npm, wdio: '9.33.1', tracer: '6.20.1', shard: '2/4'}
+          - {package-manager: npm, wdio: '9.33.1', tracer: '6.20.1', shard: '3/4'}
+          - {package-manager: npm, wdio: '9.33.1', tracer: '6.20.1', shard: '4/4'}
+          - {package-manager: pnpm, wdio: '9.33.1', tracer: '6.20.1', shard: '1/1'}
           - {package-manager: npm, wdio: 'latest', tracer: 'latest', shard: '1/4'}
           - {package-manager: npm, wdio: 'latest', tracer: 'latest', shard: '2/4'}
           - {package-manager: npm, wdio: 'latest', tracer: 'latest', shard: '3/4'}
