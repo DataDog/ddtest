@@ -3,7 +3,7 @@ module github.com/DataDog/ddtest
 go 1.27.3
 
 require (
-	github.com/DataDog/ddtest/ddto v0.0.0-00010101000000-000000000000
+	github.com/DataDog/ddtest/ddto v1.16.0
 	github.com/Masterminds/semver/v3 v3.5.0
 	github.com/bmatcuk/doublestar/v4 v4.10.4
 	github.com/kballard/go-shellquote v0.0.0-20180428030007-95032a82bc51
@@ -32,5 +32,3 @@ require (
 	github.com/subosito/gotenv v1.6.0 // indirect
 	golang.org/x/text v0.43.0 // indirect
 )
-
-replace github.com/DataDog/ddtest/ddto => ./ddto
