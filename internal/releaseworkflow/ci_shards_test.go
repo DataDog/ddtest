@@ -69,7 +69,7 @@ func TestReleaseRequiresGreenMainWithoutRerunningMatrices(t *testing.T) {
 	require.Len(t, workflow.On.Dispatch.Inputs, 1)
 	input := workflow.On.Dispatch.Inputs["release_type"]
 	require.Equal(t, "choice", input.Type)
-	require.Equal(t, "patch", input.Default)
+	require.Equal(t, "minor", input.Default)
 	require.True(t, input.Required)
 	require.Equal(t, []string{"patch", "minor"}, input.Options)
 	require.Len(t, workflow.Jobs, 1)

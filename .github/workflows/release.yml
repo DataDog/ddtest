@@ -7,7 +7,7 @@ on:
         description: 'Bump the latest published stable release'
         required: true
         type: choice
-        default: patch
+        default: minor
         options: [patch, minor]
 
 concurrency:
