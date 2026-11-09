@@ -17,6 +17,9 @@ type Framework interface {
 	RunTests(ctx context.Context, testFiles []string, envMap map[string]string) error
 	Platform() PlatformEnvironment
 	SupportsFullTestDiscovery() bool
+	// HasFileLevelSuites is true only when a tracer suite covers the whole file.
+	// Resolving a suite to a source path alone does not establish this guarantee.
+	HasFileLevelSuites() bool
 	SourceFileForSuite(suite string) (string, bool)
 	HasUnskippableMarker(testFile string) bool
 }

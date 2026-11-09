@@ -75,6 +75,7 @@ func (p PlanMetadata) IsZero() bool {
 
 type TestPlanner struct {
 	testFiles               map[string]struct{}
+	completeSuiteInventory  map[string]bool
 	suiteAggregates         map[testSuiteKey]testSuiteAggregate
 	suitesBySourceFile      map[string][]testSuiteKey
 	testSuiteDurations      map[string]map[string]api.TestSuiteDurationInfo
@@ -124,6 +125,7 @@ type testFileDurationSource string
 const (
 	testFileDurationSourceKnown   testFileDurationSource = "known"
 	testFileDurationSourceDefault testFileDurationSource = "default"
+	testFileDurationSourceMixed   testFileDurationSource = "mixed"
 )
 
 type testSuiteAggregate struct {
@@ -191,6 +193,7 @@ func NewWithDependencies(
 func newTestPlannerWithDefaults() *TestPlanner {
 	return &TestPlanner{
 		testFiles:               make(map[string]struct{}),
+		completeSuiteInventory:  make(map[string]bool),
 		suiteAggregates:         make(map[testSuiteKey]testSuiteAggregate),
 		suitesBySourceFile:      make(map[string][]testSuiteKey),
 		testSuiteDurations:      make(map[string]map[string]api.TestSuiteDurationInfo),
@@ -308,7 +311,7 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 	fullTestDiscoverySupported := testFramework.SupportsFullTestDiscovery()
 	forceFullTestDiscovery := settings.GetForceFullTestDiscovery()
 	strictDiscovery := settings.GetStrictDiscovery()
-	fullDiscoveryNeeded := fullTestDiscoverySupported && (isTestLevelSkipping || forceFullTestDiscovery)
+	fullDiscoveryNeeded := fullTestDiscoverySupported && (isTestLevelSkipping || forceFullTestDiscovery || !testFramework.HasFileLevelSuites())
 	ciTags := environment.GetCITags()
 	tp.runInfo = runmetadata.New(ciTags)
 	tp.planMetadata = NewPlanMetadata(tags, detectedPlatform.Name(), testFramework.Name(), testSkippingLevel)
@@ -505,6 +508,11 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 		}
 		selectedDiscoveryMode = discoveryModeFast
 		selectedDiscoveryDuration = fastDiscoveryDuration
+		if testFramework.HasFileLevelSuites() {
+			for file := range tp.testFiles {
+				tp.completeSuiteInventory[file] = true
+			}
+		}
 		tp.addDurationDataForFastDiscoveryFallback()
 		if isSuiteLevelSkipping && tiaSkippingEnabled {
 			tp.recordSuiteLevelSkippables(skipMatcher, testFramework)
@@ -542,10 +550,14 @@ func completeRuntimeTags(tags map[string]string) bool {
 func (tp *TestPlanner) recordPlanningTelemetry(selection splitSelection) {
 	backendDurationTestFiles := 0
 	defaultDurationTestFiles := 0
+	mixedDurationTestFiles := 0
 	for _, source := range tp.testFileDurationSources {
-		if source == testFileDurationSourceKnown {
+		switch source {
+		case testFileDurationSourceKnown:
 			backendDurationTestFiles++
-		} else {
+		case testFileDurationSourceMixed:
+			mixedDurationTestFiles++
+		default:
 			defaultDurationTestFiles++
 		}
 	}
@@ -570,6 +582,7 @@ func (tp *TestPlanner) recordPlanningTelemetry(selection splitSelection) {
 		FullySkippedTestFiles:     fullySkippedTestFiles,
 		BackendDurationTestFiles:  backendDurationTestFiles,
 		DefaultDurationTestFiles:  defaultDurationTestFiles,
+		MixedDurationTestFiles:    mixedDurationTestFiles,
 		EstimatedTimeSavedPercent: tp.skippablePercentage,
 		ParallelRunners:           selection.selected.parallelRunners,
 		ExpectedFullRuntime:       tp.expectedFullDuration(),
@@ -686,7 +699,6 @@ func (tp *TestPlanner) estimateDiscoveredSuiteDurations() {
 }
 
 func (tp *TestPlanner) addDurationDataForFastDiscoveryFallback() {
-	seenSourceFiles := make(map[string]struct{})
 	for module, suites := range tp.testSuiteDurations {
 		for suite, suiteInfo := range suites {
 			key := testSuiteKey{Module: module, Suite: suite}
@@ -703,15 +715,10 @@ func (tp *TestPlanner) addDurationDataForFastDiscoveryFallback() {
 			}
 
 			duration, ok := parseDurationP50(suiteInfo)
+			source := testFileDurationSourceKnown
 			if !ok {
-				continue
-			}
-
-			// Fast discovery only sees files, not test cases. For suite-level TIA we
-			// assume a single backend suite maps to a single source file, so one
-			// duration-backed aggregate per source file is enough and avoids double-counting.
-			if _, ok := seenSourceFiles[sourceFile]; ok {
-				continue
+				duration = float64(time.Second)
+				source = testFileDurationSourceDefault
 			}
 
 			tp.suiteAggregates[key] = testSuiteAggregate{
@@ -720,11 +727,10 @@ func (tp *TestPlanner) addDurationDataForFastDiscoveryFallback() {
 				SourceFile:        sourceFile,
 				TotalDuration:     duration,
 				EstimatedDuration: duration,
-				DurationSource:    testFileDurationSourceKnown,
+				DurationSource:    source,
 				NumTests:          1,
 				NumTestsSkipped:   0,
 			}
-			seenSourceFiles[sourceFile] = struct{}{}
 		}
 	}
 }
@@ -854,11 +860,16 @@ func (tp *TestPlanner) estimateTestFileWeight(testFile string) (testFileWeightEs
 			continue
 		}
 		hasRunnableSuite = true
-		source = aggregate.DurationSource
+		source = mergeDurationSources(source, aggregate.DurationSource)
 		duration += aggregate.EstimatedDuration
 	}
 	if !hasRunnableSuite {
-		return testFileWeightEstimate{}, false
+		if tp.completeSuiteInventory[testFile] {
+			return testFileWeightEstimate{}, false
+		}
+		// An incomplete inventory cannot establish that every current suite is
+		// skippable, including when reconstructing an older plan cache.
+		return testFileWeightEstimate{weight: constants.DefaultTestFileWeight, source: testFileDurationSourceDefault}, true
 	}
 	if source == "" {
 		source = testFileDurationSourceDefault
@@ -881,4 +892,19 @@ func (tp *TestPlanner) estimateTestFileWeight(testFile string) (testFileWeightEs
 		weight: weight,
 		source: source,
 	}, true
+}
+
+// mergeDurationSources folds only runnable contributions; the empty accumulator
+// is distinct from an unspecified contribution, which uses the default estimate.
+func mergeDurationSources(current, next testFileDurationSource) testFileDurationSource {
+	if next == "" {
+		next = testFileDurationSourceDefault
+	}
+	if current == "" {
+		return next
+	}
+	if current != next {
+		return testFileDurationSourceMixed
+	}
+	return current
 }

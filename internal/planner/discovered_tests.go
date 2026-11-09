@@ -17,6 +17,7 @@ import (
 
 func (tp *TestPlanner) resetDiscoveryResults() {
 	tp.testFiles = make(map[string]struct{})
+	tp.completeSuiteInventory = make(map[string]bool)
 	tp.suiteAggregates = make(map[testSuiteKey]testSuiteAggregate)
 	tp.suitesBySourceFile = make(map[string][]testSuiteKey)
 	tp.reportStats = newPlanningReportStats()
@@ -112,11 +113,8 @@ func (tp *TestPlanner) recordFullDiscoveryResults(
 		}
 
 		match := skippableMatcher.Match(test)
-		// Suite-level matches in full discovery would rely on the collected
-		// tests' own source files. Keep the same gate as fast suite-mode
-		// planning: a suite is only omitted when backend suite metadata maps it
-		// to a source file, so forcing full discovery cannot change which
-		// files are skipped.
+		// Preserve the source mapping guard: stale backend mappings must not
+		// apply a suite skip to a different current file.
 		if match.kind == skippableMatchTIASuite {
 			if sourceFile, ok := tp.sourceFileForSuite(match.suiteKey, testFramework); !ok || sourceFile != normalizedSourceFile {
 				slog.Debug("Skippable suite has no matching source-file mapping; keeping suite runnable",
@@ -133,6 +131,13 @@ func (tp *TestPlanner) recordFullDiscoveryResults(
 			tp.recordAppliedSkippable(match, normalizedSourceFile)
 			skippableTestsCount++
 		}
+	}
+
+	if tp.completeSuiteInventory == nil {
+		tp.completeSuiteInventory = make(map[string]bool)
+	}
+	for file := range tp.testFiles {
+		tp.completeSuiteInventory[file] = true
 	}
 
 	slog.Info("Processed the discovered tests",
@@ -300,6 +305,11 @@ func (tp *TestPlanner) recordSuiteLevelSkippables(skippableMatcher skippableMatc
 		}
 		if _, ok := tp.testFiles[sourceFile]; !ok {
 			slog.Debug("Skippable suite source file was not discovered or was excluded; ignoring suite", "module", suite.Module, "suite", suite.Suite, "sourceFile", sourceFile)
+			continue
+		}
+
+		if !tp.completeSuiteInventory[sourceFile] {
+			slog.Debug("Suite inventory is incomplete; leaving skipping to the tracer", "sourceFile", sourceFile)
 			continue
 		}
 

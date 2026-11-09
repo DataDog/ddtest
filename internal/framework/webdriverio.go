@@ -170,3 +170,6 @@ func (w *WebdriverIO) RunTests(ctx context.Context, files []string, env map[stri
 
 	return w.executor.Run(ctx, command, args, options)
 }
+
+// HasFileLevelSuites identifies the tracer's test-file suite boundary.
+func (*WebdriverIO) HasFileLevelSuites() bool { return true }

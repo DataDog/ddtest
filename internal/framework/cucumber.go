@@ -283,3 +283,6 @@ func parseCucumberMessages(filename string) ([]string, error) {
 	}
 	return normalizeJavaScriptTestFiles(files), nil
 }
+
+// HasFileLevelSuites identifies the tracer's test-file suite boundary.
+func (*Cucumber) HasFileLevelSuites() bool { return true }

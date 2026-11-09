@@ -265,6 +265,7 @@ Planning
   Duration estimates
     Backend durations used: 431 suites
     Default durations used: 90 suites
+    Mixed backend/default durations: 0 files
     Backend-only suites added: 12
   Skipping
     TIA skippables applied: 312 suites
@@ -430,6 +431,7 @@ Planning
   Duration estimates
     Backend durations used: 12 suites
     Default durations used: 1 suite
+    Mixed backend/default durations: 0 files
     Backend-only suites added: 2
   Skipping
     TIA skippables applied: 8 suites

@@ -213,3 +213,6 @@ func parseMochaDiscoveryOutput(output []byte) ([]string, error) {
 	}
 	return normalizeJavaScriptTestFiles(paths), nil
 }
+
+// HasFileLevelSuites identifies the tracer's test-file suite boundary.
+func (*Mocha) HasFileLevelSuites() bool { return true }

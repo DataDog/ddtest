@@ -3,6 +3,7 @@ package planner
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -374,5 +375,70 @@ func TestTestSuiteKey_JSONMapKeyRoundTrip(t *testing.T) {
 
 	if !reflect.DeepEqual(restored.suiteAggregates, runner.suiteAggregates) {
 		t.Errorf("Expected restored suite aggregates to preserve text-marshaled keys.\nexpected: %v\nactual: %v", runner.suiteAggregates, restored.suiteAggregates)
+	}
+}
+
+func TestPlanCachePreservesInventoryAndMixedDurations(t *testing.T) {
+	runner := newMultiSuitePlanner(t, "missing", false)
+	setPlannerForceFullTestDiscovery(t, true)
+	if err := runner.PreparePlanningData(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := runner.storeTestOptimizationPlanCache(); err != nil {
+		t.Fatal(err)
+	}
+	restored := newTestPlannerWithDefaults()
+	if err := restored.restoreTestOptimizationPlanCache(); err != nil {
+		t.Fatal(err)
+	}
+	if !restored.completeSuiteInventory[multiSuiteFile] || restored.testFileDurationSources[multiSuiteFile] != testFileDurationSourceMixed || restored.testFileWeights[multiSuiteFile] != 11000 {
+		t.Fatalf("restored wrong inventory/durations: %+v, %+v, %+v", restored.completeSuiteInventory, restored.testFileDurationSources, restored.testFileWeights)
+	}
+}
+
+func TestPlanCacheReconstructionRequiresCompleteInventoryToOmitFile(t *testing.T) {
+	for _, complete := range []bool{false, true} {
+		t.Run(fmt.Sprintf("complete=%t", complete), func(t *testing.T) {
+			t.Chdir(t.TempDir())
+			cache := testOptimizationPlanCache{SuiteAggregates: map[testSuiteKey]testSuiteAggregate{
+				{Module: "rspec", Suite: "A"}: {SourceFile: multiSuiteFile, NumTests: 1, NumTestsSkipped: 1},
+			}}
+			if complete {
+				cache.CompleteSuiteInventory = map[string]bool{multiSuiteFile: true}
+			}
+			if err := testoptimization.NewCacheManager().StoreTestOptimizationPlanCache(cache); err != nil {
+				t.Fatal(err)
+			}
+			restored := newTestPlannerWithDefaults()
+			if err := restored.restoreTestOptimizationPlanCache(); err != nil {
+				t.Fatal(err)
+			}
+			weight, runnable := restored.testFileWeights[multiSuiteFile]
+			if runnable == complete || (runnable && weight <= 0) {
+				t.Fatalf("runnable=%t weight=%d for complete=%t", runnable, weight, complete)
+			}
+		})
+	}
+}
+
+func TestPlanCacheReconstructsMixedDurationSource(t *testing.T) {
+	runner := newMultiSuitePlanner(t, "missing", false)
+	setPlannerForceFullTestDiscovery(t, true)
+	if err := runner.PreparePlanningData(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	cache := testOptimizationPlanCache{
+		SuiteAggregates:        runner.suiteAggregates,
+		CompleteSuiteInventory: runner.completeSuiteInventory,
+	}
+	if err := testoptimization.NewCacheManager().StoreTestOptimizationPlanCache(cache); err != nil {
+		t.Fatal(err)
+	}
+	restored := newTestPlannerWithDefaults()
+	if err := restored.restoreTestOptimizationPlanCache(); err != nil {
+		t.Fatal(err)
+	}
+	if restored.testFileDurationSources[multiSuiteFile] != testFileDurationSourceMixed || restored.testFileWeights[multiSuiteFile] != 11000 {
+		t.Fatalf("reconstructed wrong durations: %+v, %+v", restored.testFileDurationSources, restored.testFileWeights)
 	}
 }

@@ -83,6 +83,7 @@ type PlanningMetrics struct {
 	FullySkippedTestFiles     int
 	BackendDurationTestFiles  int
 	DefaultDurationTestFiles  int
+	MixedDurationTestFiles    int
 	EstimatedTimeSavedPercent float64
 	ParallelRunners           int
 	ExpectedFullRuntime       time.Duration
@@ -286,6 +287,7 @@ func Planning(client Client, metrics PlanningMetrics) {
 	distribution(client, "ddtest.planning.estimated_time_saved_pct", commonTags, metrics.EstimatedTimeSavedPercent)
 	distribution(client, "ddtest.planning.test_file_durations", appendPlanningTags(commonTags, "source:backend"), float64(metrics.BackendDurationTestFiles))
 	distribution(client, "ddtest.planning.test_file_durations", appendPlanningTags(commonTags, "source:default"), float64(metrics.DefaultDurationTestFiles))
+	distribution(client, "ddtest.planning.test_file_durations", appendPlanningTags(commonTags, "source:mixed"), float64(metrics.MixedDurationTestFiles))
 	distribution(client, "ddtest.planning.parallel_runners", commonTags, float64(metrics.ParallelRunners))
 	distribution(client, "ddtest.planning.expected_full_runtime_ms", commonTags, milliseconds(metrics.ExpectedFullRuntime))
 	distribution(client, "ddtest.planning.expected_runnable_runtime_ms", commonTags, milliseconds(metrics.ExpectedRunnableRuntime))
