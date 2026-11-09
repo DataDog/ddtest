@@ -191,7 +191,7 @@ func TestPublicWebdriverIOTestdrive(t *testing.T) {
     runs-on: %s
     steps:
       - uses: actions/setup-node@v4
-        with: {node-version: '24.14.1', architecture: %s}
+        with: {node-version: '24.22.2', architecture: %s}
       - uses: datadog/test-visibility-github-action@v3
         with: {languages: js, js-tracer-version: '%s'}
       - run: npm test
