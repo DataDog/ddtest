@@ -38,6 +38,15 @@ case "${1:-}" in
   *) echo 'Usage: release.sh validate|create' >&2; exit 1 ;;
 esac
 
+# Automatic notes otherwise start at the latest per-commit prerelease, omitting
+# the changes since the last stable release. Resolve this before creating tags;
+# a failed lookup must not silently fall back to GitHub's automatic selection.
+previous_tag=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name)
+if [[ ! "$previous_tag" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+  echo "Expected a published stable release tag, got: $previous_tag" >&2
+  exit 1
+fi
+
 # The release commit is the checkout's commit with ddto's version and go.mod's
 # requirement of it, for go install (see release-commit.sh), which made it
 # locally: RELEASE_COMMIT. GitHub makes it again, signed, from the same files,
@@ -66,7 +75,7 @@ commit=$(printf '{"message":"Release %s","tree":"%s","parents":["%s"]}' "$VERSIO
 # never move a tag. ddto's tag comes first: VERSION needs it.
 gh api "repos/$GITHUB_REPOSITORY/git/refs" -f "ref=refs/tags/ddto/$VERSION" -f "sha=$commit"
 gh api "repos/$GITHUB_REPOSITORY/git/refs" -f "ref=refs/tags/$VERSION" -f "sha=$commit"
-gh release create "$VERSION" --verify-tag --target "$commit" --title "$VERSION" --draft --generate-notes dist/*
+gh release create "$VERSION" --verify-tag --target "$commit" --title "$VERSION" --draft --generate-notes --notes-start-tag "$previous_tag" dist/*
 release_url=$(gh release view "$VERSION" --json url --jq .url)
 {
   echo "## Draft release $VERSION"

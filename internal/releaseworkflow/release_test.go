@@ -34,6 +34,9 @@ func TestRelease(t *testing.T) {
 		{name: "shell input", env: map[string]string{"VERSION": "v1.8.0$(exit 42)"}, want: "Version must"},
 		{name: "make input", env: map[string]string{"VERSION": "v1.8.0$(shell exit 42)"}, want: "Version must"},
 		{name: "create", mode: "create"},
+		{name: "latest stable lookup fails", mode: "create", env: map[string]string{"MOCK_LATEST_FAILURE": "1"}, want: "latest release lookup failed"},
+		{name: "no stable baseline", mode: "create", env: map[string]string{"MOCK_LATEST_TAG": ""}, want: "Expected a published stable release tag"},
+		{name: "prerelease baseline rejected", mode: "create", env: map[string]string{"MOCK_LATEST_TAG": "pre-release-1234567"}, want: "Expected a published stable release tag"},
 		{name: "tag creation race", mode: "create", env: map[string]string{"MOCK_CREATE_FAILURE": "1"}, want: "tag creation failed"},
 		{name: "no release commit", mode: "create", env: map[string]string{"RELEASE_COMMIT": ""}, want: "RELEASE_COMMIT must be"},
 		{name: "release commit elsewhere", mode: "create", env: map[string]string{"MOCK_PARENT": "other-sha"}, want: "RELEASE_COMMIT must be"},
@@ -65,6 +68,9 @@ case "$*" in
   *matching-refs*)
     if [[ "$MOCK_TAG_FAILURE" == 1 ]]; then echo 'tag lookup failed' >&2; exit 1; fi
     echo "$MOCK_REFS" ;;
+  *releases/latest*)
+    if [[ "$MOCK_LATEST_FAILURE" == 1 ]]; then echo 'latest release lookup failed' >&2; exit 1; fi
+    echo "$MOCK_LATEST_TAG" ;;
   *git/blobs*) cat >> "$MOCK_LOG"; echo >> "$MOCK_LOG"; echo blob-sha ;;
   *git/trees*) cat >> "$MOCK_LOG"; echo >> "$MOCK_LOG"; echo "$MOCK_TREE" ;;
   *git/commits*) cat >> "$MOCK_LOG"; echo >> "$MOCK_LOG"; echo release-commit-sha ;;
@@ -97,6 +103,7 @@ esac
 				"GITHUB_STEP_SUMMARY": filepath.Join(dir, "summary"), "MOCK_LOG": filepath.Join(dir, "calls"),
 				"MOCK_ROLE": "maintain", "MOCK_RERUN_ROLE": "maintain", "MOCK_REFS": "",
 				"MOCK_PERMISSION_FAILURE": "0", "MOCK_TAG_FAILURE": "0", "MOCK_CREATE_FAILURE": "0",
+				"MOCK_LATEST_FAILURE": "0", "MOCK_LATEST_TAG": "v1.7.0",
 				"RELEASE_COMMIT": "local-release-commit", "MOCK_PARENT": "checked-out-main-sha", "MOCK_TREE": "verified-tree",
 			}
 			for key, value := range tt.env {
@@ -124,7 +131,8 @@ esac
 					`{"message":"Release v1.8.0","tree":"verified-tree","parents":["checked-out-main-sha"]}`,
 					"git/refs -f ref=refs/tags/ddto/v1.8.0 -f sha=release-commit-sha\n" +
 						"api repos/DataDog/ddtest/git/refs -f ref=refs/tags/v1.8.0 -f sha=release-commit-sha",
-					"release create v1.8.0 --verify-tag --target release-commit-sha --title v1.8.0 --draft --generate-notes dist/*",
+					"api repos/DataDog/ddtest/releases/latest --jq .tag_name",
+					"release create v1.8.0 --verify-tag --target release-commit-sha --title v1.8.0 --draft --generate-notes --notes-start-tag v1.7.0 dist/*",
 				} {
 					if !strings.Contains(string(calls), want) {
 						t.Errorf("missing %q in calls: %s", want, calls)

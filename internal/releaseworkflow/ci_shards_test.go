@@ -12,11 +12,12 @@ import (
 )
 
 type ciTestJob struct {
-	If       string
-	Needs    any
-	Uses     string
-	Env      map[string]string
-	Strategy struct {
+	If          string
+	Needs       any
+	Uses        string
+	Env         map[string]string
+	Permissions map[string]string
+	Strategy    struct {
 		FailFast bool `yaml:"fail-fast"`
 		Matrix   struct{ Shard []any }
 	}
@@ -49,14 +50,41 @@ func TestCompilerCacheRefreshesForEachRevision(t *testing.T) {
 	require.NotEmpty(t, key)
 }
 
-func TestReleaseUsesTheSameCIAndRetainsTheInstrumentationGate(t *testing.T) {
+func TestReleaseRequiresGreenMainWithoutRerunningMatrices(t *testing.T) {
 	data, err := os.ReadFile("../../.github/workflows/release.yml")
 	require.NoError(t, err)
 	var workflow struct{ Jobs map[string]ciTestJob }
 	require.NoError(t, yaml.Unmarshal(data, &workflow))
-	require.Equal(t, "./.github/workflows/ci.yml", workflow.Jobs["ci"].Uses)
-	require.Equal(t, "./.github/workflows/go-instrumentation.yml", workflow.Jobs["compatibility"].Uses)
-	require.Equal(t, []any{"ci", "compatibility"}, workflow.Jobs["release"].Needs)
+	require.Len(t, workflow.Jobs, 1)
+	job := workflow.Jobs["release"]
+	require.Equal(t, "read", job.Permissions["actions"])
+	checks, build, create := []int{}, -1, -1
+	for index, step := range job.Steps {
+		if strings.Contains(step.Run, "check_release_ci.py") {
+			checks = append(checks, index)
+			require.Equal(t, "${{ github.token }}", step.Env["GH_TOKEN"])
+		}
+		if step.Name == "Checkout code" {
+			require.Equal(t, "${{ github.sha }}", step.With["ref"])
+		}
+		if step.Name == "Build binaries" {
+			build = index
+		}
+		if step.Name == "Create Release and Upload Assets" {
+			create = index
+		}
+	}
+	require.Len(t, checks, 2)
+	require.Less(t, checks[0], build)
+	require.Greater(t, checks[1], build)
+	require.Less(t, checks[1], create)
+}
+
+func TestReleaseCIGate(t *testing.T) {
+	cmd := exec.Command("python3", "-B", "-m", "unittest", "discover", "-s", "../../.github/scripts", "-p", "test_check_release_ci.py")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("release CI gate tests failed: %v\n%s", err, output)
+	}
 }
 
 func TestPublicCLIJobsShareOneExecutable(t *testing.T) {
