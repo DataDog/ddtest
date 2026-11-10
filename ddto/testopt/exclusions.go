@@ -13,10 +13,3 @@ type TestExclusions = gotesting.TestExclusions
 func RegisterTestExclusions(fn any, exclusions TestExclusions) {
 	gotesting.RegisterTestExclusions(fn, exclusions)
 }
-
-// RegisterTestExclusionsByName is used by generated test bootstraps for annotated
-// declarations in imported helper packages. Call during package initialization;
-// names identify compiled declarations and are unrelated to mutable span tags.
-func RegisterTestExclusionsByName(name string, exclusions TestExclusions) {
-	gotesting.RegisterTestExclusionsByName(name, exclusions)
-}

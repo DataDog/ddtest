@@ -2533,11 +2533,9 @@ func finishProcessRetryTestEvent(
 	}
 	if attempt.Result.ProtectedDescendantFailure {
 		markProtectedFailure(execMeta)
+		execMeta.isDisabled, execMeta.isQuarantined = false, false
 	} else {
 		execMeta.protectedDescendantFailure.Store(false)
-	}
-	if attempt.Result.ProtectedDescendantFailure {
-		execMeta.isDisabled, execMeta.isQuarantined = false, false
 	}
 	coverage.SubmitProcessTestCoverage(session.SessionID(), suite.SuiteID(), test.TestID(), attempt.Result.Coverage)
 	cancelExecution := setTestTagsFromExecutionMetadataNoClose(test, execMeta)
@@ -3304,7 +3302,8 @@ func wrapProcessRetryChildTest(original func(*testing.T), cfg processRetryChildC
 				execMeta.isDisabled, execMeta.isQuarantined, execMeta.isAttemptToFix = root.Disabled, root.Quarantined, root.AttemptToFix
 				execMeta.assignment = testManagementAssignment{disabled: root.AssignedDisabled || root.Disabled, quarantined: root.AssignedQuarantined || root.Quarantined, attemptToFix: root.AssignedAttemptToFix || root.AttemptToFix}
 			}
-			setExecutionExclusions(attempt.test, execMeta, runtime.FuncForPC(reflect.ValueOf(original).Pointer()), nil, exclusionsForFunc(runtime.FuncForPC(reflect.ValueOf(original).Pointer())))
+			originalFunc := runtime.FuncForPC(reflect.ValueOf(original).Pointer())
+			setExecutionExclusions(attempt.test, execMeta, originalFunc, nil, exclusionsForFunc(originalFunc))
 			attempt.metadata = execMeta
 			moduleName, suiteName := "", ""
 			if cfg.Subtree != nil {
@@ -3701,11 +3700,10 @@ func instrumentProcessRetryChildSubtest(original func(*testing.T)) func(*testing
 		execMeta := createTestMetadata(t, nil)
 		execMeta.test = owner.test
 		execMeta.exclusionResults = owner.exclusionResults
-		sourceFunc := runtime.FuncForPC(reflect.ValueOf(original).Pointer())
-		setExecutionExclusions(t, execMeta, sourceFunc, parent, exclusionsForChild(t, sourceFunc, parent))
-		moduleName, suiteName := utils.GetModuleAndSuiteName(sourceFunc.Entry())
+		setExecutionExclusions(t, execMeta, source, parent, exclusions)
+		moduleName, suiteName := utils.GetModuleAndSuiteName(source.Entry())
 		if state := owner.exclusionPolicy; state != nil && state.cfg != nil {
-			moduleName, suiteName, _ = quarantinedSubtestIdentity(t, state, parent, moduleName, suiteName, sourceFunc)
+			moduleName, suiteName, _ = quarantinedSubtestIdentity(t, state, parent, moduleName, suiteName, source)
 			execMeta.identity = newTestIdentity(moduleName, suiteName, t.Name())
 			resolved := state.cfg.resolveChildMetadata(parent, moduleName, suiteName, t.Name())
 			applyProcessDirectiveExclusions(&resolved.directive, execMeta.exclusions)

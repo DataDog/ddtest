@@ -660,7 +660,7 @@ func validateProcessRetryControlConfig(cfg processRetryControlConfig, expected p
 	if err := validateProcessRetryExclusionPolicy(cfg.ExclusionPolicy, cfg.TestName); err != nil {
 		return err
 	}
-	if len(cfg.ExclusionResults) > 4096 {
+	if len(cfg.ExclusionResults) > processRetrySubtreeMaxDirectives {
 		return errors.New("too many excluded retry descendants")
 	}
 	for name := range cfg.ExclusionResults {

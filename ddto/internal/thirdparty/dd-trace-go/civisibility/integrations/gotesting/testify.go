@@ -213,10 +213,13 @@ func testifySuiteMethods(methodFinder reflect.Type, suiteName, moduleName string
 		// Keep reflection's existing source and suite identity. A promoted
 		// wrapper gets only an exact declaration-policy alias, never another
 		// receiver's execution metadata or mutable span tags.
-		declaration := testifyMethodDeclaration(methodFinder, method)
+		var declaration *runtime.Func
+		if hasTestExclusionDeclarations.Load() {
+			declaration = testifyMethodDeclaration(methodFinder, method)
+		}
 		if declaration != nil && methodFunc != nil && declaration.Name() != methodFunc.Name() {
 			if exclusions := exclusionsForFunc(declaration); exclusions.any() {
-				RegisterTestExclusionsByName(methodFunc.Name(), exclusions)
+				registerTestExclusionsByName(methodFunc.Name(), exclusions)
 			}
 		}
 		var methodFile string

@@ -131,6 +131,14 @@ const (
 	// TestIsAttempToFix indicates that the test is an attempt to fix
 	TestIsAttempToFix = "test.test_management.is_attempt_to_fix"
 
+	// TestPreventFailureSuppression indicates that the test's declaration keeps
+	// its failures blocking despite quarantine or disabling
+	TestPreventFailureSuppression = "test.test_management.prevent_failure_suppression"
+
+	// TestNoAutoRetry indicates that the test's declaration is excluded from
+	// automatic retries, early flake detection and attempt-to-fix
+	TestNoAutoRetry = "test.test_management.no_auto_retry"
+
 	// TestHasFailedAllRetries indicates that the test has failed all retries
 	TestHasFailedAllRetries = "test.has_failed_all_retries"
 

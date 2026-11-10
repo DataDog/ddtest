@@ -69,7 +69,8 @@ type Plan struct {
 	modfileOverlay   bool // Temporary workspaces read the explicit modfile through the overlay.
 	moduleWorkspace  bool // The caller used module mode; translate its module flags for the workspace.
 	workspaceGoFlags string
-	// Warnings name optional integrations skipped for unsupported libraries.
+	// Warnings name optional integrations skipped for unsupported libraries
+	// and ddtest annotations ignored on unsupported declarations.
 	Warnings     []string
 	coverOverlay bool
 	// fileCoverage reports that the build has file marks, and
@@ -638,13 +639,6 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime, pro
 	// Packages that the runtime imports keep it in an external test package,
 	// the only test package that may import them back.
 	runtimeImports := graph.imported(selectedRuntime)
-	exclusionGraph := graph
-	if runtime == Mini {
-		exclusionGraph, e = exclusionDependencyGraph(packages, graph, list)
-		if e != nil {
-			return plan, e
-		}
-	}
 	internalImports := 0
 	for _, p := range packages {
 		// ddto lists testing itself; only the caller's patterns select its tests.
@@ -677,19 +671,11 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime, pro
 			// The caller's compiler path identifies this package without baking
 			// its directory into the source. Identical packages still share files.
 			content = "package " + testPackage + "\nimport __dd_ci_runtime " + fmt.Sprintf("%q", runtimePackage) + "\nfunc init() { __dd_ci_runtime.RegisterTestPackage() }\n" + callerEnvironment
-		}
-		if runtime == Mini {
-			importedRegistrations, err := exclusionDependencyRegistrations(p, exclusionGraph, replacements, runtimeImports)
+			registrations, warnings, err := exclusionRegistrationSources(p, replacements, runtimePackage, runtimeImports[p.ImportPath])
 			if err != nil {
 				return plan, err
 			}
-			content += importedRegistrations
-		}
-		if runtime == Mini {
-			registrations, err := exclusionRegistrationSourcesForBoundary(p, replacements, runtimePackage, runtimeImports[p.ImportPath])
-			if err != nil {
-				return plan, err
-			}
+			plan.Warnings = append(plan.Warnings, warnings...)
 			for pkg, source := range registrations {
 				filename := "zz_dd_ci_exclusions_test.go"
 				if pkg != p.Name {

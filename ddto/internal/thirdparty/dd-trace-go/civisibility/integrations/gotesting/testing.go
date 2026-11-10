@@ -1359,13 +1359,17 @@ func setTestTagsFromExecutionMetadataNoClose(test integrations.Test, execMeta *t
 	// Set the Test Optimization test to the execution metadata
 	execMeta.test = test
 	bindProtectedFailureEvent(execMeta, test)
-	// Preserve effective suppression independently of retained assignment tags.
-	integrations.SetTestCrashFailureSuppression(test, execMeta.isQuarantined || execMeta.isDisabled)
+	if hasTestExclusionDeclarations.Load() {
+		// Preserve effective suppression independently of retained assignment
+		// tags. Without declarations the tags are the effective policy, so the
+		// crash path keeps reading them.
+		integrations.SetTestCrashFailureSuppression(test, execMeta.isQuarantined || execMeta.isDisabled)
+	}
 	if execMeta.exclusions.PreventFailureSuppression {
-		test.SetTag("test.test_management.prevent_failure_suppression", "true")
+		test.SetTag(constants.TestPreventFailureSuppression, "true")
 	}
 	if execMeta.exclusions.NoAutoRetry {
-		test.SetTag("test.test_management.no_auto_retry", "true")
+		test.SetTag(constants.TestNoAutoRetry, "true")
 	}
 	if execMeta.identity != nil && len(execMeta.identity.Segments) > 1 {
 		if log.DebugEnabled() {

@@ -3056,7 +3056,11 @@ Mini's `gotesting/exclusions.go` owns compiled per-function declarations and
 per-native-parent-invocation result caches. `testopt.RegisterTestExclusions`
 registers the declaration API. The CLI reads only Go-selected sources and embeds
 comment declarations in package initialization, preserving overlays, build tags,
-external test packages and method identity without runtime source reads.
+external test packages and method identity without runtime source reads. It
+reads only each tested package's own files and registers method expressions;
+it does not scan dependencies, so annotations in imported packages and generic
+declarations are not registered. Compiled function names are recorded only by
+the runtime itself, for receiver counterparts and promoted Testify wrappers.
 
 Feature metadata projects quarantine/disabled and retry policy after retaining
 backend assignments separately. Execution metadata reapplies exclusions after
@@ -3074,6 +3078,11 @@ command outcomes and annotation survival without sources. The Testify regression
 `TestMiniTestifyExclusionsKeepSiblingRetries` checks both retry modes and retains
 an excluded failure while a sibling recovers. The runner tests cover distinct
 internal/external packages, method declarations, overlays and annotation removal.
+
+Binaries that register no declaration keep their previous per-test path: the
+declaration lookups, protected-failure event binding, crash policy registration
+and promoted Testify declaration resolution all wait for the first
+registration. `constants/test_tags.go` names the two annotation tags.
 
 - Plain Go table rows inherit the resolved parent declaration's exclusion policy,
   including shared callbacks and parallel rows, while Testify methods retain

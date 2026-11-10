@@ -339,10 +339,8 @@
       ],
       [
         "orchestrion",
+        "sdk-orchestrion",
         "units"
-      ],
-      [
-        "sdk-orchestrion"
       ]
     ],
     "differential/ubuntu-latest/race": [
@@ -350,8 +348,7 @@
         "cli",
         "provision",
         "parity",
-        "transparency",
-        "sdk-orchestrion"
+        "transparency"
       ],
       [
         "fuzz",
@@ -360,7 +357,8 @@
       ],
       [
         "orchestrion",
-        "testify"
+        "testify",
+        "sdk-orchestrion"
       ]
     ],
     "differential/macos-latest/normal": [

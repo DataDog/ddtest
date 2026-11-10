@@ -297,14 +297,19 @@ when Datadog retries its parent suite; ordinary sibling methods can still retry.
 
 The comments are compiled into the binary before execution policy is selected,
 including separate test packages. Source files need not be present at runtime.
+Only the files of each tested package are read, so an annotation in an imported
+package, such as a Testify suite shared from a helper package, has no effect.
+Generic test methods and callbacks are not supported either.
 Native `t.Run` cases inherit their executing parent declaration, including
 shared callbacks and parallel rows. The same callback used by an ordinary parent
 keeps ordinary policy. Individual Testify methods use their own declarations. A method annotation applies
 when its parent is selected and runs; it does not schedule a method whose whole
 parent test is skipped or disabled before the method is discovered. A selected
 protected method can override its own disabled assignment, and a quarantined
-parent cannot hide its protected terminal failure. Annotations on a suite type or
-`TestMain` are not supported. The reference `--runtime=sdk` is unchanged.
+parent cannot hide its protected terminal failure. Annotations on a suite type,
+`TestMain`, a generic declaration or any function that is not a test are not
+supported: `ddtest instrument` ignores them with a warning and runs the tests.
+The reference `--runtime=sdk` is unchanged.
 
 For manual Mini instrumentation, register declarations during package
 initialization with `testopt.RegisterTestExclusions(TestCritical,

@@ -183,10 +183,8 @@ func TestExclusionSuite(t *testing.T){suite.Run(t,new(ExclusionSuite))}
 		}
 	}
 	t.Run("subtest-gate", func(t *testing.T) { checkMiniSubtestGate(t, dir, bin) })
-	t.Run("imported-promoted-declarations", checkMiniImportedPromotedExclusions)
-	t.Run("generic-declarations", checkMiniGenericDeclarations)
-	t.Run("cgo-declarations", checkMiniCgoImportedExclusions)
-	t.Run("runtime-dependency-declarations", checkMiniRuntimeDependencyExclusions)
+	t.Run("promoted-declarations", checkMiniPromotedExclusions)
+	t.Run("cgo-declarations", checkMiniCgoExclusions)
 	t.Run("declaration-cache", checkMiniDeclarationCacheIdentity)
 	t.Run("promoted-declaration-cache", checkMiniPromotedDeclarationCache)
 	t.Run("public-method-exclusions", checkMiniPublicMethodExclusions)

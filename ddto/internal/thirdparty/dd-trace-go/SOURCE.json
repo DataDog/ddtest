@@ -11,7 +11,7 @@
   "files": [
     {
       "path": "ADAPTATIONS.md",
-      "sha256": "3c49447a7c4aaba1aad107ac63c6e60858a4a6ab8b521662283053857153658b",
+      "sha256": "f9dd28c80392819940ba5d050a6d3c85d3ffd2be922dc3a6624ab147c7d36c76",
       "role": "local"
     },
     {
@@ -137,7 +137,7 @@
     },
     {
       "path": "civisibility/constants/test_tags.go",
-      "sha256": "ec8f373f10091a0ce577b9016d8734316d895ec595346b06212e6aa8f927e2da",
+      "sha256": "65f0e05432ae366a611d0a885817d97ee08d18cd6dc96e2db4669aa4efabe66b",
       "role": "adapted",
       "source_path": "internal/civisibility/constants/test_tags.go",
       "source_sha256": "d1be480f1d7e5ebfc239d88da857c84be8aca94d988f372310427512547c7a01"
@@ -493,7 +493,7 @@
     },
     {
       "path": "civisibility/integrations/gotesting/exclusions.go",
-      "sha256": "2cae972c76e6947a7bb049eb4eb312224b1889b27ca2ab40cb91a9294130aa66",
+      "sha256": "86f02bff5b67c94dfa613539439acf3095eb7074f9c96b279d8d78d9c9f6e153",
       "role": "local"
     },
     {
@@ -731,14 +731,14 @@
     },
     {
       "path": "civisibility/integrations/gotesting/retry_process.go",
-      "sha256": "f8dff80a4810f2bee39a4bf7300771b13c213d4f80a0349cc39121f0f06349eb",
+      "sha256": "0e9581d1d2346158b75b98390f4ddd916a55466be4ceea973875508f6bd6137b",
       "role": "adapted",
       "source_path": "internal/civisibility/integrations/gotesting/retry_process.go",
       "source_sha256": "e1bdfd9174b86b856a05dbeb4278d386e8126cbb272248b9f7ab00bf8ee8feca"
     },
     {
       "path": "civisibility/integrations/gotesting/retry_process_control.go",
-      "sha256": "4ffbac8e6a72b026c817ab0adb1bc4acfa173ee545812e2982dc9b7c06ee045a",
+      "sha256": "4f79cf6bcad5ea039903c1d52a3e64b824e6805de87d2ed30f0f495761ef4a03",
       "role": "adapted",
       "source_path": "internal/civisibility/integrations/gotesting/retry_process_control.go",
       "source_sha256": "7671d328d8c28bd29eb6c81e15dddc8623feb776a4e4dfb2e0211a81dd95932a"
@@ -829,7 +829,7 @@
     },
     {
       "path": "civisibility/integrations/gotesting/testify.go",
-      "sha256": "bff4861a8d5ada4535e136e073ebd6d63461a794fd18869c9affc07e5ab30d54",
+      "sha256": "506fd78ff5eaa5fe3cd7659dd15d099b8861edf6f489cf2ae6fad45e2a7649ce",
       "role": "adapted",
       "source_path": "internal/civisibility/integrations/gotesting/testify.go",
       "source_sha256": "25105ea7f1a1d46c78c639de90bf61a925c3942adb45dc73dbbdc6fe7e0248c1"
@@ -841,7 +841,7 @@
     },
     {
       "path": "civisibility/integrations/gotesting/testing.go",
-      "sha256": "4d79d49dfecb5017583778252a79f3cbc4653b88358b06890d08cc1970574b5b",
+      "sha256": "ee44f87b5f1ec84016a9721bfa48014cde000a028134cd7c5284001ed3a66e0c",
       "role": "adapted",
       "source_path": "internal/civisibility/integrations/gotesting/testing.go",
       "source_sha256": "73324a56f1b1c581df8620a4f67a51743b198b2470d43f9b645425fff6a63646"

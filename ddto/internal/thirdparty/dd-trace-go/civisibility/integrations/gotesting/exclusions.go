@@ -21,6 +21,12 @@ type TestExclusions struct {
 
 type testManagementAssignment struct{ quarantined, disabled, attemptToFix bool }
 
+// hasTestExclusionDeclarations lets every test skip the declaration lookups,
+// event binding and crash policy registration when the binary registers no
+// exclusions, which keeps unannotated packages on their previous code path.
+// Registration happens during package initialization, before tests read it.
+var hasTestExclusionDeclarations atomic.Bool
+
 var hasNoAutoRetryDeclarations atomic.Bool
 
 var testExclusionDeclarations sync.Map // runtime function name -> TestExclusions
@@ -35,7 +41,7 @@ func RegisterTestExclusions(fn any, exclusions TestExclusions) {
 	if f == nil {
 		return
 	}
-	RegisterTestExclusionsByName(f.Name(), exclusions)
+	registerTestExclusionsByName(f.Name(), exclusions)
 	if v.Type().NumIn() == 0 {
 		return
 	}
@@ -53,10 +59,10 @@ func RegisterTestExclusions(fn any, exclusions TestExclusions) {
 			return
 		}
 		if compiled := runtime.FuncForPC(m.Func.Pointer()); compiled != nil {
-			RegisterTestExclusionsByName(compiled.Name(), exclusions)
+			registerTestExclusionsByName(compiled.Name(), exclusions)
 		}
 		if declaration := testifyMethodDeclaration(typ, m); declaration != nil {
-			RegisterTestExclusionsByName(declaration.Name(), exclusions)
+			registerTestExclusionsByName(declaration.Name(), exclusions)
 		}
 	}
 	registerMethod(receiver)
@@ -68,7 +74,7 @@ func RegisterTestExclusions(fn any, exclusions TestExclusions) {
 }
 
 func exclusionsForFunc(fn *runtime.Func) TestExclusions {
-	if fn != nil {
+	if fn != nil && hasTestExclusionDeclarations.Load() {
 		if value, ok := testExclusionDeclarations.Load(fn.Name()); ok {
 			return value.(TestExclusions)
 		}
@@ -429,14 +435,15 @@ func (results *excludedTestResults) snapshotForRoot(root string) map[string]excl
 	return snapshot
 }
 
-// RegisterTestExclusionsByName is the generated-bootstrap bridge for reachable
-// helper declarations. Canonical names avoid importing the helper back into its
-// own runtime dependency. Call only during initialization, before tests execute.
-func RegisterTestExclusionsByName(name string, exclusions TestExclusions) {
+// registerTestExclusionsByName records the exclusions of one compiled function
+// name: a registered declaration, its receiver counterparts, or a promoted
+// Testify wrapper resolved to an annotated declaration.
+func registerTestExclusionsByName(name string, exclusions TestExclusions) {
 	if strings.TrimSpace(name) == "" {
 		return
 	}
 	testExclusionDeclarations.Store(name, exclusions)
+	hasTestExclusionDeclarations.Store(true)
 	if exclusions.NoAutoRetry {
 		hasNoAutoRetryDeclarations.Store(true)
 	}
@@ -491,6 +498,11 @@ func exclusionResultDeclaration(t *testing.T, source *runtime.Func, parent *test
 
 func setExecutionExclusions(t *testing.T, meta *testExecutionMetadata, source *runtime.Func, parent *testExecutionMetadata, exclusions TestExclusions) {
 	meta.exclusions = exclusions
+	if !hasTestExclusionDeclarations.Load() {
+		// Without declarations no parent can own a cache key for this test.
+		meta.exclusionDeclaration = ""
+		return
+	}
 	meta.exclusionDeclaration = exclusionResultDeclaration(t, source, parent)
 }
 
@@ -520,10 +532,15 @@ func markProtectedFailure(meta *testExecutionMetadata) {
 // concurrent marking cannot be lost in either binding order. Bind before the
 // base crash policy is registered, which may otherwise suppress the event.
 func bindProtectedFailureEvent(meta *testExecutionMetadata, test integrations.Test) {
-	if meta == nil {
+	// Only a prevent-failure-suppression declaration can mark a protected
+	// failure, so unannotated binaries avoid the event pointer allocation.
+	if meta == nil || !hasTestExclusionDeclarations.Load() {
 		return
 	}
-	meta.protectedFailureEvent.Store(&test)
+	// Copy after the gate: storing &test would move the parameter to the heap
+	// on entry, even for the early return.
+	event := test
+	meta.protectedFailureEvent.Store(&event)
 	if meta.protectedDescendantFailure.Load() {
 		integrations.MarkTestProtectedFailure(test)
 	}

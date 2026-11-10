@@ -23,7 +23,7 @@ class ShardTests(unittest.TestCase):
 
     def test_matrix_and_platform_inventory(self):
         differential = ci_shards.matrix(self.groups, "differential")["include"]
-        self.assertEqual(18, len(differential))
+        self.assertEqual(16, len(differential))
         self.assertEqual(2, len(ci_shards.matrix(self.groups, "mini")["include"]))
         self.assertEqual([dict(suite="mini", os="ubuntu-latest", go="tip", mode="normal",
                                shards="units,native,fuzz", job="units-native-fuzz", owner=True)],
