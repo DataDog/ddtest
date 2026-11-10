@@ -200,6 +200,14 @@ func executeFreshRetryAttemptIteration(execOpts *executionOptions) bool {
 			execMeta.retryContinuationAdmitted = false
 			return
 		}
+		if execMeta.ranNoAutoRetryDescendant.Load() {
+			// Another attempt would run a //dd:test.no_auto_retry test again.
+			execOpts.retryCount = 0
+			shouldRetry = false
+			execMeta.retryContinuationDecided = true
+			execMeta.retryContinuationAdmitted = false
+			return
+		}
 		shouldRetry = reserveRetryBudgetIfNeeded(execOpts, localT, execMeta, currentIndex)
 		execMeta.retryContinuationDecided = true
 		execMeta.retryContinuationAdmitted = shouldRetry

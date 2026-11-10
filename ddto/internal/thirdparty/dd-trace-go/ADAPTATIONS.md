@@ -3049,3 +3049,21 @@ best-effort behavior. OS-release parsing skips malformed lines without a value.
 `TestContainerReadersHandleReadErrors`, `TestContainerReaderStopsAtFirstID` and
 `TestOSReleaseHandlesMalformedLinesAndReadErrors` cover these paths; tip's
 scanner analyzer checks the error handling with `go vet`.
+
+## Test automation exclusion comments
+
+`integrations/manual_api_sourcecache.go` reads `//dd:test.no_auto_retry` and
+`//dd:test.prevent_failure_suppression` from a test declaration's comments,
+next to `//dd:test.unskippable`, from the source that `SetTestFunc` already
+parses and caches; `TestFuncExclusions` returns them and `SetTestFunc` tags
+the event (`constants/test_tags.go`). In `gotesting`,
+`applyDeclarationExclusions` clears the test's own quarantine and disable
+state for prevent_failure_suppression, and its EFD, flaky retries and
+attempt-to-fix for no_auto_retry, before the feature path is selected. A
+no_auto_retry subtest, such as a Testify method (`commonInfo.declarationFunc`),
+marks every enclosing execution, and `retry_attempt_integration.go` then admits
+no further attempt of that family. The first execution always runs in the
+parent, so this holds in process mode; a no_auto_retry test that first runs in
+a process retry attempt cannot stop the attempts already scheduled. Checks:
+`TestTestFuncExclusionsReadDeclarationComments` and
+`TestMiniDeclarationExclusions`, which fails without each part.

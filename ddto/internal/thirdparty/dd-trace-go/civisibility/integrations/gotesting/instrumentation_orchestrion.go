@@ -261,6 +261,10 @@ func instrumentTestingTFuncWithSourceOptions(
 			identity:   subtestIdentity,
 			sourceFunc: originalFunc,
 		}
+		if testifyData != nil {
+			subtestInfo.declarationFunc = testifyData.methodFunc
+		}
+		noAutoRetry, _ := integrations.TestFuncExclusions(subtestInfo.declaration())
 
 		runSubtest := func(currentT *testing.T) {
 			localIdentity := subtestIdentity
@@ -294,6 +298,9 @@ func instrumentTestingTFuncWithSourceOptions(
 				defer deleteTestMetadata(currentT)
 			}
 			execMeta.identity = localIdentity
+			if noAutoRetry {
+				markNoAutoRetryAncestors(currentT)
+			}
 			if drainNativeLifecycle && parentExecMeta != nil {
 				execMeta.fuzzEvents = parentExecMeta.fuzzEvents
 			}

@@ -449,9 +449,9 @@
       "source": "internal/civisibility/integrations/manual_api_sourcecache_decl_fixture_test.go",
       "destination": "internal/thirdparty/dd-trace-go/civisibility/integrations/manual_api_sourcecache_decl_fixture_test.go",
       "source_sha256": "bffc01a08c922b07d594c2ad43449761d254a119b9fb44d99de9ddb518267135",
-      "adapted_sha256": "bffc01a08c922b07d594c2ad43449761d254a119b9fb44d99de9ddb518267135",
+      "adapted_sha256": "9199898b321cd5aacdf3a4d42e5a6073de0c4f3458877fb5d5dd6e201b9724d1",
       "kind": "full",
-      "adaptation": "native writer-free CI bootstrap replaces unused APM mock buffer reset"
+      "adaptation": "native writer-free CI bootstrap replaces unused APM mock buffer reset; declaration fixtures for the local test automation exclusion comments"
     },
     {
       "source": "internal/civisibility/integrations/manual_api_sourcecache_funcn_fixture_test.go",
@@ -481,9 +481,9 @@
       "source": "internal/civisibility/integrations/manual_api_sourcecache_test.go",
       "destination": "internal/thirdparty/dd-trace-go/civisibility/integrations/manual_api_sourcecache_test.go",
       "source_sha256": "aff071e72f16cc26f99ecc09ef478cffc02a52a4cee72634e1653ab610d8c793",
-      "adapted_sha256": "da883f047c326bc6660b8005e40be048512acb1b1d0018a843f2acc0eb30a006",
+      "adapted_sha256": "ee38c47ab00dedc05aa7e9b0ccc8c6574179e3fefd3aea47d63415c6b2afae6c",
       "kind": "full",
-      "adaptation": "Native spans replace unused APM mock resets; an explicit CODEOWNERS fixture supplies the upstream repository input; current repository URL is relocated; confirmed named source ranges start at the AST declaration, including same-named methods and named func1 declarations, instead of the runtime entry PC; standard-library assertion helpers"
+      "adaptation": "Native spans replace unused APM mock resets; an explicit CODEOWNERS fixture supplies the upstream repository input; current repository URL is relocated; confirmed named source ranges start at the AST declaration, including same-named methods and named func1 declarations, instead of the runtime entry PC; standard-library assertion helpers; TestTestFuncExclusionsReadDeclarationComments covers the local no_auto_retry and prevent_failure_suppression comments"
     },
     {
       "source": "internal/civisibility/integrations/manual_api_sourcepath_test.go",
