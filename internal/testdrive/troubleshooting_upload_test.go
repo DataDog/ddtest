@@ -245,3 +245,49 @@ func TestTroubleshootingExecutionResultConflictKeepsCurrentReport(t *testing.T) 
 		})
 	}
 }
+
+func TestTroubleshootingStandaloneFocusedFailureUsesCurrentReport(t *testing.T) {
+	t.Setenv("DO_NOT_TRACK", "")
+	t.Setenv("DDTEST_TELEMETRY_DISABLED", "")
+	t.Setenv("DD_INSTRUMENTATION_TELEMETRY_ENABLED", "true")
+	root := t.TempDir()
+	t.Chdir(root)
+	requireWriteFile(t, filepath.Join(root, "pytest.ini"), "[pytest]\n")
+	previous := completeValidationFixture("pytest")
+	previous.All, previous.Tracer = true, "ddtrace@1.2.3"
+	previous.Runs[1].TestEventCount = 99
+	require.NoError(t, finishValidation(io.Discard, root, previous))
+	retained, err := os.ReadFile(validationPath(root))
+	require.NoError(t, err)
+	drive := pytestDrive(root)
+	drive.allConfigurations, drive.projectTracer = false, "fixture"
+	drive.workflowRun = func(_ context.Context, out io.Writer) error {
+		current := completeValidationFixture("pytest")
+		current.Tracer = "ddtrace@4.16.1"
+		current.Features[0].Status = "failed"
+		current.Runs[1].TestCounts.Failed, current.Runs[1].TestEventCount = 2, 2
+		return finishValidation(out, root, current)
+	}
+	payloads := make(chan []byte, 1)
+	output := &troubleshootingOutput{Attempt: usagetelemetry.Start("testdrive", "validation", usagetelemetry.Config{
+		Version: "1.2.3", ClientToken: "dummy", IntakeSite: "datadoghq.com", Transport: troubleshootingTransport{payloads: payloads}, Context: t.Context(),
+	})}
+	t.Cleanup(func() { output.Finish(1, false) })
+	require.ErrorContains(t, drive.Workflow(t.Context(), output, WorkflowOptions{Format: "agent"}), "validation_incomplete")
+	var result onboard.AgentResult
+	require.NoError(t, json.Unmarshal(output.Bytes(), &result))
+	focused := validationResult{KeptReport: validationPath("")}
+	require.Equal(t, focused.jsonReportPath(drive.repositoryRoot), result.JSONReport)
+	require.Equal(t, focused.htmlReportPath(drive.repositoryRoot), result.HTMLReport)
+	output.Finish(1, false)
+	require.Len(t, payloads, 1)
+	data := string(<-payloads)
+	require.Contains(t, data, `"tracer_version": "4.16.1"`)
+	require.Contains(t, data, `"failed": 2`)
+	require.Contains(t, data, `"test_event_count": 2`)
+	require.NotContains(t, data, `"test_event_count": 99`)
+	require.NotContains(t, data, `"tracer_version": "1.2.3"`)
+	after, err := os.ReadFile(validationPath(root))
+	require.NoError(t, err)
+	require.Equal(t, retained, after, "the previous --all report stays intact")
+}

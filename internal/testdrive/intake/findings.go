@@ -90,6 +90,9 @@ type Facts struct {
 	ManagementRequests  int
 	Events              []Event
 	ConfigurationErrors []string
+	// LibraryCapabilities retains only known capability names and normalized
+	// states, including when ordinary runs discard customer event tags.
+	LibraryCapabilities map[string]string
 	// RuntimeVersions are the runtime versions the tracer reported running on.
 	RuntimeVersions            []string
 	FrameworkVersions          []string
@@ -166,6 +169,7 @@ func (s *Server) Facts() (Facts, error) {
 		return findings, err
 	}
 	findings.RuntimeVersions, findings.FrameworkVersions, findings.TracerVersions = reportedVersions(events)
+	findings.LibraryCapabilities = libraryCapabilities(events)
 	if s.collectEvents {
 		findings.Events = events
 	}

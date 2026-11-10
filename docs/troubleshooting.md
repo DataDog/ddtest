@@ -118,7 +118,8 @@ initialized. Request counts show contact with local control endpoints, not that
 the tracer accepted or applied a response. Capabilities summarize positive,
 zero or conflicting numeric advertisements from captured test events; an
 `available` advertisement does not replace the feature's behavior assertions.
-Ordinary runs do not retain customer event tags to obtain these version fields.
+Ordinary runs retain only the allowlisted capability states and version fields,
+without retaining customer event tags for those observations.
 
 Raw framework assertions and tracer crash stacks can be valuable to engineers,
 but replacing paths alone does not make them safe: messages and stack frames

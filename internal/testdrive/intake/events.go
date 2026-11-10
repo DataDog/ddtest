@@ -279,3 +279,40 @@ func (s *Server) events() ([]Event, error) {
 	}
 	return events, nil
 }
+
+func libraryCapabilities(events []Event) map[string]string {
+	var capabilities map[string]string
+	for _, name := range []string{"auto_test_retries", "early_flake_detection", "test_impact_analysis", "test_management.quarantine", "test_management.disable", "test_management.attempt_to_fix"} {
+		state, advertised := "unknown", false
+		for _, event := range events {
+			if event.Type != "test" {
+				continue
+			}
+			value, ok := event.Tags["_dd.library_capabilities."+name]
+			if !ok {
+				continue
+			}
+			advertised = true
+			version, err := strconv.Atoi(value)
+			if err != nil || version < 0 {
+				continue
+			}
+			observed := "available"
+			if version == 0 {
+				observed = "unavailable"
+			}
+			if state == "unknown" {
+				state = observed
+			} else if state != observed {
+				state = "mixed"
+			}
+		}
+		if advertised {
+			if capabilities == nil {
+				capabilities = make(map[string]string)
+			}
+			capabilities[name] = state
+		}
+	}
+	return capabilities
+}

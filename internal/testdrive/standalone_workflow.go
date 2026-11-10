@@ -93,9 +93,9 @@ func (t *Testdrive) standaloneWorkflow(ctx context.Context, attempt *workflowAtt
 	if err != nil {
 		return fail("validation_failed", "validation_report_unavailable", errors.Join(runErr, err).Error(), "No current full report exists. Resolve this execution failure; old or check-only evidence cannot establish the verdict.")
 	}
-	result.JSONReport = validationPath(t.repositoryRoot)
+	result.JSONReport = validation.jsonReportPath(t.repositoryRoot)
 	if validation.HTMLReportCurrent {
-		result.HTMLReport = htmlReportPath(t.repositoryRoot)
+		result.HTMLReport = validation.htmlReportPath(t.repositoryRoot)
 	}
 	result.Instruction = onboard.StandaloneVerdictInstruction(displayName(name))
 	if t.executor != nil {

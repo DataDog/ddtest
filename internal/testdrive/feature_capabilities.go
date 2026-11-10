@@ -35,33 +35,8 @@ func observedTracerState(facts intake.Facts) *usagetelemetry.TracerState {
 		state.Initialization = "events_observed"
 	}
 	for _, feature := range []string{"auto-retries", "early-flake-detection", "skipping", "quarantine", "disabled", "attempt-to-fix"} {
-		capability := usagetelemetry.FeatureCapability{Feature: feature, State: "unknown"}
-		advertised := false
-		for _, event := range facts.Events {
-			if event.Type != "test" {
-				continue
-			}
-			value, ok := event.Tags[capabilityPrefix+featureCapabilities[feature]]
-			if !ok {
-				continue
-			}
-			advertised = true
-			version, err := strconv.Atoi(value)
-			if err != nil || version < 0 {
-				continue
-			}
-			observed := "available"
-			if version == 0 {
-				observed = "unavailable"
-			}
-			if capability.State == "unknown" {
-				capability.State = observed
-			} else if capability.State != observed {
-				capability.State = "mixed"
-			}
-		}
-		if advertised {
-			state.Capabilities = append(state.Capabilities, capability)
+		if observed, advertised := facts.LibraryCapabilities[featureCapabilities[feature]]; advertised {
+			state.Capabilities = append(state.Capabilities, usagetelemetry.FeatureCapability{Feature: feature, State: observed})
 		}
 	}
 	return state

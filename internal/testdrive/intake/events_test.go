@@ -6,6 +6,7 @@
 package intake
 
 import (
+	"encoding/json"
 	"net/http"
 	"strconv"
 	"testing"
@@ -61,6 +62,43 @@ func TestEventsInheritCapabilitiesFromPayloadMetadata(t *testing.T) {
 	require.Equal(t, "0", facts.Events[2].Tags[capability], "test metadata does not leak into suites")
 	require.Equal(t, "1.2.3", facts.Events[0].Tags["library_version"])
 	require.NotContains(t, facts.Events[0].Tags, "suite-only")
+}
+
+func TestFactsRetainsOnlyNormalizedCapabilitiesBeforeDiscardingEvents(t *testing.T) {
+	const prefix = "_dd.library_capabilities."
+	payload, err := msgp.AppendIntf(nil, map[string]any{
+		"metadata": map[string]any{
+			"*": map[string]any{prefix + "auto_test_retries": "0"},
+			"test": map[string]any{
+				prefix + "auto_test_retries": "1", prefix + "test_management.quarantine": "2",
+				prefix + "test_management.disable": "PRIVATE_SECRET", prefix + "test_management.attempt_to_fix": "-1",
+			},
+		},
+		"events": []any{
+			map[string]any{"type": "test", "content": map[string]any{"meta": map[string]any{"test.name": "PRIVATE_CUSTOMER_TEST", prefix + "PRIVATE_FEATURE": "PRIVATE_SECRET"}}},
+			map[string]any{"type": "test", "content": map[string]any{"meta": map[string]any{prefix + "auto_test_retries": "0", prefix + "test_impact_analysis": "0"}}},
+			map[string]any{"type": "test_suite_end", "content": map[string]any{"meta": map[string]any{prefix + "early_flake_detection": "1"}}},
+		},
+	})
+	require.NoError(t, err)
+	for _, collect := range []bool{false, true} {
+		server := &Server{collectEvents: collect, requests: []RawRequest{{Method: http.MethodPost, Path: constants.TestCycleURLPath, Body: payload}}}
+		facts, err := server.Facts()
+		require.NoError(t, err)
+		require.Equal(t, map[string]string{
+			"auto_test_retries": "mixed", "test_impact_analysis": "unavailable", "test_management.quarantine": "available",
+			"test_management.disable": "unknown", "test_management.attempt_to_fix": "unknown",
+		}, facts.LibraryCapabilities)
+		require.NotContains(t, facts.LibraryCapabilities, "early_flake_detection", "suite-only advertisements are not test capabilities")
+		if collect {
+			require.Len(t, facts.Events, 3)
+		} else {
+			require.Empty(t, facts.Events, "ordinary runs still discard customer tags")
+		}
+		data, err := json.Marshal(facts.LibraryCapabilities)
+		require.NoError(t, err)
+		require.NotContains(t, string(data), "PRIVATE_")
+	}
 }
 
 func TestFactsReportsEffectiveVersionsAndObservedControlRequests(t *testing.T) {

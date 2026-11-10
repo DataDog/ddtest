@@ -8,14 +8,18 @@ package testdrive
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
+	"net/http"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/DataDog/ddtest/internal/constants"
 	"github.com/DataDog/ddtest/internal/framework"
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
 	"github.com/stretchr/testify/require"
+	"github.com/tinylib/msgp/msgp"
 )
 
 func capabilityControl(tags map[string]string) validationRun {
@@ -92,15 +96,9 @@ func TestTracerCapabilityDoesNotReplacePlannerSkipping(t *testing.T) {
 func TestTroubleshootingTracerStateKeepsUnknownAndConflictingEvidence(t *testing.T) {
 	facts := intake.Facts{RequestsObserved: true, SettingsRequests: 1, TestEventCount: 2,
 		FrameworkVersions: []string{"30.1.2"}, TracerVersions: []string{"6.20.1"},
-		Events: []intake.Event{
-			{Type: "test", Tags: map[string]string{
-				capabilityPrefix + "auto_test_retries": "1", capabilityPrefix + "test_impact_analysis": "0",
-				capabilityPrefix + "test_management.quarantine": "2", capabilityPrefix + "test_management.disable": "PRIVATE_SECRET",
-				"test.name": "PRIVATE_CUSTOMER_TEST",
-			}},
-			{Type: "test", Tags: map[string]string{capabilityPrefix + "auto_test_retries": "0"}},
-			{Type: "test_suite_end", Tags: map[string]string{capabilityPrefix + "early_flake_detection": "1"}},
-		}}
+		LibraryCapabilities: map[string]string{"auto_test_retries": "mixed", "test_impact_analysis": "unavailable", "test_management.quarantine": "available", "test_management.disable": "unknown"},
+	}
+
 	summary := (validationRun{Instrumented: true, Facts: facts}).summary()
 	require.Equal(t, facts.FrameworkVersions, summary.FrameworkVersions)
 	require.Equal(t, facts.TracerVersions, summary.TracerVersions)
@@ -119,6 +117,39 @@ func TestTroubleshootingTracerStateKeepsUnknownAndConflictingEvidence(t *testing
 	require.Nil(t, unknown.SettingsRequests)
 	require.Nil(t, unknown.ManagementRequests)
 	require.Nil(t, (validationRun{}).summary().TracerState, "uninstrumented runs have no tracer observations")
+}
+
+func TestOrdinaryReportingRunsPreserveCapabilityStates(t *testing.T) {
+	for _, feature := range []string{"", "reporting-only"} {
+		t.Run(feature, func(t *testing.T) {
+			server, err := intake.StartScenario(t.TempDir(), intake.Scenario{Feature: feature})
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, server.Close()) })
+			payload, err := msgp.AppendIntf(nil, map[string]any{
+				"metadata": map[string]any{"test": map[string]any{capabilityPrefix + "auto_test_retries": "1"}},
+				"events": []any{map[string]any{"type": "test", "content": map[string]any{"meta": map[string]any{
+					"test.name": "PRIVATE_CUSTOMER_TEST", capabilityPrefix + "PRIVATE_FEATURE": "PRIVATE_SECRET",
+				}}}},
+			})
+			require.NoError(t, err)
+			response, err := http.Post(server.URL()+constants.TestCycleURLPath, "application/msgpack", bytes.NewReader(payload))
+			require.NoError(t, err)
+			require.NoError(t, response.Body.Close())
+			require.Equal(t, http.StatusOK, response.StatusCode)
+			facts, err := server.Facts()
+			require.NoError(t, err)
+			require.Empty(t, facts.Events, "ordinary runs must not retain customer event tags")
+			for _, role := range []runRole{roleReporting, roleRepeat} {
+				summary := (validationRun{Role: role, Instrumented: true, Facts: facts}).summary()
+				require.Len(t, summary.TracerState.Capabilities, 1)
+				require.Equal(t, "auto-retries", summary.TracerState.Capabilities[0].Feature)
+				require.Equal(t, "available", summary.TracerState.Capabilities[0].State)
+				data, err := json.Marshal(summary.TracerState)
+				require.NoError(t, err)
+				require.NotContains(t, string(data), "PRIVATE_")
+			}
+		})
+	}
 }
 
 func TestTestNGValidationSkipsOnlyUnadvertisedFeatures(t *testing.T) {
