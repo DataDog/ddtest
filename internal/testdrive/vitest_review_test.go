@@ -43,6 +43,28 @@ func vitestIntegrationRoot(t *testing.T) string {
 	return root
 }
 
+func TestVitestProbeDiscoveredBySourceFilteredConfigIntegration(t *testing.T) {
+	root := vitestIntegrationRoot(t)
+	// Some fast suites conservatively exclude apparent environment mutations,
+	// including an equality comparison directly against process.env.
+	requireWriteFile(t, filepath.Join(root, "vitest.config.mjs"), `
+import {readdirSync, readFileSync} from 'node:fs';
+export default {test:{pool:'forks',include:readdirSync('.').filter(file =>
+  file.endsWith('.test.js') && !/process\.env\.\w+\s*=/.test(readFileSync(file, 'utf8'))
+)}};
+`)
+	source := filepath.Join(root, "original.test.js")
+	requireWriteFile(t, source, `throw new Error('inspection must not execute test bodies')`)
+	probe, err := createProbe(root, validationRun{Tests: []jestTest{{File: source, Status: "passed"}}}, vitestProbeSource)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, removeProbe(root, probe)) })
+	drive := &Testdrive{command: "npx", args: []string{"vitest", "run", "--config", "vitest.config.mjs", "original.test.js"}, executor: &ext.DefaultCommandExecutor{}}
+	_, projects, files, err := drive.inspectVitest(t.Context(), t.TempDir(), probe)
+	require.NoError(t, err)
+	require.Len(t, projects, 1)
+	require.Equal(t, []string{probe}, files, "the original configuration must admit the feature probe")
+}
+
 func TestVitestValidationArgumentsIntegration(t *testing.T) {
 	root := vitestIntegrationRoot(t)
 	requireWriteFile(t, filepath.Join(root, "vitest.config.mjs"), `throw new Error('mode rejection must happen before config loading')`)

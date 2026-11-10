@@ -412,8 +412,8 @@ import {test} from 'vitest';
 let ddtestAttempts = 0;
 test('ddtest validation probe', () => {
   ddtestAttempts++;
-  if (globalThis.process.env.DDTEST_PROBE_MODE === 'fail' ||
-      (globalThis.process.env.DDTEST_PROBE_MODE === 'fail-once' && ddtestAttempts === 1)) {
+  const mode = globalThis.process.env.DDTEST_PROBE_MODE;
+  if (mode === 'fail' || (mode === 'fail-once' && ddtestAttempts === 1)) {
     throw new Error('ddtest intentional failure');
   }
 });
