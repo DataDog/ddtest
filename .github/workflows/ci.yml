@@ -247,10 +247,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - rspec: "3.12.0"
+          - name: minimum
+            rspec: "~> 3.0"
             datadog_ci: "1.31.0"
-          - rspec: "3.13.2"
-            datadog_ci: "1.37.0"
+          - name: latest
+            rspec: ">= 0"
+            datadog_ci: ">= 0"
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -266,23 +268,29 @@ jobs:
           ruby-version: "3.4"
 
       - name: Install RSpec compatibility dependencies
+        id: dependencies
+        env:
+          FRAMEWORK_VERSION: ${{ matrix.rspec }}
+          DATADOG_CI_VERSION: ${{ matrix.datadog_ci }}
         run: |
-          gem install datadog-ci --version "${{ matrix.datadog_ci }}" --no-document
-          gem install rspec --version "${{ matrix.rspec }}" --no-document
+          gem install datadog-ci --version "$DATADOG_CI_VERSION" --no-document
+          gem install rspec --version "$FRAMEWORK_VERSION" --no-document
+          ruby -rrubygems -e 'puts "rspec=#{Gem::Specification.find_by_name("rspec", ENV.fetch("FRAMEWORK_VERSION")).version}"' >> "$GITHUB_OUTPUT"
+          ruby -rrubygems -e 'puts "datadog_ci=#{Gem::Specification.find_by_name("datadog-ci", ENV.fetch("DATADOG_CI_VERSION")).version}"' >> "$GITHUB_OUTPUT"
       - name: Set up Test Optimization
         env:
           DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
         uses: ./.github/actions/setup-test-optimization
         with:
-          session-name: rspec-compatibility (RSpec ${{ matrix.rspec }}, tracer ${{ matrix.datadog_ci }})
+          session-name: rspec-compatibility (${{ matrix.name }}, RSpec ${{ steps.dependencies.outputs.rspec }}, tracer ${{ steps.dependencies.outputs.datadog_ci }})
       - name: Test RSpec adapter
         env:
           DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
         run: |
-          DDTEST_RSPEC_VERSION="${{ matrix.rspec }}" \
-            DDTEST_DATADOG_CI_VERSION="${{ matrix.datadog_ci }}" \
+          DDTEST_RSPEC_VERSION="${{ steps.dependencies.outputs.rspec }}" \
+            DDTEST_DATADOG_CI_VERSION="${{ steps.dependencies.outputs.datadog_ci }}" \
             ddtest instrument go test -v ./internal/compatibility -run '^TestRSpecAdapterIntegration$'
-          DDTEST_RUBY_PLATFORM_VERSION="${{ matrix.datadog_ci }}" \
+          DDTEST_RUBY_PLATFORM_VERSION="${{ steps.dependencies.outputs.datadog_ci }}" \
             ddtest instrument go test -v ./internal/compatibility -run '^TestRubyPlatformIntegration$'
 
   minitest-compatibility:
@@ -292,10 +300,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - minitest: "5.26.0"
+          - name: minimum
+            minitest: "~> 5.0"
             datadog_ci: "1.31.0"
-          - minitest: "6.0.6"
-            datadog_ci: "1.37.0"
+          - name: latest
+            minitest: ">= 0"
+            datadog_ci: ">= 0"
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -311,22 +321,28 @@ jobs:
           ruby-version: "3.4"
 
       - name: Install Minitest compatibility dependencies
+        id: dependencies
+        env:
+          FRAMEWORK_VERSION: ${{ matrix.minitest }}
+          DATADOG_CI_VERSION: ${{ matrix.datadog_ci }}
         run: |
-          gem install datadog-ci --version "${{ matrix.datadog_ci }}" --no-document
-          gem install minitest --version "${{ matrix.minitest }}" --no-document
+          gem install datadog-ci --version "$DATADOG_CI_VERSION" --no-document
+          gem install minitest --version "$FRAMEWORK_VERSION" --no-document
           gem install rake --version "13.2.1" --no-document
+          ruby -rrubygems -e 'puts "minitest=#{Gem::Specification.find_by_name("minitest", ENV.fetch("FRAMEWORK_VERSION")).version}"' >> "$GITHUB_OUTPUT"
+          ruby -rrubygems -e 'puts "datadog_ci=#{Gem::Specification.find_by_name("datadog-ci", ENV.fetch("DATADOG_CI_VERSION")).version}"' >> "$GITHUB_OUTPUT"
       - name: Set up Test Optimization
         env:
           DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
         uses: ./.github/actions/setup-test-optimization
         with:
-          session-name: minitest-compatibility (Minitest ${{ matrix.minitest }}, tracer ${{ matrix.datadog_ci }})
+          session-name: minitest-compatibility (${{ matrix.name }}, Minitest ${{ steps.dependencies.outputs.minitest }}, tracer ${{ steps.dependencies.outputs.datadog_ci }})
       - name: Test Minitest adapter
         env:
           DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
         run: |
-          DDTEST_MINITEST_VERSION="${{ matrix.minitest }}" \
-            DDTEST_DATADOG_CI_VERSION="${{ matrix.datadog_ci }}" \
+          DDTEST_MINITEST_VERSION="${{ steps.dependencies.outputs.minitest }}" \
+            DDTEST_DATADOG_CI_VERSION="${{ steps.dependencies.outputs.datadog_ci }}" \
             ddtest instrument go test -v ./internal/compatibility -run '^TestMinitestAdapterIntegration$'
 
   pytest-compatibility:
