@@ -78,7 +78,7 @@ func (pythonLanguage) installTracer(*Testdrive, context.Context, platform.Tracer
 }
 
 func (pythonLanguage) inspectEnvironment(ctx context.Context, request environmentRequest) (string, []string, environmentInfo, *reportCard) {
-	command, args, source := pythonTestdriveCommand(request.root, request.command, request.args, request.explicit)
+	command, args, source := platform.PythonTestCommand(request.root, request.command, request.args, request.explicit)
 	info, finding := pythonEnvironmentInfo(ctx, command, args, source, request.environment, request.timeout)
 	return command, args, info, finding
 }

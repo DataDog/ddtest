@@ -218,14 +218,15 @@ class EvaluateTests(unittest.TestCase):
 
     def test_trial_ending_on_an_unscriptable_question_is_recorded(self):
         rows = [json.loads(line) for line in (FIXTURES / "E14-ddtest-results.jsonl").read_text().splitlines()]
+        rows[-1]["result"]["code"] = "scope_decision_required"
         record = self.evaluate(case("E14-tradukisto", blockers=["runtime fidelity: substitute Java"]),
                                name="E14-tradukisto-claude", testdrive=real_report("E14"), rows=rows)
         self.assertEqual(record["outcome"], "pass")
-        self.assertEqual(record["question"]["code"], "substitute_runtime_unaccepted")
-        self.assertIn("question not scriptable: substitute_runtime_unaccepted (ddtest-results.jsonl row 4)", record["notes"])
+        self.assertEqual(record["question"]["code"], "scope_decision_required")
+        self.assertIn("question not scriptable: scope_decision_required (ddtest-results.jsonl row 4)", record["notes"])
         stream = io.StringIO()
         catalog_check.report([record], stream)
-        self.assertIn("NOTE E14-tradukisto (claude): question not scriptable: substitute_runtime_unaccepted", stream.getvalue())
+        self.assertIn("NOTE E14-tradukisto (claude): question not scriptable: scope_decision_required", stream.getvalue())
         # A scriptable question, or a result that is no question, is not flagged.
         for result in ({"status": "needs_input", "code": "ci_runtime_required", "next_action": "ask_user"},
                        {"status": "needs_input", "code": "setup_dependencies_missing", "next_action": "run_command"},
@@ -464,6 +465,24 @@ class EvaluateOnlyTests(unittest.TestCase):
         for key in ("provider", "framework", "agent", "next_step", "problems"):
             self.assertIn(key, entry)
 
+    def test_quoted_non_utf8_filename_does_not_abort_evaluate_only_batch(self):
+        affected = write_evidence(self.root / 'out' / 'E02-pipeline-schema-codex', testdrive=real_report('E02'))
+        write_evidence(self.root / 'out' / 'E08-kitchensink-codex', testdrive=real_report('E08'))
+        patch = ('diff --git "a/bad\\377.py" "b/bad\\377.py"\n'
+                 '--- "a/bad\\377.py"\n+++ "b/bad\\377.py"\n@@ -1 +1 @@\n-old\n+new\n')
+        (affected / 'changes.patch').write_text(patch)
+        (affected / 'status.txt').write_text(' M "bad\\377.py"\n')
+        code, output, results = self.main('E02', 'E08')
+        self.assertEqual(code, 0, output)
+        self.assertEqual([(record['id'], record['outcome']) for record in results['cases']],
+                         [('E02-pipeline-schema', 'pass'), ('E08-kitchensink', 'pass')])
+        trajectory = results['cases'][0]['trajectory']
+        self.assertEqual(trajectory['status'], 'review')
+        self.assertIn('Trajectory evaluation failed:', trajectory['reason'])
+        self.assertEqual(json.loads((affected / 'trajectory.json').read_text()), trajectory)
+        self.assertEqual(results['cases'][1]['trajectory']['status'], 'pass')
+        self.assertEqual((affected / 'changes.patch').read_text(), patch)
+
     def test_forced_mismatch_prints_an_error_block_and_exits_one(self):
         write_evidence(self.root / "out" / "E08-kitchensink-codex", testdrive=real_report("E08"))
         catalog = copy.deepcopy(self.catalog)
@@ -539,12 +558,18 @@ class EvaluateOnlyTests(unittest.TestCase):
 
     def test_unscriptable_questions_are_listed_in_results(self):
         rows = [json.loads(line) for line in (FIXTURES / "E14-ddtest-results.jsonl").read_text().splitlines()]
+        rows[-1]["result"]["code"] = "scope_decision_required"
         write_evidence(self.root / "out" / "E14-tradukisto-claude", testdrive=real_report("E14"), rows=rows)
-        code, output, results = self.main("E14")
+        # This historical fixture stops before accepting the substitute runtime.
+        catalog = copy.deepcopy(self.catalog)
+        expected = next(case for case in catalog["cases"] if case["id"] == "E14-tradukisto")["expected"]
+        expected.update(verdict="INCOMPLETE", blockers=["runtime fidelity: substitute Java"],
+                        reason="Historical fixture stops for a runtime decision", run="catalog fixture", ddtest="fixture")
+        code, output, results = self.main("E14", catalog=catalog)
         self.assertEqual(code, 0, output)
         self.assertEqual(results["questions_not_scriptable"],
-                         ["E14-tradukisto (claude): question not scriptable: substitute_runtime_unaccepted"])
-        self.assertEqual(results["cases"][0]["question"]["code"], "substitute_runtime_unaccepted")
+                         ["E14-tradukisto (claude): question not scriptable: scope_decision_required"])
+        self.assertEqual(results["cases"][0]["question"]["code"], "scope_decision_required")
 
     def test_results_path_override(self):
         write_evidence(self.root / "out" / "E02-pipeline-schema-codex", testdrive=real_report("E02"))
@@ -575,7 +600,7 @@ class ExpectedSchemaTests(unittest.TestCase):
                 if "blockers" in resolved:
                     self.assertIn(resolved["verdict"], catalog_check.BLOCKER_VERDICTS)
         self.assertEqual({entry["id"] for entry in self.catalog["cases"] if entry["expected"].get("blockers")},
-                         {"E08-kitchensink", "E12-kalamar-export", "E13-jcommander", "E14-tradukisto",
+                         {"E08-kitchensink", "E12-kalamar-export",
                           "E15-spring-boot-cucumber", "E16-spring-karate-demo", "E17-feel-scala"})
 
     def problems(self, **changes):

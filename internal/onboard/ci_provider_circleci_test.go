@@ -519,7 +519,7 @@ func TestCircleCIJavaScriptCompleteness(t *testing.T) {
 	}{
 		{"complete", complete, "", true},
 		{"selected site", complete, "datadoghq.com", true},
-		{"other site", complete, "datadoghq.eu", false},
+		{"other site", complete, "datadoghq.eu", true},
 		{"missing", strings.Replace(complete, circleOrbStep, "", 1), "", false},
 		{"after the tests", strings.Replace(strings.Replace(complete, circleOrbStep, "", 1), "      - run: npm test\n", "      - run: npm test\n"+circleOrbStep, 1), "", false},
 		{"other language", strings.Replace(complete, "languages: js", "languages: python", 1), "", false},

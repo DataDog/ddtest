@@ -521,7 +521,7 @@ func (f imageFallback) setupInstructions(request ciSetupRequest) string {
 	snippet := f.snippet(request).shell()
 	switch f.ciProvider.(type) {
 	case jenkinsContainer:
-		text.WriteString("2. In every sh script that runs the tests in those stages (each sh step is a shell of its own, so a stage whose tests run in several sh steps needs them in each), add these lines immediately before the test command, after dependency installation and any cd into the test directory, inside the same sh string. Write that script as a single-quoted Groovy string (sh '''…''') so Groovy leaves every $ to the shell, and keep its other commands unchanged:\n\n```sh\n" + snippet + "\n```\n")
+		text.WriteString(jenkinsSnippetInstructions(request, snippet))
 		text.WriteString("\nIt installs the tracers into a new folder of the workspace for each shell (" + jenkinsTracerFolder + "): add " + jenkinsTracerIgnore + " to the repository .gitignore, without a leading /. Keep those stages out of every datadog(…) option's scope, as for the setup snippet.\n")
 	case buildkite:
 		text.WriteString("2. In every Buildkite command step of those jobs that runs the tests, add this entry to its commands immediately before the first test command, after dependency installation and any cd into the test directory; in a command written as one block (command: |), add its lines inside the block, before the test command. Keep every existing command, env, plugin and condition unchanged, and don't add Datadog's setup snippet to these steps.\n\n```yaml\n")

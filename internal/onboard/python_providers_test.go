@@ -197,7 +197,7 @@ func TestPythonProviderReplayKeepsTheJobsEnvironment(t *testing.T) {
 
 	exported, references := pythonSetupExports(map[string]string{})
 	require.Empty(t, exported)
-	require.Equal(t, map[string]string{"PYTHONPATH": pythonTracerPath, "PYTEST_ADDOPTS": "--ddtrace"}, references)
+	require.Equal(t, map[string]string{"PYTHONPATH": pythonTracerPath + ":", "PYTEST_ADDOPTS": "--ddtrace"}, references)
 	exported, _ = pythonSetupExports(map[string]string{"PYTHONPATH": "src", "PYTEST_ADDOPTS": "-x"})
 	require.Equal(t, map[string]string{"PYTHONPATH": pythonTracerPath + ":src", "PYTEST_ADDOPTS": "--ddtrace -x"}, exported)
 }
@@ -312,17 +312,19 @@ func TestPythonVirtualEnvironmentsAndToolSteps(t *testing.T) {
           . venv/bin/activate && pytest tests
           coverage xml
           codecov
-          python setup.py sdist bdist_wheel
           twine check dist/*
+      - run: python setup.py sdist bdist_wheel
 `)
 	t.Chdir(root)
+	writeFile(t, root, "setup.py", "from setuptools import setup\nsetup()\n")
 	scope, err := DiscoverValidationScope(root, "pytest")
 	require.NoError(t, err)
-	require.Empty(t, scope.Unresolved)
+	require.Len(t, scope.Unresolved, 1)
+	require.Contains(t, scope.Unresolved[0], "Unresolved Python entry point: python setup.py sdist bdist_wheel")
 	require.Len(t, scope.Commands, 1)
 	require.Equal(t, "pytest tests", scope.Commands[0].Command)
 	check := pythonRuntimeCheck(t, root)
-	require.Equal(t, "compatible", check.Status, pythonFindings(check))
+	require.Equal(t, "inconclusive", check.Status, pythonFindings(check))
 
 	rest, activated := pythonWithoutActivations("source venv/bin/activate\n. .venv/bin/activate && pytest -x\necho done")
 	require.Equal(t, "pytest -x\necho done", rest)
@@ -442,9 +444,9 @@ func TestPythonCircleCIFixture(t *testing.T) {
 	var output bytes.Buffer
 	require.NoError(t, Run(&output))
 	text := output.String()
-	require.Contains(t, text, "python_tracer_version: <exact ddtrace release>")
+	require.Contains(t, text, "python_tracer_version: 4.16.1")
 	require.Contains(t, text, "ddtest testdrive --framework pytest --all --check-only --yes")
-	require.Contains(t, text, "ddtest testdrive --framework pytest --all --yes --tracer-version <exact ddtrace release>")
+	require.Contains(t, text, "ddtest testdrive --framework pytest --all --yes --tracer-version 4.16.1")
 	require.NotContains(t, text, "--agent")
 }
 
@@ -606,9 +608,9 @@ func TestPythonJenkinsSnippetReachesOnlyItsShell(t *testing.T) {
 // the standalone local check instead of the coordinated agent handoff.
 func TestPythonProviderInstructions(t *testing.T) {
 	for provider, expected := range map[string][]string{
-		"gitlab":    {`LANGUAGES="python"`, `PYTHON_TRACER_VERSION="<exact ddtrace release>"`, ".dd_civis_env", "pass_env"},
+		"gitlab":    {`LANGUAGES="python"`, `PYTHON_TRACER_VERSION="4.16.1"`, ".dd_civis_env", "pass_env"},
 		"circleci":  {"languages: python", "python_tracer_version:", "cimg/python:3.12"},
-		"buildkite": {`DD_CIVISIBILITY_INSTRUMENTATION_LANGUAGES="python"`, `DD_SET_TRACER_VERSION_PYTHON="<exact ddtrace release>"`},
+		"buildkite": {`DD_CIVISIBILITY_INSTRUMENTATION_LANGUAGES="python"`, `DD_SET_TRACER_VERSION_PYTHON="4.16.1"`},
 		"jenkins":   {"languages: ['PYTHON']", "cannot pin one", "PEP 668"},
 		"github":    {"datadog/test-visibility-github-action@v3", "languages: python"},
 	} {
@@ -723,4 +725,53 @@ func TestPythonAgentOnboardingAsksForAHostRuntime(t *testing.T) {
 	require.Equal(t, "ci_runtime_required", result.Code)
 	require.Equal(t, "ask_user", result.NextAction)
 	require.Equal(t, []string{"ci_runtime:.gitlab-ci.yml / pytest"}, result.RequiredInput)
+}
+
+func TestPythonBuildStepsRemainPossibleTestLaunchers(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "setup.py", "from setuptools import setup\nsetup()\n")
+	for _, command := range []string{"python -m build", "pyproject-build", "check-manifest", "python -m check_manifest", "python setup.py sdist bdist_wheel"} {
+		t.Run(command, func(t *testing.T) {
+			resolution := resolvePythonStep(root, ciWorkflow{}, runtimeJob{}, runtimeStep{Run: command})
+			require.Contains(t, resolution.Reason, "Unresolved Python entry point")
+			require.False(t, resolution.Review)
+		})
+	}
+}
+
+func TestPythonHandWrittenSetupIsValidated(t *testing.T) {
+	provider := handWrittenProviders[0]
+	for _, tc := range []struct{ name, release, reason string }{
+		{"exact", "4.16.0", ""},
+		{"floating", ">=4", "not an exact release"},
+		{"different release", "4.17.0", "local validation selected ddtrace@4.16.0"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pin := "ddtrace==" + tc.release
+			if tc.release == ">=4" {
+				pin = "ddtrace>=4"
+			}
+			root := unvalidatedRepository(t, provider, strings.Replace(provider.config(map[string]string{
+				"PYTEST_ADDOPTS": "--ddtrace", "DD_CIVISIBILITY_AGENTLESS_ENABLED": "true", "DD_API_KEY": "$DD_API_KEY", "DD_SITE": "datadoghq.com",
+			}, []string{"pip install -r requirements.txt"}, "python -m pytest"), "node:22", "python:3.12", 1), map[string]string{"requirements.txt": "pytest\n" + pin + "\n"})
+			check := pythonRuntimeCheck(t, root)
+			if tc.reason == "" {
+				require.Equal(t, StatusCompatible, check.Status, pythonFindings(check))
+			} else {
+				require.NotEqual(t, StatusCompatible, check.Status)
+				require.Contains(t, pythonFindings(check), tc.reason)
+			}
+		})
+	}
+}
+
+func TestPythonInstallerPreservesAnEmptyPathEntry(t *testing.T) {
+	_, references := pythonSetupExports(nil)
+	require.Equal(t, pythonTracerPath+":", references["PYTHONPATH"])
+	step := runtimeStep{Env: map[string]string{"PYTHONPATH": references["PYTHONPATH"]}}
+	require.Equal(t, ".", pythonApplicationPath(ciWorkflow{}, runtimeJob{}, step, nil))
+	_, references = pythonSetupExports(map[string]string{"PYTHONPATH": "src"})
+	require.Equal(t, pythonTracerPath+":src", references["PYTHONPATH"])
+	step.Env["PYTHONPATH"] = references["PYTHONPATH"]
+	require.Equal(t, "src", pythonApplicationPath(ciWorkflow{}, runtimeJob{}, step, nil))
 }

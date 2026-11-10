@@ -181,7 +181,7 @@ func TestHandWrittenJavaScriptSetups(t *testing.T) {
 				{name: "complete", env: agentless, configured: true, status: StatusCompatible},
 				{name: "selected site", env: agentless, site: "datadoghq.com", configured: true, status: StatusCompatible},
 				{name: "default site", env: with(agentless, "DD_SITE", ""), site: "datadoghq.com", configured: true, status: StatusCompatible},
-				{name: "other site", env: agentless, site: "datadoghq.eu", reason: "set DD_SITE=datadoghq.eu", status: StatusCompatible},
+				{name: "other site", env: agentless, site: "datadoghq.eu", configured: true, status: StatusCompatible},
 				{name: "ESM", framework: "vitest", command: "npx vitest run", env: handWrittenAgentless("-r dd-trace/ci/init --import dd-trace/register.js"), configured: true, status: StatusCompatible},
 				{name: "ESM without the loader", framework: "vitest", command: "npx vitest run", env: agentless, status: StatusInconclusive, reason: "add --import dd-trace/register.js"},
 				{name: "other options", env: handWrittenAgentless("--max-old-space-size=4096 --require=dd-trace/ci/init"), configured: true, status: StatusCompatible},
@@ -280,11 +280,9 @@ func TestHandWrittenJavaScriptSetupApply(t *testing.T) {
 
 			writeFile(t, root, provider.file, provider.config(with(agentless, "DD_SITE", "datadoghq.eu"), []string{"npm ci"}, "npx jest"))
 			_, err = PlanJavaScriptSetup(root, "jest", "5.133.0", "datadoghq.com", ">=18")
-			var gap *SetupGap
-			require.ErrorAs(t, err, &gap)
-			require.Contains(t, gap.Reason, "sets up Test Optimization by hand")
-			require.Contains(t, gap.Reason, "keep it, without adding a second setup")
-			require.Contains(t, gap.Reason, "set DD_SITE=datadoghq.com")
+			require.NoError(t, err)
+			check := handWrittenRuntime(t, root, "jest").WithSiteCaveats("datadoghq.com")
+			require.Contains(t, strings.Join(CISetupCaveats(&check), "\n"), "reports to datadoghq.eu, but --site selects datadoghq.com")
 			data, err := os.ReadFile(filepath.Join(root, provider.file))
 			require.NoError(t, err)
 			require.NotContains(t, string(data), "install_test_visibility")
@@ -1004,9 +1002,7 @@ func TestHandWrittenIncompleteSetupHandoffAgreesWithApply(t *testing.T) {
 			agree(t, root, "jest", "NODE_OPTIONS preloads dd-trace for npm ci at ")
 			agree(t, root, "jest", "Set NODE_OPTIONS for the test commands only (inline on each, or for the commands after the install).")
 
-			// Every other piece the setup lacks is asked for the same way.
-			writeFile(t, root, provider.file, provider.config(with(agentless, "DD_SITE", "datadoghq.eu"), []string{"npm ci"}, "npx jest"))
-			agree(t, root, "jest", "set DD_SITE=datadoghq.com")
+			// An existing site stays unchanged; missing credentials still need an edit.
 			writeFile(t, root, provider.file, provider.config(with(agentless, "DD_API_KEY", "0123456789abcdef"), []string{"npm ci"}, "npx jest"))
 			agree(t, root, "jest", "never commit the key")
 

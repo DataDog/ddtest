@@ -126,7 +126,11 @@ func TestPythonInlinePythonpathNeedsTheExactEdit(t *testing.T) {
 			require.NoError(t, err)
 			require.Empty(t, scope.Unresolved)
 			require.Len(t, scope.Commands, 1)
-			require.Equal(t, "src", strings.Split(scope.Commands[0].Environment["PYTHONPATH"], ":")[0])
+			if tc.name == "github" {
+				require.Equal(t, "src", scope.Commands[0].Environment["PYTHONPATH"])
+			} else {
+				require.True(t, strings.HasPrefix(scope.Commands[0].Environment["PYTHONPATH"], ".:src"), "the installer preserves its empty path entry before the added src path")
+			}
 			check = pythonRuntimeCheckForSite(t, root, "")
 			require.Equal(t, "compatible", check.Status, pythonFindings(check))
 			require.Nil(t, RequiredCIEdits(t.Context(), root, "python", "pytest", false))
@@ -302,8 +306,8 @@ func TestPythonInlinePathEditKeepsEachCommandsPath(t *testing.T) {
 			require.NoError(t, err)
 			require.Empty(t, scope.Unresolved)
 			require.Len(t, scope.Commands, 2)
-			require.Equal(t, "packages/a", scope.Commands[0].Environment["PYTHONPATH"])
-			require.Equal(t, "packages/b", scope.Commands[1].Environment["PYTHONPATH"])
+			require.Equal(t, ".:packages/a", scope.Commands[0].Environment["PYTHONPATH"])
+			require.Equal(t, ".:packages/b", scope.Commands[1].Environment["PYTHONPATH"])
 			check = pythonRuntimeCheckForSite(t, root, "")
 			require.Equal(t, "compatible", check.Status, pythonFindings(check))
 		})

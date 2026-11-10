@@ -279,3 +279,12 @@ func TestImageMissingTools(t *testing.T) {
 		require.Equal(t, tc.missing, imageMissingTools(tc.image, tc.bash, tc.downloader, tc.curl), tc.image)
 	}
 }
+
+func TestOfficialMavenAlpineHasBash(t *testing.T) {
+	for _, image := range []string{"maven:3-alpine", "maven:3.9.9-eclipse-temurin-21-alpine", "docker.io/library/maven:3-alpine"} {
+		require.Empty(t, imageMissingTools(image, false, false, false), image)
+	}
+	for _, image := range []string{"example/maven:3-alpine", "registry.example/maven:3-alpine", "eclipse-temurin:21-alpine", "alpine:3"} {
+		require.NotEmpty(t, imageMissingTools(image, false, false, false), image)
+	}
+}

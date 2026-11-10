@@ -82,6 +82,52 @@ class ContainerTests(unittest.TestCase):
             self.assertIn('file_change' if agent=='codex' else 'Write',activity)
         self.assertEqual(canary.read_text(),'HOST-CREDENTIAL-CANARY')
 
+    def test_prepared_image_restores_clean_fresh_trials_without_setup(self):
+        context = self.root / 'prepared-context'
+        context.mkdir()
+        repo = context / 'repo'
+        subprocess.run(['git', 'clone', '--quiet', '--no-local', '--depth=1', '--', SOURCE, str(repo)], check=True, capture_output=True)
+        commit = subprocess.check_output(['git', '-C', str(repo), 'rev-parse', 'HEAD'], text=True).strip()
+        subprocess.run(['git', '-C', str(repo), 'remote', 'set-url', 'origin', self.args.repo], check=True)
+        dependency = repo / 'node_modules' / 'fixture-dependency'
+        dependency.mkdir(parents=True)
+        (dependency / 'ready').write_text('Prepared project dependency')
+        with (repo / '.git/info/exclude').open('a') as stream:
+            stream.write('\nnode_modules/\n')
+        import prepare_case_images
+        case = {'id': 'fixture', 'repo': self.args.repo, 'commit': commit, 'framework': 'jest',
+                'harness': {}, 'trims': {}, 'setup_commands': [
+                    "python3 -c \"import pathlib; p=pathlib.Path('/trial/caches/pip/private-cache'); p.write_text('project cache'); p.chmod(0o600); d=pathlib.Path('/trial/home/.gradle/private-daemon'); d.mkdir(); d.chmod(0o700)\""],
+                'readiness_commands': []}
+        text = prepare_case_images.dockerfile(case, IMAGE)
+        # The same builder runs against a local fixture source, without network.
+        lines = [line for line in text.splitlines() if not line.startswith('RUN ["git",')]
+        lines.insert(lines.index('WORKDIR /trial/repo'), 'COPY repo /trial/repo')
+        (context / 'Dockerfile').write_text('\n'.join(lines) + '\n')
+        config = self.root / 'empty-docker-config'
+        client = prepare_case_images.docker_client(config)
+        commands = prepare_case_images.image_build_commands(client, IMAGE,
+                    ['--network=none', '--iidfile', str(context / 'image-id'), str(context)])
+        prepare_case_images.execute_image_build(commands, timeout=120)
+        self.assertEqual(subprocess.check_output([*client, 'image', 'inspect', '--format', '{{.Id}}', IMAGE], text=True).strip(), IMAGE)
+        image = (context / 'image-id').read_text().strip()
+        self.addCleanup(lambda: subprocess.run(['docker', 'image', 'rm', image], capture_output=True))
+        self.args.image, self.args.ref, self.args.framework = image, commit, 'jest'
+        self.args.case_image = True
+        self.args.pnpm = '12.14.0'
+        self.args.readiness_command = ['test -f node_modules/fixture-dependency/ready']
+        for number in range(2):
+            self.args.output = self.root / ('prepared-evidence-' + str(number))
+            with patch.object(run_eval, 'trial_root', return_value=self.root), contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                code = run_eval.run(self.args)
+            result = json.loads((self.args.output / 'run.json').read_text())
+            self.assertEqual(code, 0, result.get('error'))
+            self.assertEqual(result['prepared_image']['baseline'], commit)
+            self.assertEqual(result['prepared_image']['image_id'], image)
+            commands = [item['argv'] for item in result['commands']]
+            self.assertFalse(any(command[:2] == ['git', 'clone'] or command[:2] == ['npm', 'install'] for command in commands))
+            self.assertEqual(result['isolation']['cleanup'], 'removed')
+
     def test_pnpm_configuration_uses_container_paths(self):
         import shlex
         script="import subprocess; p=subprocess.check_output(['pnpm','config','get','store-dir'],text=True).strip(); assert p=='/trial/caches/pnpm-store',p"
@@ -227,6 +273,24 @@ class ContainerTests(unittest.TestCase):
             canary.kill();canary.wait(timeout=5)
         time.sleep(3)
         self.assertFalse(sentinel.exists())
+
+    def test_default_datadog_intakes_resolve_only_to_loopback(self):
+        trial=self.root/'intake-guard';trial.mkdir()
+        container=isolation.Container(trial,IMAGE)
+        env=isolation.environment(trial);env['PATH']=container.path
+        script="""import os,socket
+hosts=['instrumentation-telemetry-intake.datadoghq.com','citestcycle-intake.datadoghq.com','citestcov-intake.datadoghq.com','cicov-intake.datadoghq.com','api.datadoghq.com']
+for host in hosts:
+    addresses={row[4][0] for row in socket.getaddrinfo(host,443)}
+    assert addresses=={'127.0.0.1'},(host,addresses)
+assert os.environ.get('DD_INSTRUMENTATION_TELEMETRY_ENABLED')=='false'
+"""
+        try:
+            container.start()
+            self.assertEqual(container.execute(['/usr/bin/python3','-c',script],trial,env,10,
+                                               lambda _:None,None,run_eval.execute),0)
+        finally:
+            container.close()
 
     def test_forwarded_environment_is_exact_and_absent_from_docker_argv(self):
         trial=self.root/'env-trial';trial.mkdir()

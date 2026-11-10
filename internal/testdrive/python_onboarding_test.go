@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestPythonStandalonePreparationKeepsUnsupportedCIAdvisory(t *testing.T) {
+func TestPythonStandalonePreparationAcceptsHandWrittenCI(t *testing.T) {
 	python := testutil.PytestPython(t)
 	for _, mode := range []string{"default", "command", "all", "check-only"} {
 		t.Run(mode, func(t *testing.T) {
@@ -19,7 +19,8 @@ func TestPythonStandalonePreparationKeepsUnsupportedCIAdvisory(t *testing.T) {
 			t.Chdir(root)
 			requireWriteFile(t, filepath.Join(root, "pytest.ini"), "[pytest]\n")
 			requireWriteFile(t, filepath.Join(root, "test_app.py"), "def test_app():\n    pass\n")
-			// ddtest does not validate hand-written Python setups yet.
+			// Hand-written setups are now accepted for the later CI preflight. Missing
+			// reporting configuration is checked there, rather than rejected by Prepare.
 			requireWriteFile(t, filepath.Join(root, ".gitlab-ci.yml"), "test:\n  image: python:3.12\n  variables:\n    PYTEST_ADDOPTS: --ddtrace\n    DD_CIVISIBILITY_AGENTLESS_ENABLED: \"true\"\n  script:\n    - pip install ddtrace==4.16.1 pytest\n    - python -m pytest\n")
 			onboard.UseCIProvider("gitlab")
 			t.Cleanup(func() { onboard.UseCIProvider("") })
@@ -30,11 +31,7 @@ func TestPythonStandalonePreparationKeepsUnsupportedCIAdvisory(t *testing.T) {
 				settings.Get().Command = shellquote.Join(python, "-m", "pytest")
 			}
 			_, err := Prepare(PrepareOptions{All: mode == "all", CheckOnly: mode == "check-only", TracerVersion: "4.11.0"})
-			if mode == "all" || mode == "check-only" {
-				require.ErrorContains(t, err, "does not validate hand-written Python setups")
-			} else {
-				require.NoError(t, err)
-			}
+			require.NoError(t, err)
 		})
 	}
 }

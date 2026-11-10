@@ -197,11 +197,11 @@ func TestJavaJenkinsContainerStageApply(t *testing.T) {
 // ddtest recognizes and certifies it, and the final report says a
 // Bash-capable image would be simpler.
 func TestJavaJenkinsShellSetupWithoutBash(t *testing.T) {
-	root := javaJenkinsRepository(t, "pipeline {\n  agent none\n  stages {\n    stage('Test') {\n      agent { docker { image 'maven:3-alpine' } }\n      steps {\n        sh 'mvn -B verify'\n      }\n    }\n  }\n}\n")
+	root := javaJenkinsRepository(t, "pipeline {\n  agent none\n  stages {\n    stage('Test') {\n      agent { docker { image 'eclipse-temurin:8-jdk-alpine' } }\n      steps {\n        sh 'mvn -B verify'\n      }\n    }\n  }\n}\n")
 	require.Empty(t, setupImageNote(root, "java", "junit5"), "no image advice")
 	instructions := providerSetupInstructions(root, jenkins{}, "java", "junit5", "", true)
 	require.Contains(t, instructions, "Set up Datadog Test Optimization without Bash or curl")
-	require.Contains(t, instructions, "run in maven:3-alpine, which has no Bash")
+	require.Contains(t, instructions, "run in eclipse-temurin:8-jdk-alpine, which has no Bash")
 	require.Contains(t, instructions, "which is simpler and more reliable")
 	plan, err := PlanProviderSetup(root, "junit5", "")
 	require.NoError(t, err)

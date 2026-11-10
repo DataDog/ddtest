@@ -757,3 +757,5 @@ func (rubyDiscovery) ciFallbackTool() string { return "Bundler" }
 
 // Ruby images carry Bundler.
 func (rubyDiscovery) ciFallbackUnavailable(string) string { return "" }
+
+func (rubyDiscovery) scriptInterpreter(name string) bool { return name == "ruby" }

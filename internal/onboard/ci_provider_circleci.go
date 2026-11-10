@@ -1736,7 +1736,7 @@ func (c *circleConfig) steps(job *circleJob, raw []circleRawStep) []runtimeStep 
 		if item.origin.setupProblem == "" && item.shell == "sh" {
 			item.origin.setupProblem = "The test step runs with /bin/sh, which does not read $BASH_ENV, so the Datadog orb's exports would not reach it. Run the step with Bash (remove its shell: /bin/sh), then rerun onboard --apply."
 		}
-		step := runtimeStep{Number: i + 1, Source: item.source, origin: item.origin, Shell: item.shell, WorkingDirectory: item.workdir, Runtime: item.runtime}
+		step := runtimeStep{Number: i + 1, Source: item.source, origin: item.origin, Shell: item.shell, WorkingDirectory: item.workdir, Runtime: item.runtime, conditional: item.conditional}
 		// Only Bash reads $BASH_ENV: a step run with sh starts from its own
 		// environment.
 		bash := item.shell != "sh"

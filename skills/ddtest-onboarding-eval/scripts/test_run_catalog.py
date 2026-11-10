@@ -32,7 +32,7 @@ def setup_commands(argv):
 
 
 def scratch_commits(argv):
-    return [command for command in setup_commands(argv) if command.startswith("git -c user.name=ddtest-eval-scratch")]
+    return [command for command in setup_commands(argv) if shlex.split(command)[:-1] == run_catalog.SCRATCH_COMMIT]
 
 
 @unittest.skipIf(yaml is None, "PyYAML is not installed")
@@ -653,6 +653,23 @@ class MainTests(unittest.TestCase):
 
 
 class RetainTests(unittest.TestCase):
+    def test_retains_source_executable_permissions(self):
+        for mode in (0o644, 0o755, 0o710):
+            with self.subTest(mode=oct(mode)), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                checkout, output = root / 'repo', root / 'out'
+                checkout.mkdir()
+                output.mkdir()
+                source = checkout / 'setup.sh'
+                source.write_text('#!/bin/sh\nexit 0\n')
+                source.chmod(mode)
+                (output / 'run.json').write_text(json.dumps({'checkout': str(checkout)}))
+                (output / 'status.txt').write_text('?? setup.sh\n')
+                run_catalog.retain(output)
+                retained = output / 'retained/untracked/setup.sh'
+                self.assertEqual(retained.read_bytes(), source.read_bytes())
+                self.assertEqual(retained.stat().st_mode & 0o111, mode & 0o111)
+
     def test_unquotes_git_paths(self):
         for printed, path in (("plain.txt", "plain.txt"), ('"a b.txt"', "a b.txt"), ('"say \\"hi\\".txt"', 'say "hi".txt'),
                               ('"line\\nbreak\\ttab\\\\.txt"', "line\nbreak\ttab\\.txt"),

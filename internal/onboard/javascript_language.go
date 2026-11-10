@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"maps"
 	"os"
 	"path"
 	"path/filepath"
@@ -69,7 +70,7 @@ func (javascriptDiscovery) ciSetupConfigured(root, framework, site string) bool 
 	if err != nil || provider.sharedSyntax() {
 		return false
 	}
-	return providerSetupConfigured(root, provider, "javascript", framework, site, "js-tracer-version", exactRelease)
+	return providerSetupConfigured(root, provider, "javascript", framework, "", "js-tracer-version", exactRelease)
 }
 
 func (javascriptDiscovery) agentInstructions(string, string) string { return "" }
@@ -436,8 +437,20 @@ func (javascriptDiscovery) ciShellAfter(workflow ciWorkflow, job runtimeJob, ste
 	if framework == "mocha" && !slices.ContainsFunc(resolution.Tests, func(command TestCommand) bool { return command.mochaESM }) {
 		return false, ""
 	}
+	variable := scopedEnvironment(framework)
+	if variable != "NODE_OPTIONS" {
+		for _, layer := range []map[string]string{workflow.Env, job.Env, step.Env} {
+			if options, ok := layer[variable]; ok {
+				step.Env = maps.Clone(step.Env)
+				if step.Env == nil {
+					step.Env = map[string]string{}
+				}
+				step.Env["NODE_OPTIONS"] = options
+			}
+		}
+	}
 	if checkJestBootstrap(workflow, job, step, nil, true) != "" {
-		return true, "its NODE_OPTIONS does not register the tracer's ESM loader (--import), so nothing between those commands and the test command may replace NODE_OPTIONS"
+		return true, "its " + variable + " does not register the tracer's ESM loader (--import), so nothing between those commands and the test command may replace NODE_OPTIONS"
 	}
 	return true, ""
 }

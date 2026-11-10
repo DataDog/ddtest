@@ -234,11 +234,13 @@ var pythonActivationText = regexp.MustCompile(`(?:^|[^a-zA-Z0-9_])(?:activate|de
 // pythonActivates reports a command, by its literal words, that activates an
 // environment ddtest does not resolve: source or . of an activate script
 // (absolute, outside the repository, or a variable left unresolved), or
-// conda's, mamba's and pyenv's activate.
+// conda's, mamba's and pyenv's activate, or a pyenv version selection.
 func pythonActivates(words []string) bool {
 	switch name := path.Base(words[0]); {
 	case name == "source" || name == ".":
 		return slices.ContainsFunc(words[1:], func(word string) bool { return pythonActivationText.MatchString(word) })
+	case name == "pyenv" && len(words) > 2 && slices.Contains([]string{"global", "local"}, words[1]):
+		return true // With no argument these commands only print the selection.
 	case slices.Contains([]string{"conda", "mamba", "micromamba", "pyenv"}, name):
 		return len(words) > 1 && (words[1] == "activate" || words[1] == "shell")
 	}
