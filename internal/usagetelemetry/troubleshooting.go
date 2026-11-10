@@ -232,7 +232,7 @@ func (d troubleshootingDiagnostics) sanitized() troubleshootingDiagnostics {
 		d.DDTestCommit = ""
 	}
 	d.Error = d.Error.sanitized()
-	d.Framework = diagnosticEnum(d.Framework, "", "jest", "vitest", "mocha", "jasmine", "playwright", "cypress", "webdriverio", "cucumber", "rspec", "minitest", "pytest", "junit4", "junit5", "testng", "cucumber-java", "go")
+	d.Framework = diagnosticEnum(d.Framework, "", "jest", "vitest", "mocha", "jasmine", "playwright", "cypress", "webdriverio", "cucumber", "rspec", "minitest", "pytest", "junit4", "junit5", "testng", "spock", "cucumber-java", "karate", "scalatest", "munit", "go")
 	d.TracerVersion, d.RuntimeVersion = diagnosticTracerVersion(d.TracerVersion), diagnosticVersion(d.RuntimeVersion)
 	d.ConfigurationCount = diagnosticCount(d.ConfigurationCount)
 	d.Truncated = d.Truncated || len(d.Features) > maxDiagnosticEntries || len(d.Runs) > maxDiagnosticEntries

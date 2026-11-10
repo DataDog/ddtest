@@ -291,3 +291,28 @@ func TestTroubleshootingStandaloneFocusedFailureUsesCurrentReport(t *testing.T) 
 	require.NoError(t, err)
 	require.Equal(t, retained, after, "the previous --all report stays intact")
 }
+
+func TestTroubleshootingPreservesSupportedJVMFrameworks(t *testing.T) {
+	t.Setenv("DO_NOT_TRACK", "")
+	t.Setenv("DDTEST_TELEMETRY_DISABLED", "")
+	t.Setenv("DD_INSTRUMENTATION_TELEMETRY_ENABLED", "true")
+	for _, name := range javaProbeFrameworks {
+		t.Run(name, func(t *testing.T) {
+			payloads := make(chan []byte, 1)
+			attempt := usagetelemetry.Start("testdrive", "validation", usagetelemetry.Config{
+				Version: "1.2.3", ClientToken: "dummy", IntakeSite: "datadoghq.com", Transport: troubleshootingTransport{payloads: payloads},
+			})
+			attempt.SetTroubleshootingContext(usagetelemetry.TroubleshootingContext{Framework: framework.NewJVM(name, nil).Name()})
+			attempt.ObserveResult("needs_input", "preparation", "runtime_unavailable")
+			attempt.Finish(1, false)
+			require.Len(t, payloads, 1)
+			var payload struct {
+				Diagnostics struct {
+					Framework string `json:"framework"`
+				} `json:"diagnostics"`
+			}
+			require.NoError(t, json.Unmarshal(<-payloads, &payload))
+			require.Equal(t, name, payload.Diagnostics.Framework)
+		})
+	}
+}
