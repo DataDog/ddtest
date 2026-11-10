@@ -444,8 +444,8 @@ func TestCanonicalMiniCallSitesRetainOtherLocations(t *testing.T) {
 		function  string
 		mini, sdk int
 	}{
-		{"instrumentTestingTFuncWithSourceOptions.func1.1", 427, 424},
-		{"instrumentTestingTFuncWithSourceOptions.func1", 433, 430},
+		{"instrumentTestingTFuncWithSourceOptions.func1.1", 434, 424},
+		{"instrumentTestingTFuncWithSourceOptions.func1", 440, 430},
 	} {
 		function := "integrations/gotesting." + site.function
 		location := fmt.Sprintf("integrations/gotesting/instrumentation_orchestrion.go:%d", site.mini)
@@ -478,22 +478,22 @@ func TestTestifyMovedCallSitesInFormattedDiagnostics(t *testing.T) {
 	file := "integrations/gotesting/instrumentation_orchestrion.go:"
 	sdk := "test panicked: fixture\n    goroutine 12 [running]:\n    github.com/DataDog/dd-trace-go/v2/internal/civisibility/integrations/gotesting.instrumentTestingTFuncWithSourceOptions.func1(0x123)\n    \t" + sdkPrefix + file + "430 +0x123\n"
 	mini := strings.ReplaceAll(sdk, "github.com/DataDog/dd-trace-go/v2/internal/civisibility/", "github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/")
-	mini = strings.ReplaceAll(strings.ReplaceAll(mini, sdkPrefix, miniPrefix), file+"430", file+"433")
+	mini = strings.ReplaceAll(strings.ReplaceAll(mini, sdkPrefix, miniPrefix), file+"430", file+"440")
 	if canonicalTestifyDiagnostic(sdk) != canonicalTestifyDiagnostic(mini) {
 		t.Error("indented stack mapping lost")
 	}
 	sdk = "\n\tError Trace:\t/work/app_test.go:18\n\t            \t\t\t\t" + sdkPrefix + file + "430\n\tError:      \tfixture failed"
-	mini = strings.ReplaceAll(strings.ReplaceAll(sdk, sdkPrefix, miniPrefix), file+"430", file+"433")
+	mini = strings.ReplaceAll(strings.ReplaceAll(sdk, sdkPrefix, miniPrefix), file+"430", file+"440")
 	if canonicalTestifyDiagnostic(sdk) != canonicalTestifyDiagnostic(mini) {
 		t.Error("formatted assertion source mapping lost")
 	}
-	for _, changed := range []string{strings.ReplaceAll(mini, file+"433", file+"434"), strings.ReplaceAll(mini, "app_test.go:18", "app_test.go:19"), strings.ReplaceAll(mini, "fixture failed", "different failure")} {
+	for _, changed := range []string{strings.ReplaceAll(mini, file+"440", file+"441"), strings.ReplaceAll(mini, "app_test.go:18", "app_test.go:19"), strings.ReplaceAll(mini, "fixture failed", "different failure")} {
 		if canonicalTestifyDiagnostic(sdk) == canonicalTestifyDiagnostic(changed) {
 			t.Error("formatted assertion erased a real difference")
 		}
 	}
-	text := "message references " + miniPrefix + file + "433"
-	if !strings.Contains(canonicalTestifyDiagnostic(text), file+"433") {
+	text := "message references " + miniPrefix + file + "440"
+	if !strings.Contains(canonicalTestifyDiagnostic(text), file+"440") {
 		t.Error("rewrote arbitrary message text")
 	}
 }
