@@ -176,6 +176,7 @@ class ReviewTests(unittest.TestCase):
             run_eval.run(self.case.args)
         self.assertFalse(self.case.args.output.exists())
         self.case.args.ref='HEAD'
+        self.case.args.repo=Path(self.case.source).as_uri()
         code,manifest=self.case.trial()
         self.assertEqual(code,0)
         self.assertIn(['git','fetch','--depth=1','--update-shallow','--no-tags','origin','HEAD'],[c['argv'] for c in manifest['commands']])

@@ -174,11 +174,12 @@ python3 skills/ddtest-onboarding-eval/scripts/run_eval.py \
 ```
 
 Repeat with `--agent claude`, its selected login and a new output directory.
-The runner mounts storage at the short container path `/trial`, fetches only the
-requested ref with `--depth=1 --no-tags`, records its resolved SHA, and creates a
-fresh shallow checkout and private caches every time. It does not download the
-default branch first or fetch ancestor history. Repositories whose setup or tests
-require history can fetch it in an explicit setup command. Submodules are opt-in with
+The runner mounts storage at the short container path `/trial`, records the
+requested ref's resolved SHA, and creates a fresh checkout and private caches every
+time. Remote sources fetch only that ref with `--depth=1 --no-tags`, without
+downloading the default branch first; setup can explicitly fetch more history.
+Local sources keep their available history before their temporary mirror is removed,
+so history-dependent setup does not need a reachable original remote. Submodules are opt-in with
 `--submodules`. Setup arguments use `shlex` without an implicit shell; setup must
 leave tracked/untracked Git state clean; it may commit, and `changes.patch`
 starts from HEAD after setup and readiness (`agent_baseline` in `run.json`;

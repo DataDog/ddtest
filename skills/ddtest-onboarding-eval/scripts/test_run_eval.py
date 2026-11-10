@@ -242,6 +242,21 @@ class RunnerTests(unittest.TestCase):
             remote = subprocess.check_output(["git", "-C", str(trial / "repo"), "remote", "get-url", "origin"], text=True).strip()
             self.assertEqual(remote, expected.stdout.strip())
 
+    def test_local_repository_without_origin_preserves_history_during_setup(self):
+        history = subprocess.check_output(["git", "-C", self.source, "rev-list", "--max-count=2", "HEAD"], text=True).splitlines()
+        local = self.root / "local.git"
+        subprocess.run(["git", "clone", "--mirror", "--quiet", "--", self.source, str(local)], check=True)
+        subprocess.run(["git", "-C", str(local), "remote", "remove", "origin"], check=True, capture_output=True)
+        self.args.repo = str(local)
+        self.args.ref = history[0]
+        # A shallow CI source may have only HEAD; preserve whatever history
+        # the local input actually has without needing a deleted remote.
+        self.args.setup_command = [shlex.join(["git", "merge-base", "--is-ancestor", history[-1], "HEAD"])]
+        code, manifest = self.trial()
+        self.assertEqual(code, 0, manifest)
+        self.assertEqual(manifest["commit"], history[0])
+        self.assertFalse((Path(manifest["trial_directory"]) / "harness" / "source.git").exists())
+
     def test_remote_pinned_commit_has_only_one_commit_of_history(self):
         # Prefer a non-tip SHA; a shallow CI checkout may have only HEAD.
         expected = subprocess.check_output(["git", "-C", self.source, "rev-list", "--max-count=2", "HEAD"], text=True).splitlines()[-1]
