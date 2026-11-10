@@ -288,7 +288,7 @@ def harness_problem(run, log):
         category = "authentication"
     elif stage in ("runtime_readiness", "storage_readiness"):
         category = "readiness"
-    elif argv[:1] == ["git"] and argv[1:2] in (["clone"], ["fetch"], ["checkout"], ["rev-parse"]):
+    elif argv[:1] == ["git"] and argv[1:2] in (["init"], ["remote"], ["clone"], ["fetch"], ["checkout"], ["rev-parse"]):
         category = "clone"
     elif argv and not finished:
         category = "timeout"

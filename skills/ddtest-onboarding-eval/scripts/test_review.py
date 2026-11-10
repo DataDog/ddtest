@@ -178,7 +178,7 @@ class ReviewTests(unittest.TestCase):
         self.case.args.ref='HEAD'
         code,manifest=self.case.trial()
         self.assertEqual(code,0)
-        self.assertIn(['git','fetch','--update-shallow','--no-tags','origin','HEAD'],[c['argv'] for c in manifest['commands']])
+        self.assertIn(['git','fetch','--depth=1','--update-shallow','--no-tags','origin','HEAD'],[c['argv'] for c in manifest['commands']])
         self.assertEqual(manifest['submodules'],'not requested')
 
     def test_malformed_nested_report_still_finalizes_evidence_and_cleanup(self):

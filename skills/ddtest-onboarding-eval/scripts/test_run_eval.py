@@ -229,9 +229,9 @@ class RunnerTests(unittest.TestCase):
         # The container mounts only the trial, so a host repository, as a
         # project patched for an eval, reaches it as a bare copy there.
         code, manifest = self.trial()
-        clone = next(record["argv"] for record in manifest["commands"] if record["argv"][:2] == ["git", "clone"])
+        remote = next(record["argv"] for record in manifest["commands"] if record["argv"][:3] == ["git", "remote", "add"])
         trial = Path(manifest["trial_directory"])
-        self.assertEqual(Path(clone[3]), trial / "harness" / "source.git")
+        self.assertEqual(Path(remote[-1]), trial / "harness" / "source.git")
         self.assertFalse((trial / "harness" / "source.git").exists(), "the copy is removed once checked out")
         self.assertEqual(manifest["repository"], self.source)
         self.assertEqual(manifest["repository_source"], "local")
@@ -241,6 +241,18 @@ class RunnerTests(unittest.TestCase):
         if expected.returncode == 0:
             remote = subprocess.check_output(["git", "-C", str(trial / "repo"), "remote", "get-url", "origin"], text=True).strip()
             self.assertEqual(remote, expected.stdout.strip())
+
+    def test_remote_pinned_commit_has_only_one_commit_of_history(self):
+        # Prefer a non-tip SHA; a shallow CI checkout may have only HEAD.
+        expected = subprocess.check_output(["git", "-C", self.source, "rev-list", "--max-count=2", "HEAD"], text=True).splitlines()[-1]
+        self.args.repo = Path(self.source).as_uri()
+        self.args.ref = expected
+        code, manifest = self.trial()
+        self.assertEqual(code, 0, manifest)
+        self.assertEqual(manifest["commit"], expected)
+        checkout = manifest["checkout"]
+        self.assertEqual(subprocess.check_output(["git", "-C", checkout, "rev-list", "--count", "HEAD"], text=True).strip(), "1")
+        self.assertEqual(subprocess.check_output(["git", "-C", checkout, "rev-parse", "--is-shallow-repository"], text=True).strip(), "true")
 
     def test_preparation_never_runs_an_agent_and_records_phase_timings(self):
         self.args.prepare_cache = "a" * 64
