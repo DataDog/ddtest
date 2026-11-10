@@ -1,12 +1,9 @@
 package main
 
 import (
-	"errors"
 	"log/slog"
 	"os"
-	"os/exec"
 	"strings"
-	"syscall"
 
 	ddto "github.com/DataDog/ddtest/ddto/cli"
 	"github.com/DataDog/ddtest/internal/cmd"
@@ -52,22 +49,6 @@ func run(execute func() error) int {
 	// Keep testdrive's ddtestProcessSettings in sync: reports must not
 	// present these process defaults as the user's ambient settings.
 
-	if err := execute(); err != nil {
-		// Cobra has already printed the error.
-		var coded interface{ ExitCode() int }
-		if errors.As(err, &coded) && coded.ExitCode() > 0 {
-			return coded.ExitCode()
-		}
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			if status, ok := exitErr.Sys().(syscall.WaitStatus); ok && status.Signaled() {
-				return 128 + int(status.Signal())
-			}
-			if code := exitErr.ExitCode(); code > 0 {
-				return code
-			}
-		}
-		return 1
-	}
-	return 0
+	// Cobra has already printed any error.
+	return cmd.ExitCode(execute())
 }

@@ -57,6 +57,8 @@ jobs:
           go-version-file: go.mod
 
       - name: Build binaries
+        env:
+          DDTEST_CLIENT_PUBLIC_TOKEN: ${{ secrets.DDTEST_CLIENT_PUBLIC_TOKEN }}
         run: make release VERSION="$VERSION"
 
       # The executables report the version, and the install scripts install them

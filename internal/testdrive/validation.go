@@ -22,6 +22,7 @@ import (
 	"github.com/DataDog/ddtest/internal/ext"
 	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/DataDog/ddtest/internal/platform"
+	"github.com/DataDog/ddtest/internal/usagetelemetry"
 
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
 	"github.com/DataDog/ddtest/internal/testdrive/workspace"
@@ -489,6 +490,7 @@ func finishValidation(output io.Writer, repositoryRoot string, result validation
 			return err
 		}
 		_, _ = fmt.Fprintf(output, "\nResults JSON: %s\n", result.jsonReportPath(""))
+		usagetelemetry.ObserveResult(output, "unsupported", "validation", "framework_unsupported")
 		return nil
 	}
 	if err := checkCIPreservation(repositoryRoot, &result); err != nil {
@@ -629,11 +631,18 @@ func finishValidation(output io.Writer, repositoryRoot string, result validation
 		_, _ = fmt.Fprintf(output, "\nCoding agents: %s %s\nfinal_response:\n%s\n", onboard.FinalResponseInstruction, onboard.StandaloneVerdictInstruction(displayName(result.Framework)), strings.TrimRight(result.Summary.FinalResponse, "\n"))
 	}
 	if result.CheckOnly && result.ChecksPassed {
+		usagetelemetry.ObserveResult(output, "passed", "configuration_check", "")
 		return nil
 	}
 	if !result.Success {
+		if result.CheckOnly {
+			usagetelemetry.ObserveResult(output, "needs_input", "configuration_check", "configuration_check_failed")
+		} else {
+			usagetelemetry.ObserveResult(output, "validation_failed", "validation", "validation_incomplete")
+		}
 		return fmt.Errorf("validation is incomplete or found an unexpected difference; see %s", path)
 	}
+	usagetelemetry.ObserveResult(output, "passed", "validation", "")
 	return nil
 }
 

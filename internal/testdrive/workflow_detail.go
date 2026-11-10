@@ -9,6 +9,7 @@ import (
 
 	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/DataDog/ddtest/internal/testdrive/workspace"
+	"github.com/DataDog/ddtest/internal/usagetelemetry"
 )
 
 // RenderWorkflowDetail inspects preparation evidence without claiming a verdict.
@@ -17,6 +18,8 @@ func RenderWorkflowDetail(ctx context.Context, output io.Writer, runID, detail s
 	defer func() {
 		if err != nil {
 			err = renderReportFailure(output, "json", err)
+		} else {
+			usagetelemetry.ObserveResult(output, "succeeded", "report", "")
 		}
 	}()
 	root, err := os.Getwd()

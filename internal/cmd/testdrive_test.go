@@ -141,6 +141,7 @@ func TestCheckOnlyPreviewRequiresConfirmationAndExposesOnlyCurrentFlags(t *testi
 	viper.Reset()
 	settings.Init()
 	t.Cleanup(func() { viper.Reset(); settings.Init() })
+	events := captureUsage(t)
 	if err := os.WriteFile("package.json", []byte(`{"scripts":{"test":"jest"},"devDependencies":{"jest":"30.2.0"}}`), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -153,9 +154,13 @@ func TestCheckOnlyPreviewRequiresConfirmationAndExposesOnlyCurrentFlags(t *testi
 	command.SetOut(&output)
 	command.SetErr(&output)
 	command.SetArgs([]string{"--check-only"})
-	err := command.ExecuteContext(t.Context())
+	err := executeWithUsage(t.Context(), command)
 	if err == nil || !strings.Contains(err.Error(), "--yes") {
 		t.Fatalf("expected confirmation error, got %v", err)
+	}
+	finished := finishedUsage(t, events, "testdrive", "configuration_check")
+	if finished.Outcome != "blocked" || finished.Code != "consent_required" {
+		t.Fatalf("confirmation usage = %+v", finished)
 	}
 	if !strings.Contains(output.String(), "Check configuration only") {
 		t.Fatal(output.String())

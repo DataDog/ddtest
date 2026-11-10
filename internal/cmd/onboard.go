@@ -32,9 +32,11 @@ func newOnboardCommand(run func(io.Writer) error) *cobra.Command {
 		Long:  "Detects the test setup and returns one structured next action. --apply --yes owns recognized Node CLI CI setup, full testdrive, package exclusions and cleanup. Unfamiliar integrations return a precise blocker.",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			observeUsage(cmd, "", "onboarding", "")
 			cmd.SilenceUsage = true
 			structured := agent || cmd.Flags().Changed("format")
 			fail := func(code string, err error) error {
+				observeUsage(cmd, "needs_input", "preparation", code)
 				if structured {
 					return protocolFailure(cmd, "preparation", code, err, nil)
 				}
@@ -73,12 +75,12 @@ func newOnboardCommand(run func(io.Writer) error) *cobra.Command {
 				}
 				return onboard.StartOptions{Timeout: selectedTimeout, AllowReviewedBuilds: reviewed, AcceptSubstituteRuntime: substitute, Format: selectedFormat, Site: site, Tracer: selectedTracer, Facts: facts, Platform: settings.GetPlatform(), Command: settings.GetCommand(), Human: isTerminalWriter(cmd.OutOrStdout()) && !structured}
 			}
-			start := func() error { return onboard.StartWithOptions(cmd.OutOrStdout(), startOptions()) }
+			start := func() error { return onboard.StartWithOptions(usageWriter(cmd), startOptions()) }
 			if instructions {
 				if structured || facts != "" || site != "" || cmd.Flags().Changed("tracer-version") {
 					return fail("invalid_options", fmt.Errorf("--instructions cannot be combined with structured output or setup options"))
 				}
-				return onboard.Run(cmd.OutOrStdout())
+				return onboard.Run(usageWriter(cmd))
 			}
 			if apply {
 				cmd.SilenceUsage = true
@@ -92,7 +94,7 @@ func newOnboardCommand(run func(io.Writer) error) *cobra.Command {
 					if structured && !yes {
 						return protocolFailure(cmd, "consent", "consent_required", fmt.Errorf("review setup with plain onboard --apply, then confirm with --yes"), confirmedCommand(cmd))
 					}
-					return onboard.ApplyPluginSetup(cmd.OutOrStdout(), startOptions(), onboard.PluginApplyOptions{Preview: !yes, AllowDirty: allowDirty, Text: !structured, Display: testdrive.FrameworkDisplayName})
+					return onboard.ApplyPluginSetup(usageWriter(cmd), startOptions(), onboard.PluginApplyOptions{Preview: !yes, AllowDirty: allowDirty, Text: !structured, Display: testdrive.FrameworkDisplayName})
 				}
 				if detected.Name() != "javascript" && testdrive.StructuredValidation(detected.Name()) || detected.Name() == "javascript" && !onboard.CIProviderEditsSetup() {
 					// ddtest writes no CI setup for this language, or on this
@@ -114,20 +116,20 @@ func newOnboardCommand(run func(io.Writer) error) *cobra.Command {
 					if structured {
 						return protocolFailure(cmd, "consent", "consent_required", fmt.Errorf("review setup with plain onboard --apply, then confirm with --yes"), confirmedCommand(cmd))
 					}
-					return execution.Apply(commandContext(cmd), cmd.OutOrStdout(), testdrive.ApplyOptions{Site: site, ExplicitTracer: cmd.Flags().Changed("tracer-version"), Preview: true, FactsFile: facts})
+					return execution.Apply(commandContext(cmd), usageWriter(cmd), testdrive.ApplyOptions{Site: site, ExplicitTracer: cmd.Flags().Changed("tracer-version"), Preview: true, FactsFile: facts})
 				}
 				cmd.SilenceErrors = true
 				mode := format
 				if !structured {
 					mode = "verbose"
 				}
-				return execution.Workflow(commandContext(cmd), cmd.OutOrStdout(), testdrive.WorkflowOptions{AllowDirty: allowDirty, Resume: resume, Apply: true, ExplicitVersion: cmd.Flags().Changed("tracer-version"), FactsFile: facts, Site: site, Format: mode})
+				return execution.Workflow(commandContext(cmd), usageWriter(cmd), testdrive.WorkflowOptions{AllowDirty: allowDirty, Resume: resume, Apply: true, ExplicitVersion: cmd.Flags().Changed("tracer-version"), FactsFile: facts, Site: site, Format: mode})
 			}
 			if yes || allowDirty {
 				return fail("invalid_options", fmt.Errorf("--yes and --allow-dirty require --apply"))
 			}
 			if run != nil {
-				return run(cmd.OutOrStdout())
+				return run(usageWriter(cmd))
 			}
 			return start()
 		},
@@ -153,6 +155,9 @@ func newOnboardCommand(run func(io.Writer) error) *cobra.Command {
 }
 
 func isTerminalWriter(output io.Writer) bool {
+	if observed, ok := output.(*usageOutput); ok {
+		output = observed.Writer
+	}
 	file, ok := output.(*os.File)
 	return ok && fileIsTerminal(file)
 }
