@@ -6,7 +6,17 @@ organization receiving the telemetry. It requires no customer authentication,
 API key, or local Datadog Agent.
 
 **Reporting is disabled in builds without a configured client token.** This
-repository supplies no token. Release owners can inject the public token using
+repository supplies no token. Release owners configure the repository Actions
+secret `DDTEST_CLIENT_PUBLIC_TOKEN`. Both the stable release and prerelease
+workflows pass it to `make release`, which embeds it in every platform binary.
+If the secret is absent or empty, releases still build with reporting disabled.
+The token is public and extractable from the binary; storing it as an Actions
+secret keeps it out of source and masks it in build logs.
+
+For a local release build, set `DDTEST_CLIENT_PUBLIC_TOKEN` before running
+`make release`. This variable is only used at release build time; it does not
+enable telemetry for `make build`, plain `go install`, or an existing binary.
+Custom builds can inject the public token using
 `-ldflags -X github.com/DataDog/ddtest/internal/usagetelemetry.ClientToken=...`
 and select the receiving site with
 `-X github.com/DataDog/ddtest/internal/usagetelemetry.IntakeSite=...`.
