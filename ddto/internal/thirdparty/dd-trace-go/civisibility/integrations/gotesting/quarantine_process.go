@@ -106,6 +106,10 @@ type processRetryTestSource struct {
 	RuntimeStartLine int    `json:"runtime_start_line,omitempty"`
 	RuntimeEndLine   int    `json:"runtime_end_line,omitempty"`
 	Unskippable      bool   `json:"unskippable,omitempty"`
+	// NoAutoRetry and PreventFailureSuppression carry the declaration's
+	// comments, as Unskippable does, for events rebuilt from a child.
+	NoAutoRetry               bool `json:"no_auto_retry,omitempty"`
+	PreventFailureSuppression bool `json:"prevent_failure_suppression,omitempty"`
 }
 
 // processRetrySubtreeResult is the event-shaped payload returned for every
@@ -507,10 +511,12 @@ func processRetrySourceFromFunc(fn *runtime.Func) *processRetryTestSource {
 	if startLine <= 0 {
 		startLine = line
 	}
-	return &processRetryTestSource{
+	source := &processRetryTestSource{
 		RuntimePath: path, RuntimeStartLine: startLine, RuntimeEndLine: endLine,
 		Unskippable: unskippable,
 	}
+	source.NoAutoRetry, source.PreventFailureSuppression = integrations.TestFuncExclusions(fn)
+	return source
 }
 
 func truncateProcessRetrySubtreeOutput(output []byte) (string, bool) {
@@ -1335,6 +1341,10 @@ func runQuarantinedRaceProcessIsolation(
 	processCtx *quarantinedRaceProcessContext,
 ) {
 	t.Helper()
+	if noAutoRetry, _ := integrations.TestFuncExclusions(testInfo.declaration()); noAutoRetry {
+		// The isolated child runs the test in place of runSubtest.
+		markNoAutoRetryAncestors(t)
+	}
 	execMeta := getTestMetadata(t)
 	createdMetadata := false
 	if execMeta == nil {

@@ -33,6 +33,9 @@ type (
 
 	// testExecutionMetadata contains metadata regarding an unique *testing.T or *testing.B execution
 	testExecutionMetadata struct {
+		// ranNoAutoRetryDescendant reports that a //dd:test.no_auto_retry test
+		// ran beneath this execution, so another attempt would run it again.
+		ranNoAutoRetryDescendant     atomic.Bool
 		test                         integrations.Test // internal CI Visibility test event
 		originalTest                 *testing.T        // original test that was executed
 		error                        atomic.Int32      // flag to check if the test event has error data already
@@ -673,6 +676,7 @@ func applyAdditionalFeaturesToTestFunc(
 		// The parent already controls the attempt-to-fix loop; subtests should only orchestrate if explicitly requested.
 		meta.shouldOrchestrateAttemptToFix = meta.hasExplicitAttemptToFix && meta.isAttemptToFix && !parentExecMeta.isAttemptToFix
 	}
+	applyDeclarationExclusions(&meta, testInfo.declaration())
 	if wrapperOpts.testManagementOnly {
 		// Fuzz seeds use testing's native one-shot corpus lifecycle. They still
 		// honor Test Management state, but never enter retry or EFD scheduling.
@@ -1540,4 +1544,28 @@ func testPointer(tb testing.TB) unsafe.Pointer {
 		return v.UnsafePointer()
 	}
 	return nil
+}
+
+// applyDeclarationExclusions applies the source comments on the test's own
+// declaration. Only the test's own Test Management assignment is overridden: a
+// quarantined or disabled ancestor still suppresses its descendants.
+func applyDeclarationExclusions(meta *additionalFeatureMetadata, declaration *runtime.Func) {
+	noAutoRetry, preventFailureSuppression := integrations.TestFuncExclusions(declaration)
+	if preventFailureSuppression {
+		meta.isQuarantined, meta.isDisabled = false, false
+	}
+	if noAutoRetry {
+		meta.isEarlyFlakeDetectionEnabled, meta.isFlakyTestRetriesEnabled = false, false
+		meta.isAttemptToFix, meta.shouldOrchestrateAttemptToFix = false, false
+	}
+}
+
+// markNoAutoRetryAncestors records on every enclosing execution that a
+// //dd:test.no_auto_retry test ran, so none of them starts another attempt.
+func markNoAutoRetryAncestors(t *testing.T) {
+	for fields := getTestPrivateFields(t); fields != nil && fields.parent != nil && *fields.parent != nil; fields = getCommonParentPrivateFields(fields) {
+		if meta := getTestMetadataFromPointer(*fields.parent); meta != nil {
+			meta.ranNoAutoRetryDescendant.Store(true)
+		}
+	}
 }

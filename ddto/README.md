@@ -275,6 +275,36 @@ runs native Go without instrumentation and prints a warning. The
 [validation contract](docs/validation.md) distinguishes loopback protocol
 checks from live intake, UI and downstream-project validation.
 
+## Test automation exclusions
+
+A test can opt out of automatic Test Optimization behavior with a comment on
+its declaration, the way `//dd:test.unskippable` keeps it from being skipped:
+
+```go
+//dd:test.no_auto_retry
+//dd:test.prevent_failure_suppression
+func TestCritical(t *testing.T) {
+	// ...
+}
+```
+
+- `//dd:test.no_auto_retry` runs the test once: no automatic retries, early
+  flake detection or attempt to fix. Go retries a test as a whole, so a Testify
+  suite in which such a method ran is not retried either, and its other methods
+  lose their retries in that run.
+- `//dd:test.prevent_failure_suppression` keeps the test's failure blocking when
+  Test Management quarantines or disables that test. It applies to the test's
+  own assignment: a quarantined or disabled parent, such as a whole Testify
+  suite, still suppresses it.
+
+Both work on test functions, Testify methods, named subtest callbacks, fuzz
+targets and examples.
+Test events carry `test.test_management.no_auto_retry` and
+`test.test_management.prevent_failure_suppression` when their declaration has
+the comment, and report the Test Management state that actually applied. As with
+`//dd:test.unskippable`, the comments are read from the test's source file when
+the test runs, so they have no effect if that file is not available.
+
 ## Environment variables
 
 Set these variables before invoking `ddtest instrument` or a compiled test

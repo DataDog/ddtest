@@ -261,6 +261,10 @@ func instrumentTestingTFuncWithSourceOptions(
 			identity:   subtestIdentity,
 			sourceFunc: originalFunc,
 		}
+		if testifyData != nil {
+			subtestInfo.declarationFunc = testifyData.methodFunc
+		}
+		noAutoRetry, _ := integrations.TestFuncExclusions(subtestInfo.declaration())
 
 		runSubtest := func(currentT *testing.T) {
 			localIdentity := subtestIdentity
@@ -422,6 +426,9 @@ func instrumentTestingTFuncWithSourceOptions(
 				}
 			}()
 
+			if noAutoRetry && !execMeta.suppressUserTestBody {
+				markNoAutoRetryAncestors(currentT) // only a test that runs can be run again
+			}
 			if !execMeta.suppressUserTestBody {
 				bindNativeTestContext(currentT, test)
 				f(currentT)

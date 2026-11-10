@@ -168,12 +168,12 @@ Only declared differences are normalized:
 
 | Mini location | SDK location | Internal function |
 | --- | --- | --- |
-| `testing.go:882` | `testing.go:864` | `(*M).executeInternalTest.func1` |
-| `instrumentation_orchestrion.go:427` | `instrumentation_orchestrion.go:424` | `instrumentTestingTFuncWithSourceOptions.func1.1` |
-| `instrumentation_orchestrion.go:433` | `instrumentation_orchestrion.go:430` | `instrumentTestingTFuncWithSourceOptions.func1` |
-| `instrumentation.go:775` | `instrumentation.go:775` | `applyAdditionalFeaturesToTestFunc.func2` |
-| `instrumentation.go:1011` | `instrumentation.go:1011` | `runTestWithRetry` |
-| `instrumentation.go:1138` | `instrumentation.go:1138` | `runRetryAttemptCapabilityFallback` |
+| `testing.go:885` | `testing.go:864` | `(*M).executeInternalTest.func1` |
+| `instrumentation_orchestrion.go:434` | `instrumentation_orchestrion.go:424` | `instrumentTestingTFuncWithSourceOptions.func1.1` |
+| `instrumentation_orchestrion.go:440` | `instrumentation_orchestrion.go:430` | `instrumentTestingTFuncWithSourceOptions.func1` |
+| `instrumentation.go:779` | `instrumentation.go:775` | `applyAdditionalFeaturesToTestFunc.func2` |
+| `instrumentation.go:1015` | `instrumentation.go:1011` | `runTestWithRetry` |
+| `instrumentation.go:1142` | `instrumentation.go:1138` | `runRetryAttemptCapabilityFallback` |
 
 The [Fuzz/Examples comparator](fuzz-examples.md) keeps application
 frames strict and canonicalizes incorporated source lines separately. Go 1.26

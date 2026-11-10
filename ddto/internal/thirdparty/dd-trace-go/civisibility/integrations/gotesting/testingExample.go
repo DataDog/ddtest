@@ -108,6 +108,7 @@ func (ddm *M) executeInternalExample(info *testingExampleInfo) func() {
 		test.SetTestFunc(info.sourceFunc)
 		execMeta := &testExecutionMetadata{identity: info.identity}
 		if meta := testManagementOnlyMetadata(info.identity); meta != nil {
+			applyDeclarationExclusions(meta, info.sourceFunc)
 			applyAdditionalFeatureMetadataToExecution(execMeta, meta)
 		}
 		if setTestTagsFromExecutionMetadata(test, execMeta) {

@@ -93,6 +93,21 @@ func TestTestFuncSourceMetadataDoesNotRequireTestEvent(t *testing.T) {
 	assert.False(t, unskippable)
 }
 
+func TestTestFuncExclusionsReadDeclarationComments(t *testing.T) {
+	resetSourceCacheTestState(t)
+	noAutoRetry, preventFailureSuppression := TestFuncExclusions(runtime.FuncForPC(reflect.ValueOf(declarationExclusionsFixtureFunc).Pointer()))
+	assert.True(t, noAutoRetry)
+	assert.True(t, preventFailureSuppression)
+	noAutoRetry, preventFailureSuppression = TestFuncExclusions(runtime.FuncForPC(reflect.ValueOf((*declarationExclusionsFixtureSuite).TestOnce).Pointer()))
+	assert.True(t, noAutoRetry)
+	assert.False(t, preventFailureSuppression)
+	for _, fn := range []*runtime.Func{runtime.FuncForPC(reflect.ValueOf(declarationUnskippableFixtureFunc).Pointer()), namedSourceFixtureRuntimeFunc(), nil} {
+		noAutoRetry, preventFailureSuppression = TestFuncExclusions(fn)
+		assert.False(t, noAutoRetry)
+		assert.False(t, preventFailureSuppression)
+	}
+}
+
 // resetSourceCacheTestState installs repository metadata so sourcecache tests also work with -trimpath.
 func resetSourceCacheTestState(t *testing.T) {
 	t.Helper()
