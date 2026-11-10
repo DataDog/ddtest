@@ -30,6 +30,8 @@ func TestJavaValidationIntegration(t *testing.T) {
 	if os.Getenv("DDTEST_RUN_JAVA_INTEGRATION_TEST") == "" {
 		t.Skip("set DDTEST_RUN_JAVA_INTEGRATION_TEST=1 with a JDK, mvn and gradle on PATH")
 	}
+	// The outer Go reporter's service must not rename the fixture's ScalaTest modules.
+	t.Setenv("DD_SERVICE", "ddtest")
 	tracer := cmp.Or(os.Getenv("DDTEST_JAVA_TRACER_VERSION"), "1.67.1")
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Minute)
 	defer cancel()
@@ -99,6 +101,7 @@ public class StepDefinitions {
 	testdrive := func(root string, args ...string) (string, error) {
 		command := exec.CommandContext(ctx, binary, append([]string{"testdrive", "--tracer-version", tracer, "--yes"}, args...)...)
 		command.Dir = root
+		command.Env = integrationEnvironment(nil)
 		output, err := command.CombinedOutput()
 		return string(output), err
 	}
@@ -249,12 +252,14 @@ class ExampleTest extends spock.lang.Specification {
 			require.Contains(t, onboard, "languages: java")
 			all := exec.CommandContext(ctx, binary, "testdrive", "--framework", tc.framework, "--all", "--yes")
 			all.Dir = root
+			all.Env = integrationEnvironment(nil)
 			data, err := all.CombinedOutput()
 			require.NoError(t, err, string(data))
 			require.Contains(t, string(data), "Validation verdict: PASSED")
 			require.Contains(t, string(data), "dd-java-agent "+pin+" is validated on this host's Java")
 			check := exec.CommandContext(ctx, binary, "testdrive", "--framework", tc.framework, "--all", "--check-only", "--yes")
 			check.Dir = root
+			check.Env = integrationEnvironment(nil)
 			data, err = check.CombinedOutput()
 			require.Error(t, err, string(data))
 			require.Contains(t, string(data), "configuration-only checks validate no JDK")
@@ -338,6 +343,7 @@ public class AppTest {
 		require.Contains(t, onboard, "also runs jacocoTestReport")
 		all := exec.CommandContext(ctx, binary, "testdrive", "--framework", "junit5", "--all", "--yes")
 		all.Dir = root
+		all.Env = integrationEnvironment(nil)
 		data, err := all.CombinedOutput()
 		require.NoError(t, err, string(data))
 		require.Contains(t, string(data), "Validation verdict: PASSED")
@@ -433,6 +439,7 @@ public class ExampleTest {
 			t.Helper()
 			process := exec.CommandContext(ctx, command[0], command[1:]...)
 			process.Dir = root
+			process.Env = integrationEnvironment(nil)
 			data, _ := process.Output()
 			var result agentResult
 			require.NoError(t, json.Unmarshal(data, &result), string(data))

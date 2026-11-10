@@ -106,12 +106,27 @@ func TestReleaseCIGate(t *testing.T) {
 	}
 }
 
-func TestPublicCLIJobsShareOneExecutable(t *testing.T) {
+func TestRootGoTestJobsUseTestOptimization(t *testing.T) {
 	jobs := ciTestJobs(t)
-	for _, name := range []string{"jest-testdrive-workflow", "testdrive-language-workflow", "ruby-testdrive",
-		"java-testdrive", "testdrive-vitest-workflow", "onboard-apply-workflow", "testdrive-mocha-workflow",
-		"testdrive-playwright-workflow", "testdrive-cypress-workflow", "testdrive-cucumber-workflow", "testdrive-webdriverio-workflow"} {
-		job := jobs[name]
+	for name, job := range jobs {
+		require.NotContains(t, job.Env, "DD_API_KEY", "%s must not expose the reporting key to every step", name)
+		for _, step := range job.Steps {
+			if step.Env["DD_API_KEY"] == "" {
+				continue
+			}
+			require.True(t, step.Uses == "./.github/actions/setup-test-optimization" || strings.Contains(step.Run, "ddtest instrument go test"), "%s / %s exposes the reporting key outside instrumentation", name, step.Name)
+			require.NotRegexp(t, `\b(npm (ci|install)|npx\b.*\binstall|gem install|pip install|go install)\b`, step.Run, "%s / %s installs dependencies with the reporting key", name, step.Name)
+		}
+		if name == "test-shards" {
+			continue // Its instrumenting build and coverage flags are checked below.
+		}
+		hasTests := false
+		for _, step := range job.Steps {
+			hasTests = hasTests || strings.Contains(step.Run, "go test")
+		}
+		if !hasTests {
+			continue
+		}
 		switch dependencies := job.Needs.(type) {
 		case string:
 			require.Equal(t, "test-binary", dependencies, name)
@@ -120,13 +135,19 @@ func TestPublicCLIJobsShareOneExecutable(t *testing.T) {
 		default:
 			t.Fatalf("%s has no shared binary dependency", name)
 		}
-		artifact, executable := false, false
+		configured := false
 		for _, step := range job.Steps {
-			artifact = artifact || strings.HasPrefix(step.Uses, "actions/download-artifact@")
-			executable = executable || strings.Contains(step.Run, "DDTEST_TEST_BINARY=")
+			if step.Uses == "./.github/actions/setup-test-optimization" {
+				configured = true
+				require.Equal(t, "${{ secrets.DATADOG_API_KEY }}", step.Env["DD_API_KEY"], name)
+				require.True(t, strings.HasPrefix(step.With["session-name"], name), name)
+			}
+			if strings.Contains(step.Run, "go test") {
+				require.Equal(t, "${{ secrets.DATADOG_API_KEY }}", step.Env["DD_API_KEY"], name)
+				require.True(t, configured, "%s tests run before reporting is configured", name)
+				require.NotContains(t, strings.ReplaceAll(step.Run, "ddtest instrument go test", ""), "go test", name)
+			}
 		}
-		require.True(t, artifact, name)
-		require.True(t, executable, name)
 	}
 }
 
