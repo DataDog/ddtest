@@ -82,12 +82,18 @@ type SlowSuite struct {
 
 // Facts contains the facts shown in the testdrive report.
 type Facts struct {
+	// RequestsObserved distinguishes a measured zero from unavailable intake data.
+	RequestsObserved    bool
 	SettingsRequests    int
 	SkippableRequests   int
+	KnownTestsRequests  int
+	ManagementRequests  int
 	Events              []Event
 	ConfigurationErrors []string
 	// RuntimeVersions are the runtime versions the tracer reported running on.
 	RuntimeVersions            []string
+	FrameworkVersions          []string
+	TracerVersions             []string
 	EmptyCoverageEntryCount    int
 	MissingCoverage            bool
 	BrowserCoverageUnavailable bool
@@ -118,7 +124,7 @@ func (s *Server) Facts() (Facts, error) {
 		return Facts{}, err
 	}
 
-	findings := Facts{TestEventCount: len(tests), CoverageLevel: coverageLevel(coverages), EmptyCoverageEntryCount: emptyEntries}
+	findings := Facts{RequestsObserved: true, TestEventCount: len(tests), CoverageLevel: coverageLevel(coverages), EmptyCoverageEntryCount: emptyEntries}
 	s.requestsMu.Lock()
 	for _, request := range s.requests {
 		if request.Method != http.MethodPost {
@@ -129,6 +135,10 @@ func (s *Server) Facts() (Facts, error) {
 			findings.SettingsRequests++
 		case constants.SkippableTestsURLPath:
 			findings.SkippableRequests++
+		case constants.KnownTestsURLPath:
+			findings.KnownTestsRequests++
+		case constants.TestManagementTestsURLPath:
+			findings.ManagementRequests++
 		}
 	}
 	s.requestsMu.Unlock()
@@ -151,12 +161,13 @@ func (s *Server) Facts() (Facts, error) {
 	if err != nil {
 		return findings, err
 	}
-	findings.RuntimeVersions, err = s.runtimeVersions()
+	events, err := s.events()
 	if err != nil {
 		return findings, err
 	}
+	findings.RuntimeVersions, findings.FrameworkVersions, findings.TracerVersions = reportedVersions(events)
 	if s.collectEvents {
-		findings.Events, err = s.events()
+		findings.Events = events
 	}
 	return findings, err
 }
@@ -607,18 +618,23 @@ func (s *Server) configurationErrors() ([]string, error) {
 	return slices.Compact(failures), nil
 }
 
-// runtimeVersions are the language runtime versions the tracer reports it ran
-// on, such as the JVM a Gradle toolchain selects for a test task.
-func (s *Server) runtimeVersions() ([]string, error) {
-	var versions []string
-	err := s.eachPayloadTags(func(metadata map[string]any) {
-		if version, ok := metadata["runtime.version"].(string); ok && version != "" {
-			versions = append(versions, version)
+// reportedVersions are observations from tracer payloads, not the versions
+// requested by the setup or merely installed in the parent environment.
+func reportedVersions(events []Event) (runtimes, frameworks, tracers []string) {
+	for _, event := range events {
+		for _, field := range []struct {
+			key    string
+			values *[]string
+		}{
+			{"runtime.version", &runtimes}, {"test.framework_version", &frameworks}, {"library_version", &tracers},
+		} {
+			if version := event.Tags[field.key]; version != "" {
+				*field.values = append(*field.values, version)
+			}
 		}
-	})
-	if err != nil {
-		return nil, fmt.Errorf("read tracer runtime versions: %w", err)
 	}
-	slices.Sort(versions)
-	return slices.Compact(versions), nil
+	slices.Sort(runtimes)
+	slices.Sort(frameworks)
+	slices.Sort(tracers)
+	return slices.Compact(runtimes), slices.Compact(frameworks), slices.Compact(tracers)
 }

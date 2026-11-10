@@ -50,6 +50,8 @@ type featureResult struct {
 	// known limitation instead, such as tracer_control_not_applied.
 	ObservedCode string `json:"observed_code,omitempty"`
 	Reason       string `json:"reason"`
+
+	Evidence *usagetelemetry.FeatureEvidence `json:"evidence,omitempty"`
 }
 
 const (
@@ -184,12 +186,19 @@ type runSummary struct {
 	SuiteErrorCount                 int                 `json:"suite_error_count"`
 	TestEventCount                  int                 `json:"test_event_count"`
 	// Runtimes are the runtime versions the tracer reported running on.
-	Runtimes []string `json:"runtimes,omitempty"`
+	Runtimes          []string                    `json:"runtimes,omitempty"`
+	FrameworkVersions []string                    `json:"framework_versions,omitempty"`
+	TracerVersions    []string                    `json:"tracer_versions,omitempty"`
+	TracerState       *usagetelemetry.TracerState `json:"tracer_state,omitempty"`
 }
 
 func (r validationRun) summary() runSummary {
 	summary := runSummary{Coverage: r.Coverage, FrameworkNode: r.FrameworkNode, ProbeExecutions: r.ProbeExecutions, NativeCommand: r.NativeCommand, ExecutionContext: r.ExecutionContext, ReplacedReporters: r.ReplacedReporters, Role: r.Role, ExecutionPath: r.ExecutionPath, Workers: r.Workers, PlannerSkipped: r.PlannerSkipped, Name: r.Name, Project: r.Project, Skipping: r.Skipping, Command: r.Command, Instrumented: r.Instrumented,
 		ProbeLintSkipped: r.ProbeLintSkipped, ProbeMode: r.ProbeMode, ResultError: reportText(r.ResultError), Timeout: r.Timeout, ProbeCoverageThresholdsDisabled: r.ProbeCoverageThresholdsDisabled, Diagnostic: reportText(r.Diagnostic), NotExercised: r.NotExercised, SuiteErrorCount: len(r.SuiteErrors), TestEventCount: r.Facts.TestEventCount, Runtimes: r.Facts.RuntimeVersions}
+	summary.FrameworkVersions, summary.TracerVersions = r.Facts.FrameworkVersions, r.Facts.TracerVersions
+	if r.Instrumented {
+		summary.TracerState = observedTracerState(r.Facts)
+	}
 	if r.framework == "cucumber" || r.framework == "webdriverio" {
 		summary.NativeResults = "observed"
 		if r.ResultError != "" {
@@ -491,6 +500,7 @@ func finishValidation(output io.Writer, repositoryRoot string, result validation
 		}
 		_, _ = fmt.Fprintf(output, "\nResults JSON: %s\n", result.jsonReportPath(""))
 		usagetelemetry.ObserveResult(output, "unsupported", "validation", "framework_unsupported")
+		usagetelemetry.SetTroubleshootingReport(output, result.jsonReportPath(repositoryRoot))
 		return nil
 	}
 	if err := checkCIPreservation(repositoryRoot, &result); err != nil {
@@ -519,6 +529,7 @@ func finishValidation(output io.Writer, repositoryRoot string, result validation
 	if err := writeValidation(path, append(data, '\n')); err != nil {
 		return err
 	}
+	usagetelemetry.SetTroubleshootingReport(output, path)
 
 	// The receipt binds the report testdrive --report verifies, which a run
 	// beside the --all report leaves in place.

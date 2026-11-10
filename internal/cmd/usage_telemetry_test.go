@@ -19,14 +19,16 @@ import (
 )
 
 type usageEvent struct {
-	EventName string `json:"event_name"`
-	AttemptID string `json:"attempt_id"`
-	Command   string `json:"command"`
-	Mode      string `json:"mode"`
-	Outcome   string `json:"outcome"`
-	Phase     string `json:"phase"`
-	Code      string `json:"code"`
-	ExitCode  int    `json:"exit_code"`
+	EventName   string          `json:"event_name"`
+	AttemptID   string          `json:"attempt_id"`
+	Command     string          `json:"command"`
+	Mode        string          `json:"mode"`
+	Outcome     string          `json:"outcome"`
+	Phase       string          `json:"phase"`
+	Code        string          `json:"code"`
+	ExitCode    int             `json:"exit_code"`
+	Diagnostics json.RawMessage `json:"diagnostics"`
+	JSON        []byte          `json:"-"`
 }
 
 type usageTransport func(*http.Request) (*http.Response, error)
@@ -40,11 +42,17 @@ func captureUsage(t *testing.T) <-chan usageEvent {
 	t.Setenv("DD_INSTRUMENTATION_TELEMETRY_ENABLED", "true")
 	events := make(chan usageEvent, 10)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var e usageEvent
-		if err := json.NewDecoder(r.Body).Decode(&e); err != nil {
+		data, err := io.ReadAll(r.Body)
+		if err != nil {
 			t.Error(err)
 			return
 		}
+		var e usageEvent
+		if err := json.Unmarshal(data, &e); err != nil {
+			t.Error(err)
+			return
+		}
+		e.JSON = data
 		events <- e
 		w.WriteHeader(http.StatusAccepted)
 	}))
@@ -53,9 +61,10 @@ func captureUsage(t *testing.T) <-chan usageEvent {
 	require.NoError(t, err)
 	original := newUsageAttempt
 	t.Cleanup(func() { newUsageAttempt = original })
-	newUsageAttempt = func(command, mode string) *usagetelemetry.Attempt {
+	newUsageAttempt = func(ctx context.Context, command, mode string) *usagetelemetry.Attempt {
 		return usagetelemetry.Start(command, mode, usagetelemetry.Config{
 			Version: "1.2.3", ClientToken: "test-token", IntakeSite: "datadoghq.com",
+			Context: ctx,
 			Transport: usageTransport(func(r *http.Request) (*http.Response, error) {
 				copy := r.Clone(r.Context())
 				copy.URL.Scheme, copy.URL.Host = endpoint.Scheme, endpoint.Host
@@ -69,21 +78,31 @@ func captureUsage(t *testing.T) <-chan usageEvent {
 
 func finishedUsage(t *testing.T, events <-chan usageEvent, command, mode string) usageEvent {
 	t.Helper()
-	require.Len(t, events, 2, "one start and one finish per invocation")
-	first, second := <-events, <-events
-	require.Equal(t, first.AttemptID, second.AttemptID)
-	require.NotEmpty(t, first.AttemptID)
-	require.Equal(t, command, first.Command)
-	require.Equal(t, command, second.Command)
-	require.Equal(t, mode, first.Mode)
-	require.Equal(t, mode, second.Mode)
-	if first.EventName == "ddtest.command.started" {
-		require.Equal(t, "ddtest.command.finished", second.EventName)
-		return second
+	finished, _ := completedUsage(t, events, command, mode)
+	return finished
+}
+
+func completedUsage(t *testing.T, events <-chan usageEvent, command, mode string) (usageEvent, usageEvent) {
+	t.Helper()
+	require.Contains(t, []int{2, 3}, len(events), "one start, one finish and at most one diagnostic event")
+	byName := make(map[string]usageEvent)
+	attemptID := ""
+	for len(events) > 0 {
+		e := <-events
+		require.Contains(t, []string{"ddtest.command.started", "ddtest.command.finished", "ddtest.troubleshooting"}, e.EventName)
+		require.NotContains(t, byName, e.EventName, "an event must not be emitted twice")
+		byName[e.EventName] = e
+		require.NotEmpty(t, e.AttemptID)
+		if attemptID == "" {
+			attemptID = e.AttemptID
+		}
+		require.Equal(t, attemptID, e.AttemptID)
+		require.Equal(t, command, e.Command)
+		require.Equal(t, mode, e.Mode)
 	}
-	require.Equal(t, "ddtest.command.finished", first.EventName)
-	require.Equal(t, "ddtest.command.started", second.EventName)
-	return first
+	require.Contains(t, byName, "ddtest.command.started")
+	require.Contains(t, byName, "ddtest.command.finished")
+	return byName["ddtest.command.finished"], byName["ddtest.troubleshooting"]
 }
 
 func TestUsageCoversCommandErrorsAndPreservesProtocol(t *testing.T) {

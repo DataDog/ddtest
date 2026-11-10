@@ -7,6 +7,29 @@ package usagetelemetry
 
 import "io"
 
+// ObserveExit classifies the top-level result before diagnostics are sent.
+// It preserves typed blocked/unsupported/cancelled results.
+// Finish calls it too, so standalone Attempt users keep the same semantics.
+func (a *Attempt) ObserveExit(exitCode int, cancelled bool) {
+	if a == nil || a.finished {
+		return
+	}
+	if cancelled {
+		a.event.Outcome = "cancelled"
+	} else if a.event.Outcome == "" || (exitCode != 0 && (a.event.Outcome == "succeeded" || a.event.Outcome == "handoff")) {
+		a.event.Outcome = "failed"
+		if exitCode == 0 {
+			a.event.Outcome = "succeeded"
+			if a.event.Mode == "discovery" || a.event.Mode == "apply" {
+				a.event.Outcome = "handoff"
+			}
+		}
+	}
+	if exitCode == 0 && a.event.Mode == "configuration_check" && a.event.Outcome == "handoff" {
+		a.event.Outcome = "succeeded"
+	}
+}
+
 // ObserveResult passes typed result metadata to the command's output observer.
 // Ordinary writers are unaffected. No rendered output or full result is read.
 func ObserveResult(output io.Writer, status, phase, code string) {
@@ -69,5 +92,8 @@ func (a *Attempt) ObserveResult(status, phase, code string) {
 	}
 	if code == "framework_unsupported" {
 		a.event.Outcome = "unsupported"
+	}
+	if a.troubleshootingError == nil && (a.event.Outcome == "failed" || a.event.Outcome == "blocked" || a.event.Outcome == "unsupported") {
+		a.troubleshootingError = captureTroubleshootingError("result", nil)
 	}
 }

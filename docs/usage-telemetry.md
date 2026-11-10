@@ -37,7 +37,7 @@ does not create a second `testdrive` attempt.
 
 Both events contain `schema_version`, `service` (`ddtest-cli`), `ddsource`
 (`ddtest`), `message`, `event_name`, `attempt_id`, `command`, `mode`, DDTest
-`version`, `os`, `arch`, and a `date` timestamp. Finished events additionally
+`version` (numeric components, `dev`, or `unknown`), `os`, `arch`, and a `date` timestamp. Finished events additionally
 contain `exit_code`, `duration_ms`, `outcome`, `phase`, and an optional `code`.
 Phase and code are explicitly allowlisted; unrecognized values become `unknown`.
 
@@ -65,10 +65,17 @@ blocked and unsupported attempts separate from execution failures.
 
 ## Data and controls
 
-The client sends no customer organization ID, persistent installation or user ID,
+Automatic usage reporting sends no customer organization ID, persistent installation or user ID,
 API/application/OAuth key, hostname, repository identity, file path, command line,
 source code, test name, free-text error, output, report, or diff. Customer
 attribution is not implemented.
+
+Eligible failures additionally send one bounded, allowlisted diagnostic event
+automatically, through the same sender and opt-out controls. There is no manual
+upload command or agent approval prompt. See [troubleshooting telemetry](troubleshooting.md)
+for the exact fields, privacy assessment and debugging limits. The diagnostic
+projection includes run counts and DDTest-owned observation frames; raw reports,
+customer paths, error messages and customer stack traces remain local.
 
 Set any of these to disable reporting before invoking DDTest:
 

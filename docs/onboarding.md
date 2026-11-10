@@ -79,6 +79,12 @@ them. The output includes an executable `git apply -R` command for the exact
 setup diff. It reverses the setup edits while preserving pre-existing changes;
 review it before executing it if you have made further edits since apply.
 
+Eligible failures also send [structured troubleshooting telemetry](troubleshooting.md)
+automatically when this build has a public telemetry token and telemetry is
+enabled. It contains allowlisted technical diagnostics; raw reports, customer
+paths, test names and error messages remain local. There is no upload prompt or
+separate troubleshooting command. The existing telemetry opt-outs apply.
+
 ## CI provider
 
 `onboard` and `testdrive` read one CI provider's configuration: GitHub Actions

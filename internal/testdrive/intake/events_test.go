@@ -63,6 +63,37 @@ func TestEventsInheritCapabilitiesFromPayloadMetadata(t *testing.T) {
 	require.NotContains(t, facts.Events[0].Tags, "suite-only")
 }
 
+func TestFactsReportsEffectiveVersionsAndObservedControlRequests(t *testing.T) {
+	payload, err := msgp.AppendIntf(nil, map[string]any{
+		"metadata": map[string]any{
+			"*":    map[string]any{"library_version": "6.20.0", "runtime.version": "22.14.0"},
+			"test": map[string]any{"test.framework_version": "30.1.2"},
+		},
+		"events": []any{map[string]any{"type": "test", "content": map[string]any{"meta": map[string]any{"library_version": "6.20.1"}}}},
+	})
+	require.NoError(t, err)
+	server := &Server{requests: []RawRequest{
+		{Method: http.MethodPost, Path: constants.SettingsURLPath},
+		{Method: http.MethodPost, Path: constants.KnownTestsURLPath},
+		{Method: http.MethodPost, Path: constants.TestManagementTestsURLPath},
+		{Method: http.MethodGet, Path: constants.SkippableTestsURLPath},
+		{Method: http.MethodPost, Path: constants.TestCycleURLPath, Body: payload},
+	}}
+	facts, err := server.Facts()
+	require.NoError(t, err)
+	require.True(t, facts.RequestsObserved)
+	require.Equal(t, []string{"6.20.1"}, facts.TracerVersions, "event overrides must not make the default look loaded")
+	require.Equal(t, []string{"30.1.2"}, facts.FrameworkVersions)
+	require.Equal(t, []string{"22.14.0"}, facts.RuntimeVersions)
+	require.Equal(t, 1, facts.SettingsRequests)
+	require.Equal(t, 1, facts.KnownTestsRequests)
+	require.Equal(t, 1, facts.ManagementRequests)
+	require.Zero(t, facts.SkippableRequests, "GET is not a tracer control request")
+	require.Empty(t, facts.Events, "ordinary runs must not retain customer event tags")
+	_, err = (&Server{requests: []RawRequest{{Method: http.MethodPost, Path: constants.TestCycleURLPath, Body: []byte("invalid")}}}).Facts()
+	require.Error(t, err)
+}
+
 func TestTestReferencesReadReportFields(t *testing.T) {
 	payload := msgp.AppendMapHeader(nil, 1)
 	payload = msgp.AppendString(payload, "events")
