@@ -23,8 +23,9 @@ and select the receiving site with
 The default receiving site is `datadoghq.com`. Supported destinations also include
 US3, US5, EU, AP1, AP2 and UK1. Unsupported destinations disable reporting.
 The receiving site is independent of the customer's `DD_SITE` or `--site`.
-Logs use `https://browser-http-intake.logs.<site>/api/v2/logs` with the public
-client token in the `dd-api-key` query parameter.
+Logs use [pup's intake format](https://github.com/DataDog/pup/blob/dd4db1a46ab1474200a99b0f71db4880dad0dd81/src/commands/setup.rs#L307-L332):
+`https://http-intake.logs.<site>/v1/input/<public-token>`. The public token is
+URL-escaped as a single path segment.
 
 ## Events and outcomes
 

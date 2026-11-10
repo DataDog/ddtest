@@ -45,11 +45,11 @@ func localConfig(t *testing.T, handler http.Handler) Config {
 	}
 }
 
-func TestUsageUsesClientTokenIntake(t *testing.T) {
+func TestUsageUsesPupIntake(t *testing.T) {
 	enabledEnvironment(t)
 	for _, site := range []string{"datadoghq.com", "us3.datadoghq.com", "us5.datadoghq.com", "datadoghq.eu", "ap1.datadoghq.com", "ap2.datadoghq.com", "uk1.datadoghq.com"} {
 		t.Run(site, func(t *testing.T) {
-			const token = "test token/+?&"
+			const token = "test token/+?&#%"
 			requests := make(chan string, 2)
 			a := Start("onboard", "discovery", Config{
 				Version: "test", ClientToken: token, IntakeSite: site,
@@ -66,9 +66,11 @@ func TestUsageUsesClientTokenIntake(t *testing.T) {
 				endpoint, err := url.Parse(<-requests)
 				require.NoError(t, err)
 				require.Equal(t, "https", endpoint.Scheme)
-				require.Equal(t, "browser-http-intake.logs."+site, endpoint.Host)
-				require.Equal(t, "/api/v2/logs", endpoint.Path)
-				require.Equal(t, url.Values{"dd-api-key": {token}}, endpoint.Query())
+				require.Equal(t, "http-intake.logs."+site, endpoint.Host)
+				require.Equal(t, "/v1/input/"+token, endpoint.Path)
+				require.Len(t, strings.Split(endpoint.EscapedPath(), "/"), 4, "token must occupy a single path segment")
+				require.Empty(t, endpoint.RawQuery)
+				require.Empty(t, endpoint.Fragment)
 			}
 		})
 	}
@@ -78,7 +80,7 @@ func TestAttemptReportsLifecycleWithoutCustomerData(t *testing.T) {
 	var mu sync.Mutex
 	var events []event
 	config := localConfig(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/api/v2/logs" || r.URL.Query().Get("dd-api-key") != "test-token" || r.Header.Get("Content-Type") != "application/json" {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/input/test-token" || r.URL.RawQuery != "" || r.Header.Get("Content-Type") != "application/json" {
 			t.Errorf("unexpected usage request: %s %s", r.Method, r.URL.Path)
 		}
 		if r.Header.Get("DD-API-KEY") != "" || r.Header.Get("Authorization") != "" {
