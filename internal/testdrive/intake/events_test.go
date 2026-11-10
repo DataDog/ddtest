@@ -7,8 +7,10 @@ package intake
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -130,6 +132,33 @@ func TestFactsReportsEffectiveVersionsAndObservedControlRequests(t *testing.T) {
 	require.Empty(t, facts.Events, "ordinary runs must not retain customer event tags")
 	_, err = (&Server{requests: []RawRequest{{Method: http.MethodPost, Path: constants.TestCycleURLPath, Body: []byte("invalid")}}}).Facts()
 	require.Error(t, err)
+}
+
+func TestOrdinaryFactsAvoidsCopyingAllSharedTags(t *testing.T) {
+	shared := map[string]any{"runtime.version": "22.14.0", "library_version": "6.20.1"}
+	for i := range 256 {
+		shared[fmt.Sprintf("private.tag.%d", i)] = strings.Repeat("private-value", 8)
+	}
+	var events []any
+	for i := range 128 {
+		events = append(events, map[string]any{"type": "test", "content": map[string]any{"span_id": uint64(i + 1)}})
+	}
+	payload, err := msgp.AppendIntf(nil, map[string]any{"metadata": map[string]any{"*": shared}, "events": events})
+	require.NoError(t, err)
+	allocated := func(collect bool) int64 {
+		server := &Server{collectEvents: collect, requests: []RawRequest{{Method: http.MethodPost, Path: constants.TestCycleURLPath, Body: payload}}}
+		measurement := testing.Benchmark(func(b *testing.B) {
+			for range b.N {
+				if _, err := server.Facts(); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+		return measurement.AllocedBytesPerOp()
+	}
+	ordinary, probe := allocated(false), allocated(true)
+	t.Logf("ordinary facts: %d bytes/op; collected probe facts: %d bytes/op", ordinary, probe)
+	require.Less(t, ordinary*2, probe, "ordinary runs must avoid the full tag-copy allocation required by probe runs")
 }
 
 func TestTestReferencesReadReportFields(t *testing.T) {

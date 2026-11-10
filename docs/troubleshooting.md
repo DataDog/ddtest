@@ -120,6 +120,8 @@ zero or conflicting numeric advertisements from captured test events; an
 `available` advertisement does not replace the feature's behavior assertions.
 Ordinary runs retain only the allowlisted capability states and version fields,
 without retaining customer event tags for those observations.
+Version observations are deduplicated as each payload is read; full event/tag
+copies are reserved for probe scenarios that explicitly collect them.
 
 Raw framework assertions and tracer crash stacks can be valuable to engineers,
 but replacing paths alone does not make them safe: messages and stack frames

@@ -164,15 +164,7 @@ func (s *Server) Facts() (Facts, error) {
 	if err != nil {
 		return findings, err
 	}
-	events, err := s.events()
-	if err != nil {
-		return findings, err
-	}
-	findings.RuntimeVersions, findings.FrameworkVersions, findings.TracerVersions = reportedVersions(events)
-	findings.LibraryCapabilities = libraryCapabilities(events)
-	if s.collectEvents {
-		findings.Events = events
-	}
+	err = s.collectEventFacts(&findings)
 	return findings, err
 }
 
@@ -620,25 +612,4 @@ func (s *Server) configurationErrors() ([]string, error) {
 	}
 	slices.Sort(failures)
 	return slices.Compact(failures), nil
-}
-
-// reportedVersions are observations from tracer payloads, not the versions
-// requested by the setup or merely installed in the parent environment.
-func reportedVersions(events []Event) (runtimes, frameworks, tracers []string) {
-	for _, event := range events {
-		for _, field := range []struct {
-			key    string
-			values *[]string
-		}{
-			{"runtime.version", &runtimes}, {"test.framework_version", &frameworks}, {"library_version", &tracers},
-		} {
-			if version := event.Tags[field.key]; version != "" {
-				*field.values = append(*field.values, version)
-			}
-		}
-	}
-	slices.Sort(runtimes)
-	slices.Sort(frameworks)
-	slices.Sort(tracers)
-	return slices.Compact(runtimes), slices.Compact(frameworks), slices.Compact(tracers)
 }
