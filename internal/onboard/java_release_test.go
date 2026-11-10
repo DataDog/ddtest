@@ -156,7 +156,7 @@ func TestJavaOnboardingResolvesAnExplicitLatest(t *testing.T) {
 	selected, err := SelectTracerRelease("java", "latest")
 	require.NoError(t, err)
 	require.Equal(t, "1.70.2", selected)
-	for _, language := range []string{"javascript", "python", "ruby"} {
+	for _, language := range []string{"javascript", "ruby"} {
 		selected, err := SelectTracerRelease(language, "latest")
 		require.NoError(t, err)
 		require.Equal(t, "latest", selected, "%s installs the release its registry tags latest", language)

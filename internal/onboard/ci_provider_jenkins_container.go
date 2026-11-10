@@ -188,9 +188,7 @@ func (c jenkinsContainer) setupInstructions(request ciSetupRequest) string {
 	}
 	text.WriteString("Set up Datadog Test Optimization in " + stages + " with Datadog's installer (" + buildkiteInstaller + "), run in the sh step that runs the tests: the Datadog Jenkins plugin installs the tracer only on the build agent, so it cannot set up tests inside a container, and every sh step starts a fresh shell, so a separate sh step's exports would never reach the tests.\n\n")
 	text.WriteString("1. Bind DD_API_KEY in those stages from a Jenkins credential of kind Secret text (ID " + jenkinsCredentialID + ", or the one the Datadog plugin already uses): wrap the sh step that runs the tests in withCredentials(" + jenkinsCredentialBinding + ") { … }, or set DD_API_KEY = credentials('" + jenkinsCredentialID + "') in the stage's environment directive. The Datadog Jenkins plugin's own key reaches only the steps in its option's scope. Never write the key into the repository or the Jenkinsfile. Local validation needs no key, so make this edit without waiting for the credential, and in the final report ask the user to have a Jenkins administrator store the Datadog API key as that credential before the Jenkinsfile change is merged: Jenkins fails a stage whose binding names a credential that does not exist. A credential that exists but is empty makes the snippet skip the setup and log that Test Optimization is disabled, and the tests run untraced.\n")
-	text.WriteString("2. In every sh script that runs the tests in those stages (each sh step is a shell of its own, so a stage whose tests run in several sh steps needs them in each), add these lines immediately before the test command, after dependency installation and any cd into the test directory, inside the same sh string. Write that script as a single-quoted Groovy string (sh '''…''') so Groovy leaves every $ to the shell, and keep its other commands unchanged:\n\n```sh\n")
-	text.WriteString(jenkinsSnippet(request, c.reset).shell())
-	text.WriteString("\n```\n")
+	text.WriteString(jenkinsSnippetInstructions(request, jenkinsSnippet(request, c.reset).shell()))
 	text.WriteString("\nThe snippet installs the tracers into a new folder of the workspace for each shell (" + jenkinsTracerFolder + "), apart from the .datadog folder of the Datadog Jenkins plugin and from the shells that run at the same time in the same workspace, such as parallel branches under one Docker agent. The folders stay in the workspace after the build, in the working directory of each sh step: add " + jenkinsTracerIgnore + " to the repository .gitignore, without a leading /, so they stay untracked below the checkout root too, and a workspace cleanup (such as cleanWs()) removes them. It tests the key with ${DD_API_KEY:+set}, so Jenkins' shell trace (sh -x) never prints it. The installer needs Bash and curl or wget in the container's image: stages whose image lacks them (Alpine variants, BusyBox, distroless; official -slim images have no curl) get the " + fallbackSetupName + " instead, as their own instructions show; never change a stage's image or Dockerfile.\n")
 	text.WriteString("\n3. Keep those stages out of every datadog(…) option's scope: in a declarative pipeline, that option goes in the options of the host-agent stages that run the tests, not the pipeline's; in a scripted pipeline, it wraps only node blocks on host agents. ddtest does not certify a container stage the plugin's variables reach. Enabling Test Optimization in the job's configuration page instead of the Jenkinsfile reaches every stage, so leave it off there.")
 	if c.reset {
@@ -409,4 +407,20 @@ func (r *jenkinsReader) pluginUnread(scope jenkinsScope) string {
 		return "at " + scope.setup.source
 	}
 	return scope.pluginUnread
+}
+
+// jenkinsSnippetInstructions escapes only the added snippet for each existing
+// sh literal, leaving the script's other Groovy expressions untouched.
+func jenkinsSnippetInstructions(request ciSetupRequest, snippet string) string {
+	text := "2. In every sh script that runs the tests in those stages, insert the setup immediately before the test command, after dependency installation and any cd. Each sh step needs its own setup. Keep the existing Groovy string literal and every other command and interpolation unchanged. The following fragments go inside that string, without adding delimiters.\n"
+	if len(request.Steps) == 0 {
+		return text + "Escape each backslash for the existing literal, and each $ for a double-quoted literal.\n\n```sh\n" + snippet + "\n```\n"
+	}
+	for _, step := range request.Steps {
+		origin, _ := step.origin.(jenkinsShellStep)
+		written, note := jenkinsCommand(origin.quote, snippet)
+		note = strings.Replace(note, "replace only the old command inside that string", "insert only this fragment before the test command inside that string", 1)
+		text += "\n" + step.Source + ":" + note + "\n\n```groovy\n" + written + "\n```\n"
+	}
+	return text
 }

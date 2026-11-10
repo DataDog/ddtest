@@ -57,11 +57,6 @@ func StartWithOptions(output io.Writer, options StartOptions) error {
 	if err != nil {
 		return fail("framework_unresolved", err)
 	}
-	selected, err := SelectTracerRelease(detected.Name(), options.Tracer)
-	if err != nil {
-		return errors.Join(err, WriteAgentResult(output, AgentResult{Status: "needs_input", Phase: "discovery", Code: "invalid_options", Reason: err.Error(), NextAction: "supply_input"}))
-	}
-	options.Tracer = selected
 	if root, err := os.Getwd(); err == nil {
 		if err := CheckCIProviderSupport(root, detected.Name(), frameworkName); err != nil {
 			var choice *CIProviderChoice
@@ -91,6 +86,11 @@ func StartWithOptions(output io.Writer, options StartOptions) error {
 		err := fmt.Errorf("--command selects one suite, but onboarding applies and validates every discovered CI configuration")
 		return errors.Join(err, WriteAgentResult(output, AgentResult{Status: "needs_input", Phase: "discovery", Code: "invalid_options", Reason: err.Error(), NextAction: "supply_input", RequiredInput: []string{"Omit --command to onboard every discovered configuration, or validate one suite with testdrive --framework " + frameworkName + " --command <command>."}}))
 	}
+	selected, err := SelectTracerRelease(detected.Name(), options.Tracer)
+	if err != nil {
+		return errors.Join(err, WriteAgentResult(output, AgentResult{Status: "needs_input", Phase: "discovery", Code: "invalid_options", Reason: err.Error(), NextAction: "supply_input"}))
+	}
+	options.Tracer = selected
 	if root, err := os.Getwd(); err == nil {
 		// Only the user can tell a CI job's runtime its configuration doesn't
 		// name; ask before any setup is prescribed for it.

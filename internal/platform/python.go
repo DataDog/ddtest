@@ -183,7 +183,7 @@ func (p *Python) SanityCheck(ctx context.Context) error {
 func (p *Python) DetectTracer(ctx context.Context, options TracerOptions) (string, error) {
 	command, prefix := pythonInterpreter(options.Command, options.Args)
 	args := append(append([]string{}, prefix...), "-c", detectPythonTracer, requiredPackageName)
-	return tracerProbe(ctx, p.executor, command, args, nil)
+	return tracerProbe(ctx, p.executor, command, args, options.Environment)
 }
 
 const detectPythonTracer = "import importlib.metadata, pathlib, sys; pathlib.Path(sys.argv[2]).write_text(importlib.metadata.version(sys.argv[1]))"
@@ -194,7 +194,11 @@ func pythonInterpreter(command string, args []string) (string, []string) {
 		return command, nil
 	}
 	if (base == "uv" || base == "poetry") && len(args) > 0 && args[0] == "run" {
-		return command, []string{"run", "python"}
+		prefix := []string{"run"}
+		if base == "uv" {
+			prefix = append(prefix, "--no-sync")
+		}
+		return command, append(prefix, "python")
 	}
 	if strings.HasPrefix(base, "pytest") && filepath.Dir(command) != "." {
 		interpreter := filepath.Join(filepath.Dir(command), "python")

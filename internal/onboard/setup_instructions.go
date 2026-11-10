@@ -54,6 +54,7 @@ func providerSetupInstructions(root string, provider ciProvider, language, frame
 				}
 			}
 			current := registered.ciSetupRequest(root, framework, site, terms)
+			current.Steps = group.steps
 			if len(groups) > 1 || group.provider != provider {
 				// The provider sets its jobs up with several mechanisms.
 				current.Framework, current.Jobs = framework, group.jobs

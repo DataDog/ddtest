@@ -204,7 +204,7 @@ func localOnlyUnsupported(framework string, check jestPreflight) string {
 // failing selection; an empty selection means none can be set up.
 func (t *Testdrive) selectSetupTracerReporting(ctx context.Context, scope onboard.ValidationScope, explicit bool) (platform.JSSelection, []string, error) {
 	var reportOnly []string
-	ci := onboard.CheckCIRuntimes(ctx, t.repositoryRoot, t.framework.Name())
+	ci := onboard.CheckCIRuntimes(ctx, t.repositoryRoot, t.framework.Name()).WithSiteCaveats(t.selectedSite)
 	if len(ci.Jobs) == 0 {
 		return platform.JSSelection{}, nil, fmt.Errorf("CI test runtime is unresolved: %s", ci.Reason)
 	}

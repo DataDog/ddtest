@@ -128,7 +128,7 @@ func planProviderJavaScriptSetup(root string, provider ciProvider, workflows []c
 			// A job that sets up the tracer by hand keeps that setup.
 			var handWritten *handWrittenSetup
 			if setupIndex < 0 {
-				handWritten = jobHandWrittenSetup(root, workflow, job, first, "javascript", framework, site)
+				handWritten = jobHandWrittenSetup(root, workflow, job, first, "javascript", framework, "")
 			}
 			inherited := []string{"DD_TRACE_PACKAGE", "DD_TRACE_ESM_IMPORT", "DD_CIVISIBILITY_ENABLED", "DD_TRACE_ENABLED"}
 			if scoped != "NODE_OPTIONS" && setupIndex < 0 {
@@ -245,7 +245,7 @@ func planProviderJavaScriptSetup(root string, provider ciProvider, workflows []c
 			complete := len(existing) > 0
 			for _, index := range existing {
 				setup, _ := datadogSetup(job.Steps[index])
-				problem := provider.setupProblem(setup, request.TracerInput, func(value string) bool { return value == version }, version, site)
+				problem := provider.setupProblem(setup, request.TracerInput, func(value string) bool { return value == version }, version, "")
 				switch {
 				case plugin && (problem != "" || esm):
 					// The provider completes the option and adds the commands
@@ -557,6 +557,9 @@ func planProviderSetup(root, framework, site, release string) (*SetupPlan, error
 // first on, for a language whose jobs keep such a setup (see
 // keepsHandWrittenJobs); nil otherwise.
 func keptHandWrittenSetup(root string, workflow ciWorkflow, job runtimeJob, first int, language discoveryLanguage, framework, site string) *handWrittenSetup {
+	if language.name() == "javascript" {
+		site = "" // Existing sites are reported as validation caveats.
+	}
 	if !language.keepsHandWrittenJobs() {
 		return nil
 	}
@@ -579,6 +582,9 @@ func sameShell(a, b runtimeStep) bool {
 // before every command that runs framework's tests; empty when it does, or
 // runs none.
 func providerJobSetupProblem(root string, provider ciProvider, workflow ciWorkflow, name, language, framework, site string) string {
+	if language == "javascript" {
+		site = "" // Existing sites are reported as validation caveats.
+	}
 	job, ok := workflow.Jobs[name]
 	if !ok {
 		return "the job is missing."
@@ -895,6 +901,9 @@ func providerSetupConfigured(root string, provider ciProvider, language, framewo
 // not complete, as the provider read it (see ciProvider.setupProblem, with
 // the selected site), one line per job; nil when none is incomplete.
 func existingSetupProblems(root, language, framework, site string) []string {
+	if language == "javascript" {
+		site = "" // Existing sites are preserved and reported as validation caveats.
+	}
 	provider, err := currentCIProvider(root)
 	if err != nil || provider.sharedSyntax() {
 		return nil

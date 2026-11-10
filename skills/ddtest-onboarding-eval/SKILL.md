@@ -12,6 +12,16 @@ alone is not isolation.** The container has network access for public source,
 packages and the selected model service. Do not publish, run real CI, or use a
 real Datadog intake in these trials.
 
+The runner disables instrumentation telemetry by default and maps the default
+US1 test-cycle, coverage, API and instrumentation-telemetry intake hostnames to
+container loopback. It records intake_guard in run.json and new frozen repeated-run
+oracles. Evidence predating the guard remains identified as unguarded. The current
+`us1-defaults-v2` also blocks `citestcov-intake.datadoghq.com`; the earlier
+`us1-defaults-v1` did not block that coverage hostname and keeps its original identity. Changing the guard requires
+a new run folder; do not pool guard regimes without disclosing that difference.
+The guard covers those normal tracer hostnames; custom endpoints, other sites and
+direct IP connections remain outside it.
+
 **Egress is not restricted.** The container can reach the Docker host's bridge
 gateway, the local network and any cloud instance metadata endpoint. Run trials on
 a dedicated machine or VM with no local Datadog Agent, databases, other services
@@ -37,7 +47,7 @@ the trial. Prepare the project's test dependencies;
 editable installs of the tested checkout block testdrive isolation. Use
 checkout-local `PYTHONPATH` or pytest `pythonpath` imports instead.
 
-Use Python 3.9+, Git, Go for building ddtest, and Docker with the trial root
+Use Python 3.9+ with PyYAML, Git, GnuPG for signed trims, Go for building ddtest, and Docker with the trial root
 shared into its VM. On macOS the default root is `~/.dde`, created private:
 Colima shares only `$HOME` by default and Docker Desktop shares `/Users`. On Linux
 the system temporary root is used. To use another folder, set
@@ -199,7 +209,9 @@ question unless it has scripted answers:
 
 Forms: `ci_runtime=<runtime>=<version>` (every asked job) or
 `ci_runtime=<workflow / job>:<runtime>=<version>`; `ci_confirm=<fact>` (yes),
-`ci_confirm=<fact>=no` or `ci_confirm=<fact>=<value>`; `ci_provider=<provider>`.
+`ci_confirm=<fact>=no` or `ci_confirm=<fact>=<value>`; `ci_provider=<provider>`;
+`substitute_runtime=accept` accepts only `substitute_runtime_unaccepted`, including
+a result that asks for that decision in `required_input` with `report_result`.
 `--user-answers FILE` takes the same values, one per line (`#` comments).
 Invalid values stop before cloning: versions are numeric as ddtest takes them
 (Ruby with a minor version, such as 3.4), runtime names follow `--ci-runtime`
@@ -330,8 +342,8 @@ login in the Keychain, which the harness never reads: without a helper, run that
 agent's trials with `run_eval.py --login-json <exported file>`, or run Codex only. The model
 preflight fails before cloning when neither is available.
 
-Trims are setup commands that edit or `git rm` files; `run_catalog.py` commits
-each trim inside the trial container with a scratch identity
+Trims are setup commands that edit or `git rm` files; `run_catalog.py` signs and verifies
+each trim inside the trial container using a disposable key and a scratch identity
 (`ddtest-eval-scratch`), so setup still leaves `git status` clean. The trial's
 private HOME has no Git configuration, and nothing changes signing settings.
 `changes.patch` diffs against `agent_baseline`, the HEAD after the trim
@@ -443,8 +455,8 @@ Each trial gets one outcome:
 | `harness_failure` | container, clone, setup, readiness, login, timeout, interruption, retention, cleanup, a runner error, or missing or malformed evidence (such as a `testdrive.json` that is not valid JSON or lacks `summary.status` or `summary.blocking_checks`, or no report although ddtest's last result claims a verdict) | yes |
 | `agent_failure` | no ddtest result or report, no final answer, or `run.json` `agent_reporting` is not `pass` | yes |
 
-Expected blockers that are no longer reported only add a note. Whether the agent
-changed files ddtest didn't prescribe is not checked; grade that by hand.
+Expected blockers that are no longer reported only add a note. Source edits receive a conservative trajectory check; unmatched hunks require
+independent review as described below.
 
 At the end the runner prints a table (case, agent, provider, framework,
 expected, actual, outcome), `NOTE <id>: agents disagree` when both agents ran a
@@ -458,8 +470,7 @@ blocker first appears (often ddtest's own advice before the agent's edit); keep
 `expected` so the regression stays visible; (2) an intentional ddtest change:
 update the shared `expected`; (3) agent-specific: add `expected.agents.<agent>`.
 A trial whose last ddtest result asks the user a question no `--user-answer`
-form answers (such as `substitute_runtime_unaccepted` or
-`scope_decision_required`) gets the note `question not scriptable: <code>`,
+form answers (such as `scope_decision_required`) gets the note `question not scriptable: <code>`,
 `question` in its record and an entry in `questions_not_scriptable`. It writes the same data
 to `<output>/results.json` (or `--results PATH`): `exit_code`, `outcomes`,
 `agents_disagree` and, per case and agent, `outcome`, `direction`, `expected`,
@@ -475,7 +486,10 @@ other entries stay, and `outcomes`, `agents_disagree` and `exit_code` are
 recomputed over all of them (`merged_entries_kept` counts the kept ones). With
 `--all`, the batch replaces every entry of the agents it covers. A
 `results.json` written for another output folder is refused; pass a new
-`--results`. The process exit status covers only the cases of this invocation.
+`--results`. The process exit status covers only the cases of this invocation. The score and
+baseline comparison also cover only its selected trial slots (including missing
+ones); retained entries from other plans remain visible without entering that
+sample.
 
 `--evaluate-only` checks existing evidence and runs nothing: `run_catalog.py
 --evaluate-only E02 --output <folder holding E02-pipeline-schema-codex>`.
@@ -485,13 +499,23 @@ A requested agent without a folder is listed as `no <agent> evidence (found:
 or a named case with no evidence at all, the exit status is 1. With `--all` (or
 `--agent both`), cases without a folder are only listed.
 
-After an intentional ddtest change, rerun the affected cases, then copy what
-the block's next step names into the case: `verdict`, `blockers` (the
+After an intentional ddtest change, rerun the affected cases before updating
+the catalog. Copy what the block's next step names into the case: `verdict`, `blockers` (the
 identifiers listed under actual, without the `configuration:` lines), `reason`,
 `run` (the output folder or round, such as `eval-claude-2026-11-04`) and
 `ddtest` (the `--ddtest-label` you passed, such as the commit; a `dev` version
-names no build). Check it with `--evaluate-only` on the same evidence, which
-must now pass.
+names no build). A single-trial calibration can be rechecked with
+`--evaluate-only` against the updated expectation; this is calibration, not an
+independent score. A repeated run keeps its original expectation and oracle:
+retain a copy of the catalog used before execution and pass it with `--catalog`
+when reevaluating those reports. Update expectations for future fresh output
+folders; improvements stay visible in the original repeated-run score.
+
+Oracle schema 3 freezes `trials_per_case_agent` and whether `--case-image` was selected. Reevaluation and comparison
+require the original trial count, including when requesting a single trial in
+a repeated-run folder. Older oracles without a planned count remain unchanged;
+use their original evaluator for historical reevaluation, and start a new output
+folder for a new experiment rather than rewriting the old oracle.
 
 To add or replace a case:
 
@@ -505,12 +529,140 @@ To add or replace a case:
 - Add a trim to `required` only when the suite fails without it; put
   speed-only trims in `optional_speed`. Run every trim through `shlex.split`
   with no shell on a fresh clone: it may only edit or remove tracked files,
-  which the trim commit (`git commit -a`) records.
+  which the trim commit (`git commit -S -a`) records.
 - Measure clone, install, browser, build and test times on the image and record
   the conditions. Add answers only for questions only the user can answer.
 - Run `python3 -m unittest test_run_catalog test_catalog_check` in `scripts/`;
   they validate the schema, the expectations and the framework and provider
   coverage.
+
+## Prepared case images
+
+Use one immutable image per case. Build the checkout at its catalog commit,
+apply its required trims, and install only the project's dependencies and caches.
+Do not install ddtest, the tracer, or dependencies ddtest will prescribe. Do not
+bake credentials, personal settings, model configuration or evaluator evidence
+into an image. The ddtest binary is still mounted separately for every trial.
+
+Generate and build them with the same base-image mapping as ordinary trials:
+
+```sh
+python3 scripts/prepare_case_images.py E04 E07 E14 E17 --image-file images.json --output ~/ddtest-work/case-images --build
+```
+
+Run this from the skill directory. Omit `--build` to generate Dockerfiles and
+print their commands. The builder applies required trims with signed commits,
+checks readiness and clean status, and refuses an installed tracer. It keeps a
+content-addressed local base tag for BuildKit; the manifest still records the
+requested immutable image ID. Its credential-free Docker configuration permits
+the installed Buildx executable without copying registry credentials or builder
+state, so personal registry credentials are not consulted.
+`case-images.json` preserves earlier cases when adding more images.
+Prepared case images and dependency-cache images are separate modes; do not
+combine `--case-image` with `--dependency-image` or cache preparation/restoration.
+
+Put the prepared checkout (including its Git history and ignored project
+dependencies) at `/opt/ddtest-case/repo`, and this JSON at
+`/opt/ddtest-case/manifest.json`:
+
+```json
+{"schema_version":1,"repository":"<catalog repo URL>","commit":"<full source SHA>","baseline":"<full HEAD SHA after signed trims>","framework":"<catalog framework>"}
+```
+
+The baseline must descend from the source commit and have clean Git status.
+Record required trims in signed commits; never disable signing. Cache payloads
+may be placed under `/opt/ddtest-case/caches`, `tools`, `venv`, `bundle-bin`,
+`home/.m2`, `home/.gradle`, `home/bundle` and `home/.bundle`. Prepare absolute
+paths for `/trial` (Python environments use `/trial/venv`), where the runner
+restores them. Model authentication and configuration are never seeded.
+
+Pass `run_eval.py --case-image --image <immutable ID> --repo <URL> --ref <full SHA>`
+with the usual binary, framework, agent, runtime and output flags; omit setup
+commands. The runner verifies the running image ID, manifest, baseline, source
+ancestry, origin and clean status. It skips cloning, dependency installation,
+Python environment creation and binstub generation, then runs readiness and
+the uncoached trial. `run.json.prepared_image` retains the verified provenance.
+There is one prepared form per case; no cold/cached variants.
+
+For a catalog batch, use `run_catalog.py --case-image` and map case IDs, rather
+than shared runtime image keys, to immutable IDs in `--image-file`.
+
+## Repeated trials and version comparisons
+
+Use `run_catalog.py E04 E14 E17 --agent both --trials 3` with the usual image,
+binary, login and output flags. Every trial has a fresh checkout, private
+caches and a separate `<case>-trial-<nn>-<agent>` evidence folder. The two agent
+lanes remain independent. Before execution, `oracle.json` freezes the source
+commits, setup, images, scripted answers, an explicit `--model` selection and
+expected verdicts/blockers. A
+changed oracle requires a new output folder; do not revise expectations after
+observing the same trials and then call their score independent.
+
+`results.json.score` includes sample counts and pass rates per case/agent and
+across trials. `expected_pass_rate` measures agreement with the predeclared
+outcome (including expected FAILED/INCOMPLETE outcomes); `rigorous_pass_rate`
+also requires a passed trajectory check. Reevaluating a selected slot replaces
+its previous result, including when its evidence is now missing. Missing trials
+and failures stay in the denominator. `complete_locally` is reported separately. These small-sample
+rates are descriptive, not evidence of statistical significance. Use explicit
+model selection for version comparisons; service defaults can change and some
+CLIs do not expose their resolved model.
+
+Pass `--compare-results <earlier results.json>` to compare two ddtest versions.
+The oracle and case/agent sets must match, including the immutable images. Before
+scoring a frozen run, reevaluation checks every selected trial manifest against its
+planned repository, source commit, image, intake guard, agent, requested model and
+prepared-image mode. Missing or mismatched
+provenance stops reevaluation without rewriting the frozen oracle or evidence.
+Oracles that predate preparation-mode provenance require their original evaluator;
+do not infer the missing mode or rewrite historical manifests.
+The result records both labels and changes in the two pass rates.
+
+Each trial's `trajectory.json` checks the source diff, including retained
+untracked source files. Exact hunks from ddtest's recorded patch prescriptions
+pass automatically. Patch capture preserves carriage returns and undecodable
+bytes before grading. Tracked patches that are not valid UTF-8 require independent
+review; replacement characters cannot authorize different raw bytes. Metadata
+phrases inside text hunks are ordinary text; actual binary, mode, rename and copy
+headers still require review. Hunk identities preserve content carriage returns and other
+line separators: an LF prescription does not authorize a CRLF edit. Preserve
+historical results with their original evaluator rather than rewriting frozen
+evidence to match new identities. Other hunks require an independent evaluator's
+review; mentioning a filename in instructions never authorizes all edits to it. Added or
+deleted regular text files use the same checks, with their file mode bound to
+each hunk. Retention preserves untracked files' executable bits and records them
+per file in `retained/RETENTION.json`; their review IDs bind the path, contents and
+executable bits. A permissions change requires a fresh capture and review. Older
+retained copies without executable-mode provenance stay unverified under the new
+checker: preserve their historical results with the original evaluator instead
+of inventing permission evidence. Binary, mode-only or unavailable changes stay unverified. A repeated batch exits nonzero
+while any trajectory is unverified. A trajectory parsing or read error leaves
+that trial unverified and records its reason; evaluation continues for the other
+trials and saves the batch results. After inspecting a hunk against the original
+prescription, save `trajectory-review.json` beside it:
+
+```json
+{"patch_sha256":"<trajectory.json value>","prescriptions_sha256":"<trajectory.json value>","hunks":[{"id":"<hunk id>","row":1,"evidence":"<literal excerpt of that ddtest result>","verdict":"prescribed"}]}
+```
+
+The two hashes bind the review to the current patch and prescription log; each
+row and literal evidence excerpt must exist. Non-JSON ddtest instructions are
+retained as `output` in the prescription log. For older evidence where those
+instructions exist only in activity.jsonl, a reviewed hunk may instead name
+`activity_event` (a 1-based event number), with `activity_sha256` on the review.
+The independent reviewer must verify that event is the output of ddtest itself. Reevaluate with the same case,
+agent, image, `--trials` and output options plus `--evaluate-only`. The independent
+reviewer must check the meaning of the change; matching a cited excerpt alone
+is not a semantic proof.
+
+When the automatic reporting check requests review only because a faithful
+paraphrase lacks the unchanged canonical text, the independent evaluator may
+save `reporting-review.json` with `verdict: "pass"`, a concrete `rationale`,
+`final_response_sha256` (of final-response.md) and `report_sha256` (of the retained
+.testoptimization/testdrive.json). Reevaluate afterward. Explicit contradictions,
+unsupported claims and CLI errors cannot be overridden this way; run.json's
+automatic assessment stays unchanged. This review belongs to the evaluator outside the
+container, and is never supplied by the tested agent.
 
 ## Grade independently
 

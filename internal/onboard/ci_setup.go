@@ -82,6 +82,8 @@ type ciSetup struct {
 // ciSetupRequest is the setup one language asks a provider for: the
 // provider supplies the step, the language its own values.
 type ciSetupRequest struct {
+	// Steps are the test steps receiving the setup, for literal-aware instructions.
+	Steps []runtimeStep
 	// Language is the installer's token for the language (languages input).
 	Language string
 	// Site is the Datadog site the setup reports to.
@@ -215,6 +217,7 @@ func setupProviderFor(provider ciProvider, job runtimeJob) ciProvider {
 // jobSetups are the jobs that set Test Optimization up with one of a
 // provider's mechanisms.
 type jobSetups struct {
+	steps    []runtimeStep
 	provider ciProvider
 	jobs     []string
 }
@@ -242,6 +245,11 @@ func testJobSetups(root string, provider ciProvider, language, framework string)
 				groups, i = append(groups, jobSetups{provider: mechanism}), len(groups)
 			}
 			groups[i].jobs = append(groups[i].jobs, workflow.Path+" / "+name)
+			for _, step := range job.Steps {
+				if resolveTestStep(root, workflow, job, step, language, framework).Matched {
+					groups[i].steps = append(groups[i].steps, step)
+				}
+			}
 		}
 	}
 	if len(groups) > 1 && len(groups[0].jobs) == 0 {

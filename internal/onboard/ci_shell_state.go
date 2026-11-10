@@ -72,6 +72,13 @@ func (s *ciShellState) applySetup(setup ciSetup, current map[string]string) {
 			continue
 		}
 		exported, references := language.setupShellExports(mergeEnvironment(current, s.env))
+		if setup.fallback {
+			if fallback, ok := language.(interface {
+				fallbackShellExports(map[string]string) (map[string]string, map[string]string)
+			}); ok {
+				exported, references = fallback.fallbackShellExports(mergeEnvironment(current, s.env))
+			}
+		}
 		maps.Copy(s.env, exported)
 		maps.Copy(s.references, references)
 		s.markSetupExported(references)
@@ -690,6 +697,14 @@ func ciRepositoryBinPath(word *syntax.Word) bool {
 func imageWithoutBash(image string) bool {
 	name := strings.ToLower(mirroredImage(image))
 	repository, tag, _ := strings.Cut(name[strings.LastIndex(name, "/")+1:], ":")
+	// Official Maven Alpine images install Bash (see docker-maven's
+	// Alpine Dockerfiles); the base distribution alone is not evidence.
+	if slices.ContainsFunc(discoveryLanguages, func(language discoveryLanguage) bool {
+		known, ok := language.(interface{ ciImageHasBash(string) bool })
+		return ok && known.ciImageHasBash(name)
+	}) {
+		return false
+	}
 	return strings.Contains(tag, "alpine") || repository == "alpine" || repository == "busybox" || strings.Contains(name, "distroless") || strings.Contains(tag, "busybox")
 }
 

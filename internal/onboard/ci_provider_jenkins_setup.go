@@ -449,16 +449,7 @@ func (jenkins) setupProblem(setup ciSetup, tracerInput string, exact func(string
 	if tracer, pinned := setup.Inputs[tracerInput]; pinned && !exact(tracer) {
 		return "The Datadog Jenkins plugin would install " + fmt.Sprintf("%q", tracer) + ", which is not an exact tracer release; pin an exact release, such as " + example + ", as the setup instructions show."
 	}
-	configured, source := setup.Inputs["site"], "DD_SITE in its additionalVariables"
-	if configured == "" {
-		if mode, stated := statedFact(jenkinsModeFact); stated {
-			configured, _ = strings.CutPrefix(mode, "agentless:")
-			source = "--ci-confirm " + jenkinsModeFact + "=" + mode
-			if mode == "agent" {
-				configured = ""
-			}
-		}
-	}
+	configured, source := jenkinsSetupSite(setup)
 	if site != "" && configured != "" && configured != site {
 		return "The Datadog Jenkins plugin reports to " + configured + " (" + source + "), but the selected Datadog site is " + site + "; configure the plugin for " + site + ", or select " + configured + "."
 	}
@@ -520,4 +511,18 @@ func (j jenkins) setupInstructions(request ciSetupRequest) string {
 		text.WriteString("\n- " + strings.ReplaceAll(note, "\n", "\n  "))
 	}
 	return strings.TrimSpace(text.String())
+}
+
+func jenkinsSetupSite(setup ciSetup) (string, string) {
+	configured, source := setup.Inputs["site"], "DD_SITE in its additionalVariables"
+	if configured == "" {
+		if mode, stated := statedFact(jenkinsModeFact); stated {
+			configured, _ = strings.CutPrefix(mode, "agentless:")
+			source = "--ci-confirm " + jenkinsModeFact + "=" + mode
+			if mode == "agent" {
+				configured = ""
+			}
+		}
+	}
+	return configured, source
 }

@@ -46,48 +46,11 @@ func firstJobHandWrittenSetup(t *testing.T, root, language, framework, site stri
 	return nil
 }
 
-// requireUnvalidatedHandWrittenSetup checks that a recognized hand-written
-// setup ddtest does not validate for language yet is kept and reported as
-// such, never certified and never replaced with the provider's setup. It
-// returns the jobs the result names.
-func requireUnvalidatedHandWrittenSetup(t *testing.T, root, language, framework string) []string {
-	t.Helper()
-	setup := firstJobHandWrittenSetup(t, root, language, framework, "")
-	require.NotNil(t, setup)
-	require.False(t, setup.complete())
-	require.Nil(t, setup.unconfirmed(), "a setup ddtest cannot certify asks the user nothing")
-	require.Contains(t, setup.problem(), "keep it, without adding a second setup. ddtest does not validate hand-written "+handWrittenLanguageName(language)+" setups yet")
-
-	var unsupported *CIProviderUnsupportedError
-	require.ErrorAs(t, CheckCIProviderSupport(root, language, framework), &unsupported)
-	require.NotEmpty(t, unsupported.HandWritten)
-	require.Contains(t, unsupported.Error(), "ddtest does not validate hand-written "+handWrittenLanguageName(language)+" setups yet, and these CI jobs set up Test Optimization by hand: ")
-	require.Contains(t, unsupported.Error(), "ddtest neither certifies those setups nor replaces them with the "+unsupported.Setup+". Keep them as they are, and do not add the "+unsupported.Setup+" to those jobs")
-	if lacks := setup.lacks(); lacks != "" {
-		require.Contains(t, unsupported.Error(), lacks, "the user learns what each setup lacks")
-	}
-	result := ProviderUnsupportedResult(unsupported)
-	require.Equal(t, "unsupported", result.Status)
-	require.Equal(t, "ci_setup_unsupported", result.Code)
-	require.Contains(t, result.Instruction, "Keep the hand-written setups as they are")
-	require.NotContains(t, result.Instruction, "rerun onboarding, which checks that setup")
-
-	provider, err := currentCIProvider(root)
-	require.NoError(t, err)
-	require.False(t, providerSetupConfigured(root, provider, language, framework, "", "", func(string) bool { return true }))
-	workflows, err := readProviderWorkflows(provider, root)
-	require.NoError(t, err)
-	_, configured := testWorkflowsWithSetup(root, workflows, language, framework)
-	require.Empty(t, configured)
-	require.Nil(t, RequiredCIConfirmations(root, language, framework))
-	return unsupported.HandWritten
-}
-
 const handWrittenRequirements = "pytest==8.3.5\nddtrace==4.16.1\n"
 
 // A pytest job that enables the ddtrace plugin by hand is recognized on every
-// provider without the shared syntax, with what it lacks, and reported as
-// not validated yet: the pytest CI check reads only the provider's setup.
+// provider without the shared syntax, with what it lacks; complete simple
+// forms are checked by the pytest CI inventory.
 func TestHandWrittenPythonSetups(t *testing.T) {
 	agentless := map[string]string{"PYTEST_ADDOPTS": "--ddtrace", "DD_CIVISIBILITY_AGENTLESS_ENABLED": "true", "DD_SITE": "datadoghq.com"}
 	for _, provider := range handWrittenProviders {
@@ -99,7 +62,7 @@ func TestHandWrittenPythonSetups(t *testing.T) {
 			require.Equal(t, "requirements.txt", setup.Pin)
 			require.Empty(t, setup.Problems)
 			require.Empty(t, setup.Unresolved)
-			requireUnvalidatedHandWrittenSetup(t, root, "python", "pytest")
+			require.Empty(t, unvalidatedHandWrittenJobs(root, activeOrDefaultCIProvider(), "python", "pytest"))
 		})
 	}
 	provider := handWrittenProviders[0]
@@ -117,9 +80,9 @@ func TestHandWrittenPythonSetups(t *testing.T) {
 		{name: "inline variable", env: with(agentless, "PYTEST_ADDOPTS", ""), command: "PYTEST_ADDOPTS=--ddtrace pytest", reference: "hand-written ddtrace@4.16.1 setup (PYTEST_ADDOPTS)"},
 		{name: "pytest configuration", env: with(agentless, "PYTEST_ADDOPTS", ""), command: "pytest", files: map[string]string{"pytest.ini": "[pytest]\naddopts = --ddtrace\n"}, reference: "hand-written ddtrace@4.16.1 setup (pytest addopts)"},
 		{name: "install command", command: "pytest", before: []string{"pip install pytest==8.3.5 ddtrace==4.17.0"}, files: map[string]string{"requirements.txt": "pytest\n"}, reference: "hand-written ddtrace@4.17.0 setup (PYTEST_ADDOPTS)"},
-		{name: "lockfile", command: "uv run pytest", before: []string{"uv sync"}, files: map[string]string{"requirements.txt": "", "pyproject.toml": "[project]\nname = \"app\"\ndependencies = [\"ddtrace>=4\"]\n", "uv.lock": "version = 1\n\n[[package]]\nname = \"ddtrace\"\nversion = \"4.16.1\"\n"}, reference: "hand-written ddtrace@4.16.1 setup (PYTEST_ADDOPTS)"},
+		{name: "lockfile", command: "uv run pytest", before: []string{"uv sync"}, files: map[string]string{"requirements.txt": "", "pyproject.toml": "[project]\nname = \"app\"\ndependencies = [\"ddtrace>=4\"]\n", "uv.lock": "version = 1\n\n[[package]]\nname = \"ddtrace\"\nversion = \"4.16.1\"\n"}, reference: "hand-written ddtrace setup (PYTEST_ADDOPTS)", unresolved: "selected dependencies ddtest cannot resolve"},
 		{name: "range", command: "pytest", files: map[string]string{"requirements.txt": "ddtrace>=4.0\n"}, reference: "hand-written ddtrace setup (PYTEST_ADDOPTS)", problem: "requirements.txt requires ddtrace >=4.0, which is not an exact release"},
-		{name: "no ddtrace", command: "pytest", files: map[string]string{"requirements.txt": "pytest==8.3.5\n"}, reference: "hand-written ddtrace setup (PYTEST_ADDOPTS)", problem: "No requirements file, lockfile or install command of the job pins ddtrace"},
+		{name: "no ddtrace", command: "pytest", files: map[string]string{"requirements.txt": "pytest==8.3.5\n"}, reference: "hand-written ddtrace setup (PYTEST_ADDOPTS)", unresolved: "an installation ddtest cannot resolve statically"},
 		{name: "literal key", env: with(agentless, "DD_API_KEY", "0123456789abcdef"), command: "pytest", problem: "never commit the key"},
 		{name: "site", command: "pytest", env: with(agentless, "DD_SITE", "datadoghq.eu"), problem: "set DD_SITE=datadoghq.com"},
 		{name: "disabled", env: with(agentless, "PYTEST_ADDOPTS", "--ddtrace --no-ddtrace"), command: "pytest", problem: "--no-ddtrace, which turns the ddtrace plugin off"},
@@ -147,14 +110,13 @@ func TestHandWrittenPythonSetups(t *testing.T) {
 			if tc.unresolved != "" {
 				require.Contains(t, strings.Join(setup.Unresolved, " "), tc.unresolved)
 			}
-			requireUnvalidatedHandWrittenSetup(t, root, "python", "pytest")
+			require.Empty(t, unvalidatedHandWrittenJobs(root, activeOrDefaultCIProvider(), "python", "pytest"))
 		})
 	}
-	// Agent mode is listed for the user, never asked for: nothing is
-	// certified either way.
+	// Agent mode requires the same explicit confirmation as other languages.
 	root := unvalidatedRepository(t, provider, provider.config(with(agentless, "DD_CIVISIBILITY_AGENTLESS_ENABLED", ""), []string{"pip install -r requirements.txt"}, "pytest"), map[string]string{"requirements.txt": handWrittenRequirements})
 	require.Contains(t, firstJobHandWrittenSetup(t, root, "python", "pytest", "").gaps(), "reports through a Datadog Agent")
-	requireUnvalidatedHandWrittenSetup(t, root, "python", "pytest")
+	require.Empty(t, unvalidatedHandWrittenJobs(root, activeOrDefaultCIProvider(), "python", "pytest"))
 
 	// Without the plugin there is no hand-written setup: the provider's
 	// support decides.
@@ -176,20 +138,20 @@ func TestHandWrittenPythonJenkinsSetup(t *testing.T) {
 	writeFile(t, root, "Jenkinsfile", "pipeline {\n  agent { docker { image 'python:3.12' } }\n  environment {\n    PYTEST_ADDOPTS = '--ddtrace'\n    DD_CIVISIBILITY_AGENTLESS_ENABLED = 'true'\n    DD_API_KEY = credentials('datadog-api-key')\n  }\n  stages {\n    stage('Test') {\n      steps {\n        sh 'pip install -r requirements.txt'\n        sh 'pytest'\n      }\n    }\n  }\n}\n")
 	t.Chdir(root)
 	useCIProvider(t, "jenkins")
-	jobs := requireUnvalidatedHandWrittenSetup(t, root, "python", "pytest")
-	require.Equal(t, []string{"Jenkinsfile / Test (hand-written ddtrace@4.16.1 setup (PYTEST_ADDOPTS))"}, jobs)
+	jobs := unvalidatedHandWrittenJobs(root, activeOrDefaultCIProvider(), "python", "pytest")
+	require.Empty(t, jobs)
 }
 
 // Messages about setting Test Optimization up by hand say, per language,
 // whether ddtest then checks that setup.
 func TestHandWrittenSetupOptionNamesValidatedLanguages(t *testing.T) {
-	require.Equal(t, "JavaScript, Ruby and Java", handWrittenValidatedLanguages())
+	require.Equal(t, "JavaScript, Python, Ruby and Java", handWrittenValidatedLanguages())
 	for _, tc := range []struct {
 		language, reason, instruction string
 	}{
 		{"javascript", "which ddtest then checks like the Datadog Jenkins plugin", "Once the user sets it up by hand, rerun onboarding, which checks that setup."},
 		{"ruby", "which ddtest then checks like the Datadog Jenkins plugin", "Once the user sets it up by hand, rerun onboarding, which checks that setup."},
-		{"python", "which ddtest does not validate for Python yet", "ddtest does not validate hand-written Python setups yet."},
+		{"python", "which ddtest then checks like the Datadog Jenkins plugin", "Once the user sets it up by hand, rerun onboarding, which checks that setup."},
 		{"java", "which ddtest then checks like the Datadog Jenkins plugin", "Once the user sets it up by hand, rerun onboarding, which checks that setup."},
 	} {
 		err := &CIProviderUnsupportedError{Language: tc.language, Framework: "tests", Provider: "Jenkins", Reason: "Jenkinsfile / Test: it runs in a container.", Setup: "Datadog Jenkins plugin"}

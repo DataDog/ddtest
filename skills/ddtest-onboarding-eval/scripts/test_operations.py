@@ -43,6 +43,11 @@ class ControlTests(unittest.TestCase):
             self.assertIn(variable + "=", arguments)
         self.assertLess(arguments.index("HTTP_PROXY="), arguments.index(container.image))
 
+    def test_parent_cannot_enable_trial_instrumentation_telemetry(self):
+        with patch.dict(os.environ, {"DD_INSTRUMENTATION_TELEMETRY_ENABLED": "true"}):
+            env = isolation.environment(Path("/trial/home"))
+        self.assertEqual(env.get("DD_INSTRUMENTATION_TELEMETRY_ENABLED"), "false")
+
     def test_missing_containers_are_recognized_in_any_case(self):
         for message in ("Error: No such object: x", "error: no such object: x", "Error response from daemon: No such container: x"):
             self.assertTrue(isolation.missing(completed(["inspect"], 1, stderr=message)))

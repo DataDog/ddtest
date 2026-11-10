@@ -274,3 +274,25 @@ func TestExplicitEmptyTracerInputOverridesActionDefault(t *testing.T) {
 	require.Equal(t, "latest", result.Jobs[0].TracerRequested)
 	require.True(t, result.Jobs[0].TracerFloating)
 }
+
+func TestJavaScriptSiteMismatchIsACaveatAndPreservesSetup(t *testing.T) {
+	for _, configured := range []string{"datadoghq.eu", "datadoghq.com", ""} {
+		t.Run(configured, func(t *testing.T) {
+			workflow := strings.Replace(fmt.Sprintf(runtimeWorkflow, ""), "languages: js", "languages: js\n          site: "+configured, 1)
+			root := newJestRepository(t, workflow)
+			check := checkCIRuntimes(t.Context(), root, nil, func(context.Context, string, string) (tracerRequirement, error) {
+				return tracerRequirement{Version: "6.16.0", Node: ">=18"}, nil
+			}).WithSiteCaveats("datadoghq.eu")
+			require.Equal(t, StatusCompatible, check.Status)
+			caveats := strings.Join(CISetupCaveats(&check), "\n")
+			if configured == "datadoghq.eu" {
+				require.NotContains(t, caveats, "Datadog site:")
+			} else {
+				require.Contains(t, caveats, "reports to datadoghq.com, but --site selects datadoghq.eu")
+			}
+			data, err := os.ReadFile(filepath.Join(root, ".github/workflows/test.yml"))
+			require.NoError(t, err)
+			require.Equal(t, workflow, string(data))
+		})
+	}
+}

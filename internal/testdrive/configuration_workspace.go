@@ -332,6 +332,7 @@ func (t *Testdrive) runPreparedChecksOrTests(ctx context.Context, output io.Writ
 	if t.workflowRoot != "" {
 		check = frameworkCIRuntimes(ctx, root, t.framework.Name())
 	}
+	check = check.WithSiteCaveats(t.selectedSite)
 	result.CIRuntime = &check
 	t.defaultToCITracer(check)
 	result.Tracer = t.tracerLabel

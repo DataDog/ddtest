@@ -492,3 +492,8 @@ func (javaDiscovery) ciFallbackUnavailable(image string) string {
 	}
 	return ""
 }
+
+// Official Maven images install Bash even when their base is Alpine.
+func (javaDiscovery) ciImageHasBash(image string) bool {
+	return strings.HasPrefix(dockerHubName(image), "maven:")
+}

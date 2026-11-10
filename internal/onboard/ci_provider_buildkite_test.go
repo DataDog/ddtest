@@ -517,7 +517,7 @@ func TestBuildkiteJavaScriptCompleteness(t *testing.T) {
 	}{
 		{"complete", complete, "", true},
 		{"selected site", complete, "datadoghq.com", true},
-		{"other site", complete, "datadoghq.eu", false},
+		{"other site", complete, "datadoghq.eu", true},
 		{"missing", strings.Replace(complete, snippet, "", 1), "", false},
 		{"after the tests", strings.Replace(strings.Replace(complete, snippet, "", 1), "      - npm test\n", "      - npm test\n"+snippet, 1), "", false},
 		{"in another step", "steps:\n  - label: setup\n    commands:\n" + snippet + "  - wait\n" + strings.Replace(complete, "steps:\n", "", 1)[0:0] + buildkiteDockerStep("test", "node:22", "      - npm test\n"), "", false},

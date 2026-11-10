@@ -409,13 +409,16 @@ func Metadata(args []string) bool {
 	})
 }
 
+// OptionTakesValue reports a Maven option whose next argument is its value.
+func OptionTakesValue(arg string) bool { return slices.Contains(optionsWithValue, arg) }
+
 // Goals returns the phases and plugin goals in Maven arguments, without
 // options or their values.
 func Goals(args []string) []string {
 	var goals []string
 	for i := 0; i < len(args); i++ {
 		switch {
-		case slices.Contains(optionsWithValue, args[i]):
+		case OptionTakesValue(args[i]):
 			i++
 		case !strings.HasPrefix(args[i], "-"):
 			goals = append(goals, args[i])

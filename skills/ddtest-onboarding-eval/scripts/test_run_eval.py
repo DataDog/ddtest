@@ -210,6 +210,21 @@ class RunnerTests(unittest.TestCase):
         self.addCleanup(shutil.rmtree, manifest["trial_directory"], ignore_errors=True)
         return code, manifest
 
+    def test_non_json_ddtest_instructions_are_retained_and_redacted(self):
+        text = 'Add /.testoptimization/ to .gitignore. DD_API_KEY=synthetic-output-key'
+        self.binary.write_text(FAKE_DDTEST.replace('\nexit 0\n', "\nprintf '%s\\n' " + shlex.quote(text) + "\nexit 0\n"))
+        original = FakeContainer.execute
+        def execute(container, argv, cwd, env, timeout, on_line, prompt, executor):
+            if prompt and not prompt.startswith('Reply AUTH_OK only'):
+                subprocess.run([env[run_eval.SELF_PATH_VARIABLE], 'onboard', '--instructions'], cwd=cwd, env=env, check=True, capture_output=True)
+            return original(container, argv, cwd, env, timeout, on_line, prompt, executor)
+        with patch.object(FakeContainer, 'execute', execute):
+            code, _ = self.trial()
+        self.assertEqual(code, 0)
+        rows = [json.loads(line) for line in (self.args.output / 'ddtest-results.jsonl').read_text().splitlines()]
+        self.assertTrue(any(row['result'] is None and 'Add /.testoptimization/ to .gitignore.' in row.get('output', '') for row in rows))
+        self.assertNotIn('synthetic-output-key', json.dumps(rows))
+
     def test_local_repository_is_cloned_from_a_copy_in_the_trial(self):
         # The container mounts only the trial, so a host repository, as a
         # project patched for an eval, reaches it as a bare copy there.
@@ -274,7 +289,20 @@ class RunnerTests(unittest.TestCase):
     def test_nested_relative_submodules_of_a_local_repository_are_mirrored(self):
         # A mirrored submodule's own relative submodules, at the revision it
         # pins, resolve beside its mirror, as Git resolves them.
-        git = ["git", "-c", "commit.gpgsign=false", "-c", "user.name=eval", "-c", "user.email=eval@example.com"]
+        gpg = shutil.which("gpg")
+        if not gpg:
+            self.skipTest("GnuPG is required for signed submodule fixtures")
+        signing = self.root / "signing"
+        signing.mkdir(mode=0o700)
+        sign_env = {**os.environ, "GNUPGHOME": str(signing)}
+        gpgconf = shutil.which("gpgconf")
+        if gpgconf:
+            self.addCleanup(subprocess.run, [gpgconf, "--homedir", str(signing), "--kill", "gpg-agent"], capture_output=True)
+        subprocess.run([gpg, "--batch", "--pinentry-mode", "loopback", "--passphrase", "",
+                        "--quick-generate-key", "Eval fixture <eval@example.com>", "ed25519", "sign", "0"],
+                       env=sign_env, check=True, capture_output=True)
+        git = ["git", "-c", "gpg.format=openpgp", "-c", "gpg.openpgp.program=" + gpg,
+               "-c", "user.signingkey=eval@example.com", "-c", "user.name=eval", "-c", "user.email=eval@example.com"]
         work = self.root / "work"
         work.mkdir()
         subprocess.run(["git", "clone", "--bare", "--quiet", self.source, str(work / "leaf.git")], check=True)
@@ -285,7 +313,9 @@ class RunnerTests(unittest.TestCase):
             (path / ".gitmodules").write_text('[submodule "' + name + '"]\n\tpath = ' + name + '\n\turl = ' + url + '\n')
             subprocess.run(["git", "-C", str(path), "update-index", "--add", "--cacheinfo", "160000," + pinned + "," + name], check=True)
             subprocess.run(["git", "-C", str(path), "add", ".gitmodules"], check=True)
-            subprocess.run([*git, "-C", str(path), "commit", "--quiet", "-m", "pin " + name], check=True)
+            message = "pin " + name + "\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+            subprocess.run([*git, "-C", str(path), "commit", "-S", "--quiet", "-m", message], env=sign_env, check=True)
+            subprocess.run([*git, "-C", str(path), "verify-commit", "HEAD"], env=sign_env, check=True, capture_output=True)
             return subprocess.check_output(["git", "-C", str(path), "rev-parse", "HEAD"], text=True).strip()
 
         shared = repository_with_submodule(work / "shared", "leaf", "../leaf.git", leaf)
@@ -523,6 +553,15 @@ class RunnerTests(unittest.TestCase):
                     run_eval.run(self.args)
                 self.assertFalse(self.args.output.exists())
 
+    def test_prepared_mode_is_recorded_before_restoration_can_fail(self):
+        self.args.case_image = True
+        self.args.ref = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=self.source, text=True).strip()
+        with patch.object(run_eval.case_image, 'restore', side_effect=ValueError('synthetic restore failure')):
+            code, manifest = self.trial()
+        self.assertEqual(code, 1)
+        self.assertIs(manifest['case_image'], True)
+        self.assertFalse((Path(manifest['checkout']) / 'observed.json').exists())
+
     def test_fresh_trials_minimal_prompt_and_independent_evaluation(self):
         checkouts = []
         for agent in ("codex", "claude"):
@@ -538,7 +577,10 @@ class RunnerTests(unittest.TestCase):
                 self.assertEqual(manifest["evaluation"], "pending")
                 self.assertEqual(manifest["ci_execution"], "not exercised")
                 self.assertEqual(observed["prompt"], manifest["prompt"])
-                self.assertEqual(observed["dd_env"], [])
+                self.assertEqual(observed["dd_env"], ["DD_INSTRUMENTATION_TELEMETRY_ENABLED"])
+                self.assertEqual(observed["environment"]["DD_INSTRUMENTATION_TELEMETRY_ENABLED"], "false")
+                self.assertEqual(manifest["isolation"]["intake_guard"], "us1-defaults-v2")
+                self.assertIs(manifest["case_image"], False)
                 self.assertEqual(observed["npm_unknown_config"], [])
                 for directory in observed["cache_environment"].values():
                     self.assertTrue(Path(directory).is_relative_to(checkout.parent / "caches"))
@@ -996,6 +1038,49 @@ class RunnerTests(unittest.TestCase):
         self.assertIn("Fake agent changed", patch_text)
         self.assertNotIn(tracked, patch_text)
         self.assertNotIn(tracked, (self.args.output / "status.txt").read_text())
+
+    def test_changes_patch_preserves_carriage_returns_through_capture(self):
+        import trajectory_check
+        agent = self.root / 'codex'
+        text = agent.read_text().replace('Fake agent changed this tracked file.\\n',
+                                         'Fake agent changed this tracked file.\\r\\n')
+        agent.write_text(text)
+        code, manifest = self.trial()
+        self.assertEqual(code, 0, manifest.get('error'))
+        raw = subprocess.check_output(['git', 'diff', '--no-ext-diff', '--no-textconv',
+                                       manifest['agent_baseline'], '--'], cwd=manifest['checkout'])
+        self.assertIn(b'Fake agent changed this tracked file.\r\n', raw)
+        captured = (self.args.output / 'changes.patch').read_bytes()
+        self.assertEqual(captured, run_eval.redact(raw.decode()).encode())
+        grade = self.root / 'capture-grade'
+        grade.mkdir()
+        (grade / 'changes.patch').write_bytes(captured)
+        (grade / 'status.txt').write_text(' M README.md\n')
+        for prescription, expected in ((captured.replace(b'\r', b''), 'review'), (captured, 'pass')):
+            (grade / 'ddtest-results.jsonl').write_text(json.dumps({'result': {'instruction': prescription.decode()}}) + '\n')
+            self.assertEqual(trajectory_check.evaluate(grade)['status'], expected)
+
+    def test_changes_patch_preserves_non_utf8_bytes_through_capture(self):
+        import trajectory_check
+        agent = self.root / 'codex'
+        text = agent.read_text().replace('with pathlib.Path("README.md").open("a") as stream:',
+                                         'with pathlib.Path("README.md").open("ab") as stream:')
+        text = text.replace('stream.write("\\nFake agent changed this tracked file.\\n")',
+                            'stream.write(b"\\nFake agent changed this tracked file.\\xff\\n")')
+        agent.write_text(text)
+        code, manifest = self.trial()
+        self.assertEqual(code, 0, manifest.get('error'))
+        raw = subprocess.check_output(['git', 'diff', '--no-ext-diff', '--no-textconv',
+                                       manifest['agent_baseline'], '--'], cwd=manifest['checkout'])
+        self.assertIn(b'\xff', raw)
+        captured = (self.args.output / 'changes.patch').read_bytes()
+        self.assertEqual(captured, raw)
+        grade = self.root / 'capture-grade'
+        grade.mkdir()
+        (grade / 'changes.patch').write_bytes(captured)
+        (grade / 'status.txt').write_text(' M README.md\n')
+        (grade / 'ddtest-results.jsonl').write_text(json.dumps({'result': {'instruction': raw.decode(errors='replace')}}) + '\n')
+        self.assertEqual(trajectory_check.evaluate(grade)['status'], 'review')
 
     def test_failed_setup_diffs_against_the_fetched_commit(self):
         self.args.setup_command = [f"{shlex.quote(sys.executable)} -c 'import sys; sys.exit(7)'"]

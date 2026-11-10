@@ -43,7 +43,8 @@ esac
 `)
 			require.NoError(t, os.Chmod(command, 0755))
 			env := map[string]string{"CALLS": log, "MODE": mode, "PREPARED": root}
-			timeout := time.Second
+			// Allow fixture subprocess startup on loaded runners.
+			timeout := 10 * time.Second
 			if mode == "timeout" {
 				timeout = 300 * time.Millisecond
 			}
@@ -111,7 +112,7 @@ esac
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(filepath.Join(tools, "bin", "python"), data, 0755))
 	env := map[string]string{"ORIGINAL": original, "PREPARED": tools}
-	info, finding := pythonEnvironmentInfo(t.Context(), command, []string{"run", "python", "-I", "-m", "pytest"}, "Poetry", env, time.Second)
+	info, finding := pythonEnvironmentInfo(t.Context(), command, []string{"run", "python", "-I", "-m", "pytest"}, "Poetry", env, 10*time.Second)
 	require.Nil(t, finding)
 	require.Equal(t, "/prepared/bin/python", info.Executable)
 	for _, selected := range []string{"python3.10", filepath.Join(t.TempDir(), "python3.10")} {
@@ -122,7 +123,7 @@ esac
 		availability, err := json.Marshal(map[string]any{"executable": interpreter, "version": "3.10.16", "pytest": true})
 		require.NoError(t, err)
 		require.NoError(t, os.WriteFile(interpreter, []byte("#!/bin/sh\nfor last; do :; done\nprintf '%s' '"+string(availability)+"' > \"$last\"\n"), 0755))
-		info, finding := pythonEnvironmentInfo(t.Context(), command, []string{"run", selected, "-m", "pytest"}, "Poetry", env, time.Second)
+		info, finding := pythonEnvironmentInfo(t.Context(), command, []string{"run", selected, "-m", "pytest"}, "Poetry", env, 10*time.Second)
 		require.Nil(t, finding)
 		require.Equal(t, interpreter, info.Executable)
 	}

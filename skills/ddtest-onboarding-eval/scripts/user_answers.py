@@ -11,9 +11,9 @@ the script does not cover stops the trial, as without a script.
 import json
 import re
 
-KINDS = ("ci_runtime", "ci_confirm", "ci_provider")
+KINDS = ("ci_runtime", "ci_confirm", "ci_provider", "substitute_runtime")
 # The question codes a --user-answer form can answer.
-SCRIPTABLE_CODES = ("ci_provider_required", "ci_runtime_required", "ci_setup_confirmation_required")
+SCRIPTABLE_CODES = ("ci_provider_required", "ci_runtime_required", "ci_setup_confirmation_required", "substitute_runtime_unaccepted")
 _NAME = r"[a-z0-9][a-z0-9_-]*"
 # The versions ddtest's --ci-runtime takes (after an optional v): Node 22,
 # 22.11 or 22.11.0; Ruby 3.3 or 3.3.6, with a minor version.
@@ -54,6 +54,9 @@ def parse_answer(text):
         if not re.fullmatch(_NAME, fact) or valued and not stated.strip():
             raise ValueError(f"User answer {text!r} must be ci_confirm=<fact> or ci_confirm=<fact>=<value>")
         answer.update(fact=fact, value=stated.strip() or None)
+    elif kind == "substitute_runtime":
+        if value != "accept":
+            raise ValueError(f"User answer {text!r} must be substitute_runtime=accept")
     else:
         if not re.fullmatch(_NAME, value):
             raise ValueError(f"User answer {text!r} must be ci_provider=<provider>")
@@ -101,7 +104,10 @@ def tool_output_text(content):
 
 def question(result):
     """The user question a ddtest result asks, or None."""
-    if not isinstance(result, dict) or result.get("next_action") != "ask_user":
+    if not isinstance(result, dict):
+        return None
+    substitute = result.get("code") == "substitute_runtime_unaccepted" and result.get("status") == "needs_input"
+    if result.get("next_action") != "ask_user" and not substitute:
         return None
     required = result.get("required_input")
     instruction = result.get("agent_instruction") if isinstance(result.get("agent_instruction"), str) else ""
@@ -179,6 +185,12 @@ def reply(asked, answers):
             answered("ci_provider", chosen, f"CI provider: {chosen['provider']}.")
         else:
             missing.append("ci_provider:" + "|".join(required))
+    elif code == "substitute_runtime_unaccepted":
+        chosen = next((answer for answer in answers if answer["kind"] == "substitute_runtime"), None)
+        if chosen:
+            answered("substitute_runtime", chosen, "I accept validation on the compatible substitute runtime.")
+        else:
+            missing.append("substitute_runtime=accept")
     elif code in SCRIPTABLE_CODES[1:] and required:
         for item in required:
             kind, _, subject = item.partition(":")

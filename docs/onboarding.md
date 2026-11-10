@@ -1321,17 +1321,58 @@ to write instead (an edit-then-apply gap); native ESM Cucumber needs
 `NODE_OPTIONS` (or in every selected script), and `onboard --apply` stops with
 a setup gap before any edit until it is there.
 
-Java hand-written setups are validated as above; Python ones are recognized
-but not validated yet: the pytest CI check reads only the provider's setup.
+Java hand-written setups are validated as above; the pytest CI check also
+validates simple Python hand-written setups.
 Where no provider setup precedes the test command, ddtest recognizes:
 
 - Python: pytest runs with the ddtrace plugin enabled, through `--ddtrace` in
   the command, `PYTEST_ADDOPTS` (also as a prefix of the command) or the
   pytest configuration's `addopts`. ddtrace comes from an exact `pip install
   ddtrace==<release>` in the job, a requirements file the job installs (`-r`,
-  following its `-r`/`-c` includes), a lockfile (`uv.lock`, `poetry.lock`,
-  `pdm.lock`, `Pipfile.lock`), or the project's `pyproject.toml` or
-  `requirements.txt`.
+  following its `-r`/`-c` includes), or dependencies selected by an observed
+  project installation. Constraints alone and uninstalled declarations do not
+  prove that ddtrace is installed. Environment activation or deactivation
+  invalidates an earlier installation's evidence, as do `pyenv global` and
+  `pyenv local` selections (including `local --unset`); install the exact release
+  in the environment that runs pytest. `uv run --no-sync` and `poetry run` select
+  their own test environment, so an earlier default-environment installation
+  cannot certify their tracer, even when uv skips syncing. uv sync and
+  automatically syncing uv run remain inconclusive because a lockfile can
+  include unselected extras and groups. Conda and Mamba package mutations also
+  invalidate prior pins; an exact pip reinstall before pytest can establish fresh
+  evidence. Clearing a virtual environment with `--clear` also invalidates its
+  earlier installation; install an exact release again after clearing it. Pip
+  configuration writes that can redirect later installations, select other
+  dependencies or enable dry runs keep those installs unresolved, including
+  isolated pip, which still reads global and site files.
+  `PIP_CONFIG_FILE=/dev/null` disables those files for an explicit reinstall.
+  Read-only configuration queries and unrelated settings preserve evidence.
+  `uv pip sync` also invalidates prior installation evidence because it
+  can remove distributions absent from its input. `pip install` dry runs,
+  including `PIP_DRY_RUN`, do not install a tracer, and alternate installation
+  destinations remain unresolved. Explicit pip interpreter selectors, executable
+  paths and destination variables such as `PIP_TARGET` cannot certify the
+  default pytest environment. Pip's `--isolated` flag before or after `install`
+  ignores destination environment variables; a value named `--isolated` does
+  not act as that flag. A later flag does not undo `PIP_PYTHON` interpreter
+  selection, explicit destinations or configuration files. Explicit `PYENV_VERSION`, `PYTHONHOME`, or `PATH`
+  selection on pytest also remains unresolved: an earlier installation does not
+  establish that interpreter's packages. Supported `cross-env` and simple
+  `cross-env-shell` wrappers retain their environment settings when tracking
+  installs, uninstalls and dry runs; unreadable wrappers invalidate earlier
+  evidence. An install under an unresolved CircleCI `when` or `unless` cannot
+  establish a pin for later unconditional pytest; an unconditional exact install
+  can establish it again. A later install without a tracer requirement
+  invalidates the earlier pin because transitive dependencies may replace it;
+  `--no-deps` or `PIP_NO_DEPS` excludes project dependencies and preserves earlier
+  evidence only when every direct requirement has a resolved package identity.
+  Unidentified wheels, archives and URLs invalidate an earlier pin even without
+  dependencies. Unquoted extras use the same Python command parser as discovery;
+  an unreadable setup command invalidates prior installation evidence. Installs
+  and uninstalls with `PIP_REQUIREMENT` remain unresolved, except when pip's
+  isolated mode ignores it; installation dry runs preserve the prior pin.
+  Each pytest invocation must also have valid reporting settings, including
+  command-local API key, site and agentless overrides.
 - Java: `-javaagent:` with a `dd-java-agent` JAR in `JAVA_TOOL_OPTIONS`,
   `MAVEN_OPTS` or `GRADLE_OPTS`, `-Dorg.gradle.jvmargs` or
   `gradle.properties`, with `DD_CIVISIBILITY_ENABLED=true` (or the matching
@@ -1347,13 +1388,10 @@ Where no provider setup precedes the test command, ddtest recognizes:
   `onboard --apply` leaves a stage with such a setup alone and refuses a plugin
   option that would reach it.
 
-For Python, ddtest checks the same rules as above and lists what each setup
-lacks, but never certifies such a setup and never replaces it with the
-provider's setup: onboarding and testdrive return `status: unsupported` with
-`code: ci_setup_unsupported`, naming each job, its setup and what it lacks,
-and tell the coding agent to keep the setup as it is and report the result.
-This applies on every provider without the shared workflow syntax, even where
-ddtest does not set up the language yet.
+For Python, ddtest checks the runtime, installed tracer release and reporting
+configuration on providers without the shared workflow syntax. It preserves
+hand-written setups and reports missing or unresolved evidence for each job;
+CI execution and dependency provisioning remain untested.
 
 The GitLab setup script, the CircleCI orb and the Buildkite snippet run the
 installer outside GitHub Actions, where it appends its preload to
