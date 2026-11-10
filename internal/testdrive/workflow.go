@@ -493,7 +493,7 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 	}
 	workflow.Checks = append(workflow.Checks, cleanup)
 	validation.Workflow = workflow
-	finalizeErr := finishValidation(io.Discard, t.repositoryRoot, validation)
+	finalizeErr := finishValidation(quietReportOutput{output}, t.repositoryRoot, validation)
 	validation, err = readCurrentOnboardingResult(t.repositoryRoot, started)
 	if err != nil {
 		return fail("blocked_environment", "report_invalid", fmt.Sprint(errors.Join(finalizeErr, err)), "Restore report access; preserve execution evidence.")

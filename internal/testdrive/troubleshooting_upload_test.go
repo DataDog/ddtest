@@ -246,6 +246,70 @@ func TestTroubleshootingExecutionResultConflictKeepsCurrentReport(t *testing.T) 
 	}
 }
 
+func TestTroubleshootingReceiptWriteFailureKeepsFinalReport(t *testing.T) {
+	for _, format := range []string{"agent", "json", "verbose"} {
+		t.Run(format, func(t *testing.T) {
+			t.Setenv("DO_NOT_TRACK", "")
+			t.Setenv("DDTEST_TELEMETRY_DISABLED", "")
+			t.Setenv("DD_INSTRUMENTATION_TELEMETRY_ENABLED", "true")
+			t.Setenv("TMPDIR", t.TempDir())
+			root := t.TempDir()
+			t.Chdir(root)
+			requireWriteFile(t, filepath.Join(root, "package.json"), `{"private":true}`)
+			drive := &Testdrive{repositoryRoot: root, framework: &framework.Vitest{}, language: "javascript",
+				tracerVersion: "6.20.1", projectTracer: "fixture", executor: workflowCheckExecutor{}, nodeVersion: currentNodeVersion}
+			drive.workflowRun = func(_ context.Context, out io.Writer) error {
+				report := completeValidationFixture("vitest")
+				report.Tracer = "dd-trace@6.20.1"
+				report.Runs[1].TestCounts.Passed, report.Runs[1].TestEventCount = 7, 7
+				report.Runs[1].Command = "PRIVATE_COMMAND"
+				report.Features[0].Reason = "PRIVATE_REASON"
+				require.NoError(t, finishValidation(out, root, report))
+				// Finalization can write the report, but cannot replace this
+				// nonempty directory with its private completion receipt.
+				path, err := checkpointPath(receiptID(root))
+				require.NoError(t, err)
+				require.NoError(t, os.Mkdir(path, 0o700))
+				requireWriteFile(t, filepath.Join(path, "PRIVATE_RECEIPT"), "preserve")
+				return nil
+			}
+			payloads := make(chan []byte, 1)
+			output := &troubleshootingOutput{Attempt: usagetelemetry.Start("testdrive", "validation", usagetelemetry.Config{
+				Version: "1.2.3", ClientToken: "dummy", IntakeSite: "datadoghq.com", Transport: troubleshootingTransport{payloads: payloads}, Context: t.Context(),
+			})}
+			t.Cleanup(func() { output.Finish(1, false) })
+			require.ErrorContains(t, drive.Workflow(t.Context(), output, WorkflowOptions{Format: format}), "report_write_failed")
+			report := readValidationReport(t, root)
+			require.Equal(t, "COMPLETE LOCALLY", report.Summary.Status)
+			require.NotNil(t, report.Workflow, "the final coordinated report was written")
+			require.Error(t, verifyWorkflowReceipt(root, report), "the failed receipt must not certify completion")
+			if format != "verbose" {
+				var result onboard.AgentResult
+				decoder := json.NewDecoder(bytes.NewReader(output.Bytes()))
+				require.NoError(t, decoder.Decode(&result), "final report text must remain suppressed")
+				require.ErrorIs(t, decoder.Decode(new(any)), io.EOF)
+				require.Equal(t, "blocked_environment", result.Status)
+				require.Equal(t, "report_write_failed", result.Code)
+			}
+			require.Empty(t, payloads, "diagnostics are sent only when the command finishes")
+			output.Finish(1, false)
+			require.Len(t, payloads, 1)
+			data := string(<-payloads)
+			require.Contains(t, data, `"outcome": "blocked"`)
+			require.Contains(t, data, `"code": "report_write_failed"`)
+			require.Contains(t, data, `"report_status": "included"`)
+			require.Contains(t, data, `"framework": "vitest"`)
+			require.Contains(t, data, `"tracer_version": "6.20.1"`)
+			require.Contains(t, data, `"name": "auto-retries"`)
+			require.Contains(t, data, `"role": "reporting-only"`)
+			require.Contains(t, data, `"passed": 7`)
+			require.Contains(t, data, `"test_event_count": 7`)
+			require.NotContains(t, data, "PRIVATE_")
+			require.NotContains(t, data, root)
+		})
+	}
+}
+
 func TestTroubleshootingStandaloneFocusedFailureUsesCurrentReport(t *testing.T) {
 	t.Setenv("DO_NOT_TRACK", "")
 	t.Setenv("DDTEST_TELEMETRY_DISABLED", "")
