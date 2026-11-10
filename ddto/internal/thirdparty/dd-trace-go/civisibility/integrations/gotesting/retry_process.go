@@ -2504,6 +2504,12 @@ func finishProcessRetryTestEvent(
 			test.SetTag(constants.TestUnskippable, "true")
 			telemetry.ITRUnskippable(telemetry.TestEventType)
 		}
+		if source.NoAutoRetry {
+			test.SetTag(constants.TestNoAutoRetry, "true")
+		}
+		if source.PreventFailureSuppression {
+			test.SetTag(constants.TestPreventFailureSuppression, "true")
+		}
 	}
 	execMeta.test = test
 	coverage.SubmitProcessTestCoverage(session.SessionID(), suite.SuiteID(), test.TestID(), attempt.Result.Coverage)

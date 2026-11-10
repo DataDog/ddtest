@@ -10,7 +10,7 @@ import (
 // The fixture's counter files record how many times each test body ran, so
 // retries and suppression are observed in the process, not only in events.
 const declarationExclusionsFixture = `package fixture_test
-import("os";"path/filepath";"testing";"github.com/stretchr/testify/suite")
+import("fmt";"os";"path/filepath";"testing";"github.com/stretchr/testify/suite")
 func count(t *testing.T,name string)int{
  path:=filepath.Join(os.Getenv("EXCLUSION_COUNTER"),name)
  f,err:=os.OpenFile(path,os.O_CREATE|os.O_APPEND|os.O_WRONLY,0600);if err!=nil{t.Fatal(err)}
@@ -40,6 +40,13 @@ type ProtectedSuite struct{suite.Suite}
 func (s *ProtectedSuite) TestProtectedMethod(){count(s.T(),"protected-method");s.T().Error("protected method failure")}
 func (s *ProtectedSuite) TestSuppressedMethod(){count(s.T(),"suppressed-method");s.T().Error("suppressed method failure")}
 func TestProtectedSuite(t *testing.T){suite.Run(t,new(ProtectedSuite))}
+//dd:test.prevent_failure_suppression
+func FuzzProtected(f *testing.F){f.Add(1);f.Fuzz(func(t *testing.T,v int){count(t,"fuzz");t.Error("protected fuzz failure")})}
+//dd:test.prevent_failure_suppression
+func Example_protected(){
+ fmt.Println("actual")
+ // Output: expected
+}
 `
 
 // //dd:test.no_auto_retry and //dd:test.prevent_failure_suppression are read
@@ -67,9 +74,11 @@ func TestMiniDeclarationExclusions(t *testing.T) {
 		policy   policySettings
 		env      []string
 		wantExit int
-		// counts maps a counter to the number of body executions.
+		// counts maps a counter to the number of body executions; "" means none.
 		counts map[string]string
 		check  func(t *testing.T, events map[string][]map[string]any)
+		// verify replaces the wantExit check when the outcome depends on the mode.
+		verify func(t *testing.T, counters string, exit int)
 	}{
 		{
 			name: "auto-retry", run: "^Test(NoRetry|OrdinaryRetry|ExclusionSuite|Rows)$", policy: policySettings{Retry: true}, env: retry, wantExit: 1,
@@ -131,19 +140,50 @@ func TestMiniDeclarationExclusions(t *testing.T) {
 				requireSingleEvent(t, events, "TestProtectedSuite/TestSuppressedMethod", map[string]any{"test.test_management.is_quarantined": "true"})
 			},
 		},
+		{
+			// A disabled no_auto_retry method does not run in the first execution,
+			// so it does not stop its suite's retries. (A process-mode retry child
+			// runs Testify methods without Test Management, so it may run there.)
+			name: "disabled-noretry-method", run: "^TestExclusionSuite$", policy: policySettings{Disabled: true, Retry: true, ManagementTarget: "TestExclusionSuite/TestOnce", ManagementSuite: "exclusions_test.go/ExclusionSuite"}, env: retry, wantExit: 0,
+			counts: map[string]string{"method-flaky": "xx"},
+			verify: requireAtMostOneExecution("method-once", 0),
+		},
+		{
+			// Race isolation runs a quarantined Testify method in a child; the
+			// method must still run at most once, whichever attempt runs it.
+			name: "quarantined-noretry-method", run: "^TestExclusionSuite$", policy: policySettings{Quarantined: true, Retry: true, ManagementTarget: "TestExclusionSuite/TestOnce", ManagementSuite: "exclusions_test.go/ExclusionSuite"}, env: retry, wantExit: -1,
+			verify: requireAtMostOneExecution("method-once", -1),
+		},
+		{
+			// Race isolation rebuilds the suite's events in the parent.
+			name: "quarantined-suite-tags", run: "^TestExclusionSuite$", policy: policySettings{Quarantined: true, ManagementTarget: "TestExclusionSuite", ManagementSuite: "exclusions_test.go"}, wantExit: 0,
+			check: func(t *testing.T, events map[string][]map[string]any) {
+				requireSingleEvent(t, events, "TestExclusionSuite/TestOnce", map[string]any{"test.test_management.no_auto_retry": "true"})
+			},
+		},
+		{
+			name: "disabled-protected-fuzz", run: "^FuzzProtected$", policy: policySettings{Disabled: true, ManagementTarget: "FuzzProtected", ManagementSuite: "exclusions_test.go"}, wantExit: 1,
+			counts: map[string]string{"fuzz": "x"},
+		},
+		{
+			// A disabled example replays its declared output; a protected one runs.
+			name: "disabled-protected-example", run: "^Example_protected$", policy: policySettings{Disabled: true, ManagementTarget: "Example_protected", ManagementSuite: "exclusions_test.go"}, wantExit: 1,
+		},
 	} {
 		for _, mode := range []string{"in_process", "process"} {
 			t.Run(tc.name+"/"+mode, func(t *testing.T) {
 				counters := t.TempDir()
 				env := append([]string{"EXCLUSION_COUNTER=" + counters, "DD_CIVISIBILITY_RETRY_EXECUTION_MODE=" + mode}, tc.env...)
 				receiver, got := runParityCase(t, dir, bin, parityCase{Args: []string{"-test.v", "-test.run=" + tc.run}, Policy: tc.policy, Env: env})
-				if got.code != tc.wantExit {
+				if tc.verify != nil {
+					tc.verify(t, counters, got.code)
+				}
+				if tc.wantExit >= 0 && got.code != tc.wantExit {
 					t.Fatalf("exit %d, want %d: %s %s", got.code, tc.wantExit, got.out, got.stderr)
 				}
 				for name, want := range tc.counts {
-					data, err := os.ReadFile(filepath.Join(counters, name))
-					if err != nil || string(data) != want {
-						t.Fatalf("%s executions=%q want=%q err=%v\nout: %s", name, data, want, err, got.out)
+					if ran := executions(t, counters, name); ran != want {
+						t.Fatalf("%s executions=%q want=%q\nout: %s", name, ran, want, got.out)
 					}
 				}
 				events := map[string][]map[string]any{}
@@ -155,10 +195,39 @@ func TestMiniDeclarationExclusions(t *testing.T) {
 					name, _ := meta["test.name"].(string)
 					events[name] = append(events[name], meta)
 				}
-				tc.check(t, events)
+				if tc.check != nil {
+					tc.check(t, events)
+				}
 			})
 		}
 	}
+}
+
+// requireAtMostOneExecution requires that a no_auto_retry body ran at most
+// once and that the exit matches the flaky sibling's outcome: it fails unless
+// a retry recovered it. wantExit -1 derives the exit from the sibling alone.
+func requireAtMostOneExecution(counter string, wantExit int) func(*testing.T, string, int) {
+	return func(t *testing.T, counters string, exit int) {
+		t.Helper()
+		once, flaky := executions(t, counters, counter), executions(t, counters, "method-flaky")
+		recovered := flaky == "xx"
+		if len(once) > 1 || flaky != "x" && !recovered || recovered != (exit == 0) || wantExit >= 0 && exit != wantExit {
+			t.Fatalf("%s=%q method-flaky=%q exit=%d", counter, once, flaky, exit)
+		}
+	}
+}
+
+// executions returns the counter file's content, one "x" per body execution.
+func executions(t *testing.T, counters, name string) string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(counters, name))
+	if os.IsNotExist(err) {
+		return ""
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
 }
 
 // requireSingleEvent requires one event for name whose tags match want; a nil

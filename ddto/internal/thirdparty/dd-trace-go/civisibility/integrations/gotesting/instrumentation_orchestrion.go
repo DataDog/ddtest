@@ -298,9 +298,6 @@ func instrumentTestingTFuncWithSourceOptions(
 				defer deleteTestMetadata(currentT)
 			}
 			execMeta.identity = localIdentity
-			if noAutoRetry {
-				markNoAutoRetryAncestors(currentT)
-			}
 			if drainNativeLifecycle && parentExecMeta != nil {
 				execMeta.fuzzEvents = parentExecMeta.fuzzEvents
 			}
@@ -429,6 +426,9 @@ func instrumentTestingTFuncWithSourceOptions(
 				}
 			}()
 
+			if noAutoRetry && !execMeta.suppressUserTestBody {
+				markNoAutoRetryAncestors(currentT) // only a test that runs can be run again
+			}
 			if !execMeta.suppressUserTestBody {
 				bindNativeTestContext(currentT, test)
 				f(currentT)

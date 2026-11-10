@@ -297,7 +297,8 @@ func TestCritical(t *testing.T) {
   own assignment: a quarantined or disabled parent, such as a whole Testify
   suite, still suppresses it.
 
-Both work on test functions, Testify methods and named subtest callbacks.
+Both work on test functions, Testify methods, named subtest callbacks, fuzz
+targets and examples.
 Test events carry `test.test_management.no_auto_retry` and
 `test.test_management.prevent_failure_suppression` when their declaration has
 the comment, and report the Test Management state that actually applied. As with

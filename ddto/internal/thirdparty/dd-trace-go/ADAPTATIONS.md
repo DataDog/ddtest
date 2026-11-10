@@ -3059,10 +3059,14 @@ parses and caches; `TestFuncExclusions` returns them and `SetTestFunc` tags
 the event (`constants/test_tags.go`). In `gotesting`,
 `applyDeclarationExclusions` clears the test's own quarantine and disable
 state for prevent_failure_suppression, and its EFD, flaky retries and
-attempt-to-fix for no_auto_retry, before the feature path is selected. A
+attempt-to-fix for no_auto_retry, before the feature path is selected; fuzz
+roots and examples apply them to their one-shot Test Management metadata. A
 no_auto_retry subtest, such as a Testify method (`commonInfo.declarationFunc`),
-marks every enclosing execution, and `retry_attempt_integration.go` then admits
-no further attempt of that family. The first execution always runs in the
+marks every enclosing execution when its body runs, including through race
+isolation of a quarantined test, and `retry_attempt_integration.go` then admits
+no further attempt of that family. `processRetryTestSource` carries both
+comments, as it carries unskippable, so events rebuilt from a child keep
+their tags. The first execution always runs in the
 parent, so this holds in process mode; a no_auto_retry test that first runs in
 a process retry attempt cannot stop the attempts already scheduled. Checks:
 `TestTestFuncExclusionsReadDeclarationComments` and
