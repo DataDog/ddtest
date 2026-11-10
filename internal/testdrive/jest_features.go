@@ -288,6 +288,7 @@ func runProbeFeatures(run func(string, intake.Scenario, string) (validationRun, 
 	if err != nil {
 		return err
 	}
+	passControl, failControl = probeCheckRun(passControl), probeCheckRun(failControl)
 	if reason := cmp.Or(passControl.Timeout, failControl.Timeout); reason != "" {
 		unavailableFeatures(result, reason+".")
 		return nil
@@ -325,7 +326,7 @@ func runProbeFeatures(run func(string, intake.Scenario, string) (validationRun, 
 		if err != nil {
 			return err
 		}
-		result.Features = append(result.Features, withTracerLimitation(result, evaluateFeature(feature, value, identity)))
+		result.Features = append(result.Features, withTracerLimitation(result, evaluateFeature(feature, probeCheckRun(value), identity)))
 	}
 	return nil
 }

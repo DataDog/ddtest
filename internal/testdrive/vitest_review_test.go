@@ -338,6 +338,7 @@ func (e *vitestRegressionExecutor) CombinedOutput(_ context.Context, _ string, a
 			data, err := json.Marshal(map[string]any{"testResults": []any{map[string]any{"name": e.file, "assertionResults": []any{map[string]any{"fullName": "existing failure", "status": "failed", "failureMessages": []string{"old failure"}}}}}})
 			require.NoError(e.t, err)
 			requireWriteFile(e.t, path, string(data))
+			writeVitestIdentityFixture(e.t, path)
 		}
 	}
 	if env["DD_CIVISIBILITY_ENABLED"] == "false" {

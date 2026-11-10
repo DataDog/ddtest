@@ -82,7 +82,7 @@ func (t *Testdrive) vitestRunnerArgs(directory, preload, probe string, instrumen
 	validation := map[string]string{"directory": directory}
 	if probe != "" {
 		files = []string{probe}
-		validation["probe"] = "^" + probeName + "$"
+		validation["probe"] = t.vitestProbeNamePattern()
 	}
 	encoded, err := json.Marshal(validation)
 	if err != nil {
@@ -211,7 +211,7 @@ func collectVitestWorkerResults(directory, root string, run *validationRun) erro
 		if !slices.Equal(assignment.Selected, reported) {
 			return fmt.Errorf("native results do not match the worker's selected files")
 		}
-		readRunnerResults(resultPath, "Vitest", run)
+		readVitestResults(resultPath, run)
 		if run.ResultError != "" {
 			return fmt.Errorf("%s", run.ResultError)
 		}
