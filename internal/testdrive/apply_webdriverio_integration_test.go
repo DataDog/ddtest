@@ -54,14 +54,14 @@ func TestPublicWebdriverIOApply(t *testing.T) {
 		require.NoError(t, os.MkdirAll(filepath.Dir(filepath.Join(root, name)), 0700))
 		requireWriteFile(t, filepath.Join(root, name), value)
 	}
-	write("package.json", `{"private":true,"scripts":{"test":"npm run browser-tests","browser-tests":"wdio run wdio.conf.cjs"},"devDependencies":{"@wdio/cli":"9.20.0","@wdio/local-runner":"9.20.0","@wdio/mocha-framework":"9.20.0","dd-trace":"6.20.1"}}`)
+	write("package.json", `{"private":true,"scripts":{"test":"npm run browser-tests","browser-tests":"wdio run wdio.conf.cjs"},"devDependencies":{"@wdio/cli":"9.33.1","@wdio/local-runner":"9.33.1","@wdio/mocha-framework":"9.33.1","dd-trace":"6.20.1"}}`)
 	write("wdio.conf.cjs", `exports.config={
  runner: 'local',
  framework:'mocha',specs:['./test/*.js'],maxInstances:1,reporters:[],capabilities:[{browserName:'chrome','goog:chromeOptions':{binary:process.env.DDTEST_CHROME_BINARY,args:['--headless=new','--no-sandbox','--disable-dev-shm-usage']},...(process.env.DDTEST_CHROMEDRIVER_BINARY?{'wdio:chromedriverOptions':{binary:process.env.DDTEST_CHROMEDRIVER_BINARY}}:{})}]
 };`)
 	write("test/one.js", `describe('browser',()=>it('renders',async()=>{await browser.url('data:text/html,<h1>hello</h1>');if(await $('h1').getText()!=='hello')throw Error('heading')}))`)
 	write(".gitignore", "node_modules/\n")
-	write(".github/workflows/test.yml", "name: CI\non: [push, pull_request]\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/setup-node@v4\n        with: {node-version: '24.14.1'}\n      - run: npm test\n")
+	write(".github/workflows/test.yml", "name: CI\non: [push, pull_request]\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/setup-node@v4\n        with: {node-version: '24.22.2'}\n      - run: npm test\n")
 	output, err = command(root, "git", "init", "-q")
 	require.NoError(t, err, string(output))
 	output, err = command(root, binary, "onboard", "--framework", "webdriverio", "--apply", "--yes", "--allow-dirty")
