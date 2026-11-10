@@ -21,6 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.dd_plan.outputs.matrix }}
+      has_tests: ${{ steps.dd_plan.outputs.has_tests }}
     steps:
       - uses: actions/checkout@v4
       - name: Download ddtest binary
@@ -53,6 +54,7 @@ jobs:
   dd_test:
     runs-on: ubuntu-latest
     needs: [dd_plan]
+    if: ${{ needs.dd_plan.outputs.has_tests == 'true' }}
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.dd_plan.outputs.matrix) }}
@@ -91,8 +93,14 @@ that looks like:
 matrix={"include":[{"ci_node_index":0,"ci_node_total":3},{"ci_node_index":1,"ci_node_total":3},{"ci_node_index":2,"ci_node_total":3}]}
 ```
 
-In GitHub Actions, `ddtest plan` also writes this matrix to `$GITHUB_OUTPUT`, so
-the plan step can expose it directly as `steps.dd_plan.outputs.matrix`.
+DDTest appends `matrix` and `has_tests` to `$GITHUB_OUTPUT`. Expose both as job
+outputs and use the job-level `if` shown above. GitHub checks it before matrix
+expansion, skipping worker allocation when `has_tests` is `'false'`. See
+[GitHub's job conditions](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idif).
+
+Runner counts remain positive for compatibility, so existing workflows must add
+this condition. Planning still runs, and planning or output-write failures fail
+the job.
 
 ## Python / Pytest Variant
 

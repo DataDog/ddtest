@@ -246,19 +246,22 @@ func (tp *TestPlanner) Plan(ctx context.Context) error {
 		return errcode.WithCode(errcode.PlanParallelRunnersWriteFailed, fmt.Errorf("failed to write parallel runners: %w", err))
 	}
 
+	if err := tp.CreateTestSplits(tp.testFileWeights, parallelRunners, constants.TestFilesOutputPath); err != nil {
+		return errcode.WithCode(errcode.PlanTestSplitsWriteFailed, fmt.Errorf("failed to create test splits: %w", err))
+	}
+
 	if ciProvider, err := tp.ciProviderDetector.DetectCIProvider(); err == nil {
 		slog.Debug("CI provider detected, configuring with parallel runners",
 			"provider", ciProvider.Name(), "parallelRunners", parallelRunners)
 
-		if err := ciProvider.Configure(parallelRunners); err != nil {
-			slog.Warn("Failed to configure CI provider", "provider", ciProvider.Name(), "error", err)
+		if err := ciProvider.Configure(environment.CIPlan{
+			ParallelRunners: parallelRunners,
+			HasTests:        len(tp.testFileWeights) > 0,
+		}); err != nil {
+			return errcode.WithCode(errcode.PlanMetadataWriteFailed, fmt.Errorf("failed to configure CI provider %s: %w", ciProvider.Name(), err))
 		}
 	} else {
 		slog.Info("No CI provider detected, running tests without CI integration", "error", err)
-	}
-
-	if err := tp.CreateTestSplits(tp.testFileWeights, parallelRunners, constants.TestFilesOutputPath); err != nil {
-		return errcode.WithCode(errcode.PlanTestSplitsWriteFailed, fmt.Errorf("failed to create test splits: %w", err))
 	}
 
 	if settings.GetReportEnabled() {

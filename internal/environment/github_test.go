@@ -57,7 +57,7 @@ func TestGitHub_Configure(t *testing.T) {
 			// Clean up before each test
 			_ = os.RemoveAll(constants.PlanDirectory)
 
-			err := g.Configure(tt.parallelRunners)
+			err := g.Configure(CIPlan{ParallelRunners: tt.parallelRunners, HasTests: true})
 			if (err != nil) != tt.wantErr {
 				t.Errorf("GitHub.Configure() error = %v, wantErr %v", err, tt.wantErr)
 				return
@@ -119,7 +119,7 @@ func TestGitHub_ConfigureJSONFormat(t *testing.T) {
 	_ = os.RemoveAll(constants.PlanDirectory)
 	defer func() { _ = os.RemoveAll(constants.PlanDirectory) }()
 
-	err := g.Configure(2)
+	err := g.Configure(CIPlan{ParallelRunners: 2, HasTests: true})
 	if err != nil {
 		t.Fatalf("Configure() failed: %v", err)
 	}
@@ -153,7 +153,7 @@ func TestGitHub_ConfigureWritesGitHubOutput(t *testing.T) {
 	}
 	t.Setenv(githubOutputEnvVar, outputFile.Name())
 
-	err = g.Configure(2)
+	err = g.Configure(CIPlan{ParallelRunners: 2, HasTests: true})
 	if err != nil {
 		t.Fatalf("Configure() failed: %v", err)
 	}
@@ -163,7 +163,7 @@ func TestGitHub_ConfigureWritesGitHubOutput(t *testing.T) {
 		t.Fatalf("failed to read GitHub output file: %v", err)
 	}
 
-	expectedContent := "matrix={\"include\":[{\"ci_node_index\":0,\"ci_node_total\":2},{\"ci_node_index\":1,\"ci_node_total\":2}]}\n"
+	expectedContent := "matrix={\"include\":[{\"ci_node_index\":0,\"ci_node_total\":2},{\"ci_node_index\":1,\"ci_node_total\":2}]}\nhas_tests=true\n"
 	if string(data) != expectedContent {
 		t.Errorf("Expected GitHub output:\n%s\nGot content:\n%s", expectedContent, string(data))
 	}

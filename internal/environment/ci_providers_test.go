@@ -108,13 +108,14 @@ func TestCIProviderConfigure(t *testing.T) {
 	t.Setenv(githubOutputEnvVar, "")
 
 	provider := NewGitHub()
-	err := provider.Configure(4) // Test with 4 parallel runners
+	err := provider.Configure(CIPlan{ParallelRunners: 4, HasTests: true}) // Test with 4 parallel runners
 	if err != nil {
 		t.Errorf("Expected Configure(4) to return nil, got %v", err)
 	}
 }
 
 func TestDetectCIProvider_NonGitHubProvidersAreConfigurable(t *testing.T) {
+	t.Chdir(t.TempDir())
 	providerNames := []string{
 		"appveyor",
 		"azurepipelines",
@@ -146,7 +147,7 @@ func TestDetectCIProvider_NonGitHubProvidersAreConfigurable(t *testing.T) {
 				t.Errorf("Expected provider name %q, got %q", providerName, provider.Name())
 			}
 
-			if err := provider.Configure(4); err != nil {
+			if err := provider.Configure(CIPlan{ParallelRunners: 4, HasTests: true}); err != nil {
 				t.Errorf("Expected Configure(4) to succeed for %q, got %v", providerName, err)
 			}
 		})
