@@ -34,6 +34,8 @@ that run's CLI, add it to `PATH` and set `DDTEST_TEST_BINARY` to its absolute pa
 Their Go tests run through `ddtest instrument`, with session names identifying
 the job, runtime versions and shards. A configured Datadog API key enables
 agentless reporting; without one, the same commands run with reporting disabled.
+Only reporting setup and instrumented Go test steps receive the API key;
+dependency installation runs in separate steps without it.
 Child framework fixtures retain their own tracing and local intake settings.
 The outer Go tracer infers its service from the repository; exporting
 `DD_SERVICE` would also change the module identity of child ScalaTest fixtures.

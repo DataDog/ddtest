@@ -252,8 +252,6 @@ jobs:
           - rspec: "3.13.2"
             datadog_ci: "1.37.0"
 
-    env:
-      DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -267,14 +265,20 @@ jobs:
         with:
           ruby-version: "3.4"
 
+      - name: Install RSpec compatibility dependencies
+        run: |
+          gem install datadog-ci --version "${{ matrix.datadog_ci }}" --no-document
+          gem install rspec --version "${{ matrix.rspec }}" --no-document
       - name: Set up Test Optimization
+        env:
+          DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
         uses: ./.github/actions/setup-test-optimization
         with:
           session-name: rspec-compatibility (RSpec ${{ matrix.rspec }}, tracer ${{ matrix.datadog_ci }})
       - name: Test RSpec adapter
+        env:
+          DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
         run: |
-          gem install datadog-ci --version "${{ matrix.datadog_ci }}" --no-document
-          gem install rspec --version "${{ matrix.rspec }}" --no-document
           DDTEST_RSPEC_VERSION="${{ matrix.rspec }}" \
             DDTEST_DATADOG_CI_VERSION="${{ matrix.datadog_ci }}" \
             ddtest instrument go test -v ./internal/compatibility -run '^TestRSpecAdapterIntegration$'
@@ -293,8 +297,6 @@ jobs:
           - minitest: "6.0.6"
             datadog_ci: "1.37.0"
 
-    env:
-      DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -308,15 +310,21 @@ jobs:
         with:
           ruby-version: "3.4"
 
-      - name: Set up Test Optimization
-        uses: ./.github/actions/setup-test-optimization
-        with:
-          session-name: minitest-compatibility (Minitest ${{ matrix.minitest }}, tracer ${{ matrix.datadog_ci }})
-      - name: Test Minitest adapter
+      - name: Install Minitest compatibility dependencies
         run: |
           gem install datadog-ci --version "${{ matrix.datadog_ci }}" --no-document
           gem install minitest --version "${{ matrix.minitest }}" --no-document
           gem install rake --version "13.2.1" --no-document
+      - name: Set up Test Optimization
+        env:
+          DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
+        uses: ./.github/actions/setup-test-optimization
+        with:
+          session-name: minitest-compatibility (Minitest ${{ matrix.minitest }}, tracer ${{ matrix.datadog_ci }})
+      - name: Test Minitest adapter
+        env:
+          DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
+        run: |
           DDTEST_MINITEST_VERSION="${{ matrix.minitest }}" \
             DDTEST_DATADOG_CI_VERSION="${{ matrix.datadog_ci }}" \
             ddtest instrument go test -v ./internal/compatibility -run '^TestMinitestAdapterIntegration$'
@@ -333,8 +341,6 @@ jobs:
           - pytest: "9.1.1"
             ddtrace: "4.14.0"
 
-    env:
-      DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -348,13 +354,19 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Install pytest compatibility dependencies
+        run: |
+          python -m pip install "ddtrace==${{ matrix.ddtrace }}" "pytest==${{ matrix.pytest }}" pytest-cov pytest-xdist
       - name: Set up Test Optimization
+        env:
+          DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
         uses: ./.github/actions/setup-test-optimization
         with:
           session-name: pytest-compatibility (pytest ${{ matrix.pytest }}, tracer ${{ matrix.ddtrace }})
       - name: Test pytest adapter
+        env:
+          DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
         run: |
-          python -m pip install "ddtrace==${{ matrix.ddtrace }}" "pytest==${{ matrix.pytest }}" pytest-cov pytest-xdist
           DDTEST_PYTHON_BINARY="$(command -v python)" \
             ddtest instrument go test -v ./internal/compatibility -run '^TestPyTest(AdapterIntegration|SuiteModeSelectorBatches)$'
           DDTEST_PYTHON_PLATFORM_INTEGRATION=1 \
@@ -370,8 +382,6 @@ jobs:
       matrix:
         dd_trace: ["5.111.0", "6.15.0"]
 
-    env:
-      DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -385,14 +395,21 @@ jobs:
         with:
           node-version: "22"
 
+      - name: Install the JavaScript tracer fixture
+        run: |
+          dd_trace_dir="${RUNNER_TEMP}/dd-trace-${{ matrix.dd_trace }}"
+          npm install --prefix "${dd_trace_dir}" "dd-trace@${{ matrix.dd_trace }}"
       - name: Set up Test Optimization
+        env:
+          DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
         uses: ./.github/actions/setup-test-optimization
         with:
           session-name: javascript-platform-compatibility (tracer ${{ matrix.dd_trace }})
       - name: Test JavaScript platform
+        env:
+          DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
         run: |
           dd_trace_dir="${RUNNER_TEMP}/dd-trace-${{ matrix.dd_trace }}"
-          npm install --prefix "${dd_trace_dir}" "dd-trace@${{ matrix.dd_trace }}"
           DDTEST_DD_TRACE_NODE_MODULES="${dd_trace_dir}/node_modules" \
             ddtest instrument go test -v ./internal/compatibility -run '^TestJavaScript(Platform|ActionPreload)Integration$'
 
@@ -404,8 +421,6 @@ jobs:
       matrix:
         jest: ["27.5.1", "28.1.3", "29.4.3", "29.7.0", "30.5.1"]
 
-    env:
-      DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -419,14 +434,21 @@ jobs:
         with:
           node-version: "22"
 
+      - name: Install the Jest compatibility fixture
+        run: |
+          jest_dir="${RUNNER_TEMP}/jest-${{ matrix.jest }}"
+          npm install --prefix "${jest_dir}" "jest@${{ matrix.jest }}" dd-trace@5.86.0
       - name: Set up Test Optimization
+        env:
+          DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
         uses: ./.github/actions/setup-test-optimization
         with:
           session-name: jest-compatibility (Jest ${{ matrix.jest }})
       - name: Test Jest adapter
+        env:
+          DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
         run: |
           jest_dir="${RUNNER_TEMP}/jest-${{ matrix.jest }}"
-          npm install --prefix "${jest_dir}" "jest@${{ matrix.jest }}" dd-trace@5.86.0
           DDTEST_JEST_NODE_MODULES="${jest_dir}/node_modules" \
             ddtest instrument go test -v ./internal/compatibility -run '^TestJest(Adapter|Testdrive)Integration$'
           DDTEST_JEST_NODE_MODULES="${jest_dir}/node_modules" \
@@ -440,8 +462,6 @@ jobs:
       matrix:
         vitest: ["1.6.1", "2.1.9", "3.2.7", "4.1.11", "5.0.5"]
 
-    env:
-      DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -455,16 +475,23 @@ jobs:
         with:
           node-version: "22"
 
-      - name: Set up Test Optimization
-        uses: ./.github/actions/setup-test-optimization
-        with:
-          session-name: vitest-compatibility (Vitest ${{ matrix.vitest }})
-      - name: Test Vitest adapter
+      - name: Install the Vitest compatibility fixture
         run: |
           vitest_dir="${RUNNER_TEMP}/vitest-${{ matrix.vitest }}"
           # npm 10.9.8 crashes while resolving Vitest's peer dependencies.
           # Keep peer resolution enabled: Vitest 5 requires Vite as a peer.
           npx --yes npm@11.11.1 install --prefix "${vitest_dir}" "vitest@${{ matrix.vitest }}" "@vitest/coverage-v8@${{ matrix.vitest }}" "dd-trace@5.132.0"
+      - name: Set up Test Optimization
+        env:
+          DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
+        uses: ./.github/actions/setup-test-optimization
+        with:
+          session-name: vitest-compatibility (Vitest ${{ matrix.vitest }})
+      - name: Test Vitest adapter
+        env:
+          DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
+        run: |
+          vitest_dir="${RUNNER_TEMP}/vitest-${{ matrix.vitest }}"
           DDTEST_VITEST_NODE_MODULES="${vitest_dir}/node_modules" \
           DDTEST_DD_TRACE_NODE_MODULES="${vitest_dir}/node_modules" \
             ddtest instrument go test -v ./internal/compatibility -run '^TestVitest(Adapter|Tracing)Integration$'
@@ -479,8 +506,6 @@ jobs:
       matrix:
         mocha: ["8.4.0", "9.2.2", "10.8.2", "11.7.6", "12.0.0"]
 
-    env:
-      DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -494,14 +519,21 @@ jobs:
         with:
           node-version: "22"
 
+      - name: Install the Mocha compatibility fixture
+        run: |
+          mocha_dir="${RUNNER_TEMP}/mocha-${{ matrix.mocha }}"
+          npm install --prefix "${mocha_dir}" "mocha@${{ matrix.mocha }}"
       - name: Set up Test Optimization
+        env:
+          DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
         uses: ./.github/actions/setup-test-optimization
         with:
           session-name: mocha-compatibility (Mocha ${{ matrix.mocha }})
       - name: Test Mocha adapter
+        env:
+          DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
         run: |
           mocha_dir="${RUNNER_TEMP}/mocha-${{ matrix.mocha }}"
-          npm install --prefix "${mocha_dir}" "mocha@${{ matrix.mocha }}"
           DDTEST_MOCHA_NODE_MODULES="${mocha_dir}/node_modules" \
             ddtest instrument go test -v ./internal/compatibility -run '^TestMocha.*Integration$'
           DDTEST_MOCHA_NODE_MODULES="${mocha_dir}/node_modules" \
@@ -515,8 +547,6 @@ jobs:
       matrix:
         cypress: ["12.17.4", "13.17.0", "14.5.4", "15.21.1", "16.0.0"]
 
-    env:
-      DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -530,14 +560,21 @@ jobs:
         with:
           node-version: "22"
 
+      - name: Install the Cypress compatibility fixture
+        run: |
+          cypress_dir="${RUNNER_TEMP}/cypress-${{ matrix.cypress }}"
+          npm install --prefix "${cypress_dir}" "cypress@${{ matrix.cypress }}"
       - name: Set up Test Optimization
+        env:
+          DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
         uses: ./.github/actions/setup-test-optimization
         with:
           session-name: cypress-compatibility (Cypress ${{ matrix.cypress }})
       - name: Test Cypress adapter
+        env:
+          DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
         run: |
           cypress_dir="${RUNNER_TEMP}/cypress-${{ matrix.cypress }}"
-          npm install --prefix "${cypress_dir}" "cypress@${{ matrix.cypress }}"
           DDTEST_CYPRESS_BINARY="${cypress_dir}/node_modules/.bin/cypress" \
             DDTEST_CYPRESS_NODE_MODULES="${cypress_dir}/node_modules" \
             DDTEST_CYPRESS_XVFB="$(command -v xvfb-run)" \
@@ -551,8 +588,6 @@ jobs:
       matrix:
         playwright: ["1.18.0", "1.31.1", "1.38.0", "1.59.1", "1.60.0", "1.62.1", "1.63.0"]
 
-    env:
-      DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -566,16 +601,24 @@ jobs:
         with:
           node-version: "22"
 
+      - name: Install the Playwright compatibility fixture
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+        run: |
+          playwright_dir="${RUNNER_TEMP}/playwright-${{ matrix.playwright }}"
+          npm install --prefix "${playwright_dir}" "@playwright/test@${{ matrix.playwright }}"
       - name: Set up Test Optimization
+        env:
+          DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
         uses: ./.github/actions/setup-test-optimization
         with:
           session-name: playwright-compatibility (Playwright ${{ matrix.playwright }})
       - name: Test Playwright adapter
         env:
+          DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
           PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
         run: |
           playwright_dir="${RUNNER_TEMP}/playwright-${{ matrix.playwright }}"
-          npm install --prefix "${playwright_dir}" "@playwright/test@${{ matrix.playwright }}"
           DDTEST_PLAYWRIGHT_BINARY="${playwright_dir}/node_modules/.bin/playwright" \
             DDTEST_PLAYWRIGHT_NODE_MODULES="${playwright_dir}/node_modules" \
             ddtest instrument go test -v ./internal/compatibility -run '^TestPlaywrightAdapterIntegration$'
@@ -588,8 +631,6 @@ jobs:
       matrix:
         cucumber: ["7.0.0", "8.11.1", "9.6.0", "10.9.0", "11.3.0", "12.9.0", "13.2.1"]
 
-    env:
-      DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -603,14 +644,21 @@ jobs:
         with:
           node-version: "22"
 
+      - name: Install the Cucumber compatibility fixture
+        run: |
+          cucumber_dir="${RUNNER_TEMP}/cucumber-${{ matrix.cucumber }}"
+          npm install --prefix "${cucumber_dir}" "@cucumber/cucumber@${{ matrix.cucumber }}"
       - name: Set up Test Optimization
+        env:
+          DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
         uses: ./.github/actions/setup-test-optimization
         with:
           session-name: cucumber-compatibility (Cucumber ${{ matrix.cucumber }})
       - name: Test Cucumber adapter
+        env:
+          DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
         run: |
           cucumber_dir="${RUNNER_TEMP}/cucumber-${{ matrix.cucumber }}"
-          npm install --prefix "${cucumber_dir}" "@cucumber/cucumber@${{ matrix.cucumber }}"
           DDTEST_CUCUMBER_BINARY="${cucumber_dir}/node_modules/.bin/cucumber-js" \
             DDTEST_CUCUMBER_NODE_MODULES="${cucumber_dir}/node_modules" \
             DDTEST_CUCUMBER_VERSION="${{ matrix.cucumber }}" \
@@ -655,8 +703,6 @@ jobs:
           - {node: '20', jest: '29.7.0', tracer: '5.132.0', typescript: 'ts-jest@29 typescript@5 @types/jest@29', group: testdrive, shard: '2/2', tests: 'TestPublicJestTestdrive'}
           - {node: '20', jest: '29.7.0', tracer: '5.132.0', typescript: 'ts-jest@29 typescript@5 @types/jest@29', group: packages, shard: '1/1', tests: 'TestPublicJest(PackageConfiguration|ForwardedConfiguration)|TestPublicCoordinatorJestFactsAndFreshReport'}
           - {node: '20', jest: '29.7.0', tracer: '5.132.0', typescript: 'ts-jest@29 typescript@5 @types/jest@29', group: configurations, shard: '1/1', tests: 'TestPublicJest(Configurations|TwoPackageConfiguration|LoaderConfiguration)'}
-    env:
-      DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
@@ -671,11 +717,14 @@ jobs:
           directory: ${{ runner.temp }}/jest-testdrive
           dependencies: jest@${{ matrix.jest }} dd-trace@${{ matrix.tracer }} ${{ matrix.typescript }} typescript@5
       - name: Set up Test Optimization
+        env:
+          DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
         uses: ./.github/actions/setup-test-optimization
         with:
           session-name: jest-testdrive-workflow (Node ${{ matrix.node }}, Jest ${{ matrix.jest }}, tracer ${{ matrix.tracer }}, ${{ matrix.group }}, shard ${{ matrix.shard }})
       - name: Validate paired outcomes, all feature probes and cleanup
         env:
+          DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
           DDTEST_JEST_NODE_MODULES: ${{ runner.temp }}/jest-testdrive/node_modules
           DDTEST_TEST_SHARD: ${{ matrix.shard }}
         run: ddtest instrument go test -v ./internal/testdrive -run '^(${{ matrix.tests }})$' -count=1 -timeout=12m
@@ -683,18 +732,20 @@ jobs:
   windows-probe-diagnostics:
     needs: test-binary
     runs-on: windows-latest
-    env:
-      DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
         with:
           go-version-file: go.mod
       - name: Set up Test Optimization
+        env:
+          DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
         uses: ./.github/actions/setup-test-optimization
         with:
           session-name: windows-probe-diagnostics
       - name: Test Windows probe filesystem diagnostics
+        env:
+          DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
         run: ddtest instrument go test ./internal/testdrive -run '^(TestProbePublicationExplainsWindowsFilesystemErrors|TestReportsCanReplaceExistingDestinationTwice)$' -count=1
 
 
@@ -706,8 +757,6 @@ jobs:
       fail-fast: false
       matrix:
         framework: [pytest]
-    env:
-      DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
@@ -717,11 +766,14 @@ jobs:
         with:
           python-version: '3.12'
       - name: Set up Test Optimization
+        env:
+          DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
         uses: ./.github/actions/setup-test-optimization
         with:
           session-name: testdrive-language-workflow (${{ matrix.framework }})
       - name: Run Python testdrive
         env:
+          DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
           DDTEST_RUN_FRAMEWORK_INTEGRATION_TEST: '1'
           DDTEST_FRAMEWORK_REPORTS: ${{ runner.temp }}/ddtest-workflow-reports
         run: ddtest instrument go test -v ./internal/testdrive -run '^TestPublicPythonRubyTestdrives/${{ matrix.framework }}$' -count=1 -timeout=20m
@@ -751,8 +803,6 @@ jobs:
             minitest: "5.27.0"
             rake: "13.4.2"
           - name: latest
-    env:
-      DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
@@ -776,11 +826,14 @@ jobs:
           gem install activesupport --conservative --no-document
           gem list | grep -E '^(datadog-ci|rspec-core|minitest|rake|activesupport) '
       - name: Set up Test Optimization
+        env:
+          DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
         uses: ./.github/actions/setup-test-optimization
         with:
           session-name: ruby-testdrive (${{ matrix.name }})
       - name: Run Ruby testdrive integration tests
         env:
+          DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
           DDTEST_RUN_FRAMEWORK_INTEGRATION_TEST: '1'
           DDTEST_RUN_RUBY_INTEGRATION_TEST: '1'
           DDTEST_RUN_RUBY_FORK_INTEGRATION_TEST: '1'
@@ -816,8 +869,6 @@ jobs:
           - name: latest
             java: '21'
             tracer: latest
-    env:
-      DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
@@ -842,11 +893,14 @@ jobs:
         with:
           gradle-version: '8.10.2'
       - name: Set up Test Optimization
+        env:
+          DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
         uses: ./.github/actions/setup-test-optimization
         with:
           session-name: java-testdrive (${{ matrix.name }}, Java ${{ matrix.java }}, tracer ${{ matrix.tracer }}, shard ${{ matrix.shard }})
       - name: Run Java testdrive integration tests
         env:
+          DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
           DDTEST_RUN_JAVA_INTEGRATION_TEST: '1'
           DDTEST_JAVA_TRACER_VERSION: ${{ matrix.tracer }}
           DDTEST_FRAMEWORK_REPORTS: ${{ runner.temp }}/ddtest-workflow-reports
@@ -880,8 +934,6 @@ jobs:
             tracer: '6.21.0'
           - vitest: 'latest'
             tracer: '6.21.0'
-    env:
-      DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
@@ -896,11 +948,14 @@ jobs:
           echo "Vitest $version"
           echo "DDTEST_VITEST_VERSION=$version" >> "$GITHUB_ENV"
       - name: Set up Test Optimization
+        env:
+          DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
         uses: ./.github/actions/setup-test-optimization
         with:
           session-name: testdrive-vitest-workflow (Vitest ${{ matrix.vitest }}, tracer ${{ matrix.tracer }})
       - name: Validate Vitest CLI and Node API paths against local intake
         env:
+          DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
           DDTEST_RUN_FRAMEWORK_INTEGRATION_TEST: '1'
           DDTEST_VITEST_TRACER_VERSION: ${{ matrix.tracer }}
         run: ddtest instrument go test -v ./internal/testdrive -run '^TestPublicVitestRunnerTestdrive$' -count=1 -timeout=15m
@@ -909,8 +964,6 @@ jobs:
     needs: test-binary
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    env:
-      DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
@@ -919,18 +972,25 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24'
+      - name: Install actionlint
+        run: |
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
       - name: Set up Test Optimization
+        env:
+          DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
         uses: ./.github/actions/setup-test-optimization
         with:
           session-name: onboard-apply-workflow
       - name: Validate generated workflow edits with actionlint
+        env:
+          DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
         run: |
-          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
           DDTEST_ACTIONLINT="$(go env GOPATH)/bin/actionlint" ddtest instrument go test -v ./internal/onboard -run '^TestGeneratedSetupWorkflow.*Actionlint$' -count=1
       - name: Install apply fixture dependencies
         run: npm install --prefix "$RUNNER_TEMP/apply-testdrive" vitest@4.1.11 mocha@11.7.6 nyc@17.1.0 dd-trace@6.20.1 @cucumber/cucumber@12.2.0 @wdio/cli@9.20.0 @wdio/local-runner@9.20.0 @wdio/mocha-framework@9.20.0 --no-audit --no-fund
       - name: Apply setup and validate against local intake
         env:
+          DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
           DDTEST_MOCHA_NODE_MODULES: ${{ runner.temp }}/apply-testdrive/node_modules
           DDTEST_VITEST_NODE_MODULES: ${{ runner.temp }}/apply-testdrive/node_modules
           DDTEST_WEBDRIVERIO_NODE_MODULES: ${{ runner.temp }}/apply-testdrive/node_modules
@@ -947,8 +1007,6 @@ jobs:
       matrix:
         mocha: ['11.7.6', 'latest']
         shard: ['1/2', '2/2']
-    env:
-      DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
@@ -962,11 +1020,14 @@ jobs:
           npm install --prefix "$RUNNER_TEMP/mocha-testdrive" "mocha@${{ matrix.mocha }}" nyc@17.1.0 c8@12.0.0 dd-trace@6.21.0 --no-audit --no-fund
           npm ls --prefix "$RUNNER_TEMP/mocha-testdrive" --depth=0
       - name: Set up Test Optimization
+        env:
+          DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
         uses: ./.github/actions/setup-test-optimization
         with:
           session-name: testdrive-mocha-workflow (Mocha ${{ matrix.mocha }}, shard ${{ matrix.shard }})
       - name: Validate CLI, programmatic runner, existing failures and coverage gate
         env:
+          DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
           DDTEST_MOCHA_NODE_MODULES: ${{ runner.temp }}/mocha-testdrive/node_modules
           DDTEST_TEST_SHARD: ${{ matrix.shard }}
         run: ddtest instrument go test -v ./internal/testdrive -run '^(TestPublicMochaTestdrive|TestMochaProbeCoverageThresholdControls|TestMochaDelayedCommandUsesSharedTimeout|TestMochaPreflightResolvesSelectedPackage)$' -count=1 -timeout=10m
@@ -993,7 +1054,6 @@ jobs:
     container:
       image: mcr.microsoft.com/playwright:v${{ matrix.playwright == 'latest' && needs.playwright-latest.outputs.version || matrix.playwright }}-noble
     env:
-      DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
       PLAYWRIGHT_VERSION: ${{ matrix.playwright == 'latest' && needs.playwright-latest.outputs.version || matrix.playwright }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1014,11 +1074,14 @@ jobs:
           npm install --prefix "$RUNNER_TEMP/playwright-testdrive" "@playwright/test@$PLAYWRIGHT_VERSION" dd-trace@6.20.1 --no-audit --no-fund
           npm ls --prefix "$RUNNER_TEMP/playwright-testdrive" --depth=0
       - name: Set up Test Optimization
+        env:
+          DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
         uses: ./.github/actions/setup-test-optimization
         with:
           session-name: testdrive-playwright-workflow (Playwright ${{ matrix.playwright }}, shard ${{ matrix.shard }})
       - name: Validate browser execution, existing failures and supervised cleanup
         env:
+          DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
           DDTEST_PLAYWRIGHT_NODE_MODULES: ${{ runner.temp }}/playwright-testdrive/node_modules
           DDTEST_TEST_SHARD: ${{ matrix.shard }}
         run: ddtest instrument go test -v ./internal/testdrive -run '^(TestPublicPlaywrightTestdrive|TestPlaywrightDiscoveryOwnsImportSideEffects|TestPlaywrightDiscoveryKeepsConfiguredReportsOutOfTheCheckout)$' -count=1 -timeout=12m
@@ -1034,8 +1097,6 @@ jobs:
         # once per Cypress version.
         cypress: ['15.1.0', 'latest']
         shard: ['1/5', '2/5', '3/5', '4/5', '5/5']
-    env:
-      DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
@@ -1060,11 +1121,14 @@ jobs:
           npm install --prefix "$RUNNER_TEMP/cypress-testdrive" "cypress@${{ matrix.cypress }}" dd-trace@6.20.1 typescript@5.9.3 --save-exact --no-audit --no-fund
           npm ls --prefix "$RUNNER_TEMP/cypress-testdrive" --depth=0
       - name: Set up Test Optimization
+        env:
+          DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
         uses: ./.github/actions/setup-test-optimization
         with:
           session-name: testdrive-cypress-workflow (Cypress ${{ matrix.cypress }}, shard ${{ matrix.shard }})
       - name: Validate original CLI, action API and matching failures with TIA deferred
         env:
+          DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
           DDTEST_CYPRESS_NODE_MODULES: ${{ runner.temp }}/cypress-testdrive/node_modules
           CYPRESS_CACHE_FOLDER: ${{ runner.temp }}/cypress-testdrive-cache
           DDTEST_TEST_SHARD: ${{ matrix.shard }}
@@ -1103,8 +1167,6 @@ jobs:
       fail-fast: false
       matrix:
         configuration: ${{ fromJSON(needs.cucumber-matrix.outputs.matrix).include }}
-    env:
-      DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
@@ -1128,11 +1190,14 @@ jobs:
         with:
           directory: ${{ runner.temp }}/cucumber-testdrive
       - name: Set up Test Optimization
+        env:
+          DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
         uses: ./.github/actions/setup-test-optimization
         with:
           session-name: testdrive-cucumber-workflow (Node ${{ matrix.configuration.node }}, Cucumber ${{ matrix.configuration.version }}, shard ${{ matrix.configuration.shard }})
       - name: Validate native scenarios, matching failures and source coverage
         env:
+          DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
           DDTEST_CUCUMBER_NODE_MODULES: ${{ runner.temp }}/cucumber-testdrive/node_modules
           DDTEST_TEST_SHARD: ${{ matrix.configuration.shard }}
         run: |
@@ -1158,8 +1223,6 @@ jobs:
           - {package-manager: npm, wdio: 'latest', tracer: 'latest', shard: '2/4'}
           - {package-manager: npm, wdio: 'latest', tracer: 'latest', shard: '3/4'}
           - {package-manager: npm, wdio: 'latest', tracer: 'latest', shard: '4/4'}
-    env:
-      DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
@@ -1179,11 +1242,14 @@ jobs:
           fi
           npm ls --prefix "$RUNNER_TEMP/wdio-testdrive" --depth=0
       - name: Set up Test Optimization
+        env:
+          DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
         uses: ./.github/actions/setup-test-optimization
         with:
           session-name: testdrive-webdriverio-workflow (${{ matrix.package-manager }}, WebdriverIO ${{ matrix.wdio }}, tracer ${{ matrix.tracer }}, shard ${{ matrix.shard }})
       - name: Validate real browser outcomes with Linux Xvfb supervision
         env:
+          DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
           DDTEST_WEBDRIVERIO_NODE_MODULES: ${{ runner.temp }}/wdio-testdrive/node_modules
           DDTEST_CHROME_BINARY: /usr/bin/google-chrome
           DDTEST_TEST_SHARD: ${{ matrix.shard }}
