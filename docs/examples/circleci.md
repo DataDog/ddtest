@@ -127,23 +127,14 @@ When CircleCI is detected, `ddtest plan` writes
 {"parallelism": 2, "has_tests": true}
 ```
 
-`has_tests` is a JSON boolean based on the final runnable files. When every file
-is skipped or discovery finds no runnable files, it is `false`. The continuation
-workflow's **workflow-level** `when` prevents allocation of every test container,
-including checkout and dependency/browser setup. The setup/planning job still
-runs. This requires a setup workflow and continuation; a `when` step inside an
-already scheduled job cannot avoid container allocation. See [CircleCI's
-continuation parameter example](https://circleci.com/docs/guides/orchestrate/using-dynamic-configuration/).
+`has_tests=false` means no files remain runnable. The workflow-level `when`
+skips test containers before setup; the planning job still runs. Runner counts
+remain positive, so existing workflows must add this condition. See
+[CircleCI's continuation example](https://circleci.com/docs/guides/orchestrate/using-dynamic-configuration/).
 
-Declare both parameters in the continuation configuration. If you already pass
-other parameters, merge them with DDTest's JSON object before continuing. Keep
-unrelated workflows outside the test workflow's condition. Missing parameter
-files or planning/output-write errors should fail the setup job; do not replace
-them with `has_tests=false`.
-
-Runner counts remain positive for compatibility even when `has_tests=false`.
-Existing workflows must adopt the parameter file and workflow condition to avoid
-empty workers; upgrading DDTest alone does not change scheduling.
+Declare both parameters in the continuation config and merge any existing
+parameters into the JSON object. Keep unrelated workflows outside the condition.
+Missing files and planning errors must fail setup, not become `has_tests=false`.
 
 ## Python / Pytest Variant
 

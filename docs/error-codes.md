@@ -39,7 +39,6 @@ or API cause. Existing codes must not be reused for a different condition.
 | `plan_skippable_percentage_write_failed` | The skippable-percentage artifact could not be written. |
 | `plan_parallel_runners_write_failed` | The parallel-runner-count artifact could not be written. |
 | `plan_test_splits_write_failed` | Test split artifacts could not be created or written. |
-| `plan_ci_configuration_failed` | CI matrix, step outputs, or continuation parameters could not be written. |
 
 ## Run errors
 

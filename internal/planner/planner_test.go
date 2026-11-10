@@ -2272,7 +2272,7 @@ func TestTestPlanner_Setup_CIProviderConfigureFailure(t *testing.T) {
 
 	// Output failures must not let a missing has_tests gate silently skip runnable tests.
 	err := runner.Plan(context.Background())
-	if errcode.CodeOf(err) != errcode.PlanCIConfigurationFailed || !errors.Is(err, mockCIProvider.ConfigureErr) {
+	if !errors.Is(err, mockCIProvider.ConfigureErr) {
 		t.Fatalf("Plan() = %v, want wrapped CI configuration failure", err)
 	}
 

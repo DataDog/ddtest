@@ -258,7 +258,7 @@ func (tp *TestPlanner) Plan(ctx context.Context) error {
 			ParallelRunners: parallelRunners,
 			HasTests:        len(tp.testFileWeights) > 0,
 		}); err != nil {
-			return errcode.WithCode(errcode.PlanCIConfigurationFailed, fmt.Errorf("failed to configure CI provider %s: %w", ciProvider.Name(), err))
+			return fmt.Errorf("failed to configure CI provider %s: %w", ciProvider.Name(), err)
 		}
 	} else {
 		slog.Info("No CI provider detected, running tests without CI integration", "error", err)
