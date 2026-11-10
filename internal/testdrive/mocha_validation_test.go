@@ -345,6 +345,11 @@ func TestMochaNestedGuardDisablesTracingOnlyForNestedCLIs(t *testing.T) {
 	if err != nil {
 		t.Skip("Node required")
 	}
+	// Runtime-manager shims can spawn Node as a grandchild of this test.
+	// Launch the actual binary so this process stands in for Mocha's owner.
+	binary, err := exec.CommandContext(t.Context(), node, "-p", "process.execPath").Output()
+	require.NoError(t, err)
+	node = strings.TrimSpace(string(binary))
 	directory := t.TempDir()
 	guard := filepath.Join(directory, "guard.cjs")
 	requireWriteFile(t, guard, mochaNestedGuard)
