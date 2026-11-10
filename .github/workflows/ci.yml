@@ -60,7 +60,7 @@ jobs:
         run: npm install --global yarn@1.22.22
 
       - name: Set up Ruby for project environment regression tests
-        uses: ruby/setup-ruby@de492cf36cbab201753d720ce4f4e336cd688c94 # v1
+        uses: ruby/setup-ruby@b3aaceaef7e0ee231b499e7b5f49c03fc1d32199 # v1
         with:
           ruby-version: "3.4"
 
@@ -120,7 +120,7 @@ jobs:
         run: npm install --global yarn@1.22.22
 
       - name: Set up Ruby for project environment regression tests
-        uses: ruby/setup-ruby@de492cf36cbab201753d720ce4f4e336cd688c94 # v1
+        uses: ruby/setup-ruby@b3aaceaef7e0ee231b499e7b5f49c03fc1d32199 # v1
         with:
           ruby-version: "3.4"
 
@@ -261,7 +261,7 @@ jobs:
           go-version-file: go.mod
 
       - name: Set up Ruby
-        uses: ruby/setup-ruby@de492cf36cbab201753d720ce4f4e336cd688c94 # v1
+        uses: ruby/setup-ruby@b3aaceaef7e0ee231b499e7b5f49c03fc1d32199 # v1
         with:
           ruby-version: "3.4"
 
@@ -306,7 +306,7 @@ jobs:
           go-version-file: go.mod
 
       - name: Set up Ruby
-        uses: ruby/setup-ruby@de492cf36cbab201753d720ce4f4e336cd688c94 # v1
+        uses: ruby/setup-ruby@b3aaceaef7e0ee231b499e7b5f49c03fc1d32199 # v1
         with:
           ruby-version: "3.4"
 
@@ -808,7 +808,7 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
         with:
           go-version-file: go.mod
-      - uses: ruby/setup-ruby@de492cf36cbab201753d720ce4f4e336cd688c94 # v1
+      - uses: ruby/setup-ruby@b3aaceaef7e0ee231b499e7b5f49c03fc1d32199 # v1
         with:
           ruby-version: '3.4'
       - name: Install Ruby validation dependencies
@@ -874,7 +874,7 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v5
         with:
           go-version-file: go.mod
-      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+      - uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
         with:
           distribution: temurin
           java-version: ${{ matrix.java }}
@@ -987,7 +987,7 @@ jobs:
         run: |
           DDTEST_ACTIONLINT="$(go env GOPATH)/bin/actionlint" ddtest instrument go test -v ./internal/onboard -run '^TestGeneratedSetupWorkflow.*Actionlint$' -count=1
       - name: Install apply fixture dependencies
-        run: npm install --prefix "$RUNNER_TEMP/apply-testdrive" vitest@4.1.11 mocha@11.7.6 nyc@17.1.0 dd-trace@6.20.1 @cucumber/cucumber@12.2.0 @wdio/cli@9.20.0 @wdio/local-runner@9.20.0 @wdio/mocha-framework@9.20.0 --no-audit --no-fund
+        run: npm install --prefix "$RUNNER_TEMP/apply-testdrive" vitest@4.1.11 mocha@11.7.6 nyc@17.1.0 dd-trace@6.20.1 @cucumber/cucumber@12.2.0 @wdio/cli@9.33.1 @wdio/local-runner@9.33.1 @wdio/mocha-framework@9.33.1 --no-audit --no-fund
       - name: Apply setup and validate against local intake
         env:
           DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
@@ -1210,15 +1210,16 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # v9.33.1 keeps worker IPC off the fd Ubuntu 26.04's xvfb-run closes.
         # npm runs every scenario across shards; pnpm checks its layout on one.
         # The latest lane also takes the latest tracer: support for a new
         # WebdriverIO major lands there first.
         include:
-          - {package-manager: npm, wdio: '9.20.0', tracer: '6.20.1', shard: '1/4'}
-          - {package-manager: npm, wdio: '9.20.0', tracer: '6.20.1', shard: '2/4'}
-          - {package-manager: npm, wdio: '9.20.0', tracer: '6.20.1', shard: '3/4'}
-          - {package-manager: npm, wdio: '9.20.0', tracer: '6.20.1', shard: '4/4'}
-          - {package-manager: pnpm, wdio: '9.20.0', tracer: '6.20.1', shard: '1/1'}
+          - {package-manager: npm, wdio: '9.33.1', tracer: '6.20.1', shard: '1/4'}
+          - {package-manager: npm, wdio: '9.33.1', tracer: '6.20.1', shard: '2/4'}
+          - {package-manager: npm, wdio: '9.33.1', tracer: '6.20.1', shard: '3/4'}
+          - {package-manager: npm, wdio: '9.33.1', tracer: '6.20.1', shard: '4/4'}
+          - {package-manager: pnpm, wdio: '9.33.1', tracer: '6.20.1', shard: '1/1'}
           - {package-manager: npm, wdio: 'latest', tracer: 'latest', shard: '1/4'}
           - {package-manager: npm, wdio: 'latest', tracer: 'latest', shard: '2/4'}
           - {package-manager: npm, wdio: 'latest', tracer: 'latest', shard: '3/4'}
