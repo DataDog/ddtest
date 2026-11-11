@@ -9,7 +9,6 @@ import (
 )
 
 type testOptimizationPlanCache struct {
-	CompleteSuiteInventory  map[string]bool                                 `json:"completeSuiteInventory,omitempty"`
 	TestSuiteDurations      map[string]map[string]api.TestSuiteDurationInfo `json:"testSuiteDurations"`
 	SuiteAggregates         map[testSuiteKey]testSuiteAggregate             `json:"suiteAggregates"`
 	SuitesBySourceFile      map[string][]testSuiteKey                       `json:"suitesBySourceFile"`
@@ -21,7 +20,6 @@ type testOptimizationPlanCache struct {
 
 func (tp *TestPlanner) storeTestOptimizationPlanCache() error {
 	cache := testOptimizationPlanCache{
-		CompleteSuiteInventory:  tp.completeSuiteInventory,
 		TestSuiteDurations:      tp.testSuiteDurations,
 		SuiteAggregates:         tp.suiteAggregates,
 		SuitesBySourceFile:      tp.suitesBySourceFile,
@@ -54,7 +52,6 @@ func (tp *TestPlanner) restoreTestOptimizationPlanCache() error {
 		return err
 	}
 
-	tp.completeSuiteInventory = cache.CompleteSuiteInventory
 	tp.testSuiteDurations = cache.TestSuiteDurations
 	tp.suiteAggregates = cache.SuiteAggregates
 	tp.suitesBySourceFile = cache.SuitesBySourceFile
@@ -94,7 +91,7 @@ func readAndNormalizeTestOptimizationPlanCache(cache *testOptimizationPlanCache)
 		cache.SuitesBySourceFile = indexSuitesBySourceFile(cache.SuiteAggregates)
 	}
 	if cache.TestFileWeights == nil || cache.TestFileDurationSources == nil {
-		weights, sources := testFileEstimatesFromSuites(cache.SuiteAggregates, cache.SuitesBySourceFile, cache.CompleteSuiteInventory)
+		weights, sources := testFileEstimatesFromSuites(cache.SuiteAggregates, cache.SuitesBySourceFile)
 		// Existing weights are the published plan. Only reconstruct missing
 		// fields; loading an old plan must not silently repartition it.
 		if cache.TestFileWeights == nil {
@@ -125,10 +122,8 @@ func countTestSuites(testSuiteDurations map[string]map[string]api.TestSuiteDurat
 func testFileEstimatesFromSuites(
 	suiteAggregates map[testSuiteKey]testSuiteAggregate,
 	suitesBySourceFile map[string][]testSuiteKey,
-	completeSuiteInventory map[string]bool,
 ) (map[string]int, map[string]testFileDurationSource) {
 	planner := newTestPlannerWithDefaults()
-	planner.completeSuiteInventory = completeSuiteInventory
 	planner.suiteAggregates = suiteAggregates
 	planner.suitesBySourceFile = suitesBySourceFile
 	testFiles := make(map[string]struct{}, len(suitesBySourceFile))

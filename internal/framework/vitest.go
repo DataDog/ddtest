@@ -198,6 +198,3 @@ func prepareVitestAdapter(request vitestRequest) (string, error) {
 	}
 	return dir, nil
 }
-
-// HasFileLevelSuites identifies the tracer's test-file suite boundary.
-func (*Vitest) HasFileLevelSuites() bool { return true }

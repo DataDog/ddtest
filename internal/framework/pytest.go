@@ -207,6 +207,3 @@ func (p *PyTest) Command() (string, []string) {
 	}
 	return "python", []string{"-m", "pytest"}
 }
-
-// HasFileLevelSuites identifies the tracer's test-file suite boundary.
-func (*PyTest) HasFileLevelSuites() bool { return true }

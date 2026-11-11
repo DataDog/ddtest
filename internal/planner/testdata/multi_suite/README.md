@@ -1,4 +1,4 @@
-# Multi-suite planning QA
+# Full-discovery mixed-duration QA
 
 Prerequisites: Go from the repository's `go.mod`, Python 3, Ruby 3.4+, Bundler,
 and access to RubyGems (or locally installed RSpec 3.13 and datadog-ci 1.39+).
@@ -35,27 +35,26 @@ reusing discovery or tracer caches, and run:
 ```sh
 rm -rf .testoptimization
 "$qa_root/ddtest" plan --framework rspec --test-skipping-mode suite \
-  --min-parallelism 1 --max-parallelism 1
+  --force-full-test-discovery --min-parallelism 1 --max-parallelism 1
 cat .testoptimization/runner/test-files.txt
 python3 - <<'PY'
 import json
 from pathlib import Path
 cache = json.loads(Path('.testoptimization/runner/cache/test_suite_durations.json').read_text())
-for key in ['completeSuiteInventory', 'testFileWeights', 'testFileDurationSources']:
+for key in ['testFileWeights', 'testFileDurationSources']:
     print(key, cache.get(key))
 PY
 ```
 
-| Scenario | `scenario.json` | Discovery switch | Expected result |
-| --- | --- | --- | --- |
-| Runnable sibling | `{"skippable":["A"],"duration_b":"30000000000"}` | `unset DDTEST_QA_FAIL_DISCOVERY` | Full discovery; file retained, weight `30000`, source `known`. |
-| Failed discovery | Same as above | `export DDTEST_QA_FAIL_DISCOVERY=true` | Fast fallback; file retained, weight `40000`, source `known`; no complete inventory. |
-| Missing sibling timing | `{"skippable":["A"],"duration_b":null}` | Unset failure switch | Full discovery; file retained, weight `1000`, source `default`. |
-| Incomplete historical inventory | Same as above | Enable failure switch | Fast fallback retains file, weight `10000`, source `known`; missing historical siblings must not permit omission. |
-| Nonpositive timing | `{"skippable":["A"],"duration_b":"0"}` | Enable failure switch | Fast fallback retains both historical suites; weight `11000`, source `mixed`. Repeat with `"-1"`. |
-| All suites skippable | `{"skippable":["A","B"],"duration_b":"30000000000"}` | Unset failure switch | Full discovery; file omitted from file list and weights. |
-| All historical suites skippable | Same as above | Enable failure switch | Fast fallback retains file at `40000`; historical rows do not prove inventory completeness. |
-| Mixed coverage | `{"skippable":[],"duration_b":null}` | Unset failure switch; add `--force-full-test-discovery` to the plan command | Weight `11000`, source `mixed`, report says `Mixed backend/default durations: 1 file`. |
+Keep `DDTEST_QA_FAIL_DISCOVERY` unset for these full-discovery scenarios.
+
+| Scenario | `scenario.json` | Expected result |
+| --- | --- | --- |
+| Mixed coverage | `{"skippable":[],"duration_b":null}` | Weight `11000`, source `mixed`; report says `Mixed backend/default durations: 1 file` and does not count it as default-only. |
+| Both timings available | `{"skippable":[],"duration_b":"30000000000"}` | Weight `40000`, source `known`; no mixed-duration file. |
+| Runnable sibling | `{"skippable":["A"],"duration_b":"30000000000"}` | File retained, weight `30000`, source `known`. |
+| Missing sibling timing | `{"skippable":["A"],"duration_b":null}` | File retained, weight `1000`, source `default`; the skipped suite's backend timing does not make it mixed. Repeat with `"0"`, `"-1"`, and `"invalid"`. |
+| All suites skippable | `{"skippable":["A","B"],"duration_b":"30000000000"}` | File omitted from file list and weights. |
 
 For every retained file, inspect
 `.testoptimization/runner/tests-split/runner-0` and confirm it includes
@@ -65,16 +64,22 @@ For every retained file, inspect
 "$qa_root/ddtest" run --framework rspec --test-skipping-mode suite --ci-node 0
 ```
 
-Expect successful execution with `RAN_B` in the output. Repeat with failed
-discovery to confirm that the conservatively retained file still runs.
+Expect successful execution with `RAN_B` in the output.
 
 For the mixed-coverage scenario, rename `RSpec.describe "A"` to `"Z"` in the
 fixture and replace `A at ./spec/multiple_spec.rb` with
 `Z at ./spec/multiple_spec.rb` in `backend.py`. Restart the backend and replan
 with a clean cache. The weight and mixed classification must remain unchanged.
 
-With the failure switch enabled, repeat planning with `--strict-discovery`.
-Expect a nonzero exit and a full-discovery error rather than a successful plan.
+To check that ordinary suite mode still uses fast discovery, restore the original
+suite names, use `{"skippable":[],"duration_b":"30000000000"}`, clear the cache,
+set `DDTEST_QA_FAIL_DISCOVERY=true`, and run the plan command **without**
+`--force-full-test-discovery`, adding `--strict-discovery`. Planning should succeed
+with fast discovery and retain the file, because it never loads the Ruby fixture.
+Run again with `--force-full-test-discovery --strict-discovery`: the deliberate
+collection failure must produce a nonzero exit. Unset the failure switch afterward.
+
+Fast-mode multi-suite skipping and duration aggregation are outside this PR.
 
 Stop the backend and remove the disposable project when finished:
 

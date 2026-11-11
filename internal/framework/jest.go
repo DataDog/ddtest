@@ -239,6 +239,3 @@ func parseJestListTestsOutput(output []byte) ([]string, error) {
 	slices.Sort(testFiles)
 	return slices.Compact(testFiles), nil
 }
-
-// HasFileLevelSuites identifies the tracer's test-file suite boundary.
-func (*Jest) HasFileLevelSuites() bool { return true }

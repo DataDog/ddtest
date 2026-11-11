@@ -1162,7 +1162,7 @@ func TestSplitImbalancePercent(t *testing.T) {
 	}
 }
 
-func TestTestPlanner_PreparePlanningData_RubySuiteModeDiscoversSuitesBeforeSkippingFile(t *testing.T) {
+func TestTestPlanner_PreparePlanningData_RubySuiteModeSkipsFullDiscoveryAndSkipsFile(t *testing.T) {
 	tempDir := t.TempDir()
 	oldWd, _ := os.Getwd()
 	defer func() { _ = os.Chdir(oldWd) }()
@@ -1183,9 +1183,8 @@ func TestTestPlanner_PreparePlanningData_RubySuiteModeDiscoversSuitesBeforeSkipp
 			skippedSuite:  "spec/models/order_spec.rb",
 			runnableSuite: "spec/models/payment_spec.rb",
 		},
-		Tests: []testoptimization.Test{
-			{Module: "rspec", Suite: skippedSuite, Name: "skip", SuiteSourceFile: "spec/models/order_spec.rb"},
-			{Module: "rspec", Suite: runnableSuite, Name: "run", SuiteSourceFile: "spec/models/payment_spec.rb"},
+		OnDiscoverTests: func() {
+			t.Fatal("full discovery should not run in suite skipping mode")
 		},
 	}
 	mockPlatform := &MockPlatform{
@@ -1219,8 +1218,8 @@ func TestTestPlanner_PreparePlanningData_RubySuiteModeDiscoversSuitesBeforeSkipp
 		t.Fatalf("PreparePlanningData() should not return error, got: %v", err)
 	}
 
-	if len(mockFramework.DiscoverTestsFiles) != 1 {
-		t.Fatalf("expected full discovery to run, got calls: %+v", mockFramework.DiscoverTestsFiles)
+	if len(mockFramework.DiscoverTestsFiles) != 0 {
+		t.Fatalf("expected full discovery not to run, got calls: %+v", mockFramework.DiscoverTestsFiles)
 	}
 	if _, ok := runner.testFileWeights["spec/models/order_spec.rb"]; ok {
 		t.Fatalf("expected skipped suite file to be omitted, got weights: %+v", runner.testFileWeights)
@@ -1969,9 +1968,6 @@ func TestTestPlanner_RecordSuiteLevelSkippables_SafetyGuardsKeepFilesRunnable(t 
 			logs := captureLogs(t)
 			runner := newTestPlannerWithDefaults()
 			runner.testFiles = tt.testFiles
-			for file := range tt.testFiles {
-				runner.completeSuiteInventory[file] = true
-			}
 			runner.testSuiteDurations = tt.durations
 			runner.addDurationDataForFastDiscoveryFallback()
 			skippables := api.Skippables{
@@ -3512,7 +3508,6 @@ func TestTestPlanner_TestFileWeight_SubMillisecondP50MinimumWeight(t *testing.T)
 
 func TestTestPlanner_TestFileWeight_SkipsFullySkippedSuites(t *testing.T) {
 	runner := NewWithDependencies(nil, nil, &MockTestOptimizationClient{}, newDefaultMockCIProviderDetector())
-	runner.completeSuiteInventory["spec/skipped_test.rb"] = true
 	runner.testFiles = map[string]struct{}{
 		"spec/skipped_test.rb": {},
 	}
@@ -3709,7 +3704,7 @@ func TestTestPlanner_PreparePlanningData_StrictDiscoveryDoesNotFailWhenFullDisco
 	}
 }
 
-func TestTestPlanner_PreparePlanningData_FastDiscoverySumsBackendDurationsPerSourceFile(t *testing.T) {
+func TestTestPlanner_PreparePlanningData_FastDiscoveryUsesOneBackendDurationPerSourceFile(t *testing.T) {
 	t.Chdir(t.TempDir())
 	ctx := context.Background()
 	environment.ResetCITags()
@@ -3749,18 +3744,15 @@ func TestTestPlanner_PreparePlanningData_FastDiscoverySumsBackendDurationsPerSou
 		t.Fatalf("PreparePlanningData() should not fail when full discovery fails but fast discovery succeeds, got: %v", err)
 	}
 
-	if len(runner.suiteAggregates) != 2 {
-		t.Fatalf("Expected both backend fallback suite aggregates, got %v", runner.suiteAggregates)
+	if len(runner.suiteAggregates) != 1 {
+		t.Fatalf("Expected one backend fallback suite aggregate per source file, got %v", runner.suiteAggregates)
 	}
-	if suiteKeys := runner.suitesBySourceFile["spec/backend_only_spec.rb"]; len(suiteKeys) != 2 {
-		t.Fatalf("Expected rebuilt source-file index to contain both suite keys, got %v", runner.suitesBySourceFile)
-	}
-	if weight := runner.testFileWeights["spec/backend_only_spec.rb"]; weight != 126 {
-		t.Fatalf("Expected summed 126ms file weight, got %d", weight)
+	if suiteKeys := runner.suitesBySourceFile["spec/backend_only_spec.rb"]; len(suiteKeys) != 1 {
+		t.Fatalf("Expected rebuilt source-file index to contain one suite key, got %v", runner.suitesBySourceFile)
 	}
 }
 
-func TestTestPlanner_PreparePlanningData_DefaultsZeroBackendDurationForFastDiscovery(t *testing.T) {
+func TestTestPlanner_PreparePlanningData_IgnoresZeroBackendDurationForFastDiscovery(t *testing.T) {
 	t.Chdir(t.TempDir())
 	ctx := context.Background()
 	environment.ResetCITags()
@@ -3796,8 +3788,8 @@ func TestTestPlanner_PreparePlanningData_DefaultsZeroBackendDurationForFastDisco
 		t.Fatalf("PreparePlanningData() should not fail when full discovery fails but fast discovery succeeds, got: %v", err)
 	}
 
-	if len(runner.suiteAggregates) != 1 {
-		t.Errorf("Expected zero-duration backend suite to be retained, got aggregates: %v", runner.suiteAggregates)
+	if len(runner.suiteAggregates) != 0 {
+		t.Errorf("Expected zero-duration backend suite to be ignored, got aggregates: %v", runner.suiteAggregates)
 	}
 
 	if weight, ok := runner.testFileWeight("spec/backend_only_spec.rb"); !ok || weight != constants.DefaultTestFileWeight {
@@ -5248,7 +5240,6 @@ func TestTestPlanner_SuiteSourceMappingConsistentAcrossDiscoveryModes(t *testing
 						if err := planner.recordFastDiscoveryFallbackFiles([]string{"tests/test_case.py"}); err != nil {
 							t.Fatal(err)
 						}
-						planner.completeSuiteInventory["tests/test_case.py"] = true
 						planner.recordSuiteLevelSkippables(matcher, fw)
 					}
 					planner.suitesBySourceFile = indexSuitesBySourceFile(planner.suiteAggregates)
@@ -5260,14 +5251,5 @@ func TestTestPlanner_SuiteSourceMappingConsistentAcrossDiscoveryModes(t *testing
 				})
 			}
 		})
-	}
-}
-
-func (m *MockFramework) HasFileLevelSuites() bool {
-	switch m.FrameworkName {
-	case "jest", "vitest", "mocha", "cucumber", "cypress", "playwright", "webdriverio", "pytest":
-		return true
-	default:
-		return false
 	}
 }

@@ -523,6 +523,3 @@ func sameFilePath(left, right string) bool {
 	}
 	return filepath.Clean(left) == filepath.Clean(right)
 }
-
-// HasFileLevelSuites identifies the tracer's test-file suite boundary.
-func (*Cypress) HasFileLevelSuites() bool { return true }

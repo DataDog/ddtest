@@ -198,5 +198,3 @@ func (m *Minitest) Command() (string, []string) {
 	command, args, _ := m.getMinitestCommand(context.Background())
 	return command, args
 }
-
-func (*Minitest) HasFileLevelSuites() bool { return false }

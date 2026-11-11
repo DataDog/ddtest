@@ -74,5 +74,3 @@ func (j *JVM) DiscoverTests(context.Context, discovery.TestFileSet) ([]testoptim
 func (j *JVM) RunTests(context.Context, []string, map[string]string) error {
 	return ErrJVMPlanRun
 }
-
-func (*JVM) HasFileLevelSuites() bool { return false }

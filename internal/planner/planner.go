@@ -75,7 +75,6 @@ func (p PlanMetadata) IsZero() bool {
 
 type TestPlanner struct {
 	testFiles               map[string]struct{}
-	completeSuiteInventory  map[string]bool
 	suiteAggregates         map[testSuiteKey]testSuiteAggregate
 	suitesBySourceFile      map[string][]testSuiteKey
 	testSuiteDurations      map[string]map[string]api.TestSuiteDurationInfo
@@ -193,7 +192,6 @@ func NewWithDependencies(
 func newTestPlannerWithDefaults() *TestPlanner {
 	return &TestPlanner{
 		testFiles:               make(map[string]struct{}),
-		completeSuiteInventory:  make(map[string]bool),
 		suiteAggregates:         make(map[testSuiteKey]testSuiteAggregate),
 		suitesBySourceFile:      make(map[string][]testSuiteKey),
 		testSuiteDurations:      make(map[string]map[string]api.TestSuiteDurationInfo),
@@ -311,7 +309,7 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 	fullTestDiscoverySupported := testFramework.SupportsFullTestDiscovery()
 	forceFullTestDiscovery := settings.GetForceFullTestDiscovery()
 	strictDiscovery := settings.GetStrictDiscovery()
-	fullDiscoveryNeeded := fullTestDiscoverySupported && (isTestLevelSkipping || forceFullTestDiscovery || !testFramework.HasFileLevelSuites())
+	fullDiscoveryNeeded := fullTestDiscoverySupported && (isTestLevelSkipping || forceFullTestDiscovery)
 	ciTags := environment.GetCITags()
 	tp.runInfo = runmetadata.New(ciTags)
 	tp.planMetadata = NewPlanMetadata(tags, detectedPlatform.Name(), testFramework.Name(), testSkippingLevel)
@@ -508,11 +506,6 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 		}
 		selectedDiscoveryMode = discoveryModeFast
 		selectedDiscoveryDuration = fastDiscoveryDuration
-		if testFramework.HasFileLevelSuites() {
-			for file := range tp.testFiles {
-				tp.completeSuiteInventory[file] = true
-			}
-		}
 		tp.addDurationDataForFastDiscoveryFallback()
 		if isSuiteLevelSkipping && tiaSkippingEnabled {
 			tp.recordSuiteLevelSkippables(skipMatcher, testFramework)
@@ -699,6 +692,7 @@ func (tp *TestPlanner) estimateDiscoveredSuiteDurations() {
 }
 
 func (tp *TestPlanner) addDurationDataForFastDiscoveryFallback() {
+	seenSourceFiles := make(map[string]struct{})
 	for module, suites := range tp.testSuiteDurations {
 		for suite, suiteInfo := range suites {
 			key := testSuiteKey{Module: module, Suite: suite}
@@ -715,10 +709,15 @@ func (tp *TestPlanner) addDurationDataForFastDiscoveryFallback() {
 			}
 
 			duration, ok := parseDurationP50(suiteInfo)
-			source := testFileDurationSourceKnown
 			if !ok {
-				duration = float64(time.Second)
-				source = testFileDurationSourceDefault
+				continue
+			}
+
+			// Fast discovery only sees files, not test cases. For suite-level TIA we
+			// assume a single backend suite maps to a single source file, so one
+			// duration-backed aggregate per source file is enough and avoids double-counting.
+			if _, ok := seenSourceFiles[sourceFile]; ok {
+				continue
 			}
 
 			tp.suiteAggregates[key] = testSuiteAggregate{
@@ -727,10 +726,11 @@ func (tp *TestPlanner) addDurationDataForFastDiscoveryFallback() {
 				SourceFile:        sourceFile,
 				TotalDuration:     duration,
 				EstimatedDuration: duration,
-				DurationSource:    source,
+				DurationSource:    testFileDurationSourceKnown,
 				NumTests:          1,
 				NumTestsSkipped:   0,
 			}
+			seenSourceFiles[sourceFile] = struct{}{}
 		}
 	}
 }
@@ -864,12 +864,7 @@ func (tp *TestPlanner) estimateTestFileWeight(testFile string) (testFileWeightEs
 		duration += aggregate.EstimatedDuration
 	}
 	if !hasRunnableSuite {
-		if tp.completeSuiteInventory[testFile] {
-			return testFileWeightEstimate{}, false
-		}
-		// An incomplete inventory cannot establish that every current suite is
-		// skippable, including when reconstructing an older plan cache.
-		return testFileWeightEstimate{weight: constants.DefaultTestFileWeight, source: testFileDurationSourceDefault}, true
+		return testFileWeightEstimate{}, false
 	}
 	if source == "" {
 		source = testFileDurationSourceDefault

@@ -3,8 +3,6 @@ package planner
 import (
 	"bytes"
 	"context"
-	"errors"
-	"fmt"
 	"testing"
 
 	"github.com/DataDog/ddtest/internal/environment"
@@ -19,7 +17,7 @@ const multiSuiteFile = "spec/multiple_spec.rb"
 func newMultiSuitePlanner(t *testing.T, siblingDuration string, skip bool) *TestPlanner {
 	t.Helper()
 	t.Chdir(t.TempDir())
-	setPlannerForceFullTestDiscovery(t, false)
+	setPlannerForceFullTestDiscovery(t, true)
 	environment.ResetCITags()
 	t.Cleanup(environment.ResetCITags)
 	captureLogs(t)
@@ -50,72 +48,44 @@ func newMultiSuitePlanner(t *testing.T, siblingDuration string, skip bool) *Test
 	return NewWithDependencies(p, fw, client, newDefaultMockCIProviderDetector())
 }
 
-func TestMultiSuitePlanningKeepsRunnableSibling(t *testing.T) {
-	for _, mode := range []string{"full", "failed", "unsupported"} {
-		for _, duration := range []string{"missing", "0", "-1", "invalid", "30000000000"} {
-			t.Run(mode+"/"+duration, func(t *testing.T) {
-				runner := newMultiSuitePlanner(t, duration, true)
-				fw := runner.framework.(*MockFramework)
-				switch mode {
-				case "failed":
-					fw.DiscoverTestsErr = errors.New("discovery failed")
-				case "unsupported":
-					fw.FullDiscoveryUnsupported = true
+// The planner must handle multiple suite identities independently of the framework.
+func TestMultiSuiteFullDiscovery(t *testing.T) {
+	for _, frameworkName := range []string{"rspec", "minitest", "pytest"} {
+		for _, tc := range []struct {
+			name     string
+			duration string
+			skipA    bool
+			skipB    bool
+			weight   int
+			source   testFileDurationSource
+		}{
+			{"sum", "30000000000", false, false, 40000, testFileDurationSourceKnown},
+			{"runnable sibling", "30000000000", true, false, 30000, testFileDurationSourceKnown},
+			{"missing sibling timing", "missing", true, false, 1000, testFileDurationSourceDefault},
+			{"zero sibling timing", "0", true, false, 1000, testFileDurationSourceDefault},
+			{"invalid sibling timing", "invalid", true, false, 1000, testFileDurationSourceDefault},
+			{"skipped default contribution", "missing", false, true, 10000, testFileDurationSourceKnown},
+			{"all skipped", "30000000000", true, true, 0, ""},
+		} {
+			t.Run(frameworkName+"/"+tc.name, func(t *testing.T) {
+				runner := newMultiSuitePlanner(t, tc.duration, tc.skipA)
+				runner.framework.(*MockFramework).FrameworkName = frameworkName
+				if tc.skipB {
+					runner.optimizationClient.(*MockTestOptimizationClient).Skippables.Suites[api.SkippableSuite{Module: "rspec", Suite: "B"}] = true
+					// Full discovery also verifies a skippable suite's source mapping.
+					runner.framework.(*MockFramework).SuiteSourceFiles = map[string]string{"B": multiSuiteFile}
 				}
 				require.NoError(t, runner.PreparePlanningData(context.Background()))
-				require.Contains(t, runner.testFileWeights, multiSuiteFile)
-				require.Positive(t, runner.testFileWeights[multiSuiteFile])
-				if mode == "full" {
-					require.Equal(t, discoveryModeFull, runner.reportStats.discoveryMode)
-					require.True(t, runner.completeSuiteInventory[multiSuiteFile])
+				require.Equal(t, discoveryModeFull, runner.reportStats.discoveryMode)
+				require.Len(t, runner.suiteAggregates, 2)
+				if tc.weight == 0 {
+					require.NotContains(t, runner.testFileWeights, multiSuiteFile)
 				} else {
-					require.Equal(t, discoveryModeFast, runner.reportStats.discoveryMode)
-					require.False(t, runner.completeSuiteInventory[multiSuiteFile])
-					require.Zero(t, runner.skippablePercentage, "historical data cannot prove current suites were skipped")
-					require.Empty(t, runner.reportStats.uniqueTIASkippableSuitesApplied)
+					require.Equal(t, tc.weight, runner.testFileWeights[multiSuiteFile])
+					require.Equal(t, tc.source, runner.testFileDurationSources[multiSuiteFile])
 				}
 			})
 		}
-	}
-}
-
-func TestMultiSuitePlanningDropsFileOnlyWithCompleteInventory(t *testing.T) {
-	for _, fail := range []bool{false, true} {
-		t.Run(fmt.Sprintf("discoveryFailed=%t", fail), func(t *testing.T) {
-			runner := newMultiSuitePlanner(t, "30000000000", true)
-			runner.optimizationClient.(*MockTestOptimizationClient).Skippables.Suites[api.SkippableSuite{Module: "rspec", Suite: "B"}] = true
-			if fail {
-				runner.framework.(*MockFramework).DiscoverTestsErr = errors.New("discovery failed")
-			}
-			require.NoError(t, runner.PreparePlanningData(context.Background()))
-			if fail {
-				require.Equal(t, 40000, runner.testFileWeights[multiSuiteFile])
-			} else {
-				require.NotContains(t, runner.testFileWeights, multiSuiteFile)
-			}
-		})
-	}
-}
-
-func TestMultiSuiteFastDurationAggregation(t *testing.T) {
-	for _, tc := range []struct {
-		duration string
-		weight   int
-		source   testFileDurationSource
-	}{
-		{"30000000000", 40000, testFileDurationSourceKnown},
-		{"0", 11000, testFileDurationSourceMixed},
-		{"-1", 11000, testFileDurationSourceMixed},
-		{"invalid", 11000, testFileDurationSourceMixed},
-	} {
-		t.Run(tc.duration, func(t *testing.T) {
-			runner := newMultiSuitePlanner(t, tc.duration, false)
-			runner.framework.(*MockFramework).FullDiscoveryUnsupported = true
-			require.NoError(t, runner.PreparePlanningData(context.Background()))
-			require.Len(t, runner.suiteAggregates, 2)
-			require.Equal(t, tc.weight, runner.testFileWeights[multiSuiteFile])
-			require.Equal(t, tc.source, runner.testFileDurationSources[multiSuiteFile])
-		})
 	}
 }
 

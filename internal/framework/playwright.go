@@ -473,6 +473,3 @@ func playwrightOptionValue(args []string, options ...string) string {
 	}
 	return value
 }
-
-// HasFileLevelSuites identifies the tracer's test-file suite boundary.
-func (*Playwright) HasFileLevelSuites() bool { return true }

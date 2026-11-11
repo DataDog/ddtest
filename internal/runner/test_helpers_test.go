@@ -174,5 +174,3 @@ func (roundRobinTestPlanner) DistributeTestFiles(testFiles []string, parallelRun
 }
 
 func (m *MockFramework) Command() (string, []string) { return "test", nil }
-
-func (m *MockFramework) HasFileLevelSuites() bool { return false }

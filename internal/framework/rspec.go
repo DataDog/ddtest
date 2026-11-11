@@ -142,5 +142,3 @@ func trailingRubySuiteSourceFile(suite string) (string, bool) {
 	}
 	return sourceFile, true
 }
-
-func (*RSpec) HasFileLevelSuites() bool { return false }
