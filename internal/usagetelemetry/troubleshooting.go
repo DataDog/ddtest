@@ -287,6 +287,10 @@ func diagnosticVersion(value string) string {
 		return value
 	}
 	if len(value) <= 80 {
+		// Java 8 separates its numeric update version with an underscore.
+		if update, ok := strings.CutPrefix(value, "1.8.0_"); ok {
+			value = "1.8.0." + update
+		}
 		if match := diagnosticVersionPattern.FindStringSubmatch(value); match != nil {
 			return match[1]
 		}

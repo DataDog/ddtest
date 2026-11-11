@@ -122,6 +122,42 @@ func TestTroubleshootingPreservesTracerLabelsAndKnownFallback(t *testing.T) {
 	}
 }
 
+func TestTroubleshootingPreservesJava8RuntimeVersionsWithoutCustomText(t *testing.T) {
+	for _, tc := range []struct{ value, expected string }{
+		{"1.8.0_442", "1.8.0.442"},
+		{"1.8.0_8", "1.8.0.8"},
+		{"1.8.0_442-b06", "1.8.0.442"},
+		{"1.8.0_442-PRIVATE.vendor", "1.8.0.442"},
+		{"1.8.0_442+PRIVATE.vendor", "1.8.0.442"},
+		{"1.8.0.442", "1.8.0.442"},
+		{"17.0.13", "17.0.13"},
+		{"1.8.0_", "unknown"},
+		{"1.8.0_PRIVATE", "unknown"},
+		{"1.8.0_442_PRIVATE", "unknown"},
+		{"1.8.0_442/PRIVATE", "unknown"},
+		{"1.8.0_442.1", "unknown"},
+		{"1.8.0_10000", "unknown"},
+		{"22_14_0", "unknown"},
+	} {
+		t.Run(tc.value, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "report.json")
+			report, err := json.Marshal(map[string]any{
+				"schema_version": 1, "framework": "junit4",
+				"runs": []map[string]any{{"role": "reporting-only", "instrumented": true, "runtimes": []string{tc.value}}},
+			})
+			require.NoError(t, err)
+			require.NoError(t, os.WriteFile(path, report, 0o600))
+			_, data := diagnosticPayload(t, TroubleshootingContext{ReportPath: path, Runtime: tc.value})
+			var bundle troubleshootingBundle
+			require.NoError(t, json.Unmarshal(data, &bundle))
+			require.Equal(t, tc.expected, bundle.Diagnostics.RuntimeVersion)
+			require.Len(t, bundle.Diagnostics.Runs, 1)
+			require.Equal(t, []string{tc.expected}, bundle.Diagnostics.Runs[0].RuntimeVersions)
+			require.NotContains(t, string(data), "PRIVATE")
+		})
+	}
+}
+
 func TestTroubleshootingReportRejectsOversizedAndNonRegularFiles(t *testing.T) {
 	directory := t.TempDir()
 	_, err := readTroubleshootingFile(directory, maxLocalReportBytes)

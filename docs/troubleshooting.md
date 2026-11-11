@@ -136,8 +136,10 @@ customer commit/branch, persistent installation ID, hostname, user information,
 credentials or free-text errors. Framework names, feature names, verdicts,
 error categories and capability states are fixed allowlists. Version strings
 retain numeric components only (`dev` is retained for development builds);
-custom refs, URLs and suffixes are discarded or become `unknown`. This applies
-to build versions in the start/finish events too. `ddtest_commit` refers to the
+custom refs, URLs and suffixes are discarded or become `unknown`. Java 8 update
+versions such as `1.8.0_442-b06` become `1.8.0.442`, retaining the numeric update
+and discarding the build suffix. The same normalization applies to build
+versions in the start/finish events. `ddtest_commit` refers to the
 DDTest binary's source revision, never the project's Git checkout. Frame
 locations are DDTest-owned symbols and relative source filenames, never customer
 or third-party stack traces.
