@@ -376,3 +376,70 @@ func TestTestSuiteKey_JSONMapKeyRoundTrip(t *testing.T) {
 		t.Errorf("Expected restored suite aggregates to preserve text-marshaled keys.\nexpected: %v\nactual: %v", runner.suiteAggregates, restored.suiteAggregates)
 	}
 }
+
+func TestPlanCachePreservesMixedDurations(t *testing.T) {
+	runner := newMultiSuitePlanner(t, "missing", false)
+	setPlannerForceFullTestDiscovery(t, true)
+	if err := runner.PreparePlanningData(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := runner.storeTestOptimizationPlanCache(); err != nil {
+		t.Fatal(err)
+	}
+	restored := newTestPlannerWithDefaults()
+	if err := restored.restoreTestOptimizationPlanCache(); err != nil {
+		t.Fatal(err)
+	}
+	if restored.testFileDurationSources[multiSuiteFile] != testFileDurationSourceMixed || restored.testFileWeights[multiSuiteFile] != 11000 {
+		t.Fatalf("restored wrong durations: %+v, %+v", restored.testFileDurationSources, restored.testFileWeights)
+	}
+}
+
+func TestPlanCacheReconstructsMixedDurationSource(t *testing.T) {
+	runner := newMultiSuitePlanner(t, "missing", false)
+	setPlannerForceFullTestDiscovery(t, true)
+	if err := runner.PreparePlanningData(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	cache := testOptimizationPlanCache{
+		SuiteAggregates: runner.suiteAggregates,
+	}
+	if err := testoptimization.NewCacheManager().StoreTestOptimizationPlanCache(cache); err != nil {
+		t.Fatal(err)
+	}
+	restored := newTestPlannerWithDefaults()
+	if err := restored.restoreTestOptimizationPlanCache(); err != nil {
+		t.Fatal(err)
+	}
+	if restored.testFileDurationSources[multiSuiteFile] != testFileDurationSourceMixed || restored.testFileWeights[multiSuiteFile] != 11000 {
+		t.Fatalf("reconstructed wrong durations: %+v, %+v", restored.testFileDurationSources, restored.testFileWeights)
+	}
+}
+
+func TestPlanCacheMissingSourcesPreservesPublishedWeights(t *testing.T) {
+	runner := newMultiSuitePlanner(t, "missing", false)
+	if err := runner.PreparePlanningData(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	// Reconstructing sources must not recalculate an already published split or
+	// resurrect a file omitted from that split.
+	for _, weights := range []map[string]int{{multiSuiteFile: 7777}, {}} {
+		cache := testOptimizationPlanCache{
+			SuiteAggregates: runner.suiteAggregates,
+			TestFileWeights: weights,
+		}
+		if err := testoptimization.NewCacheManager().StoreTestOptimizationPlanCache(cache); err != nil {
+			t.Fatal(err)
+		}
+		restored := newTestPlannerWithDefaults()
+		if err := restored.restoreTestOptimizationPlanCache(); err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(weights, restored.testFileWeights) || len(restored.testFileDurationSources) != len(weights) {
+			t.Fatalf("changed published plan: weights=%v sources=%v", restored.testFileWeights, restored.testFileDurationSources)
+		}
+		if len(weights) > 0 && restored.testFileDurationSources[multiSuiteFile] != testFileDurationSourceMixed {
+			t.Fatalf("expected reconstructed mixed source, got %v", restored.testFileDurationSources)
+		}
+	}
+}

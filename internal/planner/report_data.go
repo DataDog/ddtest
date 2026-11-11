@@ -208,6 +208,7 @@ type durationApplicationReport struct {
 	BackendSuitesAdded      int
 	SuitesWithoutDurations  int
 	FilesWithoutDurations   int
+	FilesWithMixedDurations int
 	ExpectedFullDuration    time.Duration
 }
 
@@ -315,6 +316,7 @@ func (tp *TestPlanner) newPlanningReport() planningReport {
 			BackendSuitesAdded:      tp.backendSuitesAddedCount(mode),
 			SuitesWithoutDurations:  tp.suitesWithoutBackendDurationsCount(),
 			FilesWithoutDurations:   tp.filesWithoutBackendDurationsCount(),
+			FilesWithMixedDurations: tp.filesWithMixedDurationsCount(),
 			ExpectedFullDuration:    tp.expectedFullDuration(),
 		},
 		Skipping: skippingApplicationReport{
@@ -360,7 +362,7 @@ func (tp *TestPlanner) suitesWithoutBackendDurationsCount() int {
 func (tp *TestPlanner) filesWithoutBackendDurationsCount() int {
 	count := 0
 	for _, source := range tp.testFileDurationSources {
-		if source != testFileDurationSourceKnown {
+		if source == testFileDurationSourceDefault || source == "" {
 			count++
 		}
 	}
@@ -544,4 +546,14 @@ func compareSuiteIdentity(a, b testSuiteTimingReport) int {
 		return 1
 	}
 	return 0
+}
+
+func (tp *TestPlanner) filesWithMixedDurationsCount() int {
+	count := 0
+	for _, source := range tp.testFileDurationSources {
+		if source == testFileDurationSourceMixed {
+			count++
+		}
+	}
+	return count
 }

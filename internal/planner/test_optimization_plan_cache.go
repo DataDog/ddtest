@@ -90,11 +90,23 @@ func readAndNormalizeTestOptimizationPlanCache(cache *testOptimizationPlanCache)
 	if cache.SuitesBySourceFile == nil {
 		cache.SuitesBySourceFile = indexSuitesBySourceFile(cache.SuiteAggregates)
 	}
-	if cache.TestFileWeights == nil {
-		cache.TestFileWeights = testFileWeightsFromSuites(cache.SuiteAggregates, cache.SuitesBySourceFile)
-	}
-	if cache.TestFileDurationSources == nil {
-		cache.TestFileDurationSources = make(map[string]testFileDurationSource)
+	if cache.TestFileWeights == nil || cache.TestFileDurationSources == nil {
+		weights, sources := testFileEstimatesFromSuites(cache.SuiteAggregates, cache.SuitesBySourceFile)
+		// Existing weights are the published plan. Only reconstruct missing
+		// fields; loading an old plan must not silently repartition it.
+		if cache.TestFileWeights == nil {
+			cache.TestFileWeights = weights
+		}
+		if cache.TestFileDurationSources == nil {
+			cache.TestFileDurationSources = make(map[string]testFileDurationSource, len(cache.TestFileWeights))
+			for file := range cache.TestFileWeights {
+				source := sources[file]
+				if source == "" {
+					source = testFileDurationSourceDefault
+				}
+				cache.TestFileDurationSources[file] = source
+			}
+		}
 	}
 	return nil
 }
@@ -107,10 +119,10 @@ func countTestSuites(testSuiteDurations map[string]map[string]api.TestSuiteDurat
 	return totalSuites
 }
 
-func testFileWeightsFromSuites(
+func testFileEstimatesFromSuites(
 	suiteAggregates map[testSuiteKey]testSuiteAggregate,
 	suitesBySourceFile map[string][]testSuiteKey,
-) map[string]int {
+) (map[string]int, map[string]testFileDurationSource) {
 	planner := newTestPlannerWithDefaults()
 	planner.suiteAggregates = suiteAggregates
 	planner.suitesBySourceFile = suitesBySourceFile
@@ -118,5 +130,6 @@ func testFileWeightsFromSuites(
 	for testFile := range suitesBySourceFile {
 		testFiles[testFile] = struct{}{}
 	}
-	return planner.estimateTestFileWeights(testFiles)
+	weights := planner.estimateTestFileWeights(testFiles)
+	return weights, planner.testFileDurationSources
 }
