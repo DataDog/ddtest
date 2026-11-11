@@ -62,6 +62,9 @@ func probeCheckRun(run validationRun) validationRun {
 			skipped[test.Name] -= len(test.Attempts)
 			run.Facts.TestEventCount -= len(test.Attempts)
 		} else {
+			if run.ResultError == "" && (filepath.Clean(path) != file || test.Name != probeName) {
+				run.ResultError = "vitest scenario reported telemetry beyond the controlled probe"
+			}
 			observed = append(observed, test)
 		}
 	}

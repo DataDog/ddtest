@@ -5,6 +5,8 @@
 package testdrive
 
 import (
+	"maps"
+	"path/filepath"
 	"testing"
 
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
@@ -47,5 +49,50 @@ func TestVitestProbeChecksOnlyExcludeKnownSkippedNeighbours(t *testing.T) {
 			require.Len(t, run.Tests, 2, "the report retains all native results")
 			require.Len(t, run.Facts.Tests, 2, "the report retains all telemetry")
 		})
+	}
+}
+
+func TestVitestFeaturesRejectUnexpectedNeighbourTelemetry(t *testing.T) {
+	for _, feature := range []string{"early-flake-detection", "attempt-to-fix"} {
+		for _, tc := range []struct {
+			name, file, test string
+			attempts         []intake.TestRun
+			want             string
+		}{
+			{"known skipped neighbour", "a.test.js", "filtered neighbour", []intake.TestRun{{Status: "skip"}}, "passed"},
+			{"passing neighbour", "a.test.js", "filtered neighbour", []intake.TestRun{{Status: "pass"}}, "inconclusive"},
+			{"failing neighbour", "a.test.js", "filtered neighbour", []intake.TestRun{{Status: "fail"}}, "inconclusive"},
+			{"retrying neighbour", "a.test.js", "filtered neighbour", []intake.TestRun{{Status: "skip", Retry: true}}, "inconclusive"},
+			{"extra neighbour attempt", "a.test.js", "filtered neighbour", []intake.TestRun{{Status: "skip"}, {Status: "skip"}}, "inconclusive"},
+			{"unknown name", "a.test.js", "unexpected", []intake.TestRun{{Status: "skip"}}, "inconclusive"},
+			{"probe name in another file", "other.test.js", probeName, []intake.TestRun{{Status: "skip"}}, "inconclusive"},
+		} {
+			t.Run(feature+"/"+tc.name, func(t *testing.T) {
+				root := t.TempDir()
+				identity := intake.Test{Module: "vitest", Suite: "a.test.js", Name: probeName, SourceFile: "a.test.js"}
+				tags := map[string]string{"test.module": identity.Module, "test.suite": identity.Suite, "test.name": identity.Name, "test.status": "pass", "test.test_management.is_attempt_to_fix": "true"}
+				retry := maps.Clone(tags)
+				retry["test.is_retry"] = "true"
+				retry["test.retry_reason"] = map[string]string{"early-flake-detection": "early_flake_detection", "attempt-to-fix": "attempt_to_fix"}[feature]
+				run := validationRun{framework: "vitest", root: root, Tests: []jestTest{
+					{File: filepath.Join(root, "a.test.js"), Name: probeName, Status: "passed"},
+					{File: filepath.Join(root, "a.test.js"), Name: "filtered neighbour", Status: "skipped"},
+				}, Facts: intake.Facts{TestEventCount: 2 + len(tc.attempts), Events: []intake.Event{{Type: "test", Tags: tags}, {Type: "test", Tags: retry}}, Tests: []intake.Test{
+					{SourceFile: "a.test.js", Name: probeName, Attempts: []intake.TestRun{{Status: "pass"}, {Status: "pass", Retry: true}}},
+					{SourceFile: tc.file, Name: tc.test, Attempts: tc.attempts},
+				}}}
+				for _, attempt := range tc.attempts {
+					neighbour := maps.Clone(tags)
+					neighbour["test.name"], neighbour["test.status"], neighbour["test.source.file"] = tc.test, attempt.Status, tc.file
+					if attempt.Retry {
+						neighbour["test.is_retry"] = "true"
+					}
+					run.Facts.Events = append(run.Facts.Events, intake.Event{Type: "test", Tags: neighbour})
+				}
+				require.Equal(t, tc.want, evaluateFeature(feature, probeCheckRun(run), identity).Status)
+				require.Len(t, run.Tests, 2, "the report retains the original native results")
+				require.Len(t, run.Facts.Tests, 2, "the report retains all telemetry")
+			})
+		}
 	}
 }
