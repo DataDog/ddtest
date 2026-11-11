@@ -28,21 +28,6 @@ platforms or frameworks require explicit selection.
 | `--runtime-tags` | `DD_TEST_OPTIMIZATION_RUNNER_RUNTIME_TAGS` | `DD_TEST_OPTIMIZATION_RUNTIME_TAGS` | `""` | JSON string to override runtime tags used to fetch skippable tests. Useful for local development on a different OS than CI, such as `--runtime-tags '{"os.platform":"linux","runtime.version":"3.2.0"}'`. |
 | | `DD_TEST_OPTIMIZATION_RUNNER_REPORT_ENABLED` | | `true` | Print human-readable plan and run reports. Set to `false` to disable them. |
 
-## Ruby files with multiple suites
-
-RSpec and Minitest can report multiple suites from the same source file. In
-suite mode, DDTest uses full discovery before omitting a file: every current
-suite in that file must be skippable. If full discovery fails or is unavailable,
-DDTest keeps the file runnable and leaves suite skipping to the tracer. With
-`--strict-discovery`, a full-discovery failure still fails planning.
-
-Fast file discovery retains all historical suite identities for duration
-estimation, including entries without a positive duration, but those entries do
-not establish a complete current inventory. Durations are summed per file;
-files with both backend timings and default estimates are reported as mixed.
-The planning duration telemetry uses `source:mixed` for these files, alongside
-`source:backend` and `source:default` for files using only one source.
-
 ## Pytest suite-level discovery
 
 Use suite mode to plan from test files without starting pytest collection or
