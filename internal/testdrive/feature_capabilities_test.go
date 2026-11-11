@@ -8,14 +8,18 @@ package testdrive
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
+	"net/http"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/DataDog/ddtest/internal/constants"
 	"github.com/DataDog/ddtest/internal/framework"
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
 	"github.com/stretchr/testify/require"
+	"github.com/tinylib/msgp/msgp"
 )
 
 func capabilityControl(tags map[string]string) validationRun {
@@ -89,6 +93,65 @@ func TestTracerCapabilityDoesNotReplacePlannerSkipping(t *testing.T) {
 	require.False(t, unsupported)
 }
 
+func TestTroubleshootingTracerStateKeepsUnknownAndConflictingEvidence(t *testing.T) {
+	facts := intake.Facts{RequestsObserved: true, SettingsRequests: 1, TestEventCount: 2,
+		FrameworkVersions: []string{"30.1.2"}, TracerVersions: []string{"6.20.1"},
+		LibraryCapabilities: map[string]string{"auto_test_retries": "mixed", "test_impact_analysis": "unavailable", "test_management.quarantine": "available", "test_management.disable": "unknown"},
+	}
+
+	summary := (validationRun{Instrumented: true, Facts: facts}).summary()
+	require.Equal(t, facts.FrameworkVersions, summary.FrameworkVersions)
+	require.Equal(t, facts.TracerVersions, summary.TracerVersions)
+	require.Equal(t, "events_observed", summary.TracerState.Initialization)
+	require.Equal(t, 1, *summary.TracerState.SettingsRequests)
+	require.Zero(t, *summary.TracerState.SkippableRequests)
+	states := make(map[string]string)
+	for _, capability := range summary.TracerState.Capabilities {
+		states[capability.Feature] = capability.State
+	}
+	require.Equal(t, map[string]string{"auto-retries": "mixed", "skipping": "unavailable", "quarantine": "available", "disabled": "unknown"}, states)
+	require.NotContains(t, states, "early-flake-detection", "suite tags do not advertise a test capability; absence is unknown")
+	require.NotContains(t, states, "attempt-to-fix", "an absent advertisement is not an unavailable feature")
+	unknown := (validationRun{Instrumented: true}).summary().TracerState
+	require.Equal(t, "unknown", unknown.Initialization)
+	require.Nil(t, unknown.SettingsRequests)
+	require.Nil(t, unknown.ManagementRequests)
+	require.Nil(t, (validationRun{}).summary().TracerState, "uninstrumented runs have no tracer observations")
+}
+
+func TestOrdinaryReportingRunsPreserveCapabilityStates(t *testing.T) {
+	for _, feature := range []string{"", "reporting-only"} {
+		t.Run(feature, func(t *testing.T) {
+			server, err := intake.StartScenario(t.TempDir(), intake.Scenario{Feature: feature})
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, server.Close()) })
+			payload, err := msgp.AppendIntf(nil, map[string]any{
+				"metadata": map[string]any{"test": map[string]any{capabilityPrefix + "auto_test_retries": "1"}},
+				"events": []any{map[string]any{"type": "test", "content": map[string]any{"meta": map[string]any{
+					"test.name": "PRIVATE_CUSTOMER_TEST", capabilityPrefix + "PRIVATE_FEATURE": "PRIVATE_SECRET",
+				}}}},
+			})
+			require.NoError(t, err)
+			response, err := http.Post(server.URL()+constants.TestCycleURLPath, "application/msgpack", bytes.NewReader(payload))
+			require.NoError(t, err)
+			require.NoError(t, response.Body.Close())
+			require.Equal(t, http.StatusOK, response.StatusCode)
+			facts, err := server.Facts()
+			require.NoError(t, err)
+			require.Empty(t, facts.Events, "ordinary runs must not retain customer event tags")
+			for _, role := range []runRole{roleReporting, roleRepeat} {
+				summary := (validationRun{Role: role, Instrumented: true, Facts: facts}).summary()
+				require.Len(t, summary.TracerState.Capabilities, 1)
+				require.Equal(t, "auto-retries", summary.TracerState.Capabilities[0].Feature)
+				require.Equal(t, "available", summary.TracerState.Capabilities[0].State)
+				data, err := json.Marshal(summary.TracerState)
+				require.NoError(t, err)
+				require.NotContains(t, string(data), "PRIVATE_")
+			}
+		})
+	}
+}
+
 func TestTestNGValidationSkipsOnlyUnadvertisedFeatures(t *testing.T) {
 	drive, build, session := javaSimulation(t)
 	drive.framework = framework.NewJVM("testng", nil)
@@ -111,6 +174,14 @@ func TestTestNGValidationSkipsOnlyUnadvertisedFeatures(t *testing.T) {
 		}
 	}
 	require.Len(t, build.calls, 6, "only the pair, both controls, skipping and disabled run")
+	requested := 0
+	for _, run := range result.Runs {
+		if run.TracerState != nil && run.TracerState.RequestedFeature != "" {
+			requested++
+			require.Contains(t, []string{"skipping", "disabled"}, run.TracerState.RequestedFeature)
+		}
+	}
+	require.Equal(t, 2, requested, "each exercised feature must retain its requested control")
 	require.True(t, featureChecksPassed("testng", result.Features))
 	passed, total, unsupported := validationFeatureCounts("testng", result.Features)
 	require.Equal(t, 2, passed)

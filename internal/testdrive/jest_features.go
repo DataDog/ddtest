@@ -20,6 +20,7 @@ import (
 
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
 	"github.com/DataDog/ddtest/internal/testdrive/workspace"
+	"github.com/DataDog/ddtest/internal/usagetelemetry"
 )
 
 const probeName = "ddtest validation probe"
@@ -44,7 +45,11 @@ func unavailableFeatures(result *validationResult, reason string) {
 		if policy.Status != "required" {
 			status, explanation = policy.Status, policy.Reason
 		}
-		result.Features = append(result.Features, featureResult{Name: policy.Name, Status: status, Reason: explanation})
+		category := "controls_unavailable"
+		if policy.Status != "required" {
+			category = "not_supported"
+		}
+		result.Features = append(result.Features, featureResult{Name: policy.Name, Status: status, Reason: explanation, Evidence: &usagetelemetry.FeatureEvidence{FailureCategory: category}})
 	}
 }
 
@@ -300,7 +305,7 @@ func runProbeFeatures(run func(string, intake.Scenario, string) (validationRun, 
 	for _, policy := range featurePolicies(result.Framework) {
 		feature := policy.Name
 		if policy.Status != "required" {
-			result.Features = append(result.Features, featureResult{Name: feature, Status: policy.Status, Reason: policy.Reason})
+			result.Features = append(result.Features, featureResult{Name: feature, Status: policy.Status, Reason: policy.Reason, Evidence: &usagetelemetry.FeatureEvidence{FailureCategory: "not_supported"}})
 			continue
 		}
 		if unsupported, ok := unsupportedTracerFeature(result.Framework, feature, passControl, failControl); ok {
@@ -321,7 +326,12 @@ func runProbeFeatures(run func(string, intake.Scenario, string) (validationRun, 
 		scenario := intake.Scenario{Feature: feature, Module: identity.Module, Suite: identity.Suite, Test: identity.Name, SourceFile: identity.SourceFile, Parameters: identity.Parameters}
 		value, err := run(feature, scenario, mode)
 		value = markTimeout(value)
-		result.Runs = append(result.Runs, value.summary())
+		summary := value.summary()
+		if summary.TracerState == nil {
+			summary.TracerState = &usagetelemetry.TracerState{Initialization: "unknown"}
+		}
+		summary.TracerState.RequestedFeature = feature
+		result.Runs = append(result.Runs, summary)
 		if err != nil {
 			return err
 		}
@@ -337,7 +347,9 @@ func withTracerLimitation(result *validationResult, feature featureResult) featu
 	if limitation == "" || feature.Status != "failed" {
 		return feature
 	}
-	return featureResult{Name: feature.Name, Status: "known limitation", Code: tracerLimitation, ObservedCode: feature.Code, Reason: limitation + " Observed: " + feature.Reason}
+	feature.Status, feature.ObservedCode = "known limitation", feature.Code
+	feature.Code, feature.Reason = tracerLimitation, limitation+" Observed: "+feature.Reason
+	return feature
 }
 
 func validProbeControl(run validationRun, status string) bool {
@@ -366,27 +378,38 @@ func probeTelemetry(run validationRun) verdict {
 }
 
 func evaluateFeature(feature string, run validationRun, identity intake.Test) featureResult {
-	result := featureResult{Name: feature, Status: "failed", Reason: "The controlled run did not show the expected feature behavior; see the recorded scenario command, exit code, and counts."}
+	result := featureResult{Name: feature, Status: "failed", Reason: "The controlled run did not show the expected feature behavior; see the recorded scenario command, exit code, and counts.", Evidence: &usagetelemetry.FeatureEvidence{}}
 	if feature == "skipping" && identity.SourceFile == "" && !frameworkFeaturePolicies[run.framework].TestLevelSkipping {
 		result.Status = "inconclusive"
 		result.Reason = "The control did not report test.source.file; a repository-relative file is required to request suite skipping."
+		result.Evidence.FailureCategory = "source_file_missing"
 		return result
 	}
 	if run.Timeout != "" {
 		result.Status, result.Reason = "inconclusive", run.Timeout+"."
+		result.Evidence.FailureCategory = "timed_out"
 		return result
 	}
 	if run.ResultError != "" || len(run.SuiteErrors) > 0 || len(run.Facts.ConfigurationErrors) > 0 {
 		result.Status = "inconclusive"
 		result.Reason = "The scenario could not collect usable runner results or reported setup/configuration errors."
+		result.Evidence.FailureCategory = "runner_results_unavailable"
+		if len(run.SuiteErrors) > 0 {
+			result.Evidence.FailureCategory = "suite_errors"
+		} else if len(run.Facts.ConfigurationErrors) > 0 {
+			result.Evidence.FailureCategory = "configuration_errors"
+		}
 		return result
 	}
 	if feature == "skipping" && run.ExecutionPath == vitestNodeAPIPath && run.PlannerSkipped {
-		return featureResult{Name: feature, Status: "passed", Reason: "ddtest's planner received the skippable probe, reported 100% skipped, and produced an empty execution plan. The command succeeded without starting a Vitest worker or executing a test body. This validates planner skipping on the ddtest run path."}
+		result.Status, result.Reason = "passed", "ddtest's planner received the skippable probe, reported 100% skipped, and produced an empty execution plan. The command succeeded without starting a Vitest worker or executing a test body. This validates planner skipping on the ddtest run path."
+		result.Evidence.Flags = []usagetelemetry.FeatureFlag{{Name: "planner_skipped", Expected: true, Observed: run.PlannerSkipped}}
+		return result
 	}
 	if feature == "skipping" && run.framework == "vitest" && run.Facts.SkippableRequests == 0 {
 		result.Status = "inconclusive"
 		result.Reason = "The Vitest tracer did not request skippable suites. Check this tracer release's Vitest Test Impact Analysis support; a successful reporting run does not prove skipping is supported. Real Datadog credentials are not required."
+		result.Evidence.FailureCategory = "skippable_request_missing"
 		return result
 	}
 	passed, failed, retries := 0, 0, 0
@@ -438,6 +461,7 @@ func evaluateFeature(feature string, run validationRun, identity intake.Test) fe
 		if name != identity.Name {
 			result.Status = "inconclusive"
 			result.Reason = "The scenario selected tests beyond the controlled probe."
+			result.Evidence.FailureCategory = "unexpected_tests_selected"
 			return result
 		}
 		switch test.Status {
@@ -450,30 +474,61 @@ func evaluateFeature(feature string, run validationRun, identity intake.Test) fe
 		}
 	}
 	nativeRepeated := (frameworkFeaturePolicies[run.framework].ProbeBodyCounts && nativePass == 1 && run.ProbeExecutions != nil && *run.ProbeExecutions >= 2) || nativePass >= 2 || ((run.framework == "vitest" || run.framework == "playwright") && nativePass == 1)
-	success := false
+	evaluation := featureEvaluation{}
 	switch feature {
 	case "auto-retries":
-		success = passed > 0 && failed == 1 && retries > 0 && nativePass > 0 && nativeFail == 0
-	case "early-flake-detection":
-		success = passed >= 2 && failed == 0 && retries > 0 && nativeRepeated && nativeFail == 0
+		evaluation.atLeast("matching_retries", 1, retries)
+		evaluation.atLeast("telemetry_attempts", 2, passed+failed)
+		evaluation.atLeast("telemetry_passed", 1, passed)
+		evaluation.equal("telemetry_failed", 1, failed)
+		evaluation.atLeast("native_passed", 1, nativePass)
+		evaluation.equal("native_failed", 0, nativeFail)
+	case "early-flake-detection", "attempt-to-fix":
+		evaluation.atLeast("matching_retries", 1, retries)
+		evaluation.atLeast("telemetry_attempts", 2, passed+failed)
+		evaluation.atLeast("telemetry_passed", 2, passed)
+		evaluation.equal("telemetry_failed", 0, failed)
+		evaluation.equal("native_failed", 0, nativeFail)
+		evaluation.flag("native_repetition_evidence", nativeRepeated)
+		if feature == "attempt-to-fix" {
+			evaluation.flag("attempt_to_fix", attemptToFix)
+		}
 	case "skipping":
-		success = skipped && executedTests(run) == 0 && passed+failed == 0 && run.Facts.TestEventCount == skippedTestEvents
+		evaluation.flag("skipped", skipped)
+		evaluation.equal("native_executed", 0, executedTests(run))
+		evaluation.equal("executed_test_events", 0, passed+failed)
+		evaluation.equal("total_test_events", skippedTestEvents, run.Facts.TestEventCount)
 	case "quarantine":
 		// Quarantine changes the command outcome, not necessarily the native
 		// assertion status. Some Jest versions retain the failing assertion;
 		// other runners report the suppressed failure as skipped.
-		success = quarantined && failed == 1 && passed == 0 && retries == 0 && len(run.Tests) == 1 && nativePass+nativeFail+nativeSkip == 1
+		evaluation.flag("quarantined", quarantined)
+		evaluation.equal("telemetry_failed", 1, failed)
+		evaluation.equal("telemetry_passed", 0, passed)
+		evaluation.equal("matching_retries", 0, retries)
+		evaluation.equal("native_results", 1, len(run.Tests))
+		evaluation.equal("native_counted_results", 1, nativePass+nativeFail+nativeSkip)
 	case "disabled":
 		// A runner may report nothing for a test that never started; the probe's
 		// own execution count, checked below, then proves the body did not run.
-		success = disabled && executedTests(run) == 0 && (nativeSkip == 1 || len(run.Tests) == 0 && frameworkFeaturePolicies[run.framework].ProbeBodyCounts)
-	case "attempt-to-fix":
-		success = attemptToFix && passed >= 2 && failed == 0 && retries > 0 && nativeRepeated && nativeFail == 0
+		evaluation.flag("disabled", disabled)
+		evaluation.flag("disabled_native_result", nativeSkip == 1 || len(run.Tests) == 0 && frameworkFeaturePolicies[run.framework].ProbeBodyCounts)
+		evaluation.equal("native_executed", 0, executedTests(run))
+	default:
+		result.Evidence.FailureCategory = "not_supported"
+		return result
 	}
 	if frameworkFeaturePolicies[run.framework].ProbeBodyCounts {
-		success = success && run.ProbeExecutions != nil && *run.ProbeExecutions == passed+failed
+		observed := run.ProbeExecutions
+		if observed != nil {
+			value := *observed
+			observed = &value
+		}
+		evaluation.Counts = append(evaluation.Counts, usagetelemetry.FeatureCount{Name: "probe_body_executions", Comparison: "equal", Expected: passed + failed, Observed: observed})
 	}
-	success = success && run.ExitCode == 0
+	evaluation.equal("exit_code", 0, run.ExitCode)
+	success := evaluation.passed()
+	result.Evidence = &evaluation.FeatureEvidence
 	if !success {
 		result.Reason = fmt.Sprintf("Controlled %s did not show the expected behavior: matching telemetry has %d passed, %d failed and %d retries with the expected reason (%d total test events); runner has %d passed, %d failed and %d skipped; exit %d.",
 			feature, passed, failed, retries, run.Facts.TestEventCount, nativePass, nativeFail, nativeSkip, run.ExitCode)

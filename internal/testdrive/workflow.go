@@ -19,6 +19,7 @@ import (
 	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/testdrive/workspace"
+	"github.com/DataDog/ddtest/internal/usagetelemetry"
 )
 
 type WorkflowOptions struct {
@@ -29,6 +30,18 @@ type WorkflowOptions struct {
 	FactsFile       string
 	Site            string
 	Format          string // agent: compact state + rendered facts; json: protocol only; verbose: runner logs too
+}
+
+// quietReportOutput suppresses runner text while retaining the typed callback
+// for reports actually written by this attempt. It never reads saved reports.
+type quietReportOutput struct{ output io.Writer }
+
+func (w quietReportOutput) Write(data []byte) (int, error) { return len(data), nil }
+func (w quietReportOutput) SetTroubleshootingReport(path string) {
+	usagetelemetry.SetTroubleshootingReport(w.output, path)
+}
+func (w quietReportOutput) ObserveTroubleshootingError(operation string, err error) {
+	usagetelemetry.ObserveTroubleshootingError(w.output, operation, err)
 }
 
 func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options WorkflowOptions) error {
@@ -108,7 +121,8 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 		if options.Format == "verbose" {
 			return t.Run(ctx, output)
 		}
-		runErr := t.Run(ctx, io.Discard)
+		runErr := t.Run(ctx, quietReportOutput{output})
+		usagetelemetry.ObserveTroubleshootingError(output, "test_execution", runErr)
 		result.Status = "ready"
 		result.Phase = "configuration_check"
 		result.Reason = "Configuration-only check; no paired execution or feature controls were performed."
@@ -416,7 +430,9 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 		run = t.workflowRun
 	}
 	runErr := run(ctx, logs)
+	usagetelemetry.ObserveTroubleshootingError(output, "test_execution", runErr)
 	validation, err := readCurrentOnboardingResult(t.repositoryRoot, started)
+	usagetelemetry.ObserveTroubleshootingError(output, "report_read", err)
 	if err != nil {
 		return fail("validation_failed", "validation_report_unavailable", fmt.Sprint(errors.Join(runErr, err)), "No current full report exists. Resolve this execution failure; old/check-only evidence cannot certify completion.")
 	}
@@ -453,6 +469,7 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 		return fail("blocked_environment", supervision.Code, supervision.Error(), "Restore the named local process capability, then rerun next_command. The test comparison is unverified.")
 	}
 	if runErr != nil && validation.Success {
+		result.JSONReport = validation.jsonReportPath(t.repositoryRoot)
 		return fail("validation_failed", "execution_result_conflict", runErr.Error(), "Resolve the execution/report discrepancy before claiming completion.")
 	}
 	progress("verification")
@@ -476,7 +493,7 @@ func (t *Testdrive) Workflow(ctx context.Context, output io.Writer, options Work
 	}
 	workflow.Checks = append(workflow.Checks, cleanup)
 	validation.Workflow = workflow
-	finalizeErr := finishValidation(io.Discard, t.repositoryRoot, validation)
+	finalizeErr := finishValidation(quietReportOutput{output}, t.repositoryRoot, validation)
 	validation, err = readCurrentOnboardingResult(t.repositoryRoot, started)
 	if err != nil {
 		return fail("blocked_environment", "report_invalid", fmt.Sprint(errors.Join(finalizeErr, err)), "Restore report access; preserve execution evidence.")

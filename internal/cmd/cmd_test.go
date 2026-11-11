@@ -558,9 +558,9 @@ func TestExecute(t *testing.T) {
 		"Start here:",
 		"cd <repository>",
 		"ddtest onboard",
-		"onboard     Start here: onboard this repository to Test Optimization",
+		"onboard Start here: onboard this repository to Test Optimization",
 	} {
-		if !strings.Contains(output, expected) {
+		if !strings.Contains(strings.Join(strings.Fields(output), " "), expected) {
 			t.Errorf("help output should contain %q:\n%s", expected, output)
 		}
 	}

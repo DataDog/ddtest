@@ -16,9 +16,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var newUsageAttempt = func(command, mode string) *usagetelemetry.Attempt {
+var newUsageAttempt = func(ctx context.Context, command, mode string) *usagetelemetry.Attempt {
 	return usagetelemetry.Start(command, mode, usagetelemetry.Config{
 		Version: buildinfo.CurrentVersion(), ClientToken: usagetelemetry.ClientToken, IntakeSite: usagetelemetry.IntakeSite,
+		Context: ctx,
 	})
 }
 
@@ -41,6 +42,7 @@ func executeWithUsage(ctx context.Context, root *cobra.Command) error {
 	ctx = context.WithValue(ctx, usageCommandKey{}, usage)
 	err := root.ExecuteContext(ctx)
 	if usage.command != nil {
+		usage.attempt.ObserveTroubleshootingError("command", err)
 		usage.attempt.Finish(ExitCode(err), err != nil && ctx.Err() != nil)
 	}
 	return err
@@ -54,7 +56,7 @@ func beginUsage(command *cobra.Command, mode string) {
 		return
 	}
 	usage.command = command
-	usage.attempt = newUsageAttempt(command.Name(), mode)
+	usage.attempt = newUsageAttempt(commandContext(command), command.Name(), mode)
 }
 
 func usageMode(command *cobra.Command) string {

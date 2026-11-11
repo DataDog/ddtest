@@ -15,6 +15,7 @@ import (
 
 	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/DataDog/ddtest/internal/testdrive/workspace"
+	"github.com/DataDog/ddtest/internal/usagetelemetry"
 )
 
 // standaloneWorkflow is testdrive --agent for a language whose validation is
@@ -41,7 +42,8 @@ func (t *Testdrive) standaloneWorkflow(ctx context.Context, attempt *workflowAtt
 		run = t.workflowRun
 	}
 	if t.checkOnly {
-		runErr := run(ctx, io.Discard)
+		runErr := run(ctx, quietReportOutput{output})
+		usagetelemetry.ObserveTroubleshootingError(output, "test_execution", runErr)
 		result.Status, result.Phase, result.NextAction = "ready", "configuration_check", "run_command"
 		result.Reason = "Configuration-only check; no paired execution or feature controls were performed."
 		if runErr != nil {
@@ -81,17 +83,19 @@ func (t *Testdrive) standaloneWorkflow(ctx context.Context, attempt *workflowAtt
 	result.Phase = "validation"
 	started := time.Now()
 	runErr := run(ctx, io.Discard)
+	usagetelemetry.ObserveTroubleshootingError(output, "test_execution", runErr)
 	if errors.Is(runErr, workspace.ErrBusy) {
 		result.NextCommand = nil
 		return fail("blocked_environment", "workflow_busy", runErr.Error(), "Wait for the running validation; do not start another one or delete lock files.")
 	}
 	validation, err := readCurrentOnboardingResult(t.repositoryRoot, started)
+	usagetelemetry.ObserveTroubleshootingError(output, "report_read", err)
 	if err != nil {
 		return fail("validation_failed", "validation_report_unavailable", errors.Join(runErr, err).Error(), "No current full report exists. Resolve this execution failure; old or check-only evidence cannot establish the verdict.")
 	}
-	result.JSONReport = validationPath(t.repositoryRoot)
+	result.JSONReport = validation.jsonReportPath(t.repositoryRoot)
 	if validation.HTMLReportCurrent {
-		result.HTMLReport = htmlReportPath(t.repositoryRoot)
+		result.HTMLReport = validation.htmlReportPath(t.repositoryRoot)
 	}
 	result.Instruction = onboard.StandaloneVerdictInstruction(displayName(name))
 	if t.executor != nil {

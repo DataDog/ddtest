@@ -60,6 +60,7 @@ type PlanSummary struct {
 	Features            []string          `json:"feature_scenarios,omitempty"`
 	Framework           string            `json:"framework"`
 	Tracer              string            `json:"tracer,omitempty"`
+	Runtime             string            `json:"local_runtime,omitempty"`
 	Site                string            `json:"site"`
 	Initialization      string            `json:"initialization"`
 	Configurations      int               `json:"configurations"`
@@ -76,6 +77,13 @@ type WorkflowCheck struct {
 
 func observeAgentResult(output io.Writer, result AgentResult) {
 	usagetelemetry.ObserveResult(output, result.Status, result.Phase, result.Code)
+	info := usagetelemetry.TroubleshootingContext{ReportPath: result.JSONReport}
+	if result.Plan != nil {
+		info.Framework, info.Tracer, info.Runtime = result.Plan.Framework, result.Plan.Tracer, result.Plan.Runtime
+	} else if result.PlanSummary != nil {
+		info.Framework, info.Tracer, info.Runtime = result.PlanSummary.Framework, result.PlanSummary.Tracer, result.PlanSummary.Runtime
+	}
+	usagetelemetry.SetTroubleshootingContext(output, info)
 }
 
 func WriteAgentResult(output io.Writer, result AgentResult) error {
@@ -89,7 +97,7 @@ func WriteAgentResult(output io.Writer, result AgentResult) error {
 func RenderAgentResult(output io.Writer, result AgentResult, format string) error {
 	if result.Plan != nil {
 		plan := result.Plan
-		result.PlanSummary = &PlanSummary{Framework: plan.Framework, Tracer: plan.Tracer, Site: plan.Site, Initialization: plan.Initialization, Configurations: len(plan.Scope.Commands), Unresolved: len(plan.Scope.Unresolved), Features: plan.Features, UnsupportedFeatures: plan.UnsupportedFeatures, KnownLimitations: plan.KnownLimitations}
+		result.PlanSummary = &PlanSummary{Framework: plan.Framework, Tracer: plan.Tracer, Runtime: plan.Runtime, Site: plan.Site, Initialization: plan.Initialization, Configurations: len(plan.Scope.Commands), Unresolved: len(plan.Scope.Unresolved), Features: plan.Features, UnsupportedFeatures: plan.UnsupportedFeatures, KnownLimitations: plan.KnownLimitations}
 		result.DetailsCommand = DDTestCommand("testdrive", "--report", "--detail", "plan")
 		if format == "json" && len(result.DetailsCommand) > 0 {
 			result.DetailsCommand = append(result.DetailsCommand, "--format", "json")

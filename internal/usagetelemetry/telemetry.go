@@ -9,6 +9,7 @@ package usagetelemetry
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/json"
 	"io"
@@ -37,13 +38,16 @@ const (
 	flushTimeout   = 3 * time.Second
 )
 
-// Config contains only release metadata and the independent usage destination.
+// Config contains release metadata and the independent usage destination.
 // Transport permits testing delivery without contacting a real intake.
 type Config struct {
 	Version     string
 	ClientToken string
 	IntakeSite  string
 	Transport   http.RoundTripper
+	// Context prevents diagnostics after command cancellation. Usage
+	// delivery remains independently bounded so the cancelled result can report.
+	Context context.Context
 }
 
 type event struct {
@@ -69,18 +73,21 @@ type event struct {
 // Attempt owns one top-level command's events. ObserveResult and Finish are
 // called by command execution; background delivery never reads mutable state.
 type Attempt struct {
-	event    event
-	started  time.Time
-	endpoint string
-	client   *http.Client
-	pending  sync.WaitGroup
-	finished bool
+	event                  event
+	started                time.Time
+	endpoint               string
+	client                 *http.Client
+	pending                sync.WaitGroup
+	finished               bool
+	troubleshootingContext TroubleshootingContext
+	troubleshootingError   *TroubleshootingError
+	ctx                    context.Context
 }
 
 // Start emits a start event, or returns nil when disabled or unconfigured.
 // It never uses DD_API_KEY, an Agent, or a customer's intake override.
 func Start(command, mode string, config Config) *Attempt {
-	if config.ClientToken == "" || disabled() || (command != "onboard" && command != "testdrive") {
+	if command != "onboard" && command != "testdrive" {
 		return nil
 	}
 	switch mode {
@@ -88,32 +95,47 @@ func Start(command, mode string, config Config) *Attempt {
 	default:
 		return nil
 	}
+	client, endpoint := intakeClient(config)
+	if client == nil {
+		return nil
+	}
+	now := time.Now()
+	ctx := config.Context
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	a := &Attempt{
+		event: event{
+			SchemaVersion: 1, Service: "ddtest-cli", Source: "ddtest",
+			AttemptID: rand.Text(), Command: command, Mode: mode,
+			Version: diagnosticVersion(config.Version), OS: runtime.GOOS, Arch: runtime.GOARCH,
+		},
+		started:  now,
+		endpoint: endpoint,
+		client:   client,
+		ctx:      ctx,
+	}
+	a.send("ddtest.command.started", now)
+	a.event.Phase = "preparation"
+	return a
+}
+
+func intakeClient(config Config) (*http.Client, string) {
+	if config.ClientToken == "" || disabled() {
+		return nil, ""
+	}
 	switch config.IntakeSite {
 	case "datadoghq.com", "us3.datadoghq.com", "us5.datadoghq.com", "datadoghq.eu",
 		"ap1.datadoghq.com", "ap2.datadoghq.com", "uk1.datadoghq.com":
 	default:
-		return nil
+		return nil, ""
 	}
-	now := time.Now()
 	client := httptransport.NewHTTPClient(requestTimeout)
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	if config.Transport != nil {
 		client.Transport = config.Transport
 	}
-	endpoint := "https://http-intake.logs." + config.IntakeSite + "/v1/input/" + url.PathEscape(config.ClientToken)
-	a := &Attempt{
-		event: event{
-			SchemaVersion: 1, Service: "ddtest-cli", Source: "ddtest",
-			AttemptID: rand.Text(), Command: command, Mode: mode,
-			Version: config.Version, OS: runtime.GOOS, Arch: runtime.GOARCH,
-		},
-		started:  now,
-		endpoint: endpoint,
-		client:   client,
-	}
-	a.send("ddtest.command.started", now)
-	a.event.Phase = "preparation"
-	return a
+	return client, "https://http-intake.logs." + config.IntakeSite + "/v1/input/" + url.PathEscape(config.ClientToken)
 }
 
 func disabled() bool {
@@ -133,21 +155,11 @@ func (a *Attempt) Finish(exitCode int, cancelled bool) {
 	if a == nil || a.finished {
 		return
 	}
+	a.ObserveExit(exitCode, cancelled)
+	if data := a.troubleshootingPayload(); len(data) > 0 {
+		a.sendBody(data)
+	}
 	a.finished = true
-	if cancelled {
-		a.event.Outcome = "cancelled"
-	} else if a.event.Outcome == "" || (exitCode != 0 && (a.event.Outcome == "succeeded" || a.event.Outcome == "handoff")) {
-		a.event.Outcome = "failed"
-		if exitCode == 0 {
-			a.event.Outcome = "succeeded"
-			if a.event.Mode == "discovery" || a.event.Mode == "apply" {
-				a.event.Outcome = "handoff"
-			}
-		}
-	}
-	if exitCode == 0 && a.event.Mode == "configuration_check" && a.event.Outcome == "handoff" {
-		a.event.Outcome = "succeeded"
-	}
 	duration := time.Since(a.started).Milliseconds()
 	a.event.ExitCode, a.event.DurationMS = &exitCode, &duration
 	a.send("ddtest.command.finished", time.Now())
@@ -171,6 +183,10 @@ func (a *Attempt) send(name string, date time.Time) {
 	if err != nil {
 		return
 	}
+	a.sendBody(body)
+}
+
+func (a *Attempt) sendBody(body []byte) {
 	a.pending.Add(1)
 	go func() {
 		defer a.pending.Done()
