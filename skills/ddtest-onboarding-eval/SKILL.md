@@ -178,8 +178,8 @@ The runner mounts storage at the short container path `/trial`, records the
 requested ref's resolved SHA, and creates a fresh checkout and private caches every
 time. Remote sources fetch only that ref with `--depth=1 --no-tags`, without
 downloading the default branch first; setup can explicitly fetch more history.
-Local sources keep their available history before their temporary mirror is removed,
-so history-dependent setup does not need a reachable original remote. Submodules are opt-in with
+Local sources keep their available history and tags before their temporary mirror is removed,
+so history- or tag-dependent setup does not need a reachable original remote. Submodules are opt-in with
 `--submodules`. Setup arguments use `shlex` without an implicit shell; setup must
 leave tracked/untracked Git state clean; it may commit, and `changes.patch`
 starts from HEAD after setup and readiness (`agent_baseline` in `run.json`;

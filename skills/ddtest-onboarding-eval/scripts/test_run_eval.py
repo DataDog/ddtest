@@ -269,6 +269,29 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(subprocess.check_output(["git", "-C", checkout, "rev-list", "--count", "HEAD"], text=True).strip(), "1")
         self.assertEqual(subprocess.check_output(["git", "-C", checkout, "rev-parse", "--is-shallow-repository"], text=True).strip(), "true")
 
+    def test_local_tags_survive_mirror_cleanup_without_fetching_remote_tags(self):
+        local = self.root / "tagged.git"
+        subprocess.run(["git", "clone", "--mirror", "--quiet", "--", self.source, str(local)], check=True)
+        subprocess.run(["git", "-C", str(local), "remote", "remove", "origin"], check=True, capture_output=True)
+        tag = "ddtest-eval-fixture"
+        # A lightweight tag reuses the existing signed commit.
+        subprocess.run(["git", "-C", str(local), "update-ref", "refs/tags/" + tag, "HEAD"], check=True)
+        tags = subprocess.check_output(["git", "-C", str(local), "tag", "--list"], text=True).splitlines()
+        source_shallow = subprocess.check_output(["git", "-C", str(local), "rev-parse", "--is-shallow-repository"], text=True).strip()
+        for kind, source in (("local", str(local)), ("remote", local.as_uri())):
+            with self.subTest(source=kind):
+                self.args.repo, self.args.ref = source, "HEAD"
+                self.args.output = self.root / (kind + "-evidence")
+                self.args.setup_command = [shlex.join(["git", "describe", "--tags", "--abbrev=0", "--match", tag])] if kind == "local" else []
+                code, manifest = self.trial()
+                self.assertEqual(code, 0, manifest)
+                checkout = manifest["checkout"]
+                observed = subprocess.check_output(["git", "-C", checkout, "tag", "--list"], text=True).splitlines()
+                self.assertEqual(observed, tags if kind == "local" else [])
+                self.assertFalse((Path(manifest["trial_directory"]) / "harness" / "source.git").exists())
+                shallow = subprocess.check_output(["git", "-C", checkout, "rev-parse", "--is-shallow-repository"], text=True).strip()
+                self.assertEqual(shallow, source_shallow if kind == "local" else "true")
+
     def test_preparation_never_runs_an_agent_and_records_phase_timings(self):
         self.args.prepare_cache = "a" * 64
         capture = [sys.executable, "-c", "print('captured fixture cache')"]

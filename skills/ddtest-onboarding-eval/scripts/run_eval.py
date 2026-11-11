@@ -1438,11 +1438,11 @@ def run(args):
                 subprocess.run(["git", "clone", "--mirror", "--quiet", "--", str(local), str(source)], check=True)
                 manifest["repository_source"] = "local"
             # Remote trials fetch only the requested ref at depth 1. Local inputs
-            # keep their available history before their temporary mirror is removed.
+            # keep their available history and tags before their mirror is removed.
             command(["git", "init", "--quiet", str(checkout)])
             command(["git", "remote", "add", "--", "origin", str(source)], cwd=checkout)
             depth = ["--depth=1"] if source == args.repo else []
-            command(["git", "fetch", *depth, "--update-shallow", "--no-tags", "origin", args.ref], cwd=checkout)
+            command(["git", "fetch", *depth, "--update-shallow", "--no-tags" if source == args.repo else "--tags", "origin", args.ref], cwd=checkout)
             command(["git", "checkout", "--detach", "FETCH_HEAD"], cwd=checkout)
             copies = []
             local_mirrors = False
