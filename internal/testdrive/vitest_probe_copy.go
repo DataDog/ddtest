@@ -98,7 +98,7 @@ func (t *Testdrive) runVitestCopiedFeatures(ctx context.Context, output io.Write
 func appendVitestProbe(source, target string, baseline validationRun) (string, error) {
 	source, target = workspace.CanonicalRoot(source), workspace.CanonicalRoot(target)
 	if relative, err := filepath.Rel(source, target); err != nil || relative == "." || filepath.IsLocal(relative) {
-		return "", fmt.Errorf("Vitest probe copy must be outside the original checkout")
+		return "", fmt.Errorf("vitest probe copy must be outside the original checkout")
 	}
 	for _, test := range baseline.Tests {
 		if test.Status != "passed" && test.Status != "failed" {
