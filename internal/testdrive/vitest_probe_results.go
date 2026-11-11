@@ -12,7 +12,7 @@ import (
 
 // An appended probe shares a file with tests excluded by --testNamePattern.
 // Keep those native results and events in the report, but evaluate the probe
-// separately. Exclude only known, skipped neighbours, never executed tests or
+// separately. Exclude only known, skipped or todo neighbours, never executed tests or
 // unmatched telemetry. The paired full-selection checks are untouched.
 func probeCheckRun(run validationRun) validationRun {
 	if run.framework != "vitest" {
@@ -31,7 +31,7 @@ func probeCheckRun(run validationRun) validationRun {
 	skipped := map[string]int{}
 	tests := make([]jestTest, 0, len(run.Tests))
 	for _, test := range run.Tests {
-		if test.File == file && test.Name != probeName && !test.probe && test.Status == "skipped" {
+		if test.File == file && test.Name != probeName && !test.probe && (test.Status == "skipped" || test.Status == "todo") {
 			name := test.Name
 			if test.telemetryName != nil {
 				name = *test.telemetryName
