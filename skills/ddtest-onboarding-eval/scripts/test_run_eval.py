@@ -231,7 +231,8 @@ class RunnerTests(unittest.TestCase):
         code, manifest = self.trial()
         clone = next(record["argv"] for record in manifest["commands"] if record["argv"][:2] == ["git", "clone"])
         trial = Path(manifest["trial_directory"])
-        self.assertEqual(Path(clone[3]), trial / "harness" / "source.git")
+        self.assertEqual(Path(clone[-2]), trial / "harness" / "source.git")
+        self.assertIn("--no-hardlinks", clone)
         self.assertFalse((trial / "harness" / "source.git").exists(), "the copy is removed once checked out")
         self.assertEqual(manifest["repository"], self.source)
         self.assertEqual(manifest["repository_source"], "local")
@@ -241,6 +242,97 @@ class RunnerTests(unittest.TestCase):
         if expected.returncode == 0:
             remote = subprocess.check_output(["git", "-C", str(trial / "repo"), "remote", "get-url", "origin"], text=True).strip()
             self.assertEqual(remote, expected.stdout.strip())
+
+    def test_local_repository_without_origin_preserves_history_during_setup(self):
+        history = subprocess.check_output(["git", "-C", self.source, "rev-list", "--max-count=2", "HEAD"], text=True).splitlines()
+        local = self.root / "local.git"
+        subprocess.run(["git", "clone", "--mirror", "--quiet", "--", self.source, str(local)], check=True)
+        subprocess.run(["git", "-C", str(local), "remote", "remove", "origin"], check=True, capture_output=True)
+        self.args.repo = str(local)
+        self.args.ref = history[0]
+        # A shallow CI source may have only HEAD; preserve whatever history
+        # the local input actually has without needing a deleted remote.
+        self.args.setup_command = [shlex.join(["git", "merge-base", "--is-ancestor", history[-1], "HEAD"])]
+        code, manifest = self.trial()
+        self.assertEqual(code, 0, manifest)
+        self.assertEqual(manifest["commit"], history[0])
+        self.assertFalse((Path(manifest["trial_directory"]) / "harness" / "source.git").exists())
+
+    def test_local_partial_clone_with_available_snapshot_does_not_need_missing_history(self):
+        gpg = shutil.which("gpg")
+        if not gpg:
+            self.skipTest("GnuPG is required for signed partial-clone fixtures")
+        signing = self.root / "signing"
+        signing.mkdir(mode=0o700)
+        sign_env = {**os.environ, "GNUPGHOME": str(signing)}
+        gpgconf = shutil.which("gpgconf")
+        if gpgconf:
+            self.addCleanup(subprocess.run, [gpgconf, "--homedir", str(signing), "--kill", "gpg-agent"], capture_output=True)
+        subprocess.run([gpg, "--batch", "--pinentry-mode", "loopback", "--passphrase", "",
+                        "--quick-generate-key", "Eval fixture <eval@example.com>", "ed25519", "sign", "0"],
+                       env=sign_env, check=True, capture_output=True)
+        git = ["git", "-c", "gpg.format=openpgp", "-c", "gpg.openpgp.program=" + gpg,
+               "-c", "user.signingkey=eval@example.com", "-c", "user.name=eval", "-c", "user.email=eval@example.com"]
+        origin, local = self.root / "origin", self.root / "partial"
+        subprocess.run(["git", "init", "--quiet", "--initial-branch=juan-fernandez/partial-fixture", str(origin)], check=True)
+        for content in ("historical content", "available snapshot"):
+            (origin / "README.md").write_text(content + "\n")
+            subprocess.run(["git", "-C", str(origin), "add", "README.md"], check=True)
+            subprocess.run([*git, "-C", str(origin), "commit", "-S", "--quiet", "-m", content], env=sign_env, check=True)
+            subprocess.run([*git, "-C", str(origin), "verify-commit", "HEAD"], env=sign_env, check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(origin), "config", "uploadpack.allowFilter", "true"], check=True)
+        subprocess.run(["git", "clone", "--quiet", "--no-local", "--filter=blob:none", "--no-checkout", "--", origin.as_uri(), str(local)], check=True)
+        subprocess.run(["git", "-C", str(local), "checkout", "--quiet", "--detach", "HEAD"], check=True)
+        objects = subprocess.check_output(["git", "-C", str(local), "rev-list", "--objects", "--all", "--missing=print"], text=True)
+        self.assertTrue(any(line.startswith("?") for line in objects.splitlines()), "the fixture must lack historical blobs")
+        expected = subprocess.check_output(["git", "-C", str(local), "rev-parse", "HEAD"], text=True).strip()
+        shutil.rmtree(origin)
+        self.args.repo, self.args.ref = str(local), "HEAD"
+        self.args.setup_command = ["git cat-file -e HEAD:README.md"]
+        code, manifest = self.trial()
+        self.assertEqual(code, 0, manifest)
+        self.assertEqual(manifest["commit"], expected)
+        trial = Path(manifest["trial_directory"])
+        self.assertFalse((trial / "harness" / "source.git").exists())
+        for pack in (local / ".git" / "objects" / "pack").glob("*.pack"):
+            copied = Path(manifest["checkout"]) / ".git" / "objects" / "pack" / pack.name
+            self.assertTrue(copied.exists())
+            self.assertFalse(os.path.samefile(pack, copied), "trial objects must not alias the local source")
+
+    def test_remote_pinned_commit_has_only_one_commit_of_history(self):
+        # Pin the materialized snapshot; partial clones may lack historical blobs.
+        expected = subprocess.check_output(["git", "-C", self.source, "rev-parse", "HEAD"], text=True).strip()
+        self.args.repo = Path(self.source).as_uri()
+        self.args.ref = expected
+        code, manifest = self.trial()
+        self.assertEqual(code, 0, manifest)
+        self.assertEqual(manifest["commit"], expected)
+        checkout = manifest["checkout"]
+        self.assertEqual(subprocess.check_output(["git", "-C", checkout, "rev-list", "--count", "HEAD"], text=True).strip(), "1")
+        self.assertEqual(subprocess.check_output(["git", "-C", checkout, "rev-parse", "--is-shallow-repository"], text=True).strip(), "true")
+
+    def test_local_tags_survive_mirror_cleanup_without_fetching_remote_tags(self):
+        local = self.root / "tagged.git"
+        subprocess.run(["git", "clone", "--mirror", "--quiet", "--", self.source, str(local)], check=True)
+        subprocess.run(["git", "-C", str(local), "remote", "remove", "origin"], check=True, capture_output=True)
+        tag = "ddtest-eval-fixture"
+        # A lightweight tag reuses the existing signed commit.
+        subprocess.run(["git", "-C", str(local), "update-ref", "refs/tags/" + tag, "HEAD"], check=True)
+        tags = subprocess.check_output(["git", "-C", str(local), "tag", "--list"], text=True).splitlines()
+        source_shallow = subprocess.check_output(["git", "-C", str(local), "rev-parse", "--is-shallow-repository"], text=True).strip()
+        for kind, source in (("local", str(local)), ("remote", local.as_uri())):
+            with self.subTest(source=kind):
+                self.args.repo, self.args.ref = source, "HEAD"
+                self.args.output = self.root / (kind + "-evidence")
+                self.args.setup_command = [shlex.join(["git", "describe", "--tags", "--abbrev=0", "--match", tag])] if kind == "local" else []
+                code, manifest = self.trial()
+                self.assertEqual(code, 0, manifest)
+                checkout = manifest["checkout"]
+                observed = subprocess.check_output(["git", "-C", checkout, "tag", "--list"], text=True).splitlines()
+                self.assertEqual(observed, tags if kind == "local" else [])
+                self.assertFalse((Path(manifest["trial_directory"]) / "harness" / "source.git").exists())
+                shallow = subprocess.check_output(["git", "-C", checkout, "rev-parse", "--is-shallow-repository"], text=True).strip()
+                self.assertEqual(shallow, source_shallow if kind == "local" else "true")
 
     def test_preparation_never_runs_an_agent_and_records_phase_timings(self):
         self.args.prepare_cache = "a" * 64

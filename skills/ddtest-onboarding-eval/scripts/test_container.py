@@ -31,8 +31,8 @@ class FixtureContainer(isolation.Container):
         super().start()
         (self.trial.parent/'active.json').write_text(json.dumps({'trial':str(self.trial),'container':self.name}))
     def execute(self,argv,*args):
-        if argv[:3]==['git','clone','--']:
-            argv=[*argv[:3],str(self.trial/'source'),argv[-1]]
+        if argv[:5]==['git','remote','add','--','origin']:
+            argv=[*argv[:5],str(self.trial/'source')]
         return super().execute(argv,*args)
 
 

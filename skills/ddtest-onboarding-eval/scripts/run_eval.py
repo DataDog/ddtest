@@ -1437,8 +1437,16 @@ def run(args):
                 source = harness / "source.git"
                 subprocess.run(["git", "clone", "--mirror", "--quiet", "--", str(local), str(source)], check=True)
                 manifest["repository_source"] = "local"
-            command(["git", "clone", "--", str(source), str(checkout)])
-            command(["git", "fetch", "--update-shallow", "--no-tags", "origin", args.ref], cwd=checkout)
+            if source == args.repo:
+                # Remote trials fetch only the requested ref at depth 1.
+                command(["git", "init", "--quiet", str(checkout)])
+                command(["git", "remote", "add", "--", "origin", str(source)], cwd=checkout)
+                command(["git", "fetch", "--depth=1", "--update-shallow", "--no-tags", "origin", args.ref], cwd=checkout)
+            else:
+                # Copy available objects without packing missing partial-clone
+                # history or letting the trial modify the source's object files.
+                command(["git", "clone", "--no-checkout", "--no-hardlinks", "--", str(source), str(checkout)])
+                command(["git", "fetch", "--update-shallow", "--no-tags", "origin", args.ref], cwd=checkout)
             command(["git", "checkout", "--detach", "FETCH_HEAD"], cwd=checkout)
             copies = []
             local_mirrors = False
