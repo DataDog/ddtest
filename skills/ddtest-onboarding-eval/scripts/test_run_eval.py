@@ -229,9 +229,10 @@ class RunnerTests(unittest.TestCase):
         # The container mounts only the trial, so a host repository, as a
         # project patched for an eval, reaches it as a bare copy there.
         code, manifest = self.trial()
-        remote = next(record["argv"] for record in manifest["commands"] if record["argv"][:3] == ["git", "remote", "add"])
+        clone = next(record["argv"] for record in manifest["commands"] if record["argv"][:2] == ["git", "clone"])
         trial = Path(manifest["trial_directory"])
-        self.assertEqual(Path(remote[-1]), trial / "harness" / "source.git")
+        self.assertEqual(Path(clone[-2]), trial / "harness" / "source.git")
+        self.assertIn("--no-hardlinks", clone)
         self.assertFalse((trial / "harness" / "source.git").exists(), "the copy is removed once checked out")
         self.assertEqual(manifest["repository"], self.source)
         self.assertEqual(manifest["repository_source"], "local")
@@ -256,6 +257,47 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(code, 0, manifest)
         self.assertEqual(manifest["commit"], history[0])
         self.assertFalse((Path(manifest["trial_directory"]) / "harness" / "source.git").exists())
+
+    def test_local_partial_clone_with_available_snapshot_does_not_need_missing_history(self):
+        gpg = shutil.which("gpg")
+        if not gpg:
+            self.skipTest("GnuPG is required for signed partial-clone fixtures")
+        signing = self.root / "signing"
+        signing.mkdir(mode=0o700)
+        sign_env = {**os.environ, "GNUPGHOME": str(signing)}
+        gpgconf = shutil.which("gpgconf")
+        if gpgconf:
+            self.addCleanup(subprocess.run, [gpgconf, "--homedir", str(signing), "--kill", "gpg-agent"], capture_output=True)
+        subprocess.run([gpg, "--batch", "--pinentry-mode", "loopback", "--passphrase", "",
+                        "--quick-generate-key", "Eval fixture <eval@example.com>", "ed25519", "sign", "0"],
+                       env=sign_env, check=True, capture_output=True)
+        git = ["git", "-c", "gpg.format=openpgp", "-c", "gpg.openpgp.program=" + gpg,
+               "-c", "user.signingkey=eval@example.com", "-c", "user.name=eval", "-c", "user.email=eval@example.com"]
+        origin, local = self.root / "origin", self.root / "partial"
+        subprocess.run(["git", "init", "--quiet", "--initial-branch=juan-fernandez/partial-fixture", str(origin)], check=True)
+        for content in ("historical content", "available snapshot"):
+            (origin / "README.md").write_text(content + "\n")
+            subprocess.run(["git", "-C", str(origin), "add", "README.md"], check=True)
+            subprocess.run([*git, "-C", str(origin), "commit", "-S", "--quiet", "-m", content], env=sign_env, check=True)
+            subprocess.run([*git, "-C", str(origin), "verify-commit", "HEAD"], env=sign_env, check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(origin), "config", "uploadpack.allowFilter", "true"], check=True)
+        subprocess.run(["git", "clone", "--quiet", "--no-local", "--filter=blob:none", "--no-checkout", "--", origin.as_uri(), str(local)], check=True)
+        subprocess.run(["git", "-C", str(local), "checkout", "--quiet", "--detach", "HEAD"], check=True)
+        objects = subprocess.check_output(["git", "-C", str(local), "rev-list", "--objects", "--all", "--missing=print"], text=True)
+        self.assertTrue(any(line.startswith("?") for line in objects.splitlines()), "the fixture must lack historical blobs")
+        expected = subprocess.check_output(["git", "-C", str(local), "rev-parse", "HEAD"], text=True).strip()
+        shutil.rmtree(origin)
+        self.args.repo, self.args.ref = str(local), "HEAD"
+        self.args.setup_command = ["git cat-file -e HEAD:README.md"]
+        code, manifest = self.trial()
+        self.assertEqual(code, 0, manifest)
+        self.assertEqual(manifest["commit"], expected)
+        trial = Path(manifest["trial_directory"])
+        self.assertFalse((trial / "harness" / "source.git").exists())
+        for pack in (local / ".git" / "objects" / "pack").glob("*.pack"):
+            copied = Path(manifest["checkout"]) / ".git" / "objects" / "pack" / pack.name
+            self.assertTrue(copied.exists())
+            self.assertFalse(os.path.samefile(pack, copied), "trial objects must not alias the local source")
 
     def test_remote_pinned_commit_has_only_one_commit_of_history(self):
         # Prefer a non-tip SHA; a shallow CI checkout may have only HEAD.
