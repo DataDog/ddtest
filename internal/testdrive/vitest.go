@@ -144,6 +144,13 @@ func (t *Testdrive) inspectVitest(ctx context.Context, directory string, probe .
 		return "", nil, nil, err
 	}
 	t.vitestNode, t.vitestExecutable = config.Node, config.Executable
+	if selectedProbe != "" {
+		t.vitestProbePattern = "^" + probeName + "$"
+		if strings.HasPrefix(config.Version, "1.") {
+			// Vitest 1 includes its empty file-root name in testNamePattern.
+			t.vitestProbePattern = "^ " + probeName + "$"
+		}
+	}
 	if t.vitestNode != "" {
 		version := t.vitestNode
 		t.nodeVersion = func() string { return version }
@@ -299,6 +306,10 @@ func (t *Testdrive) runVitest(ctx context.Context, output io.Writer, session *wo
 		env["DD_CIVISIBILITY_ENABLED"], env["DD_TRACE_ENABLED"] = "false", "false"
 	}
 	resultPath := filepath.Join(directory, "vitest-results.json")
+	identityReporter := filepath.Join(directory, "vitest-identities.mjs")
+	if err := os.WriteFile(identityReporter, []byte(vitestIdentityReporter), 0600); err != nil {
+		return run, err
+	}
 	// Vitest's JSON reporter can omit unhandled errors even when they cause exit 1.
 	args, inspected := slices.Clone(t.vitestArguments), t.vitestInspected
 	if probePath != "" {
@@ -315,12 +326,14 @@ func (t *Testdrive) runVitest(ctx context.Context, output io.Writer, session *wo
 		validationArgs = append(validationArgs, "--run")
 	}
 	validationArgs = append(validationArgs, "--no-cache", "--reporter=default", "--reporter=json", "--outputFile="+resultPath, "--coverage.reportsDirectory="+filepath.Join(directory, "coverage"), "--coverage.thresholds.autoUpdate=false")
+	validationArgs = append(validationArgs, "--reporter="+identityReporter)
 	if probePath != "" {
-		validationArgs = append(validationArgs, "--testNamePattern=^"+probeName+"$", "--no-coverage.thresholds", "--retry=0")
+		validationArgs = append(validationArgs, "--testNamePattern="+t.vitestProbeNamePattern(), "--no-coverage.thresholds", "--retry=0")
 		env["DDTEST_PROBE_MODE"] = probeMode
 	}
 	args = framework.WithFrameworkOptions(t.command, args, "vitest", validationArgs...)
 	if t.usesVitestRunner() {
+		env["DDTEST_VITEST_IDENTITY_REPORTER"] = identityReporter
 		args, err = t.vitestRunnerArgs(directory, preload, probePath, instrumented, env)
 		if err != nil {
 			return run, err
@@ -358,7 +371,13 @@ func (t *Testdrive) runVitest(ctx context.Context, output io.Writer, session *wo
 			readVitestWorkerResults(directory, t.repositoryRoot, &run)
 		}
 	} else {
-		readRunnerResults(resultPath, "Vitest", &run)
+		readVitestResults(resultPath, &run)
+	}
+	if probePath != "" {
+		for i := range run.Tests {
+			test := &run.Tests[i]
+			test.probe = filepath.Clean(test.File) == filepath.Clean(probePath) && test.telemetryName != nil && *test.telemetryName == probeName
+		}
 	}
 	if scenario.Feature == "skipping" {
 		run.Skipping = diagnoseSkipping(run, scenario)
@@ -412,8 +431,8 @@ import {test} from 'vitest';
 let ddtestAttempts = 0;
 test('ddtest validation probe', () => {
   ddtestAttempts++;
-  if (globalThis.process.env.DDTEST_PROBE_MODE === 'fail' ||
-      (globalThis.process.env.DDTEST_PROBE_MODE === 'fail-once' && ddtestAttempts === 1)) {
+  const mode = globalThis.process.env.DDTEST_PROBE_MODE;
+  if (mode === 'fail' || (mode === 'fail-once' && ddtestAttempts === 1)) {
     throw new Error('ddtest intentional failure');
   }
 });
@@ -425,7 +444,11 @@ func (t *Testdrive) runVitestFeatures(ctx context.Context, output io.Writer, ses
 		unavailableFeatures(result, err.Error())
 		return nil
 	}
-	defer func() { runErr = errors.Join(runErr, removeProbe(t.repositoryRoot, probePath)) }()
+	defer func() {
+		if probePath != "" {
+			runErr = errors.Join(runErr, removeProbe(t.repositoryRoot, probePath))
+		}
+	}()
 	runner := *t
 	_, projects, files, err := runner.inspectVitest(ctx, session.Directory(), probePath)
 	if t.usesVitestRunner() {
@@ -433,16 +456,34 @@ func (t *Testdrive) runVitestFeatures(ctx context.Context, output io.Writer, ses
 		// below enforce exact selection without CLI substring filters.
 		files = slices.DeleteFunc(files, func(file string) bool { return filepath.Clean(file) != filepath.Clean(probePath) })
 	}
+	if err == nil && len(projects) == 1 && len(files) == 0 {
+		if err := removeProbe(t.repositoryRoot, probePath); err != nil {
+			return err
+		}
+		probePath = ""
+		return t.runVitestCopiedFeatures(ctx, output, session, preload, baseline, result)
+	}
 	if err != nil || len(projects) != 1 || len(files) != 1 || filepath.Clean(files[0]) != filepath.Clean(probePath) {
 		unavailableFeatures(result, fmt.Sprintf("The temporary probe was not uniquely discovered under the original Vitest configuration: %v", err))
 		return nil
 	}
+	return runner.runSelectedVitestProbe(ctx, output, session, preload, probePath, result)
+}
+
+func (t *Testdrive) runSelectedVitestProbe(ctx context.Context, output io.Writer, session *workspace.Session, preload, probePath string, result *validationResult) error {
 	run := func(name string, scenario intake.Scenario, mode string) (validationRun, error) {
 		role := roleProbeFeature
 		if scenario.Feature == "" || scenario.Feature == "reporting-only" {
 			role = roleProbeControl
 		}
-		return runner.runVitest(ctx, output, session, preload, runSpec{Name: name, Role: role, Instrumented: true, Scenario: scenario, ProbePath: probePath, ProbeMode: mode})
+		return t.runVitest(ctx, output, session, preload, runSpec{Name: name, Role: role, Instrumented: true, Scenario: scenario, ProbePath: probePath, ProbeMode: mode})
 	}
 	return runProbeFeatures(run, result)
+}
+
+func (t *Testdrive) vitestProbeNamePattern() string {
+	if t.vitestProbePattern != "" {
+		return t.vitestProbePattern
+	}
+	return "^" + probeName + "$"
 }

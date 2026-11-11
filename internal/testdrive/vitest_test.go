@@ -78,6 +78,7 @@ func (e vitestErrorExecutor) CombinedOutput(_ context.Context, _ string, args []
 	for _, arg := range args {
 		if path, ok := strings.CutPrefix(arg, "--outputFile="); ok {
 			requireWriteFile(e.t, path, `{"success":true,"testResults":[{"name":"probe.test.ts","assertionResults":[{"fullName":"ddtest validation probe","status":"passed"}]}]}`)
+			writeVitestIdentityFixture(e.t, path)
 		}
 	}
 	return []byte("\x1b[31mUnhandled Errors\x1b[0m\nUnhandled Rejection\nError: Unable to deserialize cloned data\n" +
