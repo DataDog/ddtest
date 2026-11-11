@@ -1,4 +1,4 @@
-# Full-discovery mixed-duration QA
+# Multi-suite planning QA
 
 Prerequisites: Go from the repository's `go.mod`, Python 3, Ruby 3.4+, Bundler,
 and access to RubyGems (or locally installed RSpec 3.13 and datadog-ci 1.39+).
@@ -79,7 +79,21 @@ with fast discovery and retain the file, because it never loads the Ruby fixture
 Run again with `--force-full-test-discovery --strict-discovery`: the deliberate
 collection failure must produce a nonzero exit. Unset the failure switch afterward.
 
-Fast-mode multi-suite skipping and duration aggregation are outside this PR.
+For a real fast-discovery regression, run from the repository root:
+
+```sh
+python3 internal/planner/testdata/multi_suite/reproduce_fast.py "$qa_root/ddtest"
+```
+
+This creates a separate temporary Ruby project and loopback backend. Suite B
+intentionally fails. Native RSpec must fail, and `ddtest run` must also expose
+`RUNNABLE_B_FAILED` when only A is skippable, with either positive or zero timing
+for B. With neither suite skipped, the 10s and 30s timings must sum to 40000ms.
+Planning uses strict fast discovery; loading the test file during discovery
+would deliberately fail. Before the fix, zero timing hides B's failure and the
+positive timings are not summed; the reproducer exits nonzero. After the fix,
+all checks pass. Logs remain in the printed temporary directory; remove that
+directory after inspection. The backend stops automatically.
 
 Stop the backend and remove the disposable project when finished:
 

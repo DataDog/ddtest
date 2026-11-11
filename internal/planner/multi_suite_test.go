@@ -119,3 +119,27 @@ func TestMultiSuiteMixedDurationClassification(t *testing.T) {
 		})
 	}
 }
+
+func TestMultiSuiteFastDiscoveryKeepsRunnableSibling(t *testing.T) {
+	for _, duration := range []string{"30000000000", "0", "-1", "invalid"} {
+		t.Run(duration, func(t *testing.T) {
+			runner := newMultiSuitePlanner(t, duration, true)
+			setPlannerForceFullTestDiscovery(t, false)
+			runner.framework.(*MockFramework).OnDiscoverTests = func() {
+				t.Fatal("suite mode must not invoke full discovery")
+			}
+			require.NoError(t, runner.PreparePlanningData(context.Background()))
+			require.Equal(t, discoveryModeFast, runner.reportStats.discoveryMode)
+			weight := 1000
+			if duration == "30000000000" {
+				weight = 30000
+			}
+			require.Equal(t, weight, runner.testFileWeights[multiSuiteFile])
+
+			// The same file can be omitted when both known suites are skippable.
+			runner.optimizationClient.(*MockTestOptimizationClient).Skippables.Suites[api.SkippableSuite{Module: "rspec", Suite: "B"}] = true
+			require.NoError(t, runner.PreparePlanningData(context.Background()))
+			require.NotContains(t, runner.testFileWeights, multiSuiteFile)
+		})
+	}
+}

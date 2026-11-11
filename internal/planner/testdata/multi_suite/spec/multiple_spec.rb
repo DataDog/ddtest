@@ -7,5 +7,8 @@ RSpec.describe "A" do
 end
 
 RSpec.describe "B" do
-  it("runs B") { puts "RAN_B" }
+  it("runs B") do
+    puts "RAN_B"
+    raise "RUNNABLE_B_FAILED" if ENV["DDTEST_QA_FAIL_B"] == "true"
+  end
 end

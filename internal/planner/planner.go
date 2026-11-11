@@ -692,7 +692,6 @@ func (tp *TestPlanner) estimateDiscoveredSuiteDurations() {
 }
 
 func (tp *TestPlanner) addDurationDataForFastDiscoveryFallback() {
-	seenSourceFiles := make(map[string]struct{})
 	for module, suites := range tp.testSuiteDurations {
 		for suite, suiteInfo := range suites {
 			key := testSuiteKey{Module: module, Suite: suite}
@@ -709,15 +708,11 @@ func (tp *TestPlanner) addDurationDataForFastDiscoveryFallback() {
 			}
 
 			duration, ok := parseDurationP50(suiteInfo)
+			source := testFileDurationSourceKnown
 			if !ok {
-				continue
-			}
-
-			// Fast discovery only sees files, not test cases. For suite-level TIA we
-			// assume a single backend suite maps to a single source file, so one
-			// duration-backed aggregate per source file is enough and avoids double-counting.
-			if _, ok := seenSourceFiles[sourceFile]; ok {
-				continue
+				// Missing timing must not hide a runnable sibling suite.
+				duration = float64(time.Second)
+				source = testFileDurationSourceDefault
 			}
 
 			tp.suiteAggregates[key] = testSuiteAggregate{
@@ -726,11 +721,10 @@ func (tp *TestPlanner) addDurationDataForFastDiscoveryFallback() {
 				SourceFile:        sourceFile,
 				TotalDuration:     duration,
 				EstimatedDuration: duration,
-				DurationSource:    testFileDurationSourceKnown,
+				DurationSource:    source,
 				NumTests:          1,
 				NumTestsSkipped:   0,
 			}
-			seenSourceFiles[sourceFile] = struct{}{}
 		}
 	}
 }

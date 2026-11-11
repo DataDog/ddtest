@@ -3704,7 +3704,7 @@ func TestTestPlanner_PreparePlanningData_StrictDiscoveryDoesNotFailWhenFullDisco
 	}
 }
 
-func TestTestPlanner_PreparePlanningData_FastDiscoveryUsesOneBackendDurationPerSourceFile(t *testing.T) {
+func TestTestPlanner_PreparePlanningData_FastDiscoverySumsBackendDurationsPerSourceFile(t *testing.T) {
 	t.Chdir(t.TempDir())
 	ctx := context.Background()
 	environment.ResetCITags()
@@ -3744,15 +3744,15 @@ func TestTestPlanner_PreparePlanningData_FastDiscoveryUsesOneBackendDurationPerS
 		t.Fatalf("PreparePlanningData() should not fail when full discovery fails but fast discovery succeeds, got: %v", err)
 	}
 
-	if len(runner.suiteAggregates) != 1 {
-		t.Fatalf("Expected one backend fallback suite aggregate per source file, got %v", runner.suiteAggregates)
+	if len(runner.suiteAggregates) != 2 {
+		t.Fatalf("Expected both backend suite aggregates, got %v", runner.suiteAggregates)
 	}
-	if suiteKeys := runner.suitesBySourceFile["spec/backend_only_spec.rb"]; len(suiteKeys) != 1 {
-		t.Fatalf("Expected rebuilt source-file index to contain one suite key, got %v", runner.suitesBySourceFile)
+	if weight := runner.testFileWeights["spec/backend_only_spec.rb"]; weight != 126 {
+		t.Fatalf("Expected summed 126ms file weight, got %d", weight)
 	}
 }
 
-func TestTestPlanner_PreparePlanningData_IgnoresZeroBackendDurationForFastDiscovery(t *testing.T) {
+func TestTestPlanner_PreparePlanningData_PreservesZeroBackendDurationSuiteForFastDiscovery(t *testing.T) {
 	t.Chdir(t.TempDir())
 	ctx := context.Background()
 	environment.ResetCITags()
@@ -3788,8 +3788,8 @@ func TestTestPlanner_PreparePlanningData_IgnoresZeroBackendDurationForFastDiscov
 		t.Fatalf("PreparePlanningData() should not fail when full discovery fails but fast discovery succeeds, got: %v", err)
 	}
 
-	if len(runner.suiteAggregates) != 0 {
-		t.Errorf("Expected zero-duration backend suite to be ignored, got aggregates: %v", runner.suiteAggregates)
+	if len(runner.suiteAggregates) != 1 {
+		t.Errorf("Expected zero-duration suite identity to be retained, got aggregates: %v", runner.suiteAggregates)
 	}
 
 	if weight, ok := runner.testFileWeight("spec/backend_only_spec.rb"); !ok || weight != constants.DefaultTestFileWeight {
