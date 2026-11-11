@@ -300,8 +300,8 @@ class RunnerTests(unittest.TestCase):
             self.assertFalse(os.path.samefile(pack, copied), "trial objects must not alias the local source")
 
     def test_remote_pinned_commit_has_only_one_commit_of_history(self):
-        # Prefer a non-tip SHA; a shallow CI checkout may have only HEAD.
-        expected = subprocess.check_output(["git", "-C", self.source, "rev-list", "--max-count=2", "HEAD"], text=True).splitlines()[-1]
+        # Pin the materialized snapshot; partial clones may lack historical blobs.
+        expected = subprocess.check_output(["git", "-C", self.source, "rev-parse", "HEAD"], text=True).strip()
         self.args.repo = Path(self.source).as_uri()
         self.args.ref = expected
         code, manifest = self.trial()
