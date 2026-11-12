@@ -77,7 +77,8 @@ func TestTestOptimizationSetupKeepsCredentialsOutOfExportedSettings(t *testing.T
 				require.Contains(t, settings, "DD_CIVISIBILITY_AGENTLESS_ENABLED=true\n")
 				require.Contains(t, settings, "DD_CIVISIBILITY_CODE_COVERAGE_REPORT_UPLOAD_ENABLED=false\n")
 				require.NotContains(t, settings, "DD_API_KEY=")
-				require.Contains(t, settings, "DD_SERVICE=ddtest\n")
+				// Not test-shards' ddtest, where Test Impact Analysis skips tests.
+				require.Contains(t, settings, "DD_SERVICE=ddtest-integration\n")
 				require.NotContains(t, settings+string(output), "test-secret-key")
 				data, err = os.ReadFile(path)
 				require.NoError(t, err)
