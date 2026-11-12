@@ -31,7 +31,7 @@ func TestJavaValidationIntegration(t *testing.T) {
 		t.Skip("set DDTEST_RUN_JAVA_INTEGRATION_TEST=1 with a JDK, mvn and gradle on PATH")
 	}
 	// The outer Go reporter's service must not rename the fixture's ScalaTest modules.
-	t.Setenv("DD_SERVICE", "ddtest")
+	t.Setenv("DD_SERVICE", "ddtest-integration")
 	tracer := cmp.Or(os.Getenv("DDTEST_JAVA_TRACER_VERSION"), "1.67.1")
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Minute)
 	defer cancel()

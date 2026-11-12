@@ -36,9 +36,12 @@ the job, runtime versions and shards. A configured Datadog API key enables
 agentless reporting; without one, the same commands run with reporting disabled.
 Only reporting setup and instrumented Go test steps receive the API key;
 dependency installation runs in separate steps without it.
-The outer Go reporter uses `DD_SERVICE=ddtest`. Java fixture CLI processes use
-the shared integration environment filter to exclude the outer reporter's
-Datadog settings, preserving ScalaTest's module identity and local intake settings.
+The outer Go reporter uses `DD_SERVICE=ddtest-integration`, a service with Test
+Impact Analysis off, so no test in these jobs or their fixtures is skipped; the
+main `test-shards` suite reports under `DD_SERVICE=ddtest`. Java fixture CLI
+processes use the shared integration environment filter to exclude the outer
+reporter's Datadog settings, preserving ScalaTest's module identity and local
+intake settings.
 The Go test helper uses the shared executable
 across temporary customer checkouts. Outside CI, it builds the CLI once per test
 process; the test process's isolated temporary directory owns its cleanup.
