@@ -3071,3 +3071,29 @@ parent, so this holds in process mode; a no_auto_retry test that first runs in
 a process retry attempt cannot stop the attempts already scheduled. Checks:
 `TestTestFuncExclusionsReadDeclarationComments` and
 `TestMiniDeclarationExclusions`, which fails without each part.
+
+## EFD admission under the parent test deadline
+
+`gotesting/retry_attempt_integration.go` admits another EFD sample only when
+the original `testing.T` deadline can fit the larger of the first and latest
+observed execution durations plus finalization time. In-process execution
+reserves 100 ms. Process mode uses its existing child teardown reserve, so a
+child that cannot fit is never launched and does not produce a synthetic
+timeout failure. Deferred process groups check again when preparing a child;
+parallel groups drain already-owned children before closing their events.
+The EFD-only check runs after the existing faulty-session policy has resolved
+whether a failed test switches to ordinary flaky retries.
+
+The first execution and test order are unchanged. This check does not reserve
+time for later original tests in the package. Attempt-to-fix and ordinary flaky
+retry policies retain their existing semantics. Failfast failure bookkeeping
+precedes the deadline decision, so rejecting another sample cannot hide an
+already-observed failure. An estimate cannot guarantee that a later, slower
+execution finishes; hard termination can still prevent a final flush.
+
+`retry_deadline_test.go` covers fixed-time admission boundaries, failfast and
+retry-family precedence, and draining an active child before releasing its
+group or closing its final event. `TestMiniBazelRetryDeadline` covers
+actual Go alarms, PASS-to-FAIL failfast status and payload finalization; the
+manual `//efd:deadline_test` in the Bazel fixture is run by
+`scripts/bazel_basic.py` under Bazel's five-second outer timeout.

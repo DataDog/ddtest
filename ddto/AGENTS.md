@@ -173,6 +173,11 @@ instead: `DD_CIVISIBILITY_EARLY_FLAKE_DETECTION_MAX_RETRIES=1` caps EFD,
 individual subtests. Do not change the tests' code to suit the retries unless
 the project's owners ask for it.
 
+With a Go test deadline, EFD stops admitting samples when the remaining time
+cannot fit the observed duration and a finalization reserve. This keeps the
+current execution order and is only a mitigation: it reserves no time for later
+tests in the package, and a slower or blocked sample can still hit the timeout.
+
 ### Background delivery
 
 Mini sends events from background goroutines while tests run. Tests that count

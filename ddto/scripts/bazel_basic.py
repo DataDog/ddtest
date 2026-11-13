@@ -370,6 +370,25 @@ def main():
             # override_repo exists only in Bzlmod.
             check_api(bazel)
         compare_with_cli(args, workspace, summaries)
+        # This target is manual so wildcard/parity runs retain their existing
+        # corpus. A passing two-second test must not be killed by its EFD
+        # repetitions under Bazel's unchanged five-second outer timeout.
+        deadline_flags = ("--nocache_test_results", "--test_timeout=5", "--test_output=errors")
+        bazel.run("test", *deadline_flags, "--test_env=DEADLINE_FAIL_SECOND=false", "//efd:deadline_test")
+        events = payload_events(Path(bazel.info("bazel-testlogs")) / "efd/deadline_test/test.outputs")
+        samples = [event for event in events if event["type"] == "test"]
+        check(len(samples) >= 2 and all(event["content"]["meta"].get("test.status") == "pass" for event in samples),
+              "Bazel EFD deadline lost passing samples")
+        check(sum(event["type"] == "test_session_end" for event in events) == 1,
+              "Bazel EFD deadline needs exactly one terminal session")
+        bazel.run("test", *deadline_flags, "--test_env=DEADLINE_FAIL_SECOND=true", "--test_arg=-test.failfast",
+                  "//efd:deadline_test", codes=(3,))
+        events = payload_events(Path(bazel.info("bazel-testlogs")) / "efd/deadline_test/test.outputs")
+        samples = [event for event in events if event["type"] == "test"]
+        check(sorted(event["content"]["meta"].get("test.status") for event in samples) == ["fail", "pass"],
+              "Bazel EFD deadline hid a failfast failure")
+        check(sum(event["type"] == "test_session_end" for event in events) == 1,
+              "Bazel failfast needs exactly one terminal session")
     except Failure as failure:
         print("FAIL:", failure, file=sys.stderr)
         return 1
