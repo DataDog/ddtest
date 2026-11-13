@@ -37,18 +37,25 @@ func TestProbeRecoveryAfterKilledProcess(t *testing.T) {
 		probe, err := createProbe(root, validationRun{Tests: []jestTest{{File: filepath.Join(root, "real.test.js"), Status: "passed"}}}, "owned test")
 		require.NoError(t, err)
 		fmt.Println(probe)
-		time.Sleep(time.Minute) // Parent kills us; no deferred cleanup can run.
+		<-t.Context().Done() // The readiness line above lets the parent kill us without cleanup.
 		return
 	}
 	root := t.TempDir()
 	requireWriteFile(t, filepath.Join(root, "real.test.js"), "customer test")
-	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
 	defer cancel()
 	child := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestProbeRecoveryAfterKilledProcess$")
-	child.Env = append(os.Environ(), "DDTEST_PROBE_CRASH_HELPER="+root)
+	// This helper's stdout is a protocol, so it must not start a CI test session.
+	child.Env = append(os.Environ(), "DD_CIVISIBILITY_ENABLED=false", "DDTEST_PROBE_CRASH_HELPER="+root)
 	stdout, err := child.StdoutPipe()
 	require.NoError(t, err)
 	require.NoError(t, child.Start())
+	t.Cleanup(func() {
+		if child.ProcessState == nil {
+			_ = child.Process.Kill()
+			_ = child.Wait()
+		}
+	})
 	line, err := bufio.NewReader(stdout).ReadString('\n')
 	require.NoError(t, err)
 	probe := strings.TrimSpace(line)

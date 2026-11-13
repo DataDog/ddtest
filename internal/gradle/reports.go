@@ -133,3 +133,25 @@ func IncompleteBuild(exitCode int, tests []Test, output string) bool {
 	}
 	return failures == 0
 }
+
+// BuildFailure is what the first failure a Gradle build's output reports
+// went wrong, as "Execution failed for task ':app:spotlessJavaCheck'. > The
+// following files had format violations"; empty when it reports none.
+func BuildFailure(output string) string {
+	lines := strings.Split(output, "\n")
+	for i, line := range lines {
+		if strings.TrimSpace(line) != "* What went wrong:" {
+			continue
+		}
+		var failure []string
+		for _, next := range lines[i+1:] {
+			next = strings.TrimSpace(next)
+			if next == "" || strings.HasPrefix(next, "* ") || len(failure) == 3 {
+				break
+			}
+			failure = append(failure, next)
+		}
+		return strings.Join(failure, " ")
+	}
+	return ""
+}

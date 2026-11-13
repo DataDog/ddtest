@@ -74,9 +74,16 @@ type RuntimeFinding struct {
 	// UserStated reports a runtime the user stated with --ci-runtime, which
 	// ddtest checks but cannot verify.
 	UserStated bool `json:"user_stated,omitempty"`
+	// AgentReporting reports a hand-written setup (see
+	// HandWrittenSetupAction) that reports through a Datadog Agent the user
+	// confirmed (--ci-confirm datadog-agent), which holds the API key: the
+	// job needs no DD_API_KEY of its own.
+	AgentReporting bool `json:"agent_reporting,omitempty"`
 	// SetupCaveats are what ddtest could not check about the setup that
 	// precedes this entry, such as a tracer release it cannot pin.
 	SetupCaveats []string `json:"setup_caveats,omitempty"`
+	// SetupSite is the existing JavaScript setup's resolved reporting site.
+	SetupSite string `json:"setup_site,omitempty"`
 	// setupInputs are the inputs of the Datadog setup action that precedes
 	// this entry, for a language's own setup checks. Not serialized.
 	setupInputs map[string]string
@@ -86,6 +93,12 @@ type RuntimeFinding struct {
 	setupSupported bool
 	// setupReadProblem is why the provider found the setup cannot run there.
 	setupReadProblem string
+	// handWritten is the setup the job writes by hand before this entry,
+	// when no provider setup precedes it (see handWrittenSetup).
+	handWritten *handWrittenSetup
+	// pathEdit is the exact edit a pytest command needs to keep the setup's
+	// PYTHONPATH (see pythonInlinePathEdit), with or without the setup.
+	pathEdit string
 }
 
 // A composite call's condition sees the caller's environment and string inputs,
@@ -105,7 +118,7 @@ type runtimeStep struct {
 	Parents          []runtimeConditionScope `yaml:"-"`
 	ResolutionError  string                  `yaml:"-"`
 	RemoteGrid       string                  `yaml:"-"`
-	WithoutSecrets   []string                `yaml:"-"`
+	WithoutCIValues  []string                `yaml:"-"`
 	WorkingDirectory string                  `yaml:"working-directory"`
 	Shell            string                  `yaml:"shell"`
 	Env              map[string]string       `yaml:"env"`
@@ -116,6 +129,14 @@ type runtimeStep struct {
 	// Setup is the Datadog setup this step runs, when its provider recognized
 	// one while reading the configuration (see ciProvider.setupStep).
 	Setup *ciSetup `yaml:"-"`
+	// LeftOut names, with why, the variables validation runs without: their
+	// CI values have no local equivalent (see ciOnlyValue), and neither the
+	// step's command line nor the runtime reads them.
+	LeftOut []string `yaml:"-"`
+	// OmittedOptions are the command-line options, as CI writes them, that
+	// the language left out of the step's command because their values only
+	// CI provides and never select tests (see omitCIOnlyOptions).
+	OmittedOptions []string `yaml:"-"`
 	// Runtime holds the runtime versions this step selects for later steps,
 	// keyed by the language's installer token (js, ruby), as a known CI
 	// component such as a runtime installer reads them; an empty version
@@ -130,6 +151,14 @@ type runtimeStep struct {
 	// origin is the provider's private reference to the step's source, for
 	// prescribed edits.
 	origin any
+	// sameShell marks a step that runs in the shell of the step before it:
+	// a later statement of a script a provider splits into steps (GitLab CI
+	// script entries, a Buildkite step's commands, a Jenkins sh). Every other
+	// step starts a new shell, as GitHub Actions and CircleCI steps do.
+	sameShell bool
+	// conditional is an execution condition the provider cannot decide;
+	// this step may be skipped even when a later test step runs.
+	conditional string
 	// windowsShell marks a step written for a Windows-only shell (Windows
 	// PowerShell) that is resolved as bash: its runner is Windows.
 	windowsShell bool
@@ -137,6 +166,24 @@ type runtimeStep struct {
 	// runner is known: rowWindows or rowOther. Empty means the job's runner
 	// as a whole decides.
 	rowRunner string
+	// scopedVariable is the scoped variable (DD_CUCUMBER_NODE_OPTIONS or
+	// DD_WDIO_NODE_OPTIONS) whose prefix the provider's reader removed from
+	// the start of Run (see readScopedPrefix).
+	scopedVariable string
+	// impactedWorkaround reports Cucumber's impacted-tests workaround right
+	// after that prefix (see readScopedPrefix).
+	impactedWorkaround bool
+	// afterTests are the commands a status-preserving subshell runs after
+	// Run's tests whatever their result, before it exits with their status,
+	// or the status of one that fails when they pass (see
+	// readStatusSubshell).
+	afterTests []string
+	// statusWrapper is the text of that subshell before and after its
+	// tests, which an edit to the tests keeps (see directScopedCommand).
+	statusWrapper [2]string
+	// inline names the variables assigned inline before Run's command, which
+	// the provider's reader moved into Env (see foldInlineEnvironment).
+	inline []string
 }
 
 // ciShellRuntime is a version manager's selection in a shell: the version
@@ -166,6 +213,14 @@ type runtimeJob struct {
 	Image string `yaml:"-"`
 	// ImageTemplate is the image as written, before variables are expanded.
 	ImageTemplate string `yaml:"-"`
+	// Unread marks a pseudo-job standing for configuration the provider
+	// could not read at all, such as a remote include: it has no runtime
+	// for the user to state, only its unresolved step.
+	Unread bool `yaml:"-"`
+	// componentInputs, on a pseudo-job standing for a known component's
+	// own job, name the include input each step's command comes from (see
+	// gitLabComponentCommands).
+	componentInputs []string
 	// ImageProblem explains why a provider that read the job's container
 	// cannot know its image, such as one built from a Dockerfile it could
 	// not resolve; empty when the image is known or there is no container.
@@ -178,10 +233,31 @@ type runtimeJob struct {
 	// instrument the job at all, such as a container the Datadog Jenkins
 	// plugin does not reach; such a job is never certified.
 	SetupUnsupported string `yaml:"-"`
+	// SetupProvider is the provider whose setup mechanism the job uses when
+	// it is not its provider's own, such as Datadog's installer in a Jenkins
+	// stage that runs in a container (see setupProviderFor); nil otherwise.
+	SetupProvider ciProvider `yaml:"-"`
+	// KeyProblem explains why the DD_API_KEY a provider stores for its jobs
+	// does not reach this job's commands as written, such as a key the
+	// configuration writes or a container that does not receive it; empty
+	// when the configuration shows no such problem. A setup written by hand
+	// reads the key there (see handWrittenSetup).
+	KeyProblem string `yaml:"-"`
 	// Host describes the agent a job without an image runs on, such as a
 	// Jenkins agent label, for the user who knows its runtime; empty uses
 	// the provider's generic description.
 	Host string `yaml:"-"`
+	// FloatingTagStated marks a job whose runtime image's floating tag
+	// (node:lts, ruby:latest, an untagged node) runs the release its agent
+	// keeps, which only the user can tell, so it takes the user's statement
+	// as a host's runtime does: a Jenkins container, whose Docker pulls an
+	// image only when the agent has none (unless alwaysPull is set).
+	FloatingTagStated bool `yaml:"-"`
+	// Checkout lists the ways the job's commands name the repository root
+	// besides relative paths: the shared model's checkout expression, the
+	// provider's checkout variable and the absolute paths the provider read
+	// for the job, as CircleCI's working directory (see readProviderWorkflows).
+	Checkout []string `yaml:"-"`
 	// Stated holds the runtime versions the user stated for this job, by
 	// installer token, when its image selects none (see --ci-runtime). They
 	// apply only on matrix rows whose runtimeHost is not empty.
@@ -278,10 +354,15 @@ func checkCIRuntimes(ctx context.Context, root string, resolveNode nodeResolver,
 		cache[key] = cachedRequirement{value, err}
 		return value, err
 	}
+	leaks := sharedSetupLeaks(root, workflows, "javascript", framework)
 	for _, workflow := range workflows {
 		path := workflow.Path
 		for _, name := range slices.Sorted(maps.Keys(workflow.Jobs)) {
 			job := workflow.Jobs[name]
+			if leak, found := sharedSetupLeak(leaks, workflow, name); found {
+				result.Jobs = append(result.Jobs, leak)
+				continue
+			}
 
 			resolutions := make([]commandResolution, len(job.Steps))
 			consumer := false
@@ -295,8 +376,10 @@ func checkCIRuntimes(ctx context.Context, root string, resolveNode nodeResolver,
 			}
 			// A job discovery reports as never running the framework, without
 			// a test and without the setup, is not a consumer either.
-			if consumer && !slices.ContainsFunc(resolutions, func(resolution commandResolution) bool { return resolution.Matched }) && !jobSelectsSetup(job, "js") && (javascriptDiscovery{}).outsideFrameworkJob(root, workflow, job, nil, framework) {
-				consumer = false
+			if consumer && !slices.ContainsFunc(resolutions, func(resolution commandResolution) bool { return resolution.Matched }) && !jobSelectsSetup(job, "js") {
+				if outside, _ := (javascriptDiscovery{}).outsideFrameworkJob(root, workflow, job, nil, framework); outside {
+					consumer = false
+				}
 			}
 			if !consumer {
 				// No step can start a selected test, so no instrumented runtime runs here.
@@ -345,7 +428,14 @@ func checkCIRuntimes(ctx context.Context, root string, resolveNode nodeResolver,
 					rowJob.Steps[i] = resolved
 					rowResolutions[i] = resolveTestStep(root, workflow, rowJob, resolved, "javascript", framework)
 					rowResolutions[i] = resolveFactBackedRuntime(ctx, root, workflow, rowJob, resolved, framework, rowResolutions[i])
-					if rowResolutions[i].Review {
+					serverStartup := false
+					if framework == "cypress" && resolveErr == nil && !rowResolutions[i].Matched {
+						_, serverStartup = cypressPairedServer(root, workflow, job, row, i, "javascript", resolved.Run)
+					}
+					if rowResolutions[i].Review || serverStartup {
+						// A paired background server is the Cypress test's
+						// managed startup, as scope review treats it: neither
+						// a test nor an unresolved command.
 						rowResolutions[i] = commandResolution{}
 					} else if resolveErr != nil && (rowResolutions[i].Matched || rowResolutions[i].Reason != "") {
 						// Setup steps such as npm ci are not test commands, even
@@ -422,8 +512,8 @@ func checkCIRuntimes(ctx context.Context, root string, resolveNode nodeResolver,
 }
 
 type runtimeState struct {
-	node, source, platform, action, tracer string
-	skippedAction                          bool
+	node, source, platform, action, tracer, site string
+	skippedAction                                bool
 	// floating marks a setup that cannot pin the tracer, and caveats what
 	// ddtest could not check about it.
 	floating bool
@@ -466,7 +556,18 @@ func (state *runtimeState) trackAction(step runtimeStep, row map[string]any) err
 	}
 	setup, _ := datadogSetup(step)
 	state.action = setup.Reference
-	state.floating, state.caveats = setup.Floating, setup.Caveats
+	state.floating, state.caveats = setup.Floating, slices.Clone(setup.Caveats)
+	var siteErr error
+	state.site, siteErr = runtimeValue(setup.Inputs["site"], row)
+	if siteErr != nil {
+		state.caveats = append(state.caveats, "Datadog site: the reporting site could not be resolved: "+siteErr.Error()+". The existing CI setting is preserved; local validation does not verify delivery to that site.")
+	}
+	if setup.Reference == jenkinsPluginReference && setup.Inputs["site"] == "" {
+		state.site, _ = jenkinsSetupSite(setup)
+	}
+	if state.site == "" && setup.Inputs["site"] == "" && setup.Reference != jenkinsPluginReference {
+		state.site = defaultDatadogSite
+	}
 	state.tracer, err = runtimeValue(setup.Inputs["js-tracer-version"], row)
 	if _, explicit := setup.Inputs["js-tracer-version"]; (explicit || setup.DefaultLatest) && state.tracer == "" {
 		state.tracer = "latest"
@@ -610,7 +711,36 @@ func checkRuntimeJob(ctx context.Context, root string, workflow ciWorkflow, name
 				continue
 			}
 		}
-		findings = append(findings, evaluateRuntimeTest(ctx, root, workflow, job, step, row, resolution, state, finding, resolveNode, resolve, frameworks...))
+		// Without a provider setup, the job may set up the tracer by hand; a
+		// complete one is checked like the setup's preload.
+		var handWritten *handWrittenSetup
+		checked, checkedState := step, state
+		if state.action == "" && !state.skippedAction && resolution.Matched {
+			if provider, err := currentCIProvider(root); err == nil && !provider.sharedSyntax() {
+				handWritten, checked = javascriptHandWrittenSetup(root, provider, workflow, job, i, frameworkName(frameworks), "")
+			}
+		}
+		if handWritten != nil {
+			finding.Action, finding.TracerRequested = handWritten.Reference, handWritten.Tracer
+			var siteErr error
+			finding.SetupSite, siteErr = runtimeValue(handWrittenEnvironment(workflow, job, step)["DD_SITE"], row)
+			if siteErr != nil {
+				finding.SetupCaveats = append(finding.SetupCaveats, "Datadog site: the reporting site could not be resolved: "+siteErr.Error()+". The existing CI setting is preserved; local validation does not verify delivery to that site.")
+			}
+			if siteErr == nil && finding.SetupSite == "" && !handWritten.reportsThroughAgent() {
+				finding.SetupSite = defaultDatadogSite
+			}
+			finding.AgentReporting = handWritten.reportsThroughAgent()
+			if problem := handWritten.problem(); problem != "" {
+				finding.Status, finding.Code, finding.Reason = StatusInconclusive, handWritten.code(), problem
+				findings = append(findings, finding)
+				continue
+			}
+			checkedState.action, checkedState.tracer = handWritten.Reference, handWritten.Tracer
+			checkedState.site = finding.SetupSite
+			checkedState.caveats = append(slices.Clone(checkedState.caveats), finding.SetupCaveats...)
+		}
+		findings = append(findings, evaluateRuntimeTest(ctx, root, workflow, job, checked, row, resolution, checkedState, finding, resolveNode, resolve, frameworks...))
 	}
 	if len(findings) == 0 && skippedTest {
 		// The row runs the job without its tests, e.g. `if: matrix.node != '20'`.
@@ -672,8 +802,11 @@ func evaluateRuntimeTest(ctx context.Context, root string, workflow ciWorkflow, 
 			return finding
 		}
 		finding.Reason = "No Datadog JavaScript action runs before this test step for this matrix entry. It is not validated as instrumented."
-		if provider := activeOrDefaultCIProvider(); !provider.sharedSyntax() {
+		if provider := setupProviderFor(activeOrDefaultCIProvider(), job); !provider.sharedSyntax() {
 			finding.Reason = "No " + provider.setupName() + " selecting JavaScript runs before this test command. It is not validated as instrumented."
+			if job.SetupUnsupported != "" {
+				finding.Reason = unsupportedSetupReason(provider, job, "javascript")
+			}
 		}
 		return finding
 	}
@@ -689,9 +822,20 @@ func evaluateRuntimeTest(ctx context.Context, root string, workflow ciWorkflow, 
 	}
 	finding.TracerFloating = finding.TracerRequested != "" && strings.TrimPrefix(finding.TracerRequested, "v") != requirement.Version
 	finding.Requirement = requirement.Node
+	finding.SetupCaveats = slices.Clone(state.caveats)
+	finding.SetupSite = state.site
+	if configured, set := step.Env["DD_SITE"]; set {
+		finding.SetupCaveats = slices.DeleteFunc(finding.SetupCaveats, func(caveat string) bool { return strings.HasPrefix(caveat, "Datadog site:") })
+		finding.SetupSite, err = runtimeValue(configured, row)
+		if err != nil {
+			finding.SetupCaveats = append(finding.SetupCaveats, "Datadog site: the reporting site could not be resolved: "+err.Error()+". The existing CI setting is preserved; local validation does not verify delivery to that site.")
+		} else if finding.SetupSite == "" {
+			finding.SetupSite = defaultDatadogSite
+		}
+	}
 	if state.floating {
 		// The exception to an exact release: the mechanism cannot pin one.
-		finding.SetupCaveats = append(slices.Clone(state.caveats), "dd-trace version: the "+state.action+" installs the latest dd-trace release when each build runs and cannot pin one; ddtest checked the CI runtime against, and validated locally with, dd-trace@"+requirement.Version+", the latest release when it ran. A later release can change behavior or drop support for the CI Node version.")
+		finding.SetupCaveats = append(finding.SetupCaveats, "dd-trace version: the "+state.action+" installs the latest dd-trace release when each build runs and cannot pin one; ddtest checked the CI runtime against, and validated locally with, dd-trace@"+requirement.Version+", the latest release when it ran. A later release can change behavior or drop support for the CI Node version.")
 	}
 	for _, entry := range resolution.Tests {
 		words, _ := shellquote.Split(entry.Command)
@@ -732,6 +876,10 @@ func evaluateRuntimeTest(ctx context.Context, root string, workflow ciWorkflow, 
 	if finding.Status == StatusInconclusive {
 		finding.Code = CodeRuntimeUnknown
 	}
+	if finding.Status == StatusIncompatible && state.floating {
+		// No other release can be selected: the setup itself cannot work.
+		finding.Code, finding.Reason = CodeIncompleteCISetup, floatingTracerNodeProblem(state.action, requirement, node)
+	}
 	if finding.Status == StatusCompatible {
 		reason := ""
 		if len(frameworks) > 0 && frameworks[0] == "cucumber" {
@@ -744,16 +892,60 @@ func evaluateRuntimeTest(ctx context.Context, root string, workflow ciWorkflow, 
 		if reason == "" {
 			reason = javascriptInstrumentationDisabled(workflow, job, step, row, frameworks...)
 		}
+		if reason != "" && readsActionPackage(workflow, job, step) {
+			// Only the Datadog GitHub action exports DD_TRACE_PACKAGE; elsewhere
+			// the setup appends its preload to NODE_OPTIONS itself.
+			reason = "This test step's NODE_OPTIONS reads $DD_TRACE_PACKAGE, which only the Datadog GitHub Actions setup exports: here it is empty, so Node gets -r without a module and fails to start. Remove -r $DD_TRACE_PACKAGE; the " + activeOrDefaultCIProvider().setupName() + " already appends its preload to NODE_OPTIONS."
+		}
 		if reason != "" {
 			finding.Status, finding.Code, finding.Reason = StatusInconclusive, CodeUnverifiedInitialization, reason
 			if reason == unverifiedPreloadReason && stepSetsNoNodeOptions(workflow, job, step) {
 				// Nothing custom to preserve: the step only lacks the action's preload.
 				finding.Code = CodeMissingInitialization
 				finding.Reason = "The Datadog action runs, but this test step sets no NODE_OPTIONS to load its preload. Add NODE_OPTIONS: -r ${{ env.DD_TRACE_PACKAGE }} (with --import ${{ env.DD_TRACE_ESM_IMPORT }} for ESM) to the step; ddtest onboard --apply can add it."
+			} else if (reason == unverifiedPreloadReason || reason == mochaESMImportReason) && setupExports(job, step, "DD_TRACE_PATH") && checkJestBootstrap(workflow, job, step, row, false) == "" {
+				// A setup that exports the tracer's package path (a CI server
+				// plugin) loads the preload; only the ESM loader line is
+				// missing from the test's shell, before the test command.
+				finding.Code = CodeMissingInitialization
+				finding.Reason = "The CI setup loads the tracer's preload, but this test step's shell does not register its ESM loader before the test command. Add " + pluginESMImportCommand + " to the step's script before the test command; ddtest onboard --apply can add it."
 			}
 		}
 	}
 	return finding
+}
+
+// unsupportedSetupReason explains a test job of language the provider's
+// setup mechanism cannot instrument (runtimeJob.SetupUnsupported).
+func unsupportedSetupReason(provider ciProvider, job runtimeJob, language string) string {
+	return "This job cannot use the " + provider.setupName() + ": " + job.SetupUnsupported + ". It is not validated as instrumented: the user's options are to run its tests where the " + provider.setupName() + " works, or " + handWrittenSetupOption(language, provider.setupName()) + "."
+}
+
+// floatingTracerNodeProblem explains why a setup that installs the latest
+// dd-trace whatever the CI Node is (the Datadog Jenkins plugin) cannot work
+// on node: the latest release's engines exclude it.
+func floatingTracerNodeProblem(setup string, latest tracerRequirement, node string) string {
+	return "The " + setup + " installs the latest dd-trace release (" + latest.Version + ") on every build, whatever Node the CI runs, and that release requires Node " + latest.Node + " (its package.json engines), which Node " + node + " does not satisfy; the " + setup + " cannot install an older release. The user's options are to run these tests on a Node version the latest dd-trace supports, or " + handWrittenSetupOption("javascript", setup) + "."
+}
+
+// floatingTracerRequirement is the latest dd-trace release and its Node
+// range, which a setup that cannot pin the tracer installs.
+var floatingTracerRequirement = func(ctx context.Context) (tracerRequirement, error) {
+	client := &http.Client{Timeout: 10 * time.Second}
+	return cachedCIRequirement("floating\nlatest", func() (tracerRequirement, error) {
+		return resolveRequirement(ctx, client, "floating", "latest", platform.NewJavaScript().ResolveRegistryTracer)
+	})
+}
+
+// readsActionPackage reports, on a provider without the shared workflow
+// syntax, a test step whose NODE_OPTIONS reads $DD_TRACE_PACKAGE, which no
+// setup outside GitHub Actions exports.
+func readsActionPackage(workflow ciWorkflow, job runtimeJob, step runtimeStep) bool {
+	if activeOrDefaultCIProvider().sharedSyntax() {
+		return false
+	}
+	options := handWrittenEnvironment(workflow, job, step)["NODE_OPTIONS"]
+	return strings.Contains(options, "$DD_TRACE_PACKAGE") || strings.Contains(options, "${DD_TRACE_PACKAGE")
 }
 
 func changesNodeRuntime(command string) bool {
@@ -896,4 +1088,24 @@ func jobSelectsSetup(job runtimeJob, token string) bool {
 		}
 	}
 	return false
+}
+
+// WithSiteCaveats preserves an existing JavaScript setup's site and reports
+// its disagreement with the selected site without blocking local validation.
+func (check RuntimeCheck) WithSiteCaveats(site string) RuntimeCheck {
+	if site == "" {
+		return check
+	}
+	check.Jobs = slices.Clone(check.Jobs)
+	for i := range check.Jobs {
+		finding := &check.Jobs[i]
+		if finding.SetupSite == "" || finding.SetupSite == site {
+			continue
+		}
+		caveat := "Datadog site: " + finding.Workflow + " / " + finding.Job + " reports to " + finding.SetupSite + ", but --site selects " + site + ". The existing CI site is preserved; local validation does not verify delivery to that site."
+		if !slices.Contains(finding.SetupCaveats, caveat) {
+			finding.SetupCaveats = append(slices.Clone(finding.SetupCaveats), caveat)
+		}
+	}
+	return check
 }

@@ -8,6 +8,7 @@ package onboard
 import (
 	"maps"
 	"path"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -27,6 +28,8 @@ type ciShellDialect struct {
 	// setupVariable reports a variable that is an input of the provider's
 	// setup mechanism, read as written.
 	setupVariable func(name string) bool
+	// posix reports scripts run by sh, which has no [[ ... ]] test.
+	posix bool
 }
 
 // ciProjectDirectory is the shared model's expression for the checkout root.
@@ -45,6 +48,11 @@ type ciShellState struct {
 	env map[string]string
 	// references are values later entries may expand without exporting.
 	references map[string]string
+	// setupExported names the references a setup exported into the shell,
+	// such as the installer's PYTEST_ADDOPTS: their values stay out of
+	// local replay, but a later plain assignment changes the tests'
+	// environment.
+	setupExported map[string]bool
 	// job are the job's variables, which the shell exports.
 	job       map[string]string
 	directory string
@@ -64,8 +72,27 @@ func (s *ciShellState) applySetup(setup ciSetup, current map[string]string) {
 			continue
 		}
 		exported, references := language.setupShellExports(mergeEnvironment(current, s.env))
+		if setup.fallback {
+			if fallback, ok := language.(interface {
+				fallbackShellExports(map[string]string) (map[string]string, map[string]string)
+			}); ok {
+				exported, references = fallback.fallbackShellExports(mergeEnvironment(current, s.env))
+			}
+		}
 		maps.Copy(s.env, exported)
 		maps.Copy(s.references, references)
+		s.markSetupExported(references)
+	}
+}
+
+// markSetupExported records variables a setup exported whose values stay
+// references.
+func (s *ciShellState) markSetupExported(references map[string]string) {
+	for name := range references {
+		if s.setupExported == nil {
+			s.setupExported = map[string]bool{}
+		}
+		s.setupExported[name] = true
 	}
 }
 
@@ -83,6 +110,68 @@ func (s *ciShellState) apply(command string, current map[string]string) bool {
 		known = mergeEnvironment(mergeEnvironment(current, s.env), s.references)
 	}
 	return onlyState
+}
+
+// foldCommandEnvironment reads a command that is one simple statement whose
+// variable assignments prefix it and set a tracer variable (a language's
+// preloadVariable or DD_*), as in NODE_OPTIONS='-r dd-trace/ci/init' yarn test: the
+// shell sets them for that command alone, as a step's environment does, so
+// they become the step's environment and the command runs without them.
+// Values read known like exports; one ddtest cannot evaluate stays
+// unresolved. ok is false for any other command, and for one whose
+// arguments read a variable it assigns, which the shell expands with the
+// value from before the assignment.
+func foldCommandEnvironment(command string, known map[string]string, project string) (run string, env map[string]string, ok bool) {
+	file, parsed := parseCIShell(command)
+	if !parsed || len(file.Stmts) != 1 {
+		return "", nil, false
+	}
+	stmt := file.Stmts[0]
+	call, isCall := stmt.Cmd.(*syntax.CallExpr)
+	if stmt.Background || stmt.Negated || stmt.Coprocess || len(stmt.Redirs) > 0 || !isCall || len(call.Assigns) == 0 || len(call.Args) == 0 {
+		return "", nil, false
+	}
+	tracer := false
+	env = map[string]string{}
+	for _, assign := range call.Assigns {
+		if assign.Name == nil || assign.Index != nil || assign.Array != nil || assign.Append || assign.Naked {
+			return "", nil, false
+		}
+		name := assign.Name.Value
+		tracer = tracer || strings.HasPrefix(name, "DD_") || slices.ContainsFunc(discoveryLanguages, func(language discoveryLanguage) bool { return language.preloadVariable(name) })
+		value, literal := "", true
+		if assign.Value != nil {
+			value, literal = ciShellWord(assign.Value, mergeEnvironment(known, env), name, project)
+		}
+		if !literal {
+			value = unresolvedCIValue(value)
+		}
+		env[name] = value
+	}
+	if !tracer {
+		return "", nil, false
+	}
+	// The shell expands the command's arguments before its assignments
+	// take effect: in A=x cmd "$A", $A is the earlier value. Folded into
+	// the step's environment, it would read x instead.
+	reads := false
+	for _, arg := range call.Args {
+		syntax.Walk(arg, func(node syntax.Node) bool {
+			if expansion, ok := node.(*syntax.ParamExp); ok && expansion.Param != nil {
+				_, assigned := env[expansion.Param.Value]
+				reads = reads || assigned
+			}
+			return !reads
+		})
+	}
+	if reads {
+		return "", nil, false
+	}
+	var text strings.Builder
+	if err := syntax.NewPrinter().Print(&text, &syntax.CallExpr{Args: call.Args}); err != nil {
+		return "", nil, false
+	}
+	return strings.TrimSpace(text.String()), env, true
 }
 
 // ciShellWord evaluates a shell word: literal text and $NAME/${NAME} reads of
@@ -103,6 +192,17 @@ func ciShellWord(word *syntax.Word, known map[string]string, self, project strin
 				parts(part.Parts)
 			case *syntax.ParamExp:
 				name := part.Param.Value
+				if trimmed, ok := ciShellTrim(part, known, self, project); ok {
+					// ${NAME%pattern} and the like on a known value, as when a
+					// scoped preload moves the setup's out of NODE_OPTIONS.
+					text.WriteString(trimmed)
+					continue
+				}
+				if alternate, alternateLiteral, ok := ciShellAlternate(part, known, self, project); ok {
+					literal = literal && alternateLiteral
+					text.WriteString(alternate)
+					continue
+				}
 				if part.Index != nil || part.Slice != nil || part.Repl != nil || !ciEmptyDefault(part.Exp) || part.Excl || part.Length {
 					literal = false
 					text.WriteString("${" + name + "...}")
@@ -188,7 +288,7 @@ func (s *ciShellState) statement(stmt *syntax.Stmt, known map[string]string) boo
 		return false
 	case *syntax.IfClause:
 		// A condition on known values: follow the branch that runs.
-		if branch, ok := ciStaticBranch(command, known, s.dialect.projectVariable); ok {
+		if branch, ok := ciStaticBranch(command, known, s.dialect.projectVariable, !s.dialect.posix); ok {
 			onlyState := true
 			for _, inner := range branch {
 				onlyState = s.statement(inner, mergeEnvironment(known, s.env)) && onlyState
@@ -237,7 +337,7 @@ func (s *ciShellState) assign(assigns []*syntax.Assign, known map[string]string,
 		// A plain assignment stays in the shell unless the variable is
 		// already exported, as the job's variables are.
 		_, exported := s.env[name]
-		if _, inJob := s.job[name]; inJob {
+		if _, inJob := s.job[name]; inJob || s.setupExported[name] {
 			exported = true
 		}
 		if input := s.setupVariable(name); input && assign.Value != nil {
@@ -258,7 +358,7 @@ func (s *ciShellState) assign(assigns []*syntax.Assign, known map[string]string,
 // changeDirectory follows a literal cd within the repository.
 func (s *ciShellState) changeDirectory(arguments []string) {
 	if len(arguments) != 1 || arguments[0] == "-" || strings.HasPrefix(arguments[0], "~") {
-		s.problem = s.dialect.label + " changes directory with cd " + strings.Join(arguments, " ") + ", which ddtest cannot follow"
+		s.problem = displayCIText(s.dialect.label + " changes directory with cd " + strings.Join(arguments, " ") + ", which ddtest cannot follow")
 		return
 	}
 	target := arguments[0]
@@ -267,7 +367,7 @@ func (s *ciShellState) changeDirectory(arguments []string) {
 		target, base = strings.TrimPrefix(rest, "/"), ""
 	}
 	if strings.HasPrefix(target, "/") || strings.Contains(target, "$") {
-		s.problem = s.dialect.label + " changes directory to " + arguments[0] + ", outside the repository ddtest reads"
+		s.problem = displayCIText(s.dialect.label + " changes directory to " + arguments[0] + ", outside the repository ddtest reads")
 		return
 	}
 	next := path.Clean(path.Join(base, target))
@@ -275,26 +375,51 @@ func (s *ciShellState) changeDirectory(arguments []string) {
 		next = ""
 	}
 	if strings.HasPrefix(next, "..") {
-		s.problem = s.dialect.label + " changes directory to " + arguments[0] + ", outside the repository"
+		s.problem = displayCIText(s.dialect.label + " changes directory to " + arguments[0] + ", outside the repository")
 		return
 	}
 	s.directory = next
 }
 
 // unfollowed records state changes inside control flow ddtest does not
-// evaluate: they make later entries unresolved.
+// evaluate. A variable it exports or assigns may be set or not: it becomes a
+// conditionalCIValue, so only what reads it is unresolved. A directory
+// change makes later entries unresolved.
 func (s *ciShellState) unfollowed(stmt *syntax.Stmt) {
+	statement := OneLineExcerpt(shellText(stmt))
+	maybe := func(assigns []*syntax.Assign, export bool) {
+		for _, assign := range assigns {
+			if assign.Name == nil || assign.Index != nil || assign.Array != nil {
+				s.problem = s.dialect.label + " assigns an array or indexed variable conditionally, which ddtest cannot follow"
+				continue
+			}
+			name := assign.Name.Value
+			if assign.Naked && !export {
+				continue
+			}
+			_, exported := s.env[name]
+			if _, inJob := s.job[name]; inJob || s.setupExported[name] {
+				exported = true
+			}
+			if export || exported || ciRunnerExported(name, s.dialect.runnerPrefixes) {
+				s.env[name] = conditionalCIValue(statement)
+				delete(s.references, name)
+			} else {
+				s.references[name] = conditionalCIValue(statement)
+			}
+		}
+	}
 	syntax.Walk(stmt, func(node syntax.Node) bool {
 		switch node := node.(type) {
 		case *syntax.Subshell, *syntax.CmdSubst:
 			return false
 		case *syntax.DeclClause:
 			if node.Variant.Value == "export" {
-				s.problem = s.dialect.label + " exports variables conditionally, which ddtest cannot follow"
+				maybe(node.Args, true)
 			}
 		case *syntax.CallExpr:
 			if len(node.Args) == 0 && len(node.Assigns) > 0 {
-				s.problem = s.dialect.label + " assigns variables conditionally, which ddtest cannot follow"
+				maybe(node.Assigns, false)
 			}
 			if len(node.Args) > 0 && node.Args[0].Lit() == "cd" {
 				s.problem = s.dialect.label + " changes directory conditionally, which ddtest cannot follow"
@@ -306,13 +431,13 @@ func (s *ciShellState) unfollowed(stmt *syntax.Stmt) {
 
 // ciStaticBranch returns the statements an if clause runs when its
 // conditions are tests on known values: [ -n "$X" ], [ -z "$X" ] and
-// [ "$X" = "value" ] (also != and ==, or test ...).
-func ciStaticBranch(clause *syntax.IfClause, known map[string]string, project string) ([]*syntax.Stmt, bool) {
+// [ "$X" = "value" ] (also != and ==, test ... or, in Bash, [[ ... ]]).
+func ciStaticBranch(clause *syntax.IfClause, known map[string]string, project string, bash bool) ([]*syntax.Stmt, bool) {
 	for current := clause; current != nil; current = current.Else {
 		if len(current.Cond) == 0 {
 			return current.Then, true // else
 		}
-		truth, ok := ciStaticTest(current.Cond, known, project)
+		truth, ok := ciStaticTest(current.Cond, known, project, bash)
 		if !ok {
 			return nil, false
 		}
@@ -324,10 +449,13 @@ func ciStaticBranch(clause *syntax.IfClause, known map[string]string, project st
 }
 
 // ciStaticTest evaluates one [ ... ] or test ... condition whose words
-// are literal or read known values.
-func ciStaticTest(condition []*syntax.Stmt, known map[string]string, project string) (bool, bool) {
+// are literal or read known values; bash also evaluates [[ ... ]].
+func ciStaticTest(condition []*syntax.Stmt, known map[string]string, project string, bash bool) (bool, bool) {
 	if len(condition) != 1 || condition[0].Negated || len(condition[0].Redirs) > 0 {
 		return false, false
+	}
+	if clause, ok := condition[0].Cmd.(*syntax.TestClause); ok && bash {
+		return ciStaticTestClause(clause.X, known, project)
 	}
 	call, ok := condition[0].Cmd.(*syntax.CallExpr)
 	if !ok || len(call.Assigns) > 0 || len(call.Args) == 0 {
@@ -361,6 +489,146 @@ func ciStaticTest(condition []*syntax.Stmt, known map[string]string, project str
 		return words[0] == words[2], true
 	case len(words) == 3 && words[1] == "!=":
 		return words[0] != words[2], true
+	}
+	return false, false
+}
+
+// ciShellTrim evaluates ${NAME%pattern}, ${NAME%%pattern}, ${NAME#pattern}
+// and ${NAME##pattern} on a known value, for a pattern of literal text,
+// known values and unquoted * and ? wildcards.
+func ciShellTrim(part *syntax.ParamExp, known map[string]string, self, project string) (string, bool) {
+	if part.Exp == nil || part.Exp.Word == nil || part.Index != nil || part.Slice != nil || part.Repl != nil || part.Excl || part.Length {
+		return "", false
+	}
+	suffix := part.Exp.Op == syntax.RemSmallSuffix || part.Exp.Op == syntax.RemLargeSuffix
+	longest := part.Exp.Op == syntax.RemLargeSuffix || part.Exp.Op == syntax.RemLargePrefix
+	if !suffix && part.Exp.Op != syntax.RemSmallPrefix && part.Exp.Op != syntax.RemLargePrefix {
+		return "", false
+	}
+	value, set := known[part.Param.Value]
+	if !set {
+		return "", false
+	}
+	pattern, ok := ciShellPattern(part.Exp.Word, known, self, project)
+	if !ok {
+		return "", false
+	}
+	// Prefix and suffix lengths, shortest first.
+	lengths := make([]int, 0, len(value)+1)
+	for length := range len(value) + 1 {
+		lengths = append(lengths, length)
+	}
+	if longest {
+		slices.Reverse(lengths)
+	}
+	for _, length := range lengths {
+		if suffix && pattern.MatchString(value[len(value)-length:]) {
+			return value[:len(value)-length], true
+		}
+		if !suffix && pattern.MatchString(value[:length]) {
+			return value[length:], true
+		}
+	}
+	return value, true
+}
+
+// ciShellAlternate evaluates ${NAME:+word} and ${NAME+word}: word when NAME
+// is set (with the colon, also not empty), and nothing otherwise, as in
+// export PYTHONPATH="${PYTHONPATH:+$PYTHONPATH:}src", which adds the
+// separator only after a set PYTHONPATH. self, the variable being assigned,
+// is unset when not known; ok is false for any other unknown variable.
+func ciShellAlternate(part *syntax.ParamExp, known map[string]string, self, project string) (value string, literal, ok bool) {
+	if part.Exp == nil || part.Index != nil || part.Slice != nil || part.Repl != nil || part.Excl || part.Length {
+		return "", false, false
+	}
+	if part.Exp.Op != syntax.AlternateUnsetOrNull && part.Exp.Op != syntax.AlternateUnset {
+		return "", false, false
+	}
+	current, set := known[part.Param.Value]
+	switch {
+	case !set && part.Param.Value != self:
+		return "", false, false
+	case !set, part.Exp.Op == syntax.AlternateUnsetOrNull && current == "", part.Exp.Word == nil:
+		return "", true, true
+	}
+	value, literal = ciShellWord(part.Exp.Word, known, self, project)
+	return value, literal, true
+}
+
+// ciShellPattern is a shell pattern word as an anchored regular expression:
+// quoted text and known values match themselves, unquoted * and ? are
+// wildcards. Bracket expressions, escapes and unknown values are not read.
+func ciShellPattern(word *syntax.Word, known map[string]string, self, project string) (*regexp.Regexp, bool) {
+	var expression strings.Builder
+	for _, part := range word.Parts {
+		switch part := part.(type) {
+		case *syntax.Lit:
+			if strings.ContainsAny(part.Value, `[\`) {
+				return nil, false
+			}
+			for _, char := range part.Value {
+				switch char {
+				case '*':
+					expression.WriteString(".*")
+				case '?':
+					expression.WriteString(".")
+				default:
+					expression.WriteString(regexp.QuoteMeta(string(char)))
+				}
+			}
+		default:
+			// Quoted text and expansions match literally (an unquoted
+			// expansion's wildcards are refused).
+			value, literal := ciShellWord(&syntax.Word{Parts: []syntax.WordPart{part}}, known, self, project)
+			if _, unquoted := part.(*syntax.ParamExp); !literal || unquoted && strings.ContainsAny(value, `*?[\`) {
+				return nil, false
+			}
+			expression.WriteString(regexp.QuoteMeta(value))
+		}
+	}
+	pattern, err := regexp.Compile(`^(?s:` + expression.String() + `)$`)
+	return pattern, err == nil
+}
+
+// ciStaticTestClause evaluates a Bash [[ ... ]] test of the same forms as
+// ciStaticTest: -n, -z, and =, == or != against a right side without
+// pattern characters, which [[ ]] would match as a pattern.
+func ciStaticTestClause(expression syntax.TestExpr, known map[string]string, project string) (bool, bool) {
+	word := func(expression syntax.TestExpr, pattern bool) (string, bool) {
+		word, ok := expression.(*syntax.Word)
+		if !ok {
+			return "", false
+		}
+		value, literal := ciShellWord(word, known, "", project)
+		if !literal || strings.Contains(strings.ReplaceAll(value, "${{ env.", ""), "$") || pattern && strings.ContainsAny(value, "*?[") {
+			return "", false
+		}
+		return value, true
+	}
+	switch test := expression.(type) {
+	case *syntax.UnaryTest:
+		value, ok := word(test.X, false)
+		switch {
+		case !ok:
+		case test.Op == syntax.TsNempStr:
+			return value != "", true
+		case test.Op == syntax.TsEmpStr:
+			return value == "", true
+		}
+	case *syntax.BinaryTest:
+		left, leftOK := word(test.X, false)
+		right, rightOK := word(test.Y, true)
+		switch {
+		case !leftOK || !rightOK:
+		case test.Op == syntax.TsMatchShort || test.Op == syntax.TsMatch:
+			return left == right, true
+		case test.Op == syntax.TsNoMatch:
+			return left != right, true
+		}
+	case *syntax.Word:
+		// [[ $X ]] tests that X is not empty.
+		value, ok := word(test, false)
+		return value != "", ok
 	}
 	return false, false
 }
@@ -427,8 +695,16 @@ func ciRepositoryBinPath(word *syntax.Word) bool {
 // imageWithoutBash reports a container image known to lack Bash: Alpine
 // variants, BusyBox and distroless images. Others are assumed to have it.
 func imageWithoutBash(image string) bool {
-	name := strings.ToLower(image)
+	name := strings.ToLower(mirroredImage(image))
 	repository, tag, _ := strings.Cut(name[strings.LastIndex(name, "/")+1:], ":")
+	// Official Maven Alpine images install Bash (see docker-maven's
+	// Alpine Dockerfiles); the base distribution alone is not evidence.
+	if slices.ContainsFunc(discoveryLanguages, func(language discoveryLanguage) bool {
+		known, ok := language.(interface{ ciImageHasBash(string) bool })
+		return ok && known.ciImageHasBash(name)
+	}) {
+		return false
+	}
 	return strings.Contains(tag, "alpine") || repository == "alpine" || repository == "busybox" || strings.Contains(name, "distroless") || strings.Contains(tag, "busybox")
 }
 
@@ -436,10 +712,67 @@ func imageWithoutBash(image string) bool {
 // remove curl and wget after building (verified on the slim language
 // runtime images).
 func imageWithoutDownloader(image string) bool {
-	name := strings.ToLower(image)
+	name := strings.ToLower(mirroredImage(image))
 	official := !strings.Contains(dockerHubName(name), "/")
 	_, tag, _ := strings.Cut(name[strings.LastIndex(name, "/")+1:], ":")
 	return official && strings.Contains(tag, "slim")
+}
+
+// registryVariablePrefix matches a registry prefix written only as variable
+// reads: ${GITLAB_DEPENDENCY_PROXY}, $CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX/,
+// ${REGISTRY}/ or CircleCI's << parameters.registry >>/.
+var registryVariablePrefix = regexp.MustCompile(`^(?:\$\{[A-Za-z_][A-Za-z0-9_]*\}|\$[A-Za-z_][A-Za-z0-9_]*|<<\s*[A-Za-z0-9_.-]+\s*>>)+/?`)
+
+// dependencyProxyPrefix matches one read of a variable naming a dependency
+// proxy, such as ${GITLAB_DEPENDENCY_PROXY}, whose value ends in the
+// registry path's separator. Case-insensitive: some callers lowercase the
+// image first.
+var dependencyProxyPrefix = regexp.MustCompile(`(?i)^(?:\$\{[A-Za-z0-9_]*DEPENDENCY_PROXY[A-Za-z0-9_]*\}|\$[A-Za-z0-9_]*DEPENDENCY_PROXY[A-Za-z0-9_]*)$`)
+
+// mirrorVariable matches a variable whose name says it serves Docker Hub's
+// images: a dependency proxy or a Docker Hub mirror.
+var mirrorVariable = regexp.MustCompile(`(?i)DEPENDENCY_PROXY|MIRROR|DOCKER_?HUB`)
+
+// mirroredImage is the image a registry mirror or dependency proxy serves
+// for a reference whose registry prefix is only variables ddtest cannot
+// resolve: the literal rest names it. The registry is part of an image's
+// identity, so the rest is read only where the prefix names a Docker Hub
+// mirror or the rest can't be mistaken for an official image:
+//   - one dependency proxy variable, with or without its own /
+//     (${GITLAB_DEPENDENCY_PROXY}ruby:3.3,
+//     $CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX/ruby:3.3);
+//   - a prefix ending in its own / that reads a mirror variable
+//     (${DOCKER_HUB_MIRROR}/node:22);
+//   - a prefix ending in its own / before a namespaced name: Docker Hub's
+//     official library/ or a publisher's namespace as mirrors serve them
+//     (${REGISTRY}/library/node:22, << parameters.registry >>/cimg/node:22),
+//     or the registry's own image ($CI_REGISTRY/group/project:tag), from
+//     which no runtime is read.
+//
+// Any other reference is returned as written: an official-looking name
+// behind an unknown registry (${REGISTRY}/node:22, $CI_REGISTRY_IMAGE/ruby:3.3
+// may be any image stored at that path), a prefix without its own /
+// (${IMAGE_PREFIX}node:22 may name custom-node:22) and a name or tag that
+// reads a variable ($RUBY_IMAGE, ruby:$VERSION), so readers never guess an
+// image.
+func mirroredImage(image string) string {
+	image = strings.TrimSpace(image)
+	prefix := registryVariablePrefix.FindString(image)
+	rest := image[len(prefix):]
+	if prefix == "" || rest == "" || strings.ContainsAny(rest, "${}<>") || strings.ContainsAny(rest[:1], "/:@.-_") {
+		return image
+	}
+	if dependencyProxyPrefix.MatchString(strings.TrimSuffix(prefix, "/")) {
+		return rest
+	}
+	if !strings.HasSuffix(prefix, "/") {
+		return image
+	}
+	repository, _, _ := strings.Cut(rest, ":")
+	if mirrorVariable.MatchString(prefix) || strings.Contains(repository, "/") {
+		return rest
+	}
+	return image
 }
 
 // dockerHubName strips Docker Hub's registry and library prefixes, so
@@ -459,4 +792,64 @@ func dockerHubName(image string) string {
 func installsCurl(command string) bool {
 	words := strings.Fields(command)
 	return (slices.Contains(words, "apt-get") || slices.Contains(words, "apt")) && slices.Contains(words, "install") && slices.Contains(words, "curl")
+}
+
+// curlBeforeTests reports whether commands, those of a job in order (empty
+// for a statement ddtest followed, such as cd or export, or a setup),
+// install curl before any command that may run the job's tests. The
+// official installer goes right before the first test command, and which
+// command that is depends on the framework, so only commands that never
+// start tests may come before the install: system package commands, and
+// builtins that change the shell's state or print.
+func curlBeforeTests(commands []string) bool {
+	for _, command := range commands {
+		if installsCurl(command) {
+			return true
+		}
+		if !curlInertCommand(command) {
+			return false
+		}
+	}
+	return false
+}
+
+// setupFreeCommands are the commands of steps for curlBeforeTests, a
+// setup's as empty.
+func setupFreeCommands(steps []runtimeStep) []string {
+	var commands []string
+	for _, step := range steps {
+		if step.Setup != nil {
+			commands = append(commands, "")
+		} else {
+			commands = append(commands, step.Run)
+		}
+	}
+	return commands
+}
+
+// Executables curlBeforeTests lets run before the install: system package
+// managers, and shell builtins that change the shell's state or print.
+var curlInertExecutables = append(slices.Clone(buildkiteDockerfilePackageManagers), "dpkg", "cd", "export", "unset", "set", "echo", "printf", "true", ":")
+
+// curlInertCommand reports shell text that only runs curlInertExecutables,
+// possibly through sudo. Text it cannot parse may run anything.
+func curlInertCommand(command string) bool {
+	file, err := syntax.NewParser().Parse(strings.NewReader(command), "")
+	if err != nil {
+		return false
+	}
+	inert := true
+	syntax.Walk(file, func(node syntax.Node) bool {
+		call, ok := node.(*syntax.CallExpr)
+		if !ok || len(call.Args) == 0 {
+			return inert
+		}
+		executable := call.Args[0].Lit()
+		if executable == "sudo" && len(call.Args) > 1 {
+			executable = call.Args[1].Lit()
+		}
+		inert = inert && slices.Contains(curlInertExecutables, executable)
+		return inert
+	})
+	return inert
 }

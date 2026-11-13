@@ -35,10 +35,10 @@ func newTestdriveCommand() *cobra.Command {
 			return nil
 		},
 	}
-	var version, facts, format, resume, detail, site, ciProvider string
+	var version, facts, format, resume, detail, site string
 	var checkOnly, agent, report bool
 	var all bool
-	var ciRuntimes, ciFacts []string
+	var ci ciOptions
 	var allowReviewedBuilds, acceptSubstituteRuntime bool
 	var timeout time.Duration
 	command.Flags().DurationVar(&timeout, "timeout", 10*time.Minute, "Maximum duration of each subprocess, including each full test-suite run")
@@ -55,12 +55,12 @@ func newTestdriveCommand() *cobra.Command {
 	command.Flags().StringVar(&resume, "resume", "", "Resume the same repository/framework/scope; tests always execute fresh")
 	command.Flags().StringVar(&facts, "facts", "", "JSON build/service facts bound to input_fingerprint (requires --all)")
 	command.Flags().StringVar(&site, "site", "", "Datadog site retained in the resolved validation plan")
-	command.Flags().StringVar(&ciProvider, "ci-provider", "", ciProviderFlagUsage())
-	ciStatementFlags(command, &ciRuntimes, &ciFacts)
+	ci.addFlags(command)
 
 	command.RunE = func(cmd *cobra.Command, _ []string) error {
 		structured := agent || cmd.Flags().Changed("format")
 		fail := func(code string, err error) error {
+			observeUsage(cmd, "needs_input", "preparation", code)
 			if structured {
 				return protocolFailure(cmd, "preparation", code, err, nil)
 			}
@@ -83,24 +83,21 @@ func newTestdriveCommand() *cobra.Command {
 			return fail("invalid_options", fmt.Errorf("--report cannot be combined with --all or --check-only"))
 		}
 		// Reports are bound to the provider they validated, so --report resolves it too.
-		if err := resolveCIProvider(cmd, ciProvider); err != nil {
-			return ciProviderFailure(cmd, structured, err)
-		}
-		if err := resolveCIStatements(ciRuntimes, ciFacts); err != nil {
-			return ciStatementFailure(cmd, structured, err)
+		if err := ci.resolve(cmd, structured); err != nil {
+			return err
 		}
 		if report {
 			cmd.SilenceErrors = true
 			if detail != "" {
-				return testdrive.RenderWorkflowDetail(commandContext(cmd), cmd.OutOrStdout(), resume, detail)
+				return testdrive.RenderWorkflowDetail(commandContext(cmd), usageWriter(cmd), resume, detail)
 			}
-			return testdrive.RenderReport(commandContext(cmd), cmd.OutOrStdout(), format)
+			return testdrive.RenderReport(commandContext(cmd), usageWriter(cmd), format)
 		}
 		if facts != "" && !all {
 			return fail("invalid_options", fmt.Errorf("--facts requires --all; facts cannot replace or narrow the discovered scope"))
 		}
 		if structured {
-			if detected, err := platform.DetectPlatform(); err == nil && !testdrive.Coordinated(detected.Name()) {
+			if detected, err := platform.DetectPlatform(); err == nil && !testdrive.StructuredValidation(detected.Name()) {
 				return fail("framework_unsupported", fmt.Errorf("controlled validation is not available for %s", detected.Name()))
 			}
 		}
@@ -112,12 +109,12 @@ func newTestdriveCommand() *cobra.Command {
 			}
 		}
 
-		execution, err := testdrive.Prepare(testdrive.PrepareOptions{TracerVersion: version, DefaultTracerVersion: !cmd.Flags().Changed("tracer-version"), CheckOnly: checkOnly, All: all, Timeout: timeout, AllowReviewedBuilds: allowReviewedBuilds, AcceptSubstituteRuntime: acceptSubstituteRuntime})
+		execution, err := testdrive.Prepare(testdrive.PrepareOptions{TracerVersion: version, DefaultTracerVersion: !cmd.Flags().Changed("tracer-version"), CheckOnly: checkOnly, All: all, Timeout: timeout, AllowReviewedBuilds: allowReviewedBuilds, AcceptSubstituteRuntime: acceptSubstituteRuntime, Site: site})
 		if err != nil {
 			return fail("validation_preparation", err)
 		}
 
-		output := cmd.OutOrStdout()
+		output := usageWriter(cmd)
 		if !agent && !cmd.Flags().Changed("format") {
 			execution.Preview(output)
 		}
@@ -128,9 +125,11 @@ func newTestdriveCommand() *cobra.Command {
 		if !yes {
 			confirmed, err := confirmTestdrive(cmd.InOrStdin(), output, isTerminal(cmd.InOrStdin()), rerunWithYes(cmd))
 			if err != nil {
+				observeUsage(cmd, "needs_input", "consent", "consent_required")
 				return err
 			}
 			if !confirmed {
+				observeUsage(cmd, "cancelled", "consent", "")
 				_, _ = fmt.Fprintln(output, "Testdrive cancelled.")
 				return nil
 			}

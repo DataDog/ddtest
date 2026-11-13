@@ -150,6 +150,7 @@ func (ddm *M) executeInternalFuzzTarget(info *testingFInfo) func(*testing.F) {
 		execMeta.identity = info.identity
 		execMeta.fuzzEvents = info.events
 		if meta := testManagementOnlyMetadata(info.identity); meta != nil {
+			applyDeclarationExclusions(meta, info.sourceFunc)
 			applyAdditionalFeatureMetadataToExecution(execMeta, meta)
 		}
 		if setTestTagsFromExecutionMetadata(test, execMeta) {

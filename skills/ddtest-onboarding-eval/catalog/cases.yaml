@@ -1,0 +1,1339 @@
+# ddtest onboarding eval: standard case catalog. Edit cases here; run them with
+# scripts/run_catalog.py (see "Case catalog" in SKILL.md).
+#
+# One pinned open-source case per supported framework, every CI provider
+# covered. Selected and measured in round 2026-11-03.
+#
+# Harness order per case (run_eval.py):
+#   clone at `commit`
+#   -> trims.required (then trims.optional_speed with --speed-trims), each
+#      committed by run_catalog.py with a scratch identity so `git status` stays clean
+#   -> setup_commands -> readiness_commands -> agent.
+# Commands use run_eval.py's shlex form: no implicit shell, `sh -c` where one is
+# needed. Trim commands only edit or `git rm`; run_catalog.py adds the commit.
+# /tmp in a command is the container's private tmpfs, not the host's.
+#
+# Fields:
+#   id                 E<nn>-<name>, unique.
+#   framework          run_eval.py --framework value; exactly one case each.
+#   language, ci_provider (github, gitlab, circleci, buildkite, jenkins),
+#   ci_config_path     the CI file ddtest should onboard.
+#   repo, commit       public clone URL and full 40-hex commit (never a branch).
+#   commit_date, subdir  subdir: the package directory when not the root.
+#   image              key of `images` below: the Dockerfile target and build args.
+#   runtime            project / ci / local runtime, package manager and framework version.
+#   system_needs, browsers, services  what the suite needs beyond the image.
+#   setup_commands, readiness_commands  run_eval.py --setup-command / --readiness-command.
+#   harness            run_eval.py flags: framework, python, pnpm, bundle_binstubs,
+#                      answers (--user-answer values).
+#   trims.required     {reason, commands}: needed for the suite to pass at all
+#                      on the image; always applied.
+#   trims.optional_speed  {reason, commands}: catalog speed trims, only with --speed-trims.
+#   ci_test_command, local_test_command  what CI runs and its local equivalent.
+#   timings_seconds    measured outside any agent, in throwaway containers on a
+#                      linux/arm64 Colima VM (4 CPU, 8 GB, shared), on the container
+#                      filesystem: the harness's /trial bind mount is ~1.2-1.4x slower
+#                      and network-bound steps vary 1.5-2x. install = dependency
+#                      install (Java: wrapper + dependency resolution); browser =
+#                      browser/binary download; build = compile beyond the test command;
+#                      tests_full = one untrimmed CI-equivalent run with warm caches;
+#                      tests_trimmed = the same with every listed trim (null: no trim).
+#                      ddtest normally runs the real suite twice per configuration,
+#                      then selects controlled probes for feature checks.
+#   tests              test counts, full and trimmed.
+#   sizes              repository and dependency sizes.
+#   prepared_image     what a prepared image or snapshot would bake, and what to keep
+#                      out. Optional warmup_commands prepare dependency caches in a
+#                      throwaway copy; they never replace trial setup/readiness.
+#                      Every case keeps out tracers, CI edits, .testoptimization
+#                      and build outputs, so ddtest still has real work to do.
+#   notes, risks
+#   expected           checked by run_catalog.py after every trial (see "Case catalog"
+#                      in SKILL.md): a mismatch fails the batch.
+#     verdict          COMPLETE LOCALLY | PASSED | INCOMPLETE | FAILED: the
+#                      testdrive.json summary.status a correct trial reaches.
+#     reason           why; required for every verdict but COMPLETE LOCALLY.
+#     blockers         optional, INCOMPLETE/FAILED only: the blockers the verdict may
+#                      have. Each is a blocker identifier (catalog_check.blocker_id of a
+#                      summary.blocking_checks entry, such as "feature skipping:
+#                      inconclusive", "compatibility: suspected regression",
+#                      "runtime fidelity: substitute Java", "unresolved CI scope:
+#                      <file> / <job> / step <n>: <cause class>" or a headline like
+#                      "Cypress real-suite coverage was not observed"); fnmatch patterns
+#                      ("feature *: inconclusive") are allowed, but prefer exact
+#                      identifiers, which a new blocker can't match (write a literal
+#                      "[" as "[[]"). Any other blocker fails
+#                      the case; "configuration: <status>" and "not every project has
+#                      every required feature result" only restate others and count
+#                      only alone. Without blockers only the verdict is checked.
+#     run, ddtest      provenance: the run (an output folder or round, such as
+#                      eval-claude-2026-11-04) and the ddtest build (its commit, as
+#                      passed with --ddtest-label) the expectation was observed on.
+#     agents           optional per-agent overrides, {codex|claude: {verdict,
+#                      blockers, reason, run, ddtest}}, applied over the shared
+#                      fields for that agent only. ddtest decides the verdict, so
+#                      use one only for a known agent difference; a verdict
+#                      override needs its own reason.
+schema_version: 1
+round: '2026-11-03'
+
+# Image keys used by cases. Build each from scripts/Dockerfile:
+#   docker build --target <target> [--build-arg K=V ...] -t <tag> \
+#     -f skills/ddtest-onboarding-eval/scripts/Dockerfile skills/ddtest-onboarding-eval/scripts
+# and pass the image to run_catalog.py as --image-map <key>=<image>.
+images:
+  agents:
+    target: agents
+    build_args: {}
+    provides: Node 24.19.0, npm 11.17.0, pnpm 12.14.0, yarn 1.22.22 (Debian bookworm)
+  browsers:
+    target: browsers
+    build_args: {}
+    provides: agents + Debian Chromium and chromedriver, Xvfb, CHROMEDRIVER_PATH
+  python:
+    target: python
+    build_args: {}
+    provides: agents + CPython 3.12 with venv (/usr/local/bin/python3)
+  ruby:
+    target: ruby
+    build_args: {}
+    provides: agents + Ruby 3.4.12, Bundler 2.6.9
+  java21:
+    target: java
+    build_args: {}
+    provides: agents + Temurin 21, Maven 3.9.11
+  java17:
+    target: java
+    build_args:
+      JDK_IMAGE: eclipse-temurin:17-jdk@sha256:91011320978c10ec51d2cde1eb6f616db6d2a739a0e521096c343dd3fed9abe6
+    provides: agents + Temurin 17, Maven 3.9.11
+
+cases:
+- id: E01-nion
+  framework: jest
+  language: javascript
+  ci_provider: circleci
+  ci_config_path: .circleci/config.yml
+  repo: https://github.com/Patreon/nion.git
+  commit: 16cb1cd923b493fba12324f2a211fbe59d47a505
+  commit_date: '2026-02-10'
+  subdir: null
+  image: agents
+  runtime:
+    project: .nvmrc v18.17.1
+    ci: cimg/node:18.17.1
+    local: node 24.19.0
+    package_manager: npm (package-lock.json)
+    framework_version: jest (lockfile)
+  system_needs: []
+  browsers: null
+  services: null
+  setup_commands:
+  - npm ci --no-audit --no-fund
+  readiness_commands: []
+  harness:
+    framework: jest
+    python: null
+    pnpm: null
+    bundle_binstubs: []
+    answers: []
+  trims:
+    required: null
+    optional_speed: null
+  ci_test_command: TESTFILES=$(circleci tests glob ... | circleci tests split --split-by=timings); JEST_JUNIT_OUTPUT=...
+    npm run test -- --runInBand ${TESTFILES}
+  local_test_command: NODE_ENV=test npx jest --runInBand
+  timings_seconds:
+    clone: 2.0
+    install: 20.6
+    browser: 0
+    build: 0
+    tests_full: 6.8
+    tests_trimmed: null
+  tests:
+    full: 18 suites / 138 tests, all pass
+    trimmed: null
+  sizes:
+    repo: .git 2.3M, tree 1.3M, 91 files
+    deps: node_modules 293M
+  prepared_image:
+    bake: node_modules (gitignored) + npm cache; nothing else. Leave dd-trace uninstalled and package.json/CI untouched.
+    keep_out: dd-trace; package.json and the CI file stay untouched
+  notes:
+  - CI runs lint, typecheck and format:check before tests; test step uses circleci tests glob|split (parallelism
+    2).
+  risks:
+  - CI Node 18 vs local Node 24 (previous rounds still completed).
+  expected:
+    verdict: COMPLETE LOCALLY
+    run: eval-claude-2026-11-04
+    ddtest: b7a9d2ba
+    reason: CircleCI orb; the agent adds jest-circus for Jest 24 as ddtest's preflight prescribes
+- id: E02-pipeline-schema
+  framework: mocha
+  language: javascript
+  ci_provider: buildkite
+  ci_config_path: .buildkite/pipeline.yml
+  repo: https://github.com/buildkite/pipeline-schema.git
+  commit: a038b393d5bbd0c628a4781ba61b9ea6e13d1595
+  commit_date: '2026-10-01'
+  subdir: test
+  image: agents
+  runtime:
+    project: test/.nvmrc + test/.node-version 18.13.0
+    ci: docker-compose plugin building test/Dockerfile FROM node:18 (npm install)
+    local: node 24.19.0
+    package_manager: npm (test/package-lock.json)
+    framework_version: mocha ^11.7.5
+  system_needs: []
+  browsers: null
+  services: null
+  setup_commands:
+  - npm ci --prefix test --no-audit --no-fund
+  readiness_commands: []
+  harness:
+    framework: mocha
+    python: null
+    pnpm: null
+    bundle_binstubs: []
+    answers: []
+  trims:
+    required: null
+    optional_speed: null
+  ci_test_command: npm test && npm run format:write (inside docker-compose service 'tests', workdir /app/test)
+  local_test_command: cd test && npx mocha *.test.js
+  timings_seconds:
+    clone: 1.4
+    install: 1.1
+    browser: 0
+    build: 0
+    tests_full: 1.2
+    tests_trimmed: null
+  tests:
+    full: 131 passing
+    trimmed: null
+  sizes:
+    repo: .git 748K, 32 files
+    deps: test/node_modules 25M
+  prepared_image:
+    bake: test/node_modules only.
+    keep_out: null
+  notes:
+  - Package lives in test/ (subdir case); CI image built by docker-compose.
+  risks: []
+  expected:
+    verdict: COMPLETE LOCALLY
+    run: eval-claude-2026-11-04
+    ddtest: b7a9d2ba
+    reason: 'no nyc gate: the test/ package has no source to instrument'
+- id: E03-manuscripts
+  framework: vitest
+  language: javascript
+  ci_provider: jenkins
+  ci_config_path: Jenkinsfile
+  repo: https://github.com/Atypon-OpenSource/manuscripts-track-changes-plugin.git
+  commit: 62f4d19dda4c2d41afa5d9fdecea840fb6bfb0be
+  commit_date: '2026-06-20'
+  subdir: null
+  image: agents
+  runtime:
+    project: engines node >=22; pnpm-lock.yaml v9 (no packageManager pin)
+    ci: Jenkinsfile docker agent node:18, yarn install --frozen-lockfile (no yarn.lock in repo)
+    local: node 24.19.0, pnpm 12.14.0
+    package_manager: pnpm (pnpm-lock.yaml)
+    framework_version: vitest 4.1.7
+  system_needs: []
+  browsers: null
+  services: null
+  setup_commands:
+  - pnpm install --frozen-lockfile --config.strict-dep-builds=false
+  readiness_commands: []
+  harness:
+    framework: vitest
+    python: null
+    pnpm: null
+    bundle_binstubs: []
+    answers: []
+  trims:
+    required: null
+    optional_speed: null
+  ci_test_command: 'yarn typecheck; yarn test (vitest run); yarn build; Publish stage: npx @manuscripts/publish'
+  local_test_command: npx vitest run
+  timings_seconds:
+    clone: 1.8
+    install: 7.3
+    browser: 0
+    build: 0
+    tests_full: 3.5
+    tests_trimmed: null
+  tests:
+    full: 9 files, 38 passed + 6 skipped (44)
+    trimmed: null
+  sizes:
+    repo: .git 1.6M, 110 files
+    deps: node_modules 258M (pnpm store under caches)
+  prepared_image:
+    bake: node_modules + pnpm store (store-dir must stay where the harness's pnpm rc points, or node_modules hardlinks
+      break).
+    keep_out: null
+  notes: []
+  risks:
+  - CI uses yarn while the repo only has pnpm-lock.yaml; Jenkins docker agent node:18 (container jobs in plugin
+    scope are a known unsupported area).
+  - No answers. The earlier Jenkins confirms and ci_runtime=node=18 went unused in round 1 and eval-claude-2026-11-04;
+    ddtest reads Node 18 from the docker agent and installs the tracer in the test step (no plugin, so no
+    ci_setup_confirmation_required).
+  expected:
+    verdict: COMPLETE LOCALLY
+    run: eval-claude-2026-11-04
+    ddtest: b7a9d2ba
+    reason: Node 18 read from the Jenkins docker agent and the tracer installed in the test step, so ddtest asks
+      nothing
+- id: E08-kitchensink
+  framework: cypress
+  language: javascript
+  ci_provider: gitlab
+  ci_config_path: .gitlab-ci.yml
+  repo: https://github.com/cypress-io/cypress-example-kitchensink.git
+  commit: 154c81326d90c4c442a20dc469977b5f1f291136
+  commit_date: '2026-09-02'
+  subdir: null
+  image: browsers
+  runtime:
+    project: .nvmrc/.node-version 24; engines ^22.22.2 || ^24.15.0 || >=26
+    ci: GitLab image cypress/base:24.19.0 (install job + 5 parallel electrons-N jobs)
+    local: node 24.19.0
+    package_manager: npm (package-lock.json)
+    framework_version: cypress 15.21.1 (Electron, bundled)
+  system_needs:
+  - Xvfb (browsers image)
+  - libstdc++ with GLIBCXX_3.4.30 is enough for Cypress 15; Cypress 16.x needs GLIBCXX_3.4.32 (not in bookworm)
+  browsers: Cypress binary 15.21.1 linux-arm64 (683M in CYPRESS_CACHE_FOLDER); Electron default, no Chromium needed
+  services: null
+  setup_commands:
+  - npm ci --no-audit --no-fund
+  readiness_commands:
+  - npx cypress verify
+  harness:
+    framework: cypress
+    python: null
+    pnpm: null
+    bundle_binstubs: []
+    answers:
+    - ci_provider=gitlab
+  trims:
+    required: null
+    optional_speed:
+      reason: keep 5 Cypress specs (network_requests.cy.js also needs internet)
+      commands:
+      - sh -c 'cd cypress/e2e/2-advanced-examples && for f in *.cy.js; do case $f in aliasing.cy.js|location.cy.js|querying.cy.js|window.cy.js)
+        ;; *) git rm -q $f;; esac; done'
+  ci_test_command: npm run start & ; npm run e2e:record -- --parallel --group "electrons on GitLab CI" (cypress
+    run --record --parallel)
+  local_test_command: CI=1 npm run test:ci (run-p --race start e2e)
+  timings_seconds:
+    clone: 1.8
+    install: 2.6
+    browser: 11.9
+    build: 0
+    tests_full: 64
+    tests_trimmed: 11.8
+  tests:
+    full: 20 specs, 122 tests, all pass (Cypress-reported 49s)
+    trimmed: 5 specs (todo + aliasing/location/querying/window), 19 tests pass
+  sizes:
+    repo: .git 7.9M, 117 files
+    deps: node_modules 94M + Cypress cache 683M
+  prepared_image:
+    bake: node_modules + Cypress binary cache (CYPRESS_CACHE_FOLDER outside the checkout; verified once). No dd-trace,
+      no coverage setup.
+    keep_out: dd-trace and any coverage setup (babel-plugin-istanbul, @cypress/code-coverage)
+  notes:
+  - 'HEAD cd24a0a (Cypress 16.2.1) and 16.0.0/16.1.1 fail on the bookworm browsers image: addon-native.node needs
+    GLIBCXX_3.4.32. Pinned the last Cypress 15 commit.'
+  - 'Repo carries CI for many systems: .gitlab-ci.yml, .buildkite/pipeline.yml, Jenkinsfile (docker cypress/base,
+    record keys), .circleci (release only), 9 GitHub workflows, plus Semaphore/Travis/Azure/Buddy/CodeBuild/Amplify.
+    ci_provider answer selects GitLab.'
+  - ddtest's cypress_observer strips --record/--parallel; kitchensink is already a ddtest detection fixture.
+  - Repo ships AGENTS.md and CLAUDE.md, which the tested agent will read.
+  risks:
+  - Record mode with CI-only CYPRESS_RECORD_KEY; background `npm run start &` in the job.
+  - network_requests.cy.js needs internet (trimmed out).
+  - Cypress TIA (skipping/coverage) is deferred in ddtest; expect those controls as deferred.
+  expected:
+    verdict: INCOMPLETE
+    blockers:  # verified: rerun4 and eval-claude-2026-11-04 testdrive.json (the configuration line is derived)
+    - Cypress real-suite coverage was not observed
+    run: eval-claude-2026-11-04
+    ddtest: b7a9d2ba
+    reason: 122/122 and features 6/6, Node 24 read from the cypress/base:24.19.0 tag (no ci_runtime question); the only
+      blocker is application coverage, which needs approval for a test-only babel-plugin-istanbul
+- id: E09-lux-design-system
+  framework: playwright
+  language: javascript
+  ci_provider: circleci
+  ci_config_path: .circleci/config.yml
+  repo: https://github.com/pulibrary/lux-design-system.git
+  commit: 13da14345b8fad2639a79186e04fbac46d58b2ee
+  commit_date: '2026-11-03'
+  subdir: null
+  image: browsers
+  runtime:
+    project: .tool-versions nodejs 24.19.0, npm 12.0.2
+    ci: 'job playwright: mcr.microsoft.com/playwright:v1.62.1-noble (Node 24 per its Dockerfile), orb circleci/node@5.0.2
+      install-packages'
+    local: node 24.19.0, npm 11.17.0
+    package_manager: npm (package-lock.json)
+    framework_version: '@playwright/test 1.62.1'
+  system_needs:
+  - 'WebKit host libs (libgstreamer-1.0, libgtk-4, libgraphene, gst allocators...) absent from bookworm image: webkit
+    project cannot launch'
+  browsers: Playwright chromium-1234 + headless shell (984M) and firefox-1538 via `npx playwright install chromium
+    firefox` into PLAYWRIGHT_BROWSERS_PATH
+  services: null
+  setup_commands:
+  - npm ci --no-audit --no-fund
+  - npx playwright install chromium firefox
+  readiness_commands: []
+  harness:
+    framework: playwright
+    python: null
+    pnpm: null
+    bundle_binstubs: []
+    answers:
+    - ci_runtime=node=24
+  trims:
+    required:
+      reason: 'the webkit project cannot launch: its host libraries are missing on bookworm'
+      commands:
+      - 'perl -0pi -e ''s/\n    \{\n      name: "webkit",\n      use: \{ \.\.\.devices\["Desktop Safari"\] \},\n    \},\n//''
+        playwright.config.js'
+      - sh -c '! grep -n webkit playwright.config.js'
+    optional_speed:
+      reason: drop the Wikipedia-backed spec (passes with network access)
+      commands:
+      - git rm -q end2end/singleselectasync.spec.js
+  ci_test_command: npx playwright test
+  local_test_command: CI=1 npx playwright test
+  timings_seconds:
+    clone: 8.6
+    install: 9.0
+    browser: 27.5
+    build: 0
+    tests_full: 22
+    tests_trimmed: 13
+  tests:
+    full: '3 specs x 3 projects: 6 passed (chromium, firefox), 3 failed (webkit cannot launch)'
+    trimmed: 2 specs x 2 projects (chromium, firefox) = 4 passed
+  sizes:
+    repo: .git 12M, 227 files
+    deps: node_modules 589M + browsers ~1.3G (chromium+firefox)
+  prepared_image:
+    bake: 'node_modules + Playwright browsers (chromium, headless shell, firefox) in PLAYWRIGHT_BROWSERS_PATH outside
+      the checkout. Do not prebuild dist/: the webServer runs `npm run build` (vite) each time, which is part of
+      the suite.'
+    keep_out: 'dist/: the webServer runs the vite build on each run, as part of the suite'
+  notes:
+  - 'webServer: `npm run start` = vite build + npx http-server :5002 (build ~5s per run).'
+  - Also has a vitest suite (node/test orb matrix 24.19.0/22.16.0), styleguide and package jobs; no GitHub workflows.
+  - 'Alternative to trimming webkit: a derived image with `npx playwright install-deps webkit` (root at build time).'
+  risks:
+  - 'CI image name selects no Node version; if ddtest asks, answer ci_runtime=node=24 (mcr playwright v1.62.1 Dockerfile:
+    NODE_VERSION=24).'
+  - Example pages may load Vue from unpkg.com (internet).
+  - 'HEAD of an active repo: pin the SHA.'
+  expected:
+    verdict: COMPLETE LOCALLY
+    run: eval-claude-2026-11-04
+    ddtest: b7a9d2ba
+    reason: with the WebKit trim; ci_runtime=node=24 answers the question the mcr Playwright image raises
+- id: E04-battleship
+  framework: cucumber
+  language: javascript
+  ci_provider: gitlab
+  ci_config_path: .gitlab-ci.yml
+  repo: https://github.com/proscrumdev/battleship-nodejs.git
+  commit: 488895ecab3f3f4d43b9740d0235a47aa5b57f4d
+  commit_date: '2026-03-30'
+  subdir: null
+  image: agents
+  runtime:
+    project: no Node pin
+    ci: image node:24 (default for all jobs)
+    local: node 24.19.0
+    package_manager: npm (package-lock.json)
+    framework_version: '@cucumber/cucumber (lockfile)'
+  system_needs: []
+  browsers: null
+  services: null
+  setup_commands:
+  - npm ci --no-audit --no-fund
+  readiness_commands: []
+  harness:
+    framework: cucumber
+    python: null
+    pnpm: null
+    bundle_binstubs: []
+    answers: []
+  trims:
+    required: null
+    optional_speed: null
+  ci_test_command: ./node_modules/.bin/cucumber-js ./GameController_ATDD --format json | ./node_modules/.bin/cucumber-junit
+    > testresults_cucumber.xml (job 'acceptance test'); mocha job 'unit test'; sonar job
+  local_test_command: ./node_modules/.bin/cucumber-js ./GameController_ATDD
+  timings_seconds:
+    clone: 1.6
+    install: 6.2
+    browser: 0
+    build: 0
+    tests_full: 0.4
+    tests_trimmed: null
+  tests:
+    full: 1 feature, 2 scenarios, 6 steps pass
+    trimmed: null
+  sizes:
+    repo: .git 532K, 23 files
+    deps: node_modules 428M
+  prepared_image:
+    bake: node_modules only.
+    keep_out: null
+  notes:
+  - Also has .forgejo/workflows/pipeline.yml and Azure buildpipeline.yml (not ddtest providers).
+  risks: []
+  expected:
+    verdict: COMPLETE LOCALLY
+    run: handoff-eval-2026-11-06-r1/reviewed-final
+    ddtest: 79998cb-handoff-r1
+    reason: Both agents followed ddtest's exact status-subshell and nyc dependency prescriptions; all three
+      trials per agent reached COMPLETE LOCALLY with scoped GitLab setup and no edits to the Mocha job.
+- id: E10-tic-tac-toe-wdio
+  framework: webdriverio
+  language: javascript
+  ci_provider: github
+  ci_config_path: .github/workflows/ci.yml
+  repo: https://github.com/devendra0708/tic-tac-toe-wdio.git
+  commit: 0af36cfe617b9169a85dd4e5b937e18683c8db0c
+  commit_date: '2026-08-14'
+  subdir: null
+  image: browsers
+  runtime:
+    project: no Node pin
+    ci: actions/setup-node node-version '20' (npm cache); setup-java 17 only for the Allure CLI
+    local: node 24.19.0
+    package_manager: npm (package-lock.json)
+    framework_version: WebdriverIO 9.30.1 (mocha framework, static-server-service, allure reporter)
+  system_needs: []
+  browsers: Debian Chromium 156 + chromedriver 156 from the browsers image (google-chrome wrapper, CHROMEDRIVER_PATH);
+    no driver download
+  services: null
+  setup_commands:
+  - npm ci --no-audit --no-fund
+  readiness_commands: []
+  harness:
+    framework: webdriverio
+    python: null
+    pnpm: null
+    bundle_binstubs: []
+    answers: []
+  trims:
+    required: null
+    optional_speed:
+      reason: keep 5 WebdriverIO specs (game.spec.ts alone takes 124 s)
+      commands:
+      - git rm -q test/specs/game.spec.ts test/specs/e2e.spec.ts test/specs/history.spec.ts
+  ci_test_command: npm test (wdio run wdio.conf.ts) with CI=true WDIO_MAX_INSTANCES=2
+  local_test_command: CI=true WDIO_MAX_INSTANCES=2 npm test
+  timings_seconds:
+    clone: 1.3
+    install: 4.2
+    browser: 0
+    build: 0
+    tests_full: 139.2
+    tests_trimmed: 12.1
+  tests:
+    full: 8 specs, 85 tests pass (game.spec.ts alone 2m04s)
+    trimmed: 5 specs (auth, i18n, nav, profile, settings), 40 tests pass
+  sizes:
+    repo: .git 408K, 44 files
+    deps: node_modules 237M
+  prepared_image:
+    bake: node_modules only (browsers come from the image).
+    keep_out: null
+  notes:
+  - 'specFileRetries: 1 when CI is set (ddtest''s webdriverio.go handles 9.21+ attempt numbering).'
+  - Typecheck, lint and format:check steps precede the tests; Allure report/pages jobs follow.
+  - package.json single-spec scripts (test:game etc.) still name trimmed specs; not used by CI.
+  - 'Remeasured 2026-11-06 in one linux/arm64 container (4 CPU, 6 GB limit, tmpfs): full 139.2s;
+    trimmed 12.8s and 11.4s (median 12.1s). Direct trimmed testdrive 59.8s: paired 40/40 results,
+    all five supported feature checks passed; skipping remains unsupported. This is fixture/DDTest
+    behavior coverage, not preservation of all 85 upstream assertions.'
+  risks:
+  - 'Personal repo with 0 stars (may disappear: mirror the pinned commit).'
+  - CI Node 20 vs local Node 24.
+  - WDIO >= 9.21 numbering was a past ddtest bug; regression canary.
+  expected:
+    verdict: COMPLETE LOCALLY
+    run: eval-claude-2026-11-04
+    ddtest: b7a9d2ba
+    reason: 85/85, features 5/5 (skipping not supported for WebdriverIO)
+- id: E05-httparty
+  framework: rspec
+  language: ruby
+  ci_provider: github
+  ci_config_path: .github/workflows/ci.yml
+  repo: https://github.com/jnunemaker/httparty.git
+  commit: c8d8666f44e9e684da302b562ac27dd6d346e1bf
+  commit_date: '2026-10-25'
+  subdir: null
+  image: ruby
+  runtime:
+    project: no .ruby-version; Gemfile.lock gitignored
+    ci: ruby/setup-ruby matrix 2.7, 3.0, 3.1, 3.2, 3.3, 3.4, 4.0 with bundler-cache
+    local: ruby 3.4.12, bundler 2.6.9
+    package_manager: bundler (no lockfile)
+    framework_version: rspec ~> 3.4; cucumber ~> 2.3
+  system_needs: []
+  browsers: null
+  services: null
+  setup_commands:
+  - bundle config set --global path /tmp/bundle
+  - bundle install
+  readiness_commands:
+  - bundle check
+  harness:
+    framework: rspec
+    python: null
+    pnpm: null
+    bundle_binstubs: []
+    answers: []
+  trims:
+    required: null
+    optional_speed: null
+  ci_test_command: 'bundle exec rake (default: spec + cucumber features)'
+  local_test_command: bundle exec rspec (and bundle exec rake for the CI shape)
+  timings_seconds:
+    clone: 1.8
+    install: 7.9
+    browser: 0
+    build: 0
+    tests_full: 11.6
+    tests_trimmed: null
+  tests:
+    full: rspec 802 examples 0 failures (1.9s); rake features 36 scenarios (10.4s); rake total 11.6s
+    trimmed: null
+  sizes:
+    repo: .git 2.2M, 116 files
+    deps: /tmp/bundle 29M (57 gems)
+  prepared_image:
+    bake: Installed gems in the bundle path outside the checkout. Gemfile.lock is generated by bundle install but
+      gitignored; bake the generated lock into the blob (gitignored) so gem versions don't drift between trials.
+    keep_out: null
+  notes:
+  - rspec part alone is 1.9s; cucumber features (Ruby Cucumber 2.x with a local mongrel server) take 10s of the
+    rake run.
+  risks:
+  - 'No committed lockfile: a fresh bundle install resolves the newest gems each time (drift); freeze via the blob.'
+  expected:
+    verdict: COMPLETE LOCALLY
+    run: eval-claude-2026-11-04
+    ddtest: b7a9d2ba
+    reason: ddtest names the datadog-ci release (such as 1.42.0) for ruby-tracer-version; round 1's wrong datadog gem
+      detour did not recur
+- id: E06-brakeman
+  framework: minitest
+  language: ruby
+  ci_provider: circleci
+  ci_config_path: .circleci/config.yml
+  repo: https://github.com/presidentbeef/brakeman.git
+  commit: 4bfdad0c35f3bcedb7c5d97baba98c537e689bf2
+  commit_date: '2026-10-21'
+  subdir: null
+  image: ruby
+  runtime:
+    project: Gemfile.lock gitignored; minitest >= 6.0
+    ci: jobs default cimg/ruby:4.0, test-3-2 (RUBYOPT frozen string literal), test-3-3, test-3-4; upload-coverage
+      via qltysh/qlty-orb
+    local: ruby 3.4.12
+    package_manager: bundler (no lockfile)
+    framework_version: minitest 6.0.6 (resolved)
+  system_needs: []
+  browsers: null
+  services: null
+  setup_commands:
+  - bundle config set --global path /tmp/bundle
+  - bundle install
+  readiness_commands:
+  - bundle check
+  harness:
+    framework: minitest
+    python: null
+    pnpm: null
+    bundle_binstubs: []
+    answers: []
+  trims:
+    required:
+      reason: 61 errors and 4 failures when stderr is not a TTY, as ddtest runs the suite
+      commands:
+      - sh -c 'KEEP=" alias_processor.rb sexp.rb call_index.rb output_processor.rb find_return_value.rb tracker.rb
+        warning.rb file_path.rb constants.rb rails4.rb rails5.rb rails6.rb options.rb checks.rb app_tree.rb render_path.rb
+        "; for f in test/tests/*.rb; do case "$KEEP" in *" ${f##*/} "*) ;; *) git rm -q "$f";; esac; done'
+    optional_speed: null
+  ci_test_command: bundle check || bundle install; bundle exec rake (Rake::TestTask test/tests/*.rb)
+  local_test_command: bundle exec rake
+  timings_seconds:
+    clone: 7.9
+    install: 14.8
+    browser: 0
+    build: 0
+    tests_full: 24.0
+    tests_trimmed: 1.8
+  tests:
+    full: '1590 runs. Without a TTY (as ddtest runs it): 4 failures + 61 errors, deterministic. With a pty: 1 failure
+      (ReportPagerTests#test_in_ci_test needs CI=true), 18.7s.'
+    trimmed: 16 files, 609 runs, 1915 assertions, 0 failures (no TTY needed)
+  sizes:
+    repo: .git 49M, tree 9M, 1403 files (test/apps 6.7M)
+    deps: /tmp/bundle 30M
+  prepared_image:
+    bake: Installed gems (bundle path) plus the generated, gitignored Gemfile.lock; trimmed tree committed.
+    keep_out: null
+  notes:
+  - 'The TTY-dependent errors: Brakeman.run checks $stderr.tty? and then indexes options[:report_progress] on a
+    String path (TypeError) in ignore/sarif/json/sonar/codeclimate/junit/github/logger/config tests.'
+  - Trim keeps the Rakefile pattern, test/apps fixtures and all CI jobs valid.
+  risks:
+  - No committed lockfile (drift).
+  - Untrimmed, the baseline already fails without a TTY; equal failures may still be 'compatible' but make grading
+    noisier.
+  expected:
+    verdict: COMPLETE LOCALLY
+    run: eval-claude-2026-11-04
+    ddtest: b7a9d2ba
+    reason: 2/2 configurations with the required TTY trim
+- id: E07-qwed-ucp
+  framework: pytest
+  language: python
+  ci_provider: buildkite
+  ci_config_path: .buildkite/pipeline.yml
+  repo: https://github.com/QWED-AI/qwed-ucp.git
+  commit: d7789db9d7b6219a9bf19074b5aba1689a201d2c
+  commit_date: '2026-10-03'
+  subdir: null
+  image: python
+  runtime:
+    project: requires-python >=3.10; uv.lock present (unused by CI)
+    ci: Buildkite docker plugin python:3.10 / 3.11 / 3.12; lint step on agent host
+    local: python 3.12 venv (python image target)
+    package_manager: pip
+    framework_version: pytest >=7 (resolved 8.x/9.x)
+  system_needs: []
+  browsers: null
+  services: null
+  setup_commands:
+  - python -m pip install .[dev]
+  - python -m pip uninstall -y qwed-ucp
+  readiness_commands: []
+  harness:
+    framework: pytest
+    python: /usr/local/bin/python3
+    pnpm: null
+    bundle_binstubs: []
+    answers:
+    - ci_provider=buildkite
+  trims:
+    required: null
+    optional_speed: null
+  ci_test_command: pip install -e ".[dev]"; PYTHONPATH=src pytest tests/ -q --timeout=30 --cov=qwed_ucp --cov-report=xml
+  local_test_command: PYTHONPATH=src pytest tests/ -q --timeout=30 --cov=qwed_ucp --cov-report=xml
+  timings_seconds:
+    clone: 1.3
+    install: 4.6
+    browser: 0
+    build: 0
+    tests_full: 1.3
+    tests_trimmed: null
+  tests:
+    full: 140 passed
+    trimmed: null
+  sizes:
+    repo: .git 536K, 56 files
+    deps: venv 54M
+  prepared_image:
+    bake: The private venv (/trial/venv in the harness) with dev deps, qwed-ucp itself uninstalled.
+    keep_out: null
+  notes:
+  - 'ci_provider answer needed: the repo also has .circleci/config.yml and .github/workflows (ci.yml, publish.yml).'
+  - coverage.xml is written untracked (not gitignored).
+  risks: []
+  expected:
+    verdict: PASSED
+    run: handoff-eval-2026-11-06-r1/reviewed-final
+    ddtest: 79998cb-handoff-r1
+    reason: Five Buildkite trials pass with ddtest-selected ddtrace 4.16.3; Python standalone validation is
+      PASSED rather than COMPLETE LOCALLY. Codex trial 3 selects GitHub without requesting the reactive
+      provider answer; its unresolved virtualenv build launcher blocks validation and remains a frozen failure.
+- id: E12-kalamar-export
+  framework: junit4
+  language: java
+  ci_provider: gitlab
+  ci_config_path: .gitlab-ci.yml
+  repo: https://github.com/KorAP/Kalamar-Plugin-Export.git
+  commit: 615981a818df97b5ef6d0782498cab47d9ce659c
+  commit_date: '2026-10-05'
+  subdir: null
+  image: java21
+  runtime:
+    project: java.version 21; no wrapper
+    ci: image maven:3-eclipse-temurin-21; variables MAVEN_OPTS=-Dmaven.repo.local=.m2/repository, MAVEN_CLI_OPTS=--batch-mode
+      --errors --fail-at-end --show-version
+    local: JDK 21.0.12.1, Maven 3.9.11
+    package_manager: Maven
+    framework_version: junit 4.13.2 (+ mockserver-netty 8.0.0, jersey grizzly test framework)
+  system_needs: []
+  browsers: null
+  services: none external; in-process MockServer and Grizzly
+  setup_commands: []
+  readiness_commands:
+  - mvn -B -q dependency:go-offline
+  harness:
+    framework: junit4
+    python: null
+    pnpm: null
+    bundle_binstubs: []
+    answers:
+    - ci_provider=gitlab
+  trims:
+    required: null
+    optional_speed: null
+  ci_test_command: export MAVEN_OPTS="$MAVEN_OPTS"; mvn $MAVEN_CLI_OPTS clean test package
+  local_test_command: mvn --batch-mode --errors --fail-at-end clean test package
+  timings_seconds:
+    clone: 1.5
+    install: 35.5
+    browser: 0
+    build: 0
+    tests_full: 13.0
+    tests_trimmed: null
+  tests:
+    full: 12 classes, 88 tests pass (ServiceTest 9.8s)
+    trimmed: null
+  sizes:
+    repo: .git 872K, 61 files
+    deps: ~/.m2 187M
+  prepared_image:
+    bake: '~/.m2 in the trial HOME. NOTE: with CI''s MAVEN_OPTS (repo-local .m2/repository) each run re-downloads
+      132M into an untracked .m2/ inside the checkout copy (35s per run instead of 13s); a blob cannot pre-seed
+      that path without dirtying the checkout.'
+    keep_out: 'the repository-local .m2/ that CI''s MAVEN_OPTS selects: seeding it would dirty the checkout'
+  notes:
+  - 'ci_provider answer needed: .github/workflows/ci_test.yml (setup-java 21, mvn clean test) also exists.'
+  - Docker build/deploy jobs (dind) on tags/manual; security-scan manual job.
+  risks:
+  - 'Repo-local Maven repository from CI variables: download time and an untracked .m2/ directory (not gitignored)
+    in whatever directory runs the CI command.'
+  - Dockerfile and docker:dind jobs are distractors.
+  expected:
+    verdict: INCOMPLETE
+    blockers:  # verified: eval-claude-2026-11-04 testdrive.json, as the rerun grading notes said
+    - 'feature auto-retries: failed'
+    - 'compatibility: inconclusive'
+    run: handoff-eval-2026-11-06-r1/reviewed-final
+    ddtest: 79998cb-handoff-r1
+    reason: Both agents reproduce INCOMPLETE with ddtest-selected dd-java-agent 1.68.1; auto-retries fails
+      and compatibility remains inconclusive in all three trials per agent.
+
+- id: E11-cdoc2-auth
+  framework: junit5
+  language: java
+  ci_provider: gitlab
+  ci_config_path: .gitlab-ci.yml
+  repo: https://github.com/open-eid/cdoc2-auth.git
+  commit: c78912288ef933e31c483c1b8759df468740baf9
+  commit_date: '2025-02-28'
+  subdir: null
+  image: java17
+  runtime:
+    project: maven.compiler.source/target 17; no wrapper
+    ci: image maven:3.8.8-eclipse-temurin-17
+    local: JDK 17.0.20.1, Maven 3.9.11
+    package_manager: Maven
+    framework_version: junit-jupiter 5.10.3
+  system_needs: []
+  browsers: null
+  services: null
+  setup_commands: []
+  readiness_commands:
+  - mvn -B -q dependency:go-offline
+  harness:
+    framework: junit5
+    python: null
+    pnpm: null
+    bundle_binstubs: []
+    answers:
+    - ci_provider=gitlab
+  trims:
+    required:
+      reason: 'test certificates expired (2025-11, 2026-01): 3 errors otherwise'
+      commands:
+      - git rm -q src/test/java/ee/cyber/cdoc2/auth/AuthTest.java src/test/java/ee/cyber/cdoc2/auth/CertVerifierTest.java
+    optional_speed: null
+  ci_test_command: mvn test -s $MAVEN_SETTINGS (build job); mvn deploy -s $MAVEN_SETTINGS (publish, manual)
+  local_test_command: mvn -B test
+  timings_seconds:
+    clone: 1.3
+    install: 19.0
+    browser: 0
+    build: 0
+    tests_full: 2.8
+    tests_trimmed: 2.0
+  tests:
+    full: '4 classes, 15 tests: 3 ERRORS (CertificateExpiredException, test certificates expired 2025-11-25 and
+      2026-01-13) in AuthTest (2) and CertVerifierTest (1)'
+    trimmed: 2 classes, 8 tests pass
+  sizes:
+    repo: .git 380K, 23 files
+    deps: ~/.m2 77M
+  prepared_image:
+    bake: Maven local repository under the trial HOME (/trial/home/.m2, from dependency:go-offline plus one `mvn
+      test` in a throwaway copy for surefire providers).
+    keep_out: null
+    warmup_commands:
+    - mvn -B test -Dgpg.skip=true
+  notes:
+  - 'ci_provider answer needed: .github/workflows/maven-release.yml also exists.'
+  - '`-s $MAVEN_SETTINGS` names a CI-only settings file variable.'
+  - The pinned commit is the repo HEAD; nothing newer fixes the certificates.
+  risks:
+  - Untrimmed, the suite is a time bomb (expired certs) and fails 3 tests; trimmed, only 8 tests remain.
+  expected:
+    verdict: COMPLETE LOCALLY
+    run: handoff-eval-2026-11-06-r1/reviewed-final
+    ddtest: 79998cb-handoff-r1
+    reason: All three trials per agent validate both configurations with the required expired-certificate trim
+      and ddtest-selected dd-java-agent 1.68.1; CI-only Maven settings and local publication limits remain caveats.
+
+- id: E13-jcommander
+  framework: testng
+  language: java
+  ci_provider: github
+  ci_config_path: .github/workflows/gradle.yml
+  repo: https://github.com/cbeust/jcommander.git
+  commit: 1b4fb692dd00a46ac2d36f961ecf8a3e9707542d
+  commit_date: '2026-11-02'
+  subdir: null
+  image: java21
+  runtime:
+    project: sourceCompatibility 21; Gradle Kotlin DSL, wrapper 9.7.1
+    ci: actions/setup-java@v1 java-version 21 (no distribution)
+    local: JDK 21.0.12.1
+    package_manager: Gradle wrapper
+    framework_version: TestNG 7.x via useTestNG(); plugins bnd 7.4.0, openrewrite 7.39.0
+  system_needs: []
+  browsers: null
+  services: null
+  setup_commands: []
+  readiness_commands:
+  - ./gradlew testClasses --no-daemon -q
+  harness:
+    framework: testng
+    python: null
+    pnpm: null
+    bundle_binstubs: []
+    answers: []
+  trims:
+    required: null
+    optional_speed: null
+  ci_test_command: chmod +x gradlew; ./gradlew clean build test
+  local_test_command: ./gradlew clean build test --rerun-tasks --no-build-cache --no-daemon --continue
+  timings_seconds:
+    clone: 3.1
+    install: 23.4
+    browser: 0
+    build: 0
+    tests_full: 4.7
+    tests_trimmed: null
+  tests:
+    full: 46 result classes, 346 tests pass
+    trimmed: null
+  sizes:
+    repo: .git 34M, tree 9.1M, 373 files
+    deps: GRADLE_USER_HOME 202M (wrapper dist 165M)
+  prepared_image:
+    bake: GRADLE_USER_HOME (/trial/home/.gradle) with the 9.7.1 distribution and resolved dependencies. Leave build/
+      and .gradle/ out (gitignored, but ddtest uses fresh copies anyway).
+    keep_out: build/ and .gradle/ in the checkout
+  notes:
+  - install = wrapper download 9.8s + testClasses (deps + compile) 13.6s.
+  - 'Distractors: .travis.yml, kobalt/ + kobaltw, a testng.xml not wired into Gradle; publish-maven-central.yml.'
+  risks:
+  - 'setup-java@v1 without distribution: JDK version must still be read as 21.'
+  expected:
+    verdict: COMPLETE LOCALLY
+    run: handoff-eval-2026-11-06-r1/reviewed-final
+    ddtest: 79998cb-handoff-r1
+    reason: All three trials per agent reach COMPLETE LOCALLY with ddtest-selected dd-java-agent 1.68.1.
+      Current TestNG policy validates two supported controls; auto-retries, early-flake-detection,
+      quarantine and attempt-to-fix are unsupported, not passed. CI clean/publishing limits remain caveats.
+- id: E14-tradukisto
+  framework: spock
+  language: groovy
+  ci_provider: github
+  ci_config_path: .github/workflows/ci.yml
+  repo: https://github.com/allegro/tradukisto.git
+  commit: 66af0c7d4a6d744568fe32afd47d750556e5619e
+  commit_date: '2026-03-18'
+  subdir: null
+  image: java17
+  runtime:
+    project: Gradle Kotlin DSL wrapper 8.14-bin
+    ci: matrix java 17/21/24, setup-java@v5 temurin (cache gradle), gradle/actions/setup-gradle@v5
+    local: JDK 17.0.20.1 (only the 17 row is certifiable)
+    package_manager: Gradle wrapper
+    framework_version: spock-core 2.3-groovy-4.0; axion-release 1.21.1 (needs .git)
+  system_needs: []
+  browsers: null
+  services: null
+  setup_commands: []
+  readiness_commands:
+  - ./gradlew testClasses --no-daemon -q
+  harness:
+    framework: spock
+    python: null
+    pnpm: null
+    bundle_binstubs: []
+    answers:
+    - substitute_runtime=accept
+  trims:
+    required: null
+    optional_speed: null
+  ci_test_command: ./gradlew --continue check; ./gradlew jacocoTestReport; codecov action
+  local_test_command: ./gradlew --continue check --rerun-tasks --no-build-cache --no-daemon
+  timings_seconds:
+    clone: 1.4
+    install: 29.4
+    browser: 0
+    build: 0
+    tests_full: 9.2
+    tests_trimmed: null
+  tests:
+    full: 69 spec classes, 4452 tests (data-driven), 2 skipped, all pass
+    trimmed: null
+  sizes:
+    repo: .git 1.4M, 187 files
+    deps: GRADLE_USER_HOME 423M
+  prepared_image:
+    bake: GRADLE_USER_HOME with distribution + deps (incl. Groovy 4 / Spock).
+    keep_out: null
+    warmup_commands:
+    - ./gradlew test --no-daemon -q
+  notes:
+  - install = wrapper 5.5s + testClasses 23.9s.
+  - Large parameterized (@Unroll/where:) test counts exercise reporting identity matching.
+  risks:
+  - 21 and 24 matrix rows cannot be certified on the JDK 17 image (needs a 21 and 24 image to cover).
+  expected:
+    verdict: COMPLETE LOCALLY
+    run: handoff-eval-2026-11-06-r1/reviewed-final
+    ddtest: 79998cb-handoff-r1
+    reason: All three trials per agent exercise the scripted substitute-runtime answer and reach COMPLETE
+      LOCALLY with ddtest-selected dd-java-agent 1.68.1. Java 21/24 use accepted Java 17 evidence, not native
+      execution; repeated Spock identities remain unavailable. Claude trial 3 adds an unsupported CI/backend
+      validation claim despite an accurate canonical block; independent reporting flags it separately.
+- id: E15-spring-boot-cucumber
+  framework: cucumber-java
+  language: java
+  ci_provider: circleci
+  ci_config_path: .circleci/config.yml
+  repo: https://github.com/abhisheksr01/spring-boot-microservice-best-practices.git
+  commit: 896d6f72df3bfae9cd0e0104adaee50c7efa4a87
+  commit_date: '2026-04-11'
+  subdir: null
+  image: java21
+  runtime:
+    project: .sdkmanrc java=Corretto-21.0.1; Gradle Groovy wrapper 8.14.3; Spring Boot 3.5.6
+    ci: 'executor base-jdk21: image openjdk:21-slim, _JAVA_OPTIONS=-Xmx3g, GRADLE_OPTS=-Dorg.gradle.daemon=false
+      -Dorg.gradle.workers.max=2'
+    local: JDK 21.0.12.1
+    package_manager: Gradle wrapper
+    framework_version: cucumber-java/junit/spring 7.29.0, @RunWith(Cucumber.class) via junit-vintage
+  system_needs: []
+  browsers: null
+  services: none external; @SpringBootTest + in-process WireMock
+  setup_commands: []
+  readiness_commands:
+  - ./gradlew testClasses --no-daemon -q
+  harness:
+    framework: cucumber-java
+    python: null
+    pnpm: null
+    bundle_binstubs: []
+    answers:
+    - ci_provider=circleci
+  trims:
+    required: null
+    optional_speed: null
+  ci_test_command: ./gradlew build -x test (build job); ./gradlew test (test job)
+  local_test_command: ./gradlew test --rerun-tasks --no-build-cache --no-daemon --continue
+  timings_seconds:
+    clone: 1.8
+    install: 37.8
+    browser: 0
+    build: 0
+    tests_full: 17.0
+    tests_trimmed: null
+  tests:
+    full: 9 classes, 17 tests incl. CucumberTest (1 feature), all pass
+    trimmed: null
+  sizes:
+    repo: .git 5.8M, 118 files
+    deps: GRADLE_USER_HOME 477M
+  prepared_image:
+    bake: GRADLE_USER_HOME warmed by `./gradlew build -x test` (as CI's build job).
+    keep_out: null
+    warmup_commands:
+    - ./gradlew build -x test --no-daemon -q
+  notes:
+  - 'ci_provider answer needed: .github/workflows/pipeline.yml also runs the tests.'
+  - 'Large CircleCI file: snyk orb, trivy, helm, OWASP ZAP, k6, dind jobs, workflows filtered to main; also azure-pipelines.yml,
+    cloudbuild.yaml, concourse-ci/, jenkins/jenkinsfile.'
+  - test is finalizedBy jacocoTestReport and jacocoTestCoverageVerification (minimum 0.8).
+  risks:
+  - Coverage verification after tests can fail once TIA skips tests.
+  - openjdk:21-slim image naming must be read as JDK 21.
+  - '@SpringBootTest DEFINED_PORT needs a free port.'
+  expected:
+    verdict: FAILED
+    blockers:  # verified: rerun4 (codex) and eval-claude-2026-11-04 testdrive.json (6 features x 2 configurations, all inconclusive)
+    - 'compatibility: suspected regression'
+    - 'feature auto-retries: inconclusive'
+    - 'feature early-flake-detection: inconclusive'
+    - 'feature skipping: inconclusive'
+    - 'feature quarantine: inconclusive'
+    - 'feature disabled: inconclusive'
+    - 'feature attempt-to-fix: inconclusive'
+    run: handoff-eval-2026-11-06-r1/reviewed-final
+    ddtest: 79998cb-handoff-r1
+    reason: CircleCI validations use ddtest-selected dd-java-agent 1.68.1 and reproduce the Cucumber
+      resourcePaths-null regression; one Codex trial selects Jenkins and stops before validation.
+      Claude trial 2 was contained after production-telemetry attempts; trial 3 made unprescribed manual
+      diagnostics under the intake guard. Those execution findings remain separate from the product verdict.
+      The upstream 1.69.0 follow-up is still release-gated.
+- id: E16-spring-karate-demo
+  framework: karate
+  language: java
+  ci_provider: github
+  ci_config_path: .github/workflows/build-on-main.yaml
+  repo: https://github.com/JustinHRJ/spring-karate-demo.git
+  commit: 9961cb0a200200f758b8e3bdde200da625bc55fd
+  commit_date: '2025-09-02'
+  subdir: null
+  image: java21
+  runtime:
+    project: java.version 21; mvnw script + .mvn/wrapper properties, no wrapper jar (CI uses plain mvn)
+    ci: setup-java@v4 21 temurin in build-on-main.yaml and merge-to-main.yaml
+    local: JDK 21.0.12.1, Maven 3.9.11
+    package_manager: Maven
+    framework_version: karate-junit5 1.4.1; Spring Boot 3.5.5; H2
+  system_needs: []
+  browsers: null
+  services: none external; Karate MockServer + RANDOM_PORT Spring Boot app in-process
+  setup_commands: []
+  readiness_commands:
+  - mvn -B -q dependency:go-offline
+  harness:
+    framework: karate
+    python: null
+    pnpm: null
+    bundle_binstubs: []
+    answers: []
+  trims:
+    required: null
+    optional_speed: null
+  ci_test_command: mvn -B verify -Dspring.profiles.active=test
+  local_test_command: mvn -B verify -Dspring.profiles.active=test
+  timings_seconds:
+    clone: 1.5
+    install: 45.9
+    browser: 0
+    build: 0
+    tests_full: 4.9
+    tests_trimmed: null
+  tests:
+    full: 1 JUnit test (End2EndTest -> Runner.path classpath:features), 1 feature, 1 scenario, passes (first run
+      10.7s with remaining downloads)
+    trimmed: null
+  sizes:
+    repo: .git 208K, 23 files
+    deps: ~/.m2 258M
+  prepared_image:
+    bake: ~/.m2 from dependency:go-offline plus one verify in a throwaway copy (28M of plugins go-offline misses).
+    keep_out: null
+    warmup_commands:
+    - mvn -B verify -Dspring.profiles.active=test -Dgpg.skip=true
+  notes:
+  - Two workflows run the same command (push/PR to main and PR events).
+  - Runner.path rather than @Karate.Test; karate-config.js and mock features under src/test/resources.
+  risks:
+  - Very small Karate surface (1 scenario).
+  expected:
+    verdict: INCOMPLETE
+    blockers:  # verified: eval-claude-2026-11-04 testdrive.json, as the rerun grading notes said (coverage 0/2; skipping and disabled inconclusive)
+    - Java application coverage was not observed
+    - 'feature skipping: inconclusive'
+    - 'feature disabled: inconclusive'
+    run: handoff-eval-2026-11-06-r1/reviewed-final
+    ddtest: 79998cb-handoff-r1
+    reason: Both agents reproduce zero application-source coverage (0/2) and inconclusive skipping/disabled
+      checks with ddtest-selected dd-java-agent 1.68.1 in all three trials per agent.
+
+- id: E17-feel-scala
+  framework: scalatest
+  language: scala
+  ci_provider: github
+  ci_config_path: .github/workflows/build-maven.yml
+  repo: https://github.com/camunda/feel-scala.git
+  commit: 838986472d4c5fce54d855d0cde515ad335a7b54
+  commit_date: '2026-10-28'
+  subdir: null
+  image: java17
+  runtime:
+    project: Maven (mvnw present; CI uses mvn); parent camunda-bpm-release-parent 2.5.1; Scala 2.13.18
+    ci: matrix java 11/17/21, setup-java@v6.1.0 temurin, actions/cache ~/.m2
+    local: JDK 17.0.20.1, Maven 3.9.11 (only the 17 row certifiable)
+    package_manager: Maven
+    framework_version: scalatest_2.13 3.2.20 via scalatest-maven-plugin 2.2.0 (surefire runs nothing); scala-maven-plugin
+      4.10.0
+  system_needs: []
+  browsers: null
+  services: null
+  setup_commands: []
+  readiness_commands:
+  - mvn -B -q dependency:go-offline
+  harness:
+    framework: scalatest
+    python: null
+    pnpm: null
+    bundle_binstubs: []
+    answers:
+    - substitute_runtime=accept
+  trims:
+    required: null
+    optional_speed:
+      reason: drop the builtin and interpreter ScalaTest suites
+      commands:
+      - git rm -q -r src/test/scala/org/camunda/feel/impl/builtin src/test/scala/org/camunda/feel/impl/interpreter
+  ci_test_command: mvn -B clean -P checkFormat verify
+  local_test_command: mvn -B clean -P checkFormat verify
+  timings_seconds:
+    clone: 1.7
+    install: 31.3
+    browser: 0
+    build: 33.8
+    tests_full: 35.6
+    tests_trimmed: 25.2
+  tests:
+    full: 57 Scala test files, 1221 succeeded, 1 ignored (tests 6.9s; verify includes Scala compile, scaladoc jar,
+      assembly, shade)
+    trimmed: 30 Scala test files, 265 tests pass (clean test 14.6s)
+  sizes:
+    repo: .git 6.7M, 165 files
+    deps: ~/.m2 180M
+  prepared_image:
+    bake: '~/.m2 after one full verify in a throwaway copy (go-offline gets only 89M of 180M: Scala compiler bridge,
+      scalafmt, license plugin come later). A warmed compile cannot be kept: every run is `clean` and ddtest uses
+      fresh build output.'
+    keep_out: 'compiled output: every run starts with clean'
+    warmup_commands:
+    - mvn -B clean -P checkFormat verify -Dgpg.skip=true
+  notes:
+  - build = first verify 69.1s minus warm 35.6s (downloads + zinc compiler bridge compile).
+  - checkFormat profile runs scalafmt check; license header check runs too.
+  risks:
+  - Even trimmed, one CI-command run is ~25s, dominated by main Scala compile + scaladoc; ddtest's probe builds
+    stop at test (~15s).
+  - 11 and 21 rows uncertifiable on the 17 image.
+  expected:
+    verdict: INCOMPLETE
+    blockers:  # verified: eval-claude-2026-11-04 testdrive.json; the same release.yml steps as the rerun grading notes
+    - 'runtime fidelity: substitute Java'
+    - 'unresolved CI scope: .github/workflows/release.yml / release / step 1: CI command expression was not resolved'
+    - 'unresolved CI scope: .github/workflows/release.yml / release / step 5: CI command expression was not resolved'
+    - 'unresolved CI scope: .github/workflows/release.yml / release / step 9: CI command expression was not resolved'
+    - 'CI runtime: inconclusive'
+    run: handoff-eval-2026-11-06-r1/reviewed-final
+    ddtest: 79998cb-handoff-r1
+    reason: Local validation passes with ddtest-selected dd-java-agent 1.68.1; substitute acceptance is not
+      requested by the structured result while release-scope blockers remain. Five trials match; Codex trial 3
+      adds unprescribed release setup, shifting step 9 to 10 and failing the frozen blocker/trajectory checks.
+
+- id: E18-mbari-commons
+  framework: munit
+  language: scala
+  ci_provider: github
+  ci_config_path: .github/workflows/gradle.yml
+  repo: https://github.com/mbari-org/commons.git
+  commit: cfbfa8886af46858a4a9c28bc8f56cf35b80870c
+  commit_date: '2026-07-20'
+  subdir: null
+  image: java17
+  runtime:
+    project: Gradle Kotlin DSL wrapper 9.4.1; buildSrc convention plugin; settings plugin com.gradleup.nmcp.settings
+      1.6.1; sourceCompatibility 17
+    ci: 'setup-java@v3 17 temurin; gradle/gradle-build-action (pinned SHA) with arguments: build'
+    local: JDK 17.0.20.1
+    package_manager: Gradle wrapper
+    framework_version: munit_3 1.3.0 (Scala 3.3.4) on Gradle's JUnit4 runner, plus JUnit 6 in jcommons and junit
+      4.13.2
+  system_needs: []
+  browsers: null
+  services: null
+  setup_commands: []
+  readiness_commands:
+  - sh -c 'rm -rf /tmp/warm && cp -r . /tmp/warm && cd /tmp/warm && ./gradlew testClasses --no-daemon -q; rc=$?;
+    rm -rf /tmp/warm; exit $rc'
+  harness:
+    framework: munit
+    python: null
+    pnpm: null
+    bundle_binstubs: []
+    answers: []
+  trims:
+    required: null
+    optional_speed: null
+  ci_test_command: 'gradle/gradle-build-action `with: arguments: build` (no run: step)'
+  local_test_command: ./gradlew build --rerun-tasks --no-build-cache --no-daemon --continue
+  timings_seconds:
+    clone: 1.5
+    install: 59.2
+    browser: 0
+    build: 0
+    tests_full: 22.5
+    tests_trimmed: null
+  tests:
+    full: jcommons 12 classes / 49 tests; scommons 18 MUnit/JUnit classes / 60 tests (3 skipped); all pass
+    trimmed: null
+  sizes:
+    repo: .git 804K, 141 files
+    deps: GRADLE_USER_HOME 851M
+  prepared_image:
+    bake: 'GRADLE_USER_HOME warmed in a throwaway copy: the project''s .gitignore lacks build/ and .gradle/, so
+      any build in the checkout leaves ~14 untracked dirs and breaks the clean-checkout rule.'
+    keep_out: 'any build in the checkout: .gitignore lacks build/ and .gradle/, so warm a throwaway copy'
+  notes:
+  - HEAD 3f64e696 does not compile on JDK 17 (HttpRequest.Builder.HEAD is Java 18+; its own CI run failed); pinned
+    the last green commit.
+  - install = wrapper 5.9s + first testClasses 53.3s (Scala 3 compiler, kotlin-dsl for buildSrc).
+  - A buildSrc/build/kotlin-dsl/... file is tracked in git.
+  risks:
+  - 'Test command lives in an action input, not a run: step; ddtest may not resolve it (may need a CI edit or end
+    as a scope stop).'
+  - MUnit skipping/disabled controls are 'not supported' by dd-java-agent per docs.
+  - Only viable Maven/Gradle MUnit candidate found.
+  expected:
+    verdict: COMPLETE LOCALLY
+    run: handoff-eval-2026-11-06-r1/reviewed-final
+    ddtest: 79998cb-handoff-r1
+    reason: All three scored trials per agent reach COMPLETE LOCALLY with ddtest-selected dd-java-agent
+      1.68.1 and the unchanged Gradle build action. Four supported controls pass; skipping and disabled are
+      unsupported. Mixed-build counts and the separate JUnit project caveat are retained. All six scored
+      trials use the intake guard; the user-approved replacement preserves the earlier operator interruption.

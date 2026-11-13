@@ -146,8 +146,8 @@ func (javaLanguage) installPreview(label string) string {
 
 func (javaLanguage) previewNotes() []string {
 	return []string{
-		"compare native Surefire/Failsafe results without and with dd-java-agent, then feature controls, in a disposable copy; the checkout's target directories are neither read nor changed",
-		"selecting a framework labels the validation; the Maven command still runs every framework the project declares",
+		"compare native Surefire/Failsafe or Gradle test results without and with dd-java-agent, then feature controls, in a disposable copy; the checkout's build output is neither read nor changed",
+		"selecting a framework labels the validation; the Maven or Gradle command still runs every framework the project declares",
 	}
 }
 
@@ -175,7 +175,7 @@ func (javaLanguage) temporaryTracerSource() string                 { return "tem
 // plugin forks its own JVM, which inherits only JAVA_TOOL_OPTIONS, so a reactor
 // with any ScalaTest module uses that instead. A configuration's own options
 // are kept, as the baseline keeps them, except a Datadog agent already
-// attached, as in a CI job after the GitHub action, or through JAVA_OPTS,
+// attached, as in a CI job after the Datadog setup, or through JAVA_OPTS,
 // which the Gradle launcher also reads: the baseline must run without it and
 // the reporting run with the selected one only.
 func (javaLanguage) runEnvironment(t *Testdrive, path string) map[string]string {
@@ -195,7 +195,7 @@ func (javaLanguage) runEnvironment(t *Testdrive, path string) map[string]string 
 		if !configured {
 			options = os.Getenv(carrier)
 		}
-		kept := withoutDatadogAgent(options)
+		kept := withoutDatadogAgent(carrier, options)
 		if carrier == key && path != "" {
 			kept = strings.TrimSpace(kept + " -javaagent:" + path)
 		}
@@ -207,11 +207,13 @@ func (javaLanguage) runEnvironment(t *Testdrive, path string) map[string]string 
 }
 
 // withoutDatadogAgent removes every -javaagent option of dd-java-agent from
-// JVM options, by JAR name or manifest, and keeps the others as written.
-func withoutDatadogAgent(options string) string {
-	words := strings.Fields(options)
+// carrier's JVM options, split as its reader splits them (see
+// platform.JavaCarrierWords), by JAR name or manifest, and keeps the others
+// as written.
+func withoutDatadogAgent(carrier, options string) string {
+	words := platform.JavaCarrierWords(carrier, options)
 	kept := slices.DeleteFunc(slices.Clone(words), func(word string) bool {
-		jar, ok := strings.CutPrefix(word, "-javaagent:")
+		jar, ok := strings.CutPrefix(platform.JavaCarrierValue(carrier, word), "-javaagent:")
 		if !ok {
 			return false
 		}
@@ -246,14 +248,12 @@ func (javaLanguage) pairedFrameworks() map[string]pairedFramework {
 		features: func(t *Testdrive, ctx context.Context, output io.Writer, session *workspace.Session, agent string, baseline validationRun, result *validationResult) error {
 			return t.runJavaFeatures(ctx, output, session, agent, baseline, result)
 		},
-		preflight: func(t *Testdrive) func(context.Context, io.Writer, *validationResult) error {
-			return t.checkJavaPreflight
-		},
+		preflight: (*Testdrive).checkJavaPreflight,
 		telemetry: verifyJavaTelemetry,
 		// The agent reports no source file for some frameworks, such as
 		// Cucumber, so the probe is matched by module, class and name.
 		probeTelemetry:  verifyJavaTelemetry,
-		missingCoverage: "Java application coverage was not observed. dd-java-agent reports per-test coverage of the classes each test runs; inspect the selected Maven command and its JDK, and check that tests execute application classes from the repository.",
+		missingCoverage: "Java application coverage was not observed. dd-java-agent reports per-test coverage of the classes each test runs; inspect the selected Maven or Gradle command and its JDK, and check that tests execute application classes from the repository.",
 	}
 	adapters := map[string]pairedFramework{}
 	for _, name := range javaProbeFrameworks {
@@ -362,7 +362,24 @@ func (javaLanguage) packageExclusions(t *Testdrive, _ context.Context) (onboard.
 	if err != nil {
 		return onboard.WorkflowCheck{Name: "package_report_exclusions", Status: "failed", Reason: "Cannot read the reactor of a discovered Maven command: " + reportText(err.Error())}, true
 	}
-	return javaPackageExclusions(t.repositoryRoot, poms), true
+	check := javaPackageExclusions(t.repositoryRoot, poms)
+	if check.Status == "passed" && t.javaScopeRunsGradle() {
+		gradleReason := "Gradle commands package only their source sets' resource directories, which do not hold the repository root's .testoptimization/."
+		if len(poms) == 0 {
+			check.Reason = gradleReason
+		} else {
+			check.Reason += " " + gradleReason
+		}
+	}
+	return check, true
+}
+
+// javaScopeRunsGradle reports whether a discovered command runs Gradle.
+func (t *Testdrive) javaScopeRunsGradle() bool {
+	return t.workflowScope != nil && slices.ContainsFunc(t.workflowScope.Commands, func(entry onboard.TestCommand) bool {
+		words, err := shellquote.Split(entry.Command)
+		return err == nil && gradle.Command(words)
+	})
 }
 
 // javaScopePOMs are the POMs, relative to the repository root, of the reactors
@@ -414,9 +431,6 @@ func (javaLanguage) initialization(root, _ string) string {
 	return "Add the Datadog action with an exact java-tracer-version after JDK setup; it attaches dd-java-agent through " + strings.Join(carriers, " and ") + ", which later steps must extend with " + strings.Join(extensions, " and ") + ". Keep the " + strings.Join(tools, " and ") + " commands and the reports excluded from Git."
 }
 
-// javaReports are the retained reports, relative to the repository root.
-var javaReports = []string{".testoptimization/testdrive.json", ".testoptimization/report.html"}
-
 // javaPackageExclusions checks that no Maven artifact packages the reports.
 // Maven packages only declared resources, so the reports at the repository
 // root are packaged only by a resource directory that contains them and
@@ -433,7 +447,7 @@ func javaPackageExclusions(root string, poms []string) onboard.WorkflowCheck {
 			check.Status, check.Reason = "failed", resource.POM+" declares the resource directory "+resource.Directory+", which ddtest cannot resolve; check that Maven does not package .testoptimization/."
 			return check
 		}
-		for _, report := range javaReports {
+		for _, report := range retainedReports {
 			relative, err := filepath.Rel(resource.Directory, report)
 			if err == nil && filepath.IsLocal(relative) && mavenResourceSelects(resource, filepath.ToSlash(relative)) {
 				check.Status, check.Reason = "failed", resource.POM+" packages "+resource.Directory+" as a resource, including .testoptimization/; add <exclude>.testoptimization/**</exclude> to that resource."

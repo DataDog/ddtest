@@ -19,7 +19,7 @@ For Go, `ddtest instrument` reports a project's tests to Test Optimization
 directly; see [Go tests with ddtest instrument](#go-tests-with-ddtest-instrument).
 
 `ddtest onboard` and `ddtest testdrive` also support Java projects built with
-Maven or Gradle; JUnit 4, JUnit 5, TestNG, Spock, Cucumber JVM, Karate, ScalaTest and MUnit get paired validation (Gradle covers JUnit 4/5, TestNG and Spock so far). `ddtest plan` and `ddtest run`
+Maven or Gradle; JUnit 4, JUnit 5, TestNG, Spock, Cucumber JVM, Karate, ScalaTest and MUnit get paired validation. `ddtest plan` and `ddtest run`
 do not support Java, because the Java agent performs Test Impact Analysis inside
 the Maven or Gradle build. See [Java validation](docs/onboarding.md#java-validation).
 
@@ -444,6 +444,7 @@ of `releases/latest/download/` in the URL.
 - [Running DDTest](docs/running.md)
 - [Go tests with ddtest instrument](ddto/README.md)
 - [Settings](docs/settings.md)
+- [Onboarding usage telemetry](docs/usage-telemetry.md)
 - [Plan file layout](docs/layout.md)
 - [Third party test runners](docs/third-party-runners.md)
 - [GitHub Actions example](docs/examples/github-actions.md)

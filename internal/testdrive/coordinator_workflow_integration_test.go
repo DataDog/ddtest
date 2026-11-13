@@ -13,6 +13,7 @@ import (
 
 	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/DataDog/ddtest/internal/testdrive/workspace"
+	"github.com/DataDog/ddtest/internal/testutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -28,11 +29,8 @@ func TestPublicCoordinatorJestFactsAndFreshReport(t *testing.T) {
 	require.NoError(t, err)
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Minute)
 	defer cancel()
-	binary := filepath.Join(t.TempDir(), "ddtest")
-	build := exec.CommandContext(ctx, "go", "build", "-o", binary, ".")
-	build.Dir = "../.."
-	data, err := build.CombinedOutput()
-	require.NoError(t, err, string(data))
+	binary := testutil.DDTest(t)
+	var data []byte
 	root := workspace.CanonicalRoot(t.TempDir())
 	require.NoError(t, workspace.Copy(ctx, filepath.Dir(modules), root, skipIgnoredOutput))
 	write := func(name, body string) {

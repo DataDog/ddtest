@@ -31,11 +31,14 @@ type supportedModule struct {
 	Main     string   `json:"main"`
 }
 
-// versions lists main first, then the releases from the newest.
+// versions lists main first, then the releases from the newest. Main is one of
+// the releases while its tip is the tagged commit, and is listed once.
 func (m supportedModule) versions() []string {
 	versions := []string{m.Main}
 	for _, release := range slices.Backward(m.Releases) {
-		versions = append(versions, release)
+		if release != m.Main {
+			versions = append(versions, release)
+		}
 	}
 	return versions
 }

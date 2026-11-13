@@ -12,8 +12,14 @@ import "slices"
 // specifics in its own files and registers in languages.go.
 type discoveryLanguage interface {
 	name() string
+	// displayName names the language in messages, such as JavaScript.
+	displayName() string
 	// actionLanguage is the language's value in the setup action's languages input.
 	actionLanguage() string
+	// runtimeSetupAction is the official GitHub action that installs the
+	// language's runtime, such as actions/setup-node. It runs no repository
+	// code (see setupOnlyActions).
+	runtimeSetupAction() string
 	// bootstrap explains how the existing test step loads the tracer.
 	bootstrap(framework string) string
 	// resolvesTestSteps reports whether resolveTestStep statically resolves
@@ -70,18 +76,49 @@ type discoveryLanguage interface {
 	// syntax: its installer token, exact tracer input, commands that must
 	// follow the setup, and its own setup rules.
 	ciSetupRequest(root, framework, site string, terms ciSetupTerms) ciSetupRequest
+	// handWrittenSetup recognizes the language's hand-written setup (see
+	// handWrittenSetup) of the test command at index of job on row, on
+	// provider, which no provider setup precedes; nil when the command's
+	// environment and the framework's configuration load no tracer.
+	handWrittenSetup(root string, provider ciProvider, workflow ciWorkflow, job runtimeJob, index int, row map[string]any, framework, site string) *handWrittenSetup
+	// validatesHandWrittenSetup reports whether the language's CI check
+	// reads the hand-written setups handWrittenSetup recognizes, so ddtest
+	// certifies a complete one. Without it, a recognized setup is reported
+	// as not validated yet (handWrittenSetup.Unvalidated): kept, never
+	// certified, and never replaced with the provider's setup.
+	validatesHandWrittenSetup() bool
+	// keepsHandWrittenJobs reports whether onboard --apply leaves a job that
+	// sets the tracer up by hand to that setup, adding no provider setup
+	// beside it: a language whose hand-written setup only the job's own
+	// configuration shows, never what a CI server plugin exports.
+	keepsHandWrittenJobs() bool
+	// preloadVariable reports the variable through which a setup written by
+	// hand loads the language's tracer into a process, such as a Node
+	// options variable; a command prefix that sets it is the command's
+	// environment (see foldCommandEnvironment).
+	preloadVariable(name string) bool
 	// cacheVariable reports a variable that locates the language's package
 	// cache or install directory, which CI caches between jobs.
 	cacheVariable(name string) bool
 	// runtimeVariable reports an environment variable the language's
 	// runtime or tools read, which images commonly export.
 	runtimeVariable(name string) bool
+	// toolVariable reports an environment variable the language's package
+	// tools, build or test tools, test runners or tracer read, as Maven's
+	// MAVEN_ARGS: CI's value for it decides what a test command runs even
+	// when its command line does not expand it.
+	toolVariable(name string) bool
 	// outsideFrameworkJob reports whether a CI job, on one matrix row,
 	// cannot run framework's tests: nothing it runs (following package and
 	// repository scripts) mentions the framework. Such a job without the
 	// setup and without a recognized test is reported, not a blocker.
-	// Languages without a static answer return false.
-	outsideFrameworkJob(root string, workflow ciWorkflow, job runtimeJob, row map[string]any, framework string) bool
+	// unread names the published packages it runs that ddtest doesn't read,
+	// which its caveat lists. Languages without a static answer return false.
+	outsideFrameworkJob(root string, workflow ciWorkflow, job runtimeJob, row map[string]any, framework string) (outside bool, unread []string)
+	// stepMayStartTests reports whether a CI step ddtest did not resolve may
+	// still start the language's tests, when the language reads its steps
+	// more precisely than the shared scan; handled is false otherwise.
+	stepMayStartTests(root string, workflow ciWorkflow, job runtimeJob, step runtimeStep) (may, handled bool)
 	// unsupportedImage names the runtime a CI job's container image selects
 	// when the language's tracer cannot instrument it, such as another
 	// language engine; empty otherwise. Such a job without the setup keeps
@@ -121,6 +158,19 @@ type discoveryLanguage interface {
 	// exports with the job's own value, for a value a scope narrower than
 	// the pipeline sets; empty when the plugin replaces it.
 	ciPluginComposes(key string) string
+	// ciStepVariables are the variables a CI wrapper step, such as Jenkins'
+	// withSonarQubeEnv, sets for the language's tools, with their values.
+	ciStepVariables(step string) map[string]string
+	// ciPluginTracerRelease is the tracer release the CI server plugin's
+	// additionalVariables select for the language, as written; set is false
+	// when they select none and the plugin installs its default.
+	ciPluginTracerRelease(variables map[string]string) (release string, set bool)
+	// ciShellAfter reports whether a test step of job, which resolution
+	// resolved for framework, needs the commands that follow the setup in
+	// its own shell (ciSetupRequest.After) when the request has any, and
+	// explains one that needs them but does not have them in effect; problem
+	// is empty when it has.
+	ciShellAfter(workflow ciWorkflow, job runtimeJob, step runtimeStep, framework string, resolution commandResolution) (needed bool, problem string)
 	// selectsShellRuntime reports a shell command, by its words, that
 	// selects another of the language's runtimes than the one on PATH, such
 	// as a version manager or the script that loads one.
@@ -130,6 +180,14 @@ type discoveryLanguage interface {
 	// job's runtime its configuration does not select (--ci-runtime); nil
 	// when it takes none.
 	statedRuntime() *statedRuntime
+
+	// checkTool classifies a command, as words with the executable first,
+	// that runs one of the language's lint, audit, packaging or package
+	// management tools: mayStart reports whether, as invoked, it may start a
+	// test runner. directory is the command's working directory ("" when
+	// unreadable), where it reads the project files the tool would run.
+	// handled is false for any other command.
+	checkTool(root, directory string, words []string) (mayStart, handled bool)
 }
 
 // discoveryLanguageFor returns the language that discovers framework's CI, or nil.

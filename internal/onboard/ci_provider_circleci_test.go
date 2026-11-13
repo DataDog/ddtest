@@ -519,7 +519,7 @@ func TestCircleCIJavaScriptCompleteness(t *testing.T) {
 	}{
 		{"complete", complete, "", true},
 		{"selected site", complete, "datadoghq.com", true},
-		{"other site", complete, "datadoghq.eu", false},
+		{"other site", complete, "datadoghq.eu", true},
 		{"missing", strings.Replace(complete, circleOrbStep, "", 1), "", false},
 		{"after the tests", strings.Replace(strings.Replace(complete, circleOrbStep, "", 1), "      - run: npm test\n", "      - run: npm test\n"+circleOrbStep, 1), "", false},
 		{"other language", strings.Replace(complete, "languages: js", "languages: python", 1), "", false},
@@ -699,7 +699,7 @@ func TestCircleCILanguageSupport(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, root, circleCIFile, "version: 2.1\njobs:\n  test:\n    docker:\n      - image: cimg/python:3.12\n    steps:\n      - run: pytest\n"+circleWorkflow("      - test\n"))
 	useCIProvider(t, "circleci")
-	for language, supported := range map[string]bool{"javascript": true, "ruby": true, "python": false, "java": false} {
+	for language, supported := range map[string]bool{"javascript": true, "ruby": true, "python": true, "java": true} {
 		err := CheckCIProviderSupport(root, language, "framework")
 		if supported {
 			require.NoError(t, err, language)

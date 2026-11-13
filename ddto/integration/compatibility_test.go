@@ -557,17 +557,23 @@ func goGet(t *testing.T, dir string, args ...string) {
 	}
 }
 
+// configureReferenceFixture declares the pinned Orchestrion. The differential
+// tests compare Mini with the pinned SDK, so that tool must leave it in place.
 func configureReferenceFixture(t *testing.T, dir string) {
 	t.Helper()
-	configureOrchestrionFixture(t, dir, orchestrionVersion, os.Getenv("ORCHESTRION_BIN"))
+	if sdk := configureOrchestrionFixture(t, dir, orchestrionVersion, os.Getenv("ORCHESTRION_BIN")); sdk != sdkVersion {
+		t.Fatalf("baseline changed SDK: %s", sdk)
+	}
 }
 
 // configureOrchestrionFixture declares Orchestrion version, whose executable
-// is bin, as the fixture's tool, with the SDK's testing aspects.
-func configureOrchestrionFixture(t *testing.T, dir, version, bin string) {
+// is bin, as the fixture's tool, with the testing aspects of the SDK that the
+// module graph selects. It returns that SDK's version.
+func configureOrchestrionFixture(t *testing.T, dir, version, bin string) string {
 	t.Helper()
 	// Both compilers use this SAME temporary module graph, including any MVS
-	// upgrades introduced by the reference tool. The SDK version stays fixed.
+	// upgrades introduced by the tool: a newer Orchestrion can require a newer
+	// SDK than the pinned one.
 	goGet(t, dir, "github.com/DataDog/orchestrion@"+version)
 	if raiseOrchestrionTools(t, dir) {
 		goGet(t, dir, "golang.org/x/tools@"+orchestrionToolsVersion)
@@ -579,9 +585,6 @@ func configureOrchestrionFixture(t *testing.T, dir, version, bin string) {
 	var module struct{ Dir, Version string }
 	if err := json.Unmarshal([]byte(out), &module); err != nil {
 		t.Fatal(err)
-	}
-	if module.Version != sdkVersion {
-		t.Fatalf("baseline changed SDK: %s", module.Version)
 	}
 	yaml, err := os.ReadFile(filepath.Join(module.Dir, "internal/civisibility/integrations/gotesting/orchestrion.yml"))
 	if err != nil {
@@ -599,6 +602,7 @@ func configureOrchestrionFixture(t *testing.T, dir, version, bin string) {
 	if out, e, code := command(t, dir, testEnv(orchestrionPinChecked+"=false"), bin, "go", "version"); code != 0 || strings.Contains(out+e, "is not present in your go.mod") {
 		t.Fatalf("orchestrion pin: %s\n%s", out, e)
 	}
+	return module.Version
 }
 
 // raiseOrchestrionTools reports whether the module in dir selects an x/tools

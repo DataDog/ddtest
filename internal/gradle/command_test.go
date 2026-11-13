@@ -118,6 +118,27 @@ func TestNonTestTasks(t *testing.T) {
 	for _, task := range []string{"okcurl:nativeBuild", "nativeCompile", "module-tests:imageRun", "jibDockerBuild", "bootBuildImage", "shadowJar"} {
 		require.True(t, NonTestTask(task), task)
 	}
+	// Signing and source archives, as publishing builds them.
+	for _, task := range []string{"signMavenJavaPublication", "signArchives", "sourcesJar", ":lib:javadocJar"} {
+		require.True(t, NonTestTask(task), task)
+	}
+	// Lifecycle tasks that run test, and a test task named like a signature
+	// check, are not.
+	for _, task := range []string{"build", "check", "signatureTest", ":lib:check"} {
+		require.False(t, NonTestTask(task), task)
+	}
+}
+
+// PIT's tasks depend on the compiled classes, not on a Test task.
+func TestMutationTasks(t *testing.T) {
+	for _, task := range []string{"pitest", ":app:pitest", "pitestReport", "pitestDebug"} {
+		require.True(t, MutationTask(task), task)
+		require.False(t, TestTask(task), task)
+		require.True(t, NonTestTask(task), task)
+	}
+	for _, task := range []string{"test", "unitTest", "integrationTest"} {
+		require.False(t, MutationTask(task), task)
+	}
 }
 
 func TestValidationArgs(t *testing.T) {
@@ -130,11 +151,11 @@ func TestValidationArgs(t *testing.T) {
 func TestProbeArgs(t *testing.T) {
 	require.Equal(t,
 		[]string{"--info", "-Pci=true", ":app:test", "--tests", "ddtest.DdtestValidationTest", "--rerun-tasks", "--no-build-cache", "--continue", "--no-daemon", "-Dorg.gradle.configuration-cache=false"},
-		ProbeArgs(strings.Fields("--info -Pci=true build test --tests com.example.ApiTest -x test -x javadoc"), ":app", "ddtest.DdtestValidationTest"),
+		ProbeArgs(strings.Fields("--info -Pci=true build test --tests com.example.ApiTest -x test -x javadoc"), ":app:test", "ddtest.DdtestValidationTest"),
 		"only the probe's project test task runs, with the command's options")
 	require.Equal(t,
 		[]string{"-Pci=true", "--info", ":app:test", "--tests", "ddtest.DdtestValidationTest", "--rerun-tasks", "--no-build-cache", "--continue", "--no-daemon", "-Dorg.gradle.configuration-cache=false"},
-		ProbeArgs(strings.Fields("test --fail-fast --rerun -Pci=true integrationTest --debug-jvm --info"), ":app", "ddtest.DdtestValidationTest"),
+		ProbeArgs(strings.Fields("test --fail-fast --rerun -Pci=true integrationTest --debug-jvm --info"), ":app:test", "ddtest.DdtestValidationTest"),
 		"a task's own options stay with the tasks the probe does not run; Gradle's own options are kept wherever they were")
-	require.Equal(t, ":test", ProbeArgs(nil, ":", "ddtest.DdtestValidationTest")[0], "the root project's test task")
+	require.Equal(t, []string{":app:integrationTest", "--tests", "ddtest.DdtestValidationTest"}, ProbeArgs([]string{"integrationTest"}, ":app:integrationTest", "ddtest.DdtestValidationTest")[:3], "the probe runs through the task whose results it joins")
 }

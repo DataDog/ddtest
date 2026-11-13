@@ -31,31 +31,101 @@ func mavenCommand(words []string) bool {
 	return len(words) > 0 && slices.Contains(mavenExecutables, filepath.Base(words[0]))
 }
 
+// mavenDaemonExecutables run Maven Daemon, which runs Maven's lifecycle in a
+// long-lived daemon JVM.
+var mavenDaemonExecutables = []string{"mvnd", "mvnd.cmd", "mvnd.sh"}
+
+// mavenDaemonAsMaven returns words with a Maven Daemon executable read as
+// mvn, to tell by its goals whether the command may run tests, as mvnd test
+// does. Validation replays the lifecycle through mvn and reports the daemon
+// difference as a caveat; the CI command stays unchanged.
+func mavenDaemonAsMaven(words []string) []string {
+	if len(words) == 0 || !slices.Contains(mavenDaemonExecutables, filepath.Base(words[0])) {
+		return words
+	}
+	args := []string{"mvn"}
+	for i := 1; i < len(words); i++ {
+		arg := words[i]
+		if maven.OptionTakesValue(arg) {
+			args = append(args, words[i:min(i+2, len(words))]...)
+			i++
+			continue
+		}
+		switch arg {
+		case "--status", "--stop", "--diag":
+			return nil // Daemon client controls never run a Maven build.
+		case "--raw-streams": // Output-only switch with no stock Maven equivalent.
+		default:
+			args = append(args, arg)
+		}
+	}
+	return args
+}
+
 // resolveJavaStep resolves one CI step into the Maven command that validates
 // framework. One Maven build runs every framework the reactor declares, so the
 // step is tied to the selected framework's modules and the rest is reported.
-func resolveJavaStep(root string, workflow ciWorkflow, job runtimeJob, step runtimeStep, framework string) commandResolution {
+func resolveJavaStep(root string, workflow ciWorkflow, job runtimeJob, step runtimeStep, framework string) (resolution commandResolution) {
 	if step.ResolutionError != "" {
 		return unresolvedCommand(step.ResolutionError)
 	}
+	// A Gradle action's arguments input is a Gradle command line.
 	if strings.TrimSpace(step.Run) == "" {
-		return commandResolution{}
+		command, resolved, ok := javaGradleActionStep(root, step, framework)
+		switch {
+		case !ok:
+			return commandResolution{}
+		case resolved != nil:
+			return *resolved
+		}
+		step = command
 	}
+	// A settings path only CI provides selects no test; the step is
+	// validated without it, as resolveVariantStep may already have done.
+	run, omitted, _ := omitCIOnlyOptions(step.Run, func(string) bool { return true })
+	step.Run, omitted = run, append(slices.Clone(step.OmittedOptions), omitted...)
+	// Mutation testing the step also runs is reported however the step
+	// resolves, unless it stays unresolved.
+	defer func() {
+		if resolution.Reason == "" || resolution.Review {
+			resolution.Caveat = javaMutationCaveat(step.Run, framework)
+		}
+	}()
 	directory := filepath.Clean(stepDirectory(workflow, job, step))
 	if !filepath.IsLocal(directory) || strings.ContainsAny(directory, "$`~") {
 		return unresolvedCommand("Maven working-directory needs explicit review: " + directory)
 	}
-	// Matrix expansion resolves expressions per row; one left here may
-	// select the tests, so it stays in the required scope.
-	if workflowExpression.MatchString(step.Run) {
-		return unresolvedCommand("CI command expression was not resolved; ddtest cannot tell which tests it runs: " + step.Run)
-	}
+	expression := workflowExpression.MatchString(step.Run)
 	parts, parseErr := staticCommands(step.Run)
+	daemon := false
+	for i, words := range parts {
+		if len(words) > 0 && slices.Contains(mavenDaemonExecutables, filepath.Base(words[0])) {
+			daemon = true
+			parts[i] = mavenDaemonAsMaven(words)
+		}
+	}
+	parts = slices.DeleteFunc(parts, func(words []string) bool { return len(words) == 0 })
 	// Release steps read project metadata, as in VERSION=$(mvn help:evaluate …),
 	// unless an inherited MAVEN_ARGS adds goals.
 	if parseErr != nil && javaMetadataScript(step.Run) && workflow.Env["MAVEN_ARGS"] == "" && job.Env["MAVEN_ARGS"] == "" && step.Env["MAVEN_ARGS"] == "" &&
 		!javaExportsMavenArgs(job) && !javaConfigGoals(root, directory) {
 		return commandResolution{}
+	}
+	// Literal goals or tasks that run no tests, as in mvn versions:set
+	// -DnewVersion=${CI_COMMIT_TAG/v} or ./gradlew publish
+	// -Psigning.keyId=${{ secrets.GPG_KEY_ID }}, run none whatever the values.
+	if (expression || parseErr != nil) && !javaStepMayRunTests(root, workflow, job, step) {
+		switch maven, gradle := mavenMention.MatchString(step.Run), gradleMention.MatchString(step.Run); {
+		case maven && !gradle:
+			return commandResolution{Review: true, Reason: "Maven goals outside the test lifecycle, such as compile, documentation, lint or release goals, are outside " + framework + " test scope."}
+		case gradle && !maven:
+			return commandResolution{Review: true, Reason: "Gradle tasks outside testing, such as assembly, documentation, analysis or publishing, are outside " + framework + " test scope."}
+		}
+	}
+	// Matrix expansion resolves expressions per row; one left here may
+	// select the tests, so it stays in the required scope.
+	if expression {
+		return unresolvedCommand("CI command expression was not resolved; ddtest cannot tell which tests it runs: " + step.Run)
 	}
 	if parseErr != nil {
 		if mavenMention.MatchString(step.Run) {
@@ -92,7 +162,7 @@ func resolveJavaStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 	case len(builds) == 0:
 		return unresolvedJavaWrapper(root, workflow, job, step, parts, framework)
 	case len(tests) == 0 && onlyMaven:
-		return commandResolution{Review: true, Reason: "Maven goals outside the test lifecycle, such as documentation, lint or release goals, are outside " + framework + " test scope."}
+		return commandResolution{Review: true, Reason: "Maven goals outside the test lifecycle, such as compile, documentation, lint or release goals, are outside " + framework + " test scope."}
 	case len(tests) == 0:
 		// Another command in the sequence may still run tests.
 		return unresolvedJavaWrapper(root, workflow, job, step, parts, framework)
@@ -116,16 +186,47 @@ func resolveJavaStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 	if err != nil {
 		return unresolvedCommand("Maven reactor could not be read statically, so the modules this step tests are unknown: " + err.Error())
 	}
-	validated, omitted := maven.TestInvocation(words[1:])
+	validated, goals := maven.TestInvocation(words[1:])
 	selected := shellquote.Join(append([]string{words[0]}, validated...)...)
 	var notes []string
-	if len(omitted) > 0 {
-		notes = append(notes, "This CI step also runs "+strings.Join(omitted, ", ")+". Local validation runs only "+selected+", the test lifecycle up to verify, and never installs or publishes artifacts. Report this to the user.")
+	if daemon {
+		notes = append(notes, "CI uses Maven Daemon (mvnd); local validation replays the same goals with mvn in a fresh JVM. Daemon-specific behavior is not validated, and the CI command is preserved.")
 	}
+	if len(goals) > 0 {
+		notes = append(notes, "This CI step also runs "+strings.Join(goals, ", ")+". Local validation runs only "+selected+", the test lifecycle up to verify, and never installs or publishes artifacts. Report this to the user.")
+	}
+	if note := javaOmittedOptionsNote(omitted, selected); note != "" {
+		notes = append(notes, note)
+	}
+	notes = append(notes, outputPipeNotes(step.Run, selected)...)
 	if others := otherFrameworkModules(projects, framework); len(others) > 0 {
 		notes = append(notes, "This Maven reactor also declares module(s) "+strings.Join(others, ", ")+", which declare other test frameworks and no "+framework+" dependency. Whether this step runs their tests depends on its active profiles and reactor selectors. Instrumenting this step reports any selected tests to Datadog too; local validation covers only the "+framework+" modules. Report this to the user.")
 	}
 	return commandResolution{Matched: true, ReviewReason: strings.Join(notes, " "), Tests: []TestCommand{{Directory: directory, Command: selected, StepScopeNotes: notes}}}
+}
+
+// javaMutationCaveat notes the PIT mutation testing a step's Gradle tasks
+// or Maven goals run (see gradle.MutationTask and maven.MutationGoal): it is
+// not one of framework's test configurations, which validation runs, nor a
+// blocker.
+func javaMutationCaveat(run, framework string) string {
+	parts, err := staticCommands(run)
+	if err != nil {
+		return ""
+	}
+	var names []string
+	for _, words := range parts {
+		switch {
+		case gradle.Command(words):
+			names = append(names, slices.DeleteFunc(gradle.Tasks(words[1:]), func(task string) bool { return !gradle.MutationTask(task) })...)
+		case mavenCommand(words):
+			names = append(names, slices.DeleteFunc(maven.Goals(words[1:]), func(goal string) bool { return !maven.MutationGoal(goal) })...)
+		}
+	}
+	if len(names) == 0 {
+		return ""
+	}
+	return "PIT mutation testing (" + strings.Join(slices.Compact(names), ", ") + ") runs the tests in its own processes and writes no test reports: it is not a " + framework + " test configuration, and ddtest neither validates nor instruments its tests."
 }
 
 // javaDefaultGoal reads the default goal of the POM a goal-less command builds.
@@ -152,8 +253,9 @@ func javaDefaultGoal(root, directory string, args []string) (string, error) {
 var mavenMention = regexp.MustCompile(`(^|[\s/;&|(])mvnw?(\.cmd)?(\s|$)`)
 
 // scriptMention finds a repository script inside shell syntax ddtest cannot
-// parse, such as ./ci/integration.sh | tee build.log.
-var scriptMention = regexp.MustCompile(`(^\s*|[;&|(]\s*)((\.\.?/)?[\w.-]+/[\w./-]+|[\w.-]+\.sh(\s|$)|(ba)?sh\s+[^-\s])`)
+// parse, such as ./ci/integration.sh | tee build.log, or one it sources, as
+// source ci/env.sh or . ci/env.sh.
+var scriptMention = regexp.MustCompile(`(?m)(^\s*|[;&|(]\s*)((\.\.?/)?[\w.-]+/[\w./-]+|[\w.-]+\.sh(\s|$)|(ba)?sh\s+[^-\s]|(source|\.)\s+[^-\s/"'$])`)
 
 // javaShellBuiltins only print, move or mark files executable around
 // maintenance goals, as chmod +x gradlew before a build.
@@ -175,7 +277,17 @@ func otherFrameworkModules(projects []maven.Project, framework string) []string 
 // A wrapper that may run tests stays in scope as unresolved; one in a job
 // without the Datadog action or any Maven test step is reported as a caveat.
 func unresolvedJavaWrapper(root string, workflow ciWorkflow, job runtimeJob, step runtimeStep, parts [][]string, framework string) commandResolution {
-	if slices.ContainsFunc(parts, javaRepositoryScript) || parts == nil && scriptMention.MatchString(step.Run) {
+	// A repository script is read with the rest of the step: one that runs no
+	// build tool, launcher or script ddtest can't read, such as a docker
+	// build, scan or deploy script, is classified like the step's other
+	// commands below. One the job names by its checkout path, as
+	// $CI_PROJECT_DIR/scripts/check.sh, is a repository script too.
+	mapped, mappedParts := repositoryRelativeCommands(step.Run, job.Checkout, filepath.Clean(stepDirectory(workflow, job, step))), parts
+	if mapped != step.Run {
+		mappedParts, _ = staticCommands(mapped)
+	}
+	scripts := slices.ContainsFunc(mappedParts, javaRepositoryScript) || mappedParts == nil && scriptMention.MatchString(mapped)
+	if scripts && javaStepScriptsMayRunTests(root, workflow, job, step) {
 		return unresolvedCommand("Repository script may run " + framework + " tests; ddtest cannot tell which ones: " + step.Run)
 	}
 	// Maven or Gradle hidden behind an assignment or env wrapper may run tests.
@@ -185,13 +297,61 @@ func unresolvedJavaWrapper(root string, workflow ciWorkflow, job runtimeJob, ste
 	if gradleMention.MatchString(step.Run) && !slices.ContainsFunc(parts, gradle.Command) {
 		return unresolvedCommand("Gradle test entry point requires a single explicit command; ddtest cannot replay its environment or shell setup: " + step.Run)
 	}
-	if !strings.Contains(step.Run, "test") && !strings.Contains(step.Run, "verify") {
+	// Tests a Dockerfile runs, as RUN mvn package, run inside the image
+	// build, which no CI setup instruments.
+	if javaImageBuildOnly(root, workflow, job, step) {
+		return commandResolution{Review: true, Reason: "Builds a Docker image whose Dockerfile may run " + framework + " tests inside the image build, as RUN mvn package does; no CI setup instruments a build inside Docker, so those tests are not reported to Datadog and are outside this validation: " + step.Run}
+	}
+	// In a job without the Datadog action, any command that may start tests
+	// is shown, since nothing there reports them.
+	uninstrumented := (parts != nil || scripts) && javaOutsideUninstrumentedJob(root, workflow, job, framework)
+	// A URL names a download, as https://dtdg.co/latest-java-tracer, not
+	// tests, unless the download runs in a shell, as curl …/run-tests.sh | bash.
+	text := withoutPassiveURLs(step.Run)
+	if namesTests := strings.Contains(text, "test") || strings.Contains(text, "verify"); !namesTests && (!uninstrumented || !javaStepMayRunTests(root, workflow, job, step)) {
 		return commandResolution{}
 	}
-	if parts != nil && javaOutsideUninstrumentedJob(root, workflow, job, framework) {
-		return commandResolution{Review: true, Code: CodeUninstrumentedJob, Reason: "Uninstrumented CI job with no recognized Maven test step: this command is outside validation and its tests, if any, are not reported to Datadog. If it runs " + framework + " tests, add the Datadog action to this job and rerun validation: " + step.Run}
+	// Words such as latest, or a shell test of a variable, start nothing
+	// when every command is a known tool that runs no Java tests, as the
+	// shared rules read moving and pushing Docker images. Downloaded code a
+	// shell runs, whose URL text keeps, may run anything.
+	if !javaStepMayRunTests(root, workflow, job, step) && !urlWord.MatchString(text) {
+		return commandResolution{Review: true, Reason: "Runs no Maven or Gradle build or other command that can start " + framework + " tests; outside " + framework + " test scope: " + step.Run}
+	}
+	if uninstrumented {
+		return commandResolution{Review: true, Code: CodeUninstrumentedJob, Reason: "Uninstrumented CI job with no recognized Maven or Gradle test step: this command is outside validation and its tests, if any, are not reported to Datadog. If it runs " + framework + " tests, add the Datadog action to this job and rerun validation: " + step.Run}
 	}
 	return unresolvedCommand("Test wrapper was not resolved; ddtest cannot tell which " + framework + " tests it runs: " + step.Run)
+}
+
+// urlWord is a URL in shell text.
+var urlWord = regexp.MustCompile(`[A-Za-z][A-Za-z0-9+.-]*://[^\s|;&<>()]+`)
+
+var (
+	// executedAfter follows a URL whose download a shell runs: piped into
+	// one on the same line, as curl … | bash, also by its path or through
+	// sudo or env, as | /bin/bash or | sudo env X=1 sh.
+	executedAfter = regexp.MustCompile(`^[^\n;&]*\|\s*(?:(?:[^\s|;&]+/)?(?:sudo|env)\s+(?:[A-Za-z_][A-Za-z0-9_]*=[^\s|;&]*\s+)*)*(?:[^\s|;&]+/)?(?:ba|z|da)?sh\b`)
+	// executedBefore precedes one a shell runs from a process or command
+	// substitution, as bash <(curl …) or sh -c "$(curl …)".
+	executedBefore = regexp.MustCompile(`(?:<\(|\$\()\s*(?:curl|wget)\b[^\n)]*$`)
+)
+
+// withoutPassiveURLs removes from shell text the URLs of downloads no shell
+// runs, keeping those a shell executes, whose names may say what they run.
+func withoutPassiveURLs(run string) string {
+	var text strings.Builder
+	last := 0
+	for _, match := range urlWord.FindAllStringIndex(run, -1) {
+		lineStart := strings.LastIndex(run[:match[0]], "\n") + 1
+		if executedAfter.MatchString(run[match[1]:]) || executedBefore.MatchString(run[lineStart:match[0]]) {
+			continue
+		}
+		text.WriteString(run[last:match[0]])
+		last = match[1]
+	}
+	text.WriteString(run[last:])
+	return text.String()
 }
 
 // javaMetadataScript reports a script whose commands only print or move files
@@ -250,6 +410,10 @@ func javaExportsMavenArgs(job runtimeJob) bool {
 // javaConfigGoals reports goals in the .mvn/maven.config that Maven reads for
 // a command run in directory: the nearest one up to the repository root.
 func javaConfigGoals(root, directory string) bool {
+	// A directory outside the checkout may hold any configuration.
+	if !filepath.IsLocal(directory) {
+		return true
+	}
 	for current := directory; ; current = filepath.Dir(current) {
 		if info, err := os.Stat(filepath.Join(root, current, ".mvn")); err == nil && info.IsDir() {
 			data, err := os.ReadFile(filepath.Join(root, current, ".mvn", "maven.config"))
@@ -271,14 +435,16 @@ func javaConfigGoals(root, directory string) bool {
 }
 
 // javaRepositoryScript reports a command that runs a script from the
-// repository, such as ./ci/test.sh or ci/test.sh, which may start Maven itself.
+// repository, such as ./ci/test.sh, ci/test.sh or bash ci/test.sh, or sources
+// one, as source ci/env.sh, which may start Maven itself.
 func javaRepositoryScript(words []string) bool {
 	if len(words) == 0 {
 		return false
 	}
 	command := words[0]
 	return strings.Contains(command, "/") && !filepath.IsAbs(command) || strings.HasSuffix(command, ".sh") ||
-		slices.Contains([]string{"bash", "sh"}, command) && len(words) > 1 && !strings.HasPrefix(words[1], "-")
+		slices.Contains([]string{"bash", "sh"}, command) && len(words) > 1 && !strings.HasPrefix(words[1], "-") ||
+		slices.Contains([]string{"source", "."}, command) && len(words) > 1 && !filepath.IsAbs(words[1])
 }
 
 // javaOutsideUninstrumentedJob reports a job that neither runs the Datadog
@@ -291,7 +457,7 @@ func javaOutsideUninstrumentedJob(root string, workflow ciWorkflow, job runtimeJ
 	sibling := job
 	sibling.Steps = nil
 	for _, step := range job.Steps {
-		if javaActionStep(step) {
+		if javaSetupStep(step) {
 			return false
 		}
 		if step.Run != "" && resolveJavaStep(root, workflow, sibling, step, framework).Matched {
@@ -312,12 +478,72 @@ var javaVersion = regexp.MustCompile(`^(?:1\.)?([0-9]+)(?:\.[0-9]+)*$`)
 // exactJavaRelease is one dd-java-agent release, never "latest".
 var exactJavaRelease = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`)
 
-// javaRuntimeProblem explains why a CI JDK selection cannot be checked or is
-// unsupported; empty when dd-java-agent supports it. The agent requires Java 8.
-func javaRuntimeProblem(version string) (reason, code string) {
-	if version == "" {
-		return "Select a static java-version with actions/setup-java before this test step; the runner's default JDK is not checked.", ""
+var (
+	// javaImages are the images whose tag starts with the JDK version, as
+	// eclipse-temurin:17-jdk, cimg/openjdk:17.0 or eclipse-temurin:8u412-b08-jdk,
+	// after IBM Semeru's open- prefix, as ibm-semeru-runtimes:open-17-jdk.
+	javaImages       = []string{"eclipse-temurin", "openjdk", "amazoncorretto", "adoptopenjdk", "sapmachine", "ibm-semeru-runtimes", "zulu-openjdk", "liberica-openjdk-debian", "liberica-openjdk-alpine", "liberica-openjdk-centos"}
+	javaImageVersion = regexp.MustCompile(`^(?:open-)?(?:1\.)?([0-9]+)(?:$|[.u_-])`)
+	// javaToolImageJDK is the JDK a build tool image's tag names, as
+	// maven:3.9-eclipse-temurin-21, maven:3-openjdk-11 or gradle:8.10.2-jdk17.
+	javaToolImageJDK = regexp.MustCompile(`(?:^|-)(?:eclipse-temurin|temurin|openjdk|jdk|amazoncorretto|corretto|sapmachine|ibm-semeru|semeru|graalvm-community|graalvm-ce|graalvm|zulu|liberica|ibmjava)-?([0-9]+)(?:$|[-._])`)
+)
+
+// javaImageRuntime is the JDK major version a CI job's image name selects;
+// empty when the name selects none, as maven:3 or ubuntu:24.04.
+func javaImageRuntime(image string) string {
+	image, _, _ = strings.Cut(image, "@")
+	name, tag, tagged := strings.Cut(image[strings.LastIndex(image, "/")+1:], ":")
+	if !tagged {
+		return ""
 	}
+	// An early-access build keeps its qualifier, which javaRuntimeProblem
+	// rejects, as openjdk:25-ea-jdk.
+	qualified := func(major string) string {
+		if javaEarlyAccessTag.MatchString(tag) {
+			return major + "-ea"
+		}
+		return major
+	}
+	if slices.Contains(javaImages, name) {
+		if match := javaImageVersion.FindStringSubmatch(tag); match != nil {
+			return qualified(match[1])
+		}
+		return ""
+	}
+	if name == "maven" || name == "gradle" {
+		if match := javaToolImageJDK.FindStringSubmatch(tag); match != nil {
+			return qualified(match[1])
+		}
+	}
+	return ""
+}
+
+// javaEarlyAccessTag is an image tag that names an early-access build.
+var javaEarlyAccessTag = regexp.MustCompile(`(?:^|[-._])ea(?:$|[-+._0-9])`)
+
+// javaUnknownRuntimeReason explains a test step whose JDK ddtest cannot read:
+// on GitHub Actions one no setup-java step selects, elsewhere the job image's
+// or, on host, the build agent's, which the user can state.
+func javaUnknownRuntimeReason(provider ciProvider, job runtimeJob, row map[string]any, host string) string {
+	switch {
+	case provider.sharedSyntax():
+		return "Select a static java-version with actions/setup-java before this test step; the runner's default JDK is not checked."
+	case job.ImageProblem != "":
+		return "The job's image cannot be read (" + job.ImageProblem + "), so ddtest cannot tell which JDK runs its tests."
+	case job.Image != "":
+		return "The job's image " + job.Image + " selects no JDK version ddtest reads, so ddtest cannot certify this job; it reads the JDK from image names such as maven:3.9-eclipse-temurin-21, gradle:8.10-jdk17 or cimg/openjdk:17.0. Tell the user; never change the job's image to certify it."
+	}
+	if host != "" {
+		return "The CI JDK is unknown: the tests run on " + host + ", and the configuration selects no JDK. Ask the user which Java version it runs (java -version there), then rerun testdrive with --ci-runtime java=<version> (or <job>:java=<version> per job); never guess it, and never change the job's image to certify it."
+	}
+	return "The job's tests run on the JDK of " + cmp.Or(runtimeHost(job, row, "Java"), "the build agent") + ", which ddtest cannot read, so ddtest cannot certify this job; it reads the JDK from image names such as maven:3.9-eclipse-temurin-21, gradle:8.10-jdk17 or cimg/openjdk:17.0. Tell the user; never change the job's image to certify it."
+}
+
+// javaRuntimeProblem explains why a CI JDK selection is unsupported or not a
+// numeric version; empty when dd-java-agent supports it. The agent requires
+// Java 8.
+func javaRuntimeProblem(version string) (reason, code string) {
 	if strings.Contains(version, "-ea") || strings.HasSuffix(version, "ea") {
 		return "Java " + version + " is an early-access build. Exclude it from instrumentation with an if: on the Datadog action, keeping its tests in CI.", CodeUnsupportedJavaRuntime
 	}
@@ -443,10 +669,11 @@ func javaReusableSecretProblem(workflows []ciWorkflow, workflow ciWorkflow, apiK
 // secretName is the secret an expression such as ${{ secrets.DD_API_KEY }} reads.
 var secretName = regexp.MustCompile(`^\$\{\{\s*secrets\.([A-Za-z_][A-Za-z0-9_]*)\s*\}\}$`)
 
-// javaActionStep reports a step that runs the Datadog action.
-func javaActionStep(step runtimeStep) bool {
-	uses, _, _ := strings.Cut(strings.ToLower(step.Uses), "@")
-	return uses == githubAction
+// javaSetupStep reports a step that runs the Datadog setup, whichever
+// provider read it.
+func javaSetupStep(step runtimeStep) bool {
+	_, ok := datadogSetup(step)
+	return ok
 }
 
 // JavaCIConfiguration inventories each CI Maven or Gradle test step's JDK and the
@@ -455,14 +682,23 @@ func javaActionStep(step runtimeStep) bool {
 // site (empty: any site).
 func JavaCIConfiguration(root, framework, site string) RuntimeCheck {
 	result := RuntimeCheck{Status: "not applicable", Reason: "No candidate Maven or Gradle CI test commands found."}
-	workflows, err := readWorkflows(root)
+	provider, err := currentCIProvider(root)
+	if err != nil {
+		return RuntimeCheck{Status: "inconclusive", Reason: err.Error()}
+	}
+	workflows, err := readProviderWorkflows(provider, root)
 	if err != nil {
 		return RuntimeCheck{Status: "inconclusive", Reason: err.Error()}
 	}
 	workflows = javaCalledWorkflows(workflows)
+	leaks := sharedSetupLeaks(root, workflows, "java", framework)
 	for _, workflow := range workflows {
 		for _, name := range slices.Sorted(maps.Keys(workflow.Jobs)) {
 			job := workflow.Jobs[name]
+			if leak, found := sharedSetupLeak(leaks, workflow, name); found {
+				result.Jobs = append(result.Jobs, leak)
+				continue
+			}
 			rows, err := runtimeMatrix(job.Strategy.Matrix)
 			if err != nil {
 				result.Jobs = append(result.Jobs, RuntimeFinding{Workflow: workflow.Path, Job: name, Status: "inconclusive", Reason: err.Error()})
@@ -475,48 +711,73 @@ func JavaCIConfiguration(root, framework, site string) RuntimeCheck {
 				}
 				// As discovery scopes it, a job without the action that never
 				// runs the framework is outside validation; its caveat says so.
-				if !slices.ContainsFunc(job.Steps, javaActionStep) && (javaDiscovery{}).outsideFrameworkJob(root, workflow, job, row, framework) {
+				if outside, _ := (javaDiscovery{}).outsideFrameworkJob(root, workflow, job, row, framework); !slices.ContainsFunc(job.Steps, javaSetupStep) && outside {
 					result.Review = append(result.Review, RuntimeFinding{Workflow: workflow.Path, Job: name, Status: "not checked", Reason: "CI job without the Datadog setup that never runs " + framework + "; it is outside this validation."})
 					continue
 				}
 				lastTest := javaLastTestStep(root, workflow, job, row, framework)
-				java, tracer, action, buildSystem := "", "", "", ""
+				// The JDK is the job image's until a step selects one, or the
+				// one the user states for the host it runs on.
+				java, tracer, action, buildSystem := javaImageRuntime(job.Image), "", "", ""
+				host, stated := "", false
+				if !provider.sharedSyntax() && java == "" {
+					host = runtimeHost(job, row, "Java")
+					if version := job.Stated["java"]; host != "" && version != "" {
+						java, stated = version, true
+					}
+				}
+				var setup *ciSetup
+				var setupStep runtimeStep
+				// expired is the source of a shell-local setup whose shell
+				// ended before the step (see ciSetup.shellLocal).
+				expired := ""
 				var inputs map[string]string
 				skippedAction := false
 				var actionErr error
 				for i, step := range job.Steps {
+					if setup != nil && setup.shellLocal && !sameShell(setupStep, step) {
+						// Its exports reach only the later commands of its own
+						// shell, as a Jenkins sh step's; this step runs in another.
+						expired = setupStep.Source
+						tracer, action, buildSystem, actionErr, inputs, setup = "", "", "", nil, nil, nil
+					}
 					uses, _, hasVersion := strings.Cut(strings.ToLower(step.Uses), "@")
+					current, isSetup := datadogSetup(step)
 					active, stepErr := stepCondition(step, row, conditionEnvironment(workflow, job, step, row))
 					if stepErr == nil && !active {
-						if selected, err := actionSelectsLanguage(step, row, "java"); uses == githubAction && hasVersion && err == nil && selected {
+						if selected, err := setupSelectsLanguage(current, row, "java"); isSetup && current.Pinned && err == nil && selected {
 							skippedAction = true
 						}
 						continue
 					}
 					if uses == "actions/setup-java" {
-						java, tracer, action, actionErr, inputs, skippedAction = "", "", "", nil, nil, false
+						java, tracer, action, actionErr, inputs, setup, skippedAction, expired = "", "", "", nil, nil, nil, false, ""
 					}
-					// An action for other languages leaves Java's MAVEN_OPTS in place.
-					if selected, err := actionSelectsLanguage(step, row, "java"); uses == githubAction && (err != nil || selected) {
-						tracer, action, buildSystem, actionErr, inputs = "", "", "", nil, nil
+					// A setup for other languages leaves Java's MAVEN_OPTS in place.
+					if selected, err := setupSelectsLanguage(current, row, "java"); isSetup && (err != nil || selected) {
+						tracer, action, buildSystem, actionErr, inputs, setup, expired = "", "", "", nil, nil, nil, ""
 					}
 					if conditionErr == nil && stepErr == nil {
 						if uses == "actions/setup-java" && hasVersion {
 							java, _ = runtimeValue(step.With["java-version"], row)
 						}
-						if uses == githubAction && hasVersion {
-							selected, err := actionSelectsLanguage(step, row, "java")
+						if isSetup && current.Pinned {
+							selected, err := setupSelectsLanguage(current, row, "java")
 							actionErr = err
 							if err == nil && selected {
-								action = step.Uses
-								tracer, _ = runtimeValue(step.With["java-tracer-version"], row)
+								action, setup, setupStep = current.Reference, &current, step
+								tracer, _ = runtimeValue(current.Inputs["java-tracer-version"], row)
+								// A plugin that downloads the latest release pins none.
+								if _, set := current.Inputs["java-tracer-version"]; !set && current.Floating {
+									tracer = "latest"
+								}
 								var buildErr error
-								buildSystem, buildErr = runtimeValue(step.With["java-instrumented-build-system"], row)
+								buildSystem, buildErr = runtimeValue(current.Inputs["java-instrumented-build-system"], row)
 								if buildErr != nil {
 									actionErr = buildErr
 								}
 								inputs = map[string]string{}
-								for key, value := range step.With {
+								for key, value := range current.Inputs {
 									inputs[key], _ = runtimeValue(value, row)
 									if inputs[key] == "" && strings.Contains(value, "${{") {
 										// A secret or other expression is set even
@@ -542,8 +803,43 @@ func JavaCIConfiguration(root, framework, site string) RuntimeCheck {
 						continue
 					}
 					tool := javaStepBuildTool(resolution, resolved.Run)
-					finding := RuntimeFinding{Location: (commandLocation{Workflow: workflow.Path, Job: name, Matrix: row, Step: stepNumber(step, i), Command: step.Run}).String(), Workflow: workflow.Path, Job: name, Step: stepNumber(step, i), Command: resolved.Run, Runtime: java, Action: action, TracerRequested: tracer, setupInputs: inputs, Status: "inconclusive"}
+					// Without a provider setup, the job may attach the agent by
+					// hand; each test step is checked on its own, since its
+					// options reach no other step.
+					var handWritten *handWrittenSetup
+					if action == "" && !skippedAction && resolution.Matched && conditionErr == nil && stepErr == nil && resolveErr == nil && !provider.sharedSyntax() {
+						rowJob := job
+						rowJob.Steps = slices.Clone(job.Steps)
+						rowJob.Steps[i] = resolved
+						handWritten = (javaDiscovery{}).handWrittenSetup(root, provider, workflow, rowJob, i, row, framework, site)
+					}
+					// A Gradle action runs the command its arguments input gives.
+					command := resolved.Run
+					if command == "" && len(resolution.Tests) > 0 {
+						command, tool = resolution.Tests[0].Command, javaGradle
+					}
+					finding := RuntimeFinding{Location: (commandLocation{Workflow: workflow.Path, Job: name, Matrix: row, Step: stepNumber(step, i), Command: step.Run}).String(), Workflow: workflow.Path, Job: name, Step: stepNumber(step, i), Command: command, Runtime: java, Action: action, TracerRequested: tracer, setupInputs: inputs, setupProvider: provider, Status: "inconclusive"}
+					if setup != nil {
+						finding.setupSupported, finding.setupReadProblem = setup.Supported, setup.Problem
+						if tracer == "latest" {
+							finding.TracerFloating, finding.SetupCaveats = true, javaFloatingCaveat(*setup)
+						} else {
+							finding.SetupCaveats = slices.Clone(setup.Caveats)
+						}
+					}
+					instrumented := action != ""
+					if handWritten != nil {
+						finding.handWritten = handWritten
+						finding.Action, finding.TracerRequested = handWritten.Reference, handWritten.Tracer
+						finding.AgentReporting = handWritten.reportsThroughAgent()
+					}
+					if host != "" {
+						finding.RuntimeHost, finding.UserStated = host, stated
+					}
 					runtimeReason, runtimeCode := javaRuntimeProblem(java)
+					if java == "" {
+						runtimeReason, runtimeCode = javaUnknownRuntimeReason(provider, job, row, host), ""
+					}
 					switch {
 					case conditionErr != nil || stepErr != nil || resolveErr != nil || actionErr != nil || resolution.Reason != "":
 						var reasons []string
@@ -558,24 +854,40 @@ func JavaCIConfiguration(root, framework, site string) RuntimeCheck {
 						finding.Reason = javaBuildToolName(tool) + " CI scope needs review: " + strings.Join(reasons, "; ")
 					case action == "" && skippedAction:
 						finding.Status, finding.Code = "excluded", "excluded_runtime"
-						finding.Reason = "The Datadog action is explicitly skipped for this matrix entry. Its tests still run without instrumentation; this runtime is not validated with the tracer."
+						finding.Reason = "The " + provider.setupName() + " is explicitly skipped for this matrix entry. Its tests still run without instrumentation; this runtime is not validated with the tracer."
+					case handWritten != nil && handWritten.problem() != "":
+						finding.Code, finding.Reason = handWritten.code(), handWritten.problem()
+					case setup != nil && ciConfirmationProblem(provider, *setup) != "" && javaSetupProblem(finding, site) == "":
+						// Ask for every answer the user owes at once.
+						finding.Code, finding.Reason = "ci_setup_confirmation_required", ciConfirmationProblem(provider, *setup)
+						if java == "" {
+							finding.Reason += " " + runtimeReason
+						}
 					case runtimeReason != "":
 						finding.Code, finding.Reason = runtimeCode, runtimeReason
-					case action == "":
-						finding.Reason = "No Datadog action selects java before this test step, so its tests are not instrumented."
-					case !exactJavaRelease.MatchString(tracer):
-						finding.Reason = "The Datadog action's java-tracer-version " + strconv.Quote(tracer) + " is not an exact release; set an exact version such as 1.67.1."
-					case setupActionProblem(finding, site) != "":
-						finding.Code, finding.Reason = CodeIncompleteCISetup, setupActionProblem(finding, site)
-					case javaReusableSecretProblem(workflows, workflow, finding.setupInputs["api_key"]) != "":
+					case action == "" && handWritten == nil && expired != "":
+						finding.Reason = "The " + setupProviderFor(provider, job).setupName() + " at " + expired + " runs in another shell than this test command, and its exports reach only the later commands of its own shell, so the tests run without it; run it in the same shell, before the test command."
+					case action == "" && handWritten == nil:
+						finding.Reason = "No " + provider.setupName() + " selects java before this test step, so its tests are not instrumented."
+					case javaReportingOverride(javaRowEnvironment(workflow, job, step, row), tool, site) != "":
+						finding.Code, finding.Reason = CodeIncompleteCISetup, javaReportingOverride(javaRowEnvironment(workflow, job, step, row), tool, site)
+					case handWritten == nil && javaSetupProblem(finding, site) != "":
+						finding.Code, finding.Reason = CodeIncompleteCISetup, javaSetupProblem(finding, site)
+					case provider.sharedSyntax() && !exactJavaRelease.MatchString(tracer):
+						finding.Reason = "The Datadog action's java-tracer-version " + strconv.Quote(tracer) + " is not an exact release; set an exact version such as " + javaSetupRelease() + "."
+					case handWritten == nil && javaReusableSecretProblem(workflows, workflow, finding.setupInputs["api_key"]) != "":
 						finding.Code, finding.Reason = CodeIncompleteCISetup, javaReusableSecretProblem(workflows, workflow, finding.setupInputs["api_key"])
 					default:
+						if handWritten != nil {
+							tracer = handWritten.Tracer
+						}
 						// Release notes, not version numbers, say which JDKs an agent
 						// release supports, so the pair is validated by running it.
 						finding.Status, finding.Reason = "not checked", "Validate dd-java-agent "+tracer+" on Java "+java+"; a static selection does not establish that this release supports this JDK."
 					}
-					// An explicitly uninstrumented row has no instrumentation to lose.
-					if reason := javaInstrumentationProblem(workflow, job, step, row, action != "", buildSystem, tool); finding.Status != "excluded" && reason != "" {
+					// An explicitly uninstrumented row has no instrumentation to
+					// lose; a hand-written setup was read where it attaches the agent.
+					if reason := javaInstrumentationProblem(provider, workflow, job, step, row, instrumented, buildSystem, tool); handWritten == nil && finding.Status != "excluded" && reason != "" {
 						finding.Status, finding.Code, finding.Reason = "inconclusive", "", reason
 					}
 					result.Jobs = append(result.Jobs, finding)
@@ -611,14 +923,100 @@ func javaMayStartTests(root string, workflow ciWorkflow, job runtimeJob, step ru
 	return stepMayStartTests(root, workflow, job, step, framework) || mavenMention.MatchString(step.Run) || gradleMention.MatchString(step.Run)
 }
 
-// javaAgentVariable is where the Datadog action, per its
+// javaSetupProblem explains why the setup before an instrumented CI entry is
+// not complete, as its provider reads it: a supported release, an API key,
+// an exact agent release and the selected site (empty: not selected).
+// javaReportingOverride explains a -Ddd.* system property in the JVM option
+// lists the build reads that sends its reports elsewhere than the selected
+// site (empty: any): a dd.site of another site, a custom agentless URL, or
+// agentless reporting turned off for a Datadog Agent the user has not
+// confirmed. Later lists override earlier ones, JAVA_TOOL_OPTIONS first, and
+// options override DD_* variables; local replay removes them, so they are
+// checked here.
+func javaReportingOverride(env map[string]string, tool, site string) string {
+	properties, from := javaEffectiveProperties(env, tool)
+	if value, set := properties["DD_CIVISIBILITY_AGENTLESS_ENABLED"]; set && handWrittenFalse(value) {
+		if _, confirmed := statedFact(handWrittenAgent); !confirmed {
+			reason := "-Ddd.civisibility.agentless.enabled=" + value + " in " + from["DD_CIVISIBILITY_AGENTLESS_ENABLED"] + " turns agentless reporting off, so this step's tests report through a Datadog Agent, which no CI configuration shows and local validation does not use: remove it"
+			// Only a provider whose setups ddtest reads by hand asks about an Agent.
+			if slices.ContainsFunc(ciProviderFacts[activeOrDefaultCIProvider().name()], func(fact ciFactDefinition) bool { return fact.Key == handWrittenAgent }) {
+				reason += ", or confirm the Agent with --ci-confirm " + handWrittenAgent
+			}
+			return reason + "."
+		}
+	}
+	if value, set := properties["DD_SITE"]; set && site != "" && value != site {
+		return "-Ddd.site=" + value + " in " + from["DD_SITE"] + " sends this step's reports to " + value + ", not " + site + ", the selected site: remove it or select " + value + "."
+	}
+	if value, set := properties["DD_CIVISIBILITY_AGENTLESS_URL"]; set {
+		return "-Ddd.civisibility.agentless.url=" + value + " in " + from["DD_CIVISIBILITY_AGENTLESS_URL"] + " sends this step's reports to a custom URL instead of the selected site's intake, which local validation cannot check: remove it."
+	} else if value := env["DD_CIVISIBILITY_AGENTLESS_URL"]; value != "" {
+		return "DD_CIVISIBILITY_AGENTLESS_URL=" + value + " sends this step's reports to a custom URL instead of the selected site's intake, which local validation cannot check: remove it."
+	}
+	return ""
+}
+
+// javaRowEnvironment is the environment a test step starts with in a matrix
+// row, its matrix expressions resolved, as -Ddd.site=${{ matrix.site }}; a
+// value the row cannot resolve stays as written.
+func javaRowEnvironment(workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any) map[string]string {
+	env := maps.Clone(handWrittenEnvironment(workflow, job, step))
+	for key, value := range env {
+		if resolved, err := interpolateMatrix(value, row); err == nil {
+			env[key] = resolved
+		}
+	}
+	return env
+}
+
+// javaEffectiveProperties are the DD_* variables the -Ddd.* system
+// properties set in the JVM option lists a build of tool reads, and the list
+// each comes from: Maven reads JAVA_TOOL_OPTIONS, then MAVEN_OPTS; Gradle
+// reads JAVA_TOOL_OPTIONS, JAVA_OPTS, then GRADLE_OPTS. A later list
+// overrides an earlier one.
+func javaEffectiveProperties(env map[string]string, tool string) (properties, from map[string]string) {
+	carriers := []string{"JAVA_TOOL_OPTIONS", "MAVEN_OPTS"}
+	if tool == javaGradle {
+		carriers = []string{"JAVA_TOOL_OPTIONS", "JAVA_OPTS", "GRADLE_OPTS"}
+	}
+	properties, from = map[string]string{}, map[string]string{}
+	for _, carrier := range carriers {
+		for key, value := range javaHandWrittenProperties(carrier, env[carrier]) {
+			properties[key], from[key] = value, carrier
+		}
+	}
+	return properties, from
+}
+
+func javaSetupProblem(job RuntimeFinding, site string) string {
+	provider := job.setupProvider
+	if provider == nil {
+		provider = activeOrDefaultCIProvider()
+	}
+	inputs := maps.Clone(job.setupInputs)
+	if inputs == nil {
+		inputs = map[string]string{}
+	}
+	// A plugin that downloads the latest release has no release input.
+	if !job.TracerFloating {
+		inputs["java-tracer-version"] = job.TracerRequested
+	}
+	supported := job.setupSupported || provider.sharedSyntax() && setupActionSupported(job.Action)
+	return provider.setupProblem(ciSetup{Reference: job.Action, Pinned: true, Supported: supported, Problem: job.setupReadProblem, Floating: job.TracerFloating, Inputs: inputs}, "java-tracer-version", exactJavaRelease.MatchString, javaSetupRelease(), site)
+}
+
+// javaAgentVariable is where the provider's Datadog setup, per its
 // java-instrumented-build-system input, adds -javaagent for a build of tool;
-// empty when it does not instrument that tool.
-func javaAgentVariable(tool, buildSystem string) string {
+// empty when it does not instrument that tool. Without the input, the
+// installer the Datadog CircleCI orb runs instruments every Java process.
+func javaAgentVariable(provider, tool, buildSystem string) string {
 	// A step that names no build tool keeps the Maven check.
 	tool = cmp.Or(tool, javaMaven)
 	switch buildSystem {
 	case "":
+		if provider == circleCIProvider {
+			return "JAVA_TOOL_OPTIONS"
+		}
 		if tool == javaGradle {
 			return "GRADLE_OPTS"
 		}
@@ -638,15 +1036,20 @@ func javaAgentVariable(tool, buildSystem string) string {
 // and job values are read by the action and kept. A matrix value applies to
 // its row only. dd-java-agent still reports tests with DD_TRACE_ENABLED=false,
 // which only stops tracing.
-func javaInstrumentationProblem(workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any, instrumented bool, buildSystem, tool string) string {
+func javaInstrumentationProblem(provider ciProvider, workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any, instrumented bool, buildSystem, tool string) string {
 	if instrumented {
-		variable := javaAgentVariable(tool, buildSystem)
+		variable := javaAgentVariable(provider.name(), tool, buildSystem)
 		if variable == "" {
-			return "The Datadog action's java-instrumented-build-system " + strconv.Quote(buildSystem) + " does not instrument " + javaBuildToolName(cmp.Or(tool, javaMaven)) + "; this test step runs without the agent."
+			return "The " + provider.setupName() + "'s " + provider.setupInput("java-instrumented-build-system") + " " + strconv.Quote(buildSystem) + " does not instrument " + javaBuildToolName(cmp.Or(tool, javaMaven)) + "; this test step runs without the agent."
 		}
-		// Another agent, such as JaCoCo's, does not keep the Datadog one, and
-		// step env values are literal: $MAVEN_OPTS is not expanded.
-		if value, set := step.Env[variable]; set && !strings.Contains(value, "dd-java-agent") && !strings.Contains(value, "${{ env."+variable+" }}") && !strings.Contains(value, "${{env."+variable+"}}") {
+		// Another agent, such as JaCoCo's, does not keep the Datadog one. Step
+		// env values are literal on GitHub Actions, where $MAVEN_OPTS is not
+		// expanded; a shell-sharing setup's export keeps its agent while
+		// later commands extend it.
+		if value, set := step.Env[variable]; set && !strings.Contains(value, "dd-java-agent") && !strings.Contains(value, javaInstallerAgent) && !strings.Contains(value, "${{ env."+variable+" }}") && !strings.Contains(value, "${{env."+variable+"}}") {
+			if !provider.sharedSyntax() {
+				return "This test step sets " + variable + ", replacing the -javaagent option the " + provider.setupName() + " added. Extend it instead, with " + provider.setupTerms().Persist(`export `+variable+`="$`+variable+` <options>"`) + ", to keep the agent."
+			}
 			return "This test step sets " + variable + ", replacing the -javaagent option the Datadog action added. Include ${{ env." + variable + " }} in the value to keep the agent."
 		}
 	}

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/kballard/go-shellquote"
@@ -15,18 +16,27 @@ import (
 
 // Resolve only declared scalar environment values and simple parameter reads.
 // Never evaluate a command substitution or inherit the evaluator's environment.
-func resolveVariantStep(workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any, frameworks ...string) (runtimeStep, map[string]string, error) {
+func resolveVariantStep(workflow ciWorkflow, job runtimeJob, step runtimeStep, row map[string]any, frameworks ...string) (_ runtimeStep, _ map[string]string, err error) {
+	// Findings name values in the provider's own syntax.
+	defer func() { err = displayCIError(err) }()
 	// An action's environment is not inherited by subsequent run steps. Keep
 	// opaque actions outside local validation; do not demand their CI secrets.
 	cypressAction := len(frameworks) > 0 && frameworks[0] == "cypress" && strings.HasPrefix(strings.ToLower(step.Uses), "cypress-io/github-action@")
-	if step.Run == "" && step.Uses != "" && step.ResolutionError == "" && !cypressAction {
+	// An action a language reads as a command, such as a Gradle action's
+	// arguments input, runs with the workflow's, job's and step's env.
+	commandAction := false
+	if len(frameworks) > 0 {
+		reader, ok := discoveryLanguageFor(frameworks[0]).(ciCommandActionReader)
+		commandAction = ok && reader.commandAction(step)
+	}
+	if step.Run == "" && step.Uses != "" && step.ResolutionError == "" && !cypressAction && !commandAction {
 		return step, nil, nil
 	}
-	var err error
 	step.Run, err = interpolateMatrix(step.Run, row)
 	if err != nil {
 		return step, nil, err
 	}
+	step.Run, step.OmittedOptions, step.WithoutCIValues = withoutCIOnlyOptions(step.Run, step.OmittedOptions, step.WithoutCIValues)
 	// GitHub evaluates expressions before the shell runs, even inside single
 	// quotes. Anything left after matrix substitution cannot be reproduced.
 	if expression := workflowExpression.FindString(step.Run); expression != "" {
@@ -78,10 +88,45 @@ func resolveVariantStep(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 	for _, layer := range []map[string]string{workflow.Env, job.Env, step.Env} {
 		maps.Copy(env, layer)
 	}
+	// A value only CI knows, as a secret, a CI context such as github.ref, a
+	// step output or a variable the provider predefines, is left out of local
+	// runs and named in the report: both paired runs miss it alike, so
+	// comparing them stays sound. As for a variable ciOnlyValue leaves out
+	// below, it still requires review when the test can be affected: when it
+	// controls the shell, the runtime, the tools or the tracer, or when the
+	// step's command line expands it, which the expansion check below finds
+	// unresolved once the value is left out. A value ciOnlyValue describes
+	// reaches it only because something reads it, so it requires review too.
+	withoutCIValue := func(key string, err error) error {
+		if ciControlVariable(key) || ciOnlyValue(env[key]) != "" {
+			return fmt.Errorf("CI environment variable %s requires review: %w", key, err)
+		}
+		step.WithoutCIValues = append(step.WithoutCIValues, key)
+		delete(env, key)
+		return nil
+	}
 	for _, key := range slices.Sorted(maps.Keys(env)) {
 		value := env[key]
+		// A variable the CI script sets only on some paths, or a path in the
+		// CI checkout, which local runs do not share, matters only to what
+		// reads it: validation runs without it unless the command line
+		// expands it or it controls the runtime, the tools or the tracer. A
+		// value that reads it stays unresolved below, as its marker remains.
+		if reason := ciOnlyValue(value); reason != "" && !shellReads(step.Run, key) && !ciControlVariable(key) {
+			step.LeftOut = append(step.LeftOut, key+" ("+reason+")")
+			delete(env, key)
+			continue
+		}
 		if err := unresolvedCIError(value); err != nil && !strings.HasPrefix(key, "DD_") {
-			return step, nil, fmt.Errorf("CI environment variable %s requires review: %w", key, err)
+			// Only a value the provider says CI defines is left out: what the
+			// job's own commands or build logic compute is its setup.
+			if !unresolvedCIProvided(value) {
+				return step, nil, fmt.Errorf("CI environment variable %s requires review: %w", key, err)
+			}
+			if err := withoutCIValue(key, err); err != nil {
+				return step, nil, err
+			}
+			continue
 		}
 		if len(frameworks) > 0 {
 			if language := discoveryLanguageFor(frameworks[0]); language != nil {
@@ -111,17 +156,6 @@ func resolveVariantStep(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 				delete(env, key)
 				continue
 			}
-		}
-		// A credential that only carries a CI secret, such as a token for a
-		// coverage or analysis upload, never exists locally. The step's tests
-		// run without it and the report names it; a command that reads it
-		// still requires review below. A secret used as a setting, such as a
-		// URL or mode, or a remote grid's key, which every test depends on,
-		// still requires review.
-		if ciCredential(key, value) {
-			step.WithoutSecrets = append(step.WithoutSecrets, key)
-			delete(env, key)
-			continue
 		}
 		if len(frameworks) > 0 && frameworks[0] == "vitest" && strings.HasPrefix(key, "DD_TEST_OPTIMIZATION_RUNNER_") {
 			if _, ok := VitestRunnerEnvironmentFlag(key); !ok {
@@ -163,7 +197,27 @@ func resolveVariantStep(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 			delete(env, key)
 			continue
 		}
+		// A setup for several languages, run in the job's shell, exports each
+		// tracer's options for later commands; another language's export only
+		// instruments that language, and holds values only CI knows. The job's
+		// own options in the variable are kept.
+		if len(frameworks) > 0 {
+			if exported, ok := otherLanguageSetupExport(discoveryLanguageFor(frameworks[0]), key); ok && strings.Contains(value, exported) {
+				value = strings.TrimSpace(strings.ReplaceAll(value, exported, ""))
+				if value == "" {
+					delete(env, key)
+					continue
+				}
+			}
+		}
 		resolved, err := runtimeValue(value, row)
+		// A matrix expression inside a value, as suite-${{ matrix.suite }},
+		// takes the row's value before the value counts as CI-only.
+		if err != nil && row != nil {
+			if interpolated, interpolationErr := interpolateMatrix(value, row); interpolationErr == nil && interpolated != value {
+				resolved, err = runtimeValue(interpolated, row)
+			}
+		}
 		if err != nil && len(frameworks) > 0 && frameworks[0] == "cypress" {
 			// Local comparison installs its own tracer and uses the same app
 			// coverage flag in both modes. CI installation/preload conditions
@@ -172,17 +226,29 @@ func resolveVariantStep(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 			known["DD_TRACE_PACKAGE"], known["DD_TRACE_ESM_IMPORT"] = actionPreload, "\x00DD_ACTION_IMPORT\x00"
 			resolved, err = bootstrapOptions(value, row, known)
 			if err == nil && strings.ContainsRune(resolved, 0) {
-				err = fmt.Errorf("cypress application environment %s forwards a CI-only action path", key)
+				return step, nil, fmt.Errorf("CI environment variable %s requires review: cypress application environment forwards a CI-only action path", key)
 			}
 		}
 
 		if err != nil {
-			return step, nil, fmt.Errorf("CI environment variable %s requires review: %w", key, err)
+			if err := withoutCIValue(key, err); err != nil {
+				return step, nil, err
+			}
+			continue
 		}
 		env[key] = resolved
 	}
 	if len(env) == 0 {
 		env = nil
+	}
+	// Options whose values only CI provides and never select tests, as a
+	// Maven settings file, are left out.
+	run, omitted, without := omitCIOnlyOptions(step.Run, func(name string) bool { _, known := env[name]; return !known })
+	step.Run, step.OmittedOptions = run, append(step.OmittedOptions, omitted...)
+	for _, option := range without {
+		if !slices.Contains(step.WithoutCIValues, option) {
+			step.WithoutCIValues = append(step.WithoutCIValues, option)
+		}
 	}
 	if len(env) == 0 || !strings.Contains(step.Run, "$") {
 		return step, env, nil
@@ -205,7 +271,7 @@ func resolveVariantStep(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 		}
 		if parameter, ok := node.(*syntax.ParamExp); ok && !keptRuntimeRead(parameter) {
 			value, exists := env[parameter.Param.Value]
-			if !exists || parameter.Index != nil || parameter.Slice != nil || parameter.Repl != nil || parameter.Exp != nil || parameter.Excl || parameter.Length || strings.ContainsAny(value, " \t\n*?[") {
+			if !exists || parameter.Index != nil || parameter.Slice != nil || parameter.Repl != nil || parameter.Exp != nil || parameter.Excl || parameter.Length || strings.ContainsAny(value, "\n*?[") {
 				expansionErr = fmt.Errorf("CI parameter %s requires explicit environment review", parameter.Param.Value)
 			}
 		}
@@ -225,6 +291,14 @@ func resolveVariantStep(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 	var commands []string
 	var visit func(*syntax.Stmt) bool
 	visit = func(stmt *syntax.Stmt) bool {
+		// Output filters after a command keep their literal text.
+		if head, filters, ok := outputPipeline(stmt); ok {
+			if !visit(head) || len(commands) == 0 {
+				return false
+			}
+			commands[len(commands)-1] += " | " + filters
+			return true
+		}
 		if len(stmt.Redirs) > 0 || stmt.Background || stmt.Negated || stmt.Coprocess {
 			return false
 		}
@@ -278,6 +352,36 @@ func resolveVariantStep(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 	// with && changes whether later tests run after a failed preparation.
 	step.Run = strings.Join(statements, "\n")
 	return step, env, nil
+}
+
+// ciOnlyValue says why a variable's CI value has no local equivalent that
+// validation may use: the script sets it only on some paths, or it is a path
+// in the CI checkout. It is "" for any other value.
+func ciOnlyValue(value string) string {
+	if _, conditional := conditionalCIStatement(value); conditional {
+		return "set only on some paths of the CI script, under conditions ddtest cannot decide"
+	}
+	if strings.Contains(value, ciProjectDirectory) && unresolvedCIError(value) == nil && strings.Count(value, "${{") == strings.Count(value, ciProjectDirectory) {
+		return "a path in the CI checkout, " + displayCIText(value)
+	}
+	return ""
+}
+
+// shellReads reports whether a shell command expands the variable name, or
+// may: a command ddtest cannot parse reads every variable.
+func shellReads(command, name string) bool {
+	file, ok := parseCIShell(command)
+	if !ok {
+		return true
+	}
+	reads := false
+	syntax.Walk(file, func(node syntax.Node) bool {
+		if parameter, ok := node.(*syntax.ParamExp); ok && parameter.Param != nil && parameter.Param.Value == name {
+			reads = true
+		}
+		return !reads
+	})
+	return reads
 }
 
 func localPreparation(root, directory string, words []string) (BuildCommand, bool) {
@@ -416,16 +520,100 @@ func TracerPluginSetting(key string) bool {
 	return ok && enabled && plugin != ""
 }
 
-// credentialName is a variable name that ends with a credential, as in
-// GITHUB_TOKEN, SONAR_LOGIN_PASSWORD or NPM_AUTH. A name that only contains
-// one, such as AUTH_MODE or PASSWORD_POLICY, is a setting.
-var credentialName = regexp.MustCompile(`(?i)(?:^|_)(?:TOKEN|SECRET|PASSWORD|PASSWD|PASSPHRASE|API_?KEY|ACCESS_?KEY|SECRET_?KEY|PRIVATE_?KEY|CREDENTIALS?|AUTH)$`)
-
-// ciCredential reports a CI variable that only carries a credential secret.
-// Datadog's own settings and remote grid keys are not.
-func ciCredential(key, value string) bool {
-	return secretReference.MatchString(strings.TrimSpace(value)) && credentialName.MatchString(key) && !strings.HasPrefix(key, "DD_") && remoteGridSecret(key, value) == ""
+// ciControlVariable reports a variable whose CI value decides how the shell,
+// the runtime, the build and test tools or the tracer run, so a local run
+// without it would validate something else: PATH, HOME, the locale and time
+// zone, the startup files and settings Bash and sh read (BASH_ENV, ENV,
+// SHELLOPTS, CDPATH, IFS), the dynamic linker's variables, Datadog settings,
+// and the variables a language's runtime, caches and tools read. A
+// credential under a tool's prefix, as NODE_AUTH_TOKEN, only authenticates
+// the tool to a registry or service and is not one.
+func ciControlVariable(key string) bool {
+	if ciRunnerExported(key, nil) || slices.Contains([]string{"BASH_ENV", "ENV", "SHELLOPTS", "CDPATH", "IFS"}, key) || strings.HasPrefix(key, "LD_") || strings.HasPrefix(key, "DYLD_") {
+		return true
+	}
+	return slices.ContainsFunc(discoveryLanguages, func(language discoveryLanguage) bool {
+		return language.runtimeVariable(key) || language.cacheVariable(key) || language.toolVariable(key) && !credentialName.MatchString(key)
+	})
 }
+
+// credentialName is a variable name that ends with a credential, as in
+// NODE_AUTH_TOKEN, SONAR_LOGIN_PASSWORD or NPM_AUTH. A name that only
+// contains one, such as AUTH_MODE or PASSWORD_POLICY, is a setting.
+// jvmOptionPrefix ends text that passes a JVM option's value next, as
+// -Dsonar.token= or -Pgpg.passphrase=", with the option's property.
+var jvmOptionPrefix = regexp.MustCompile(`(?:^|[\s"'=])(-[DP]([\w.-]+))=["']?$`)
+
+// ciOnlyOption reports whether a value ddtest cannot resolve that follows
+// text is one a JVM option passes only to a plugin that runs no tests (see
+// ciOnlyProperty), as -Dgpg.passphrase= before a Jenkins interpolation; option
+// is the flag, as -Dgpg.passphrase. Such a value selects no tests, so
+// validation runs with it empty (see omitCIOnlyOptions).
+func ciOnlyOption(text string) (option string, ok bool) {
+	match := jvmOptionPrefix.FindStringSubmatch(text)
+	if match == nil {
+		return "", false
+	}
+	return match[1], ciOnlyProperty(match[1])
+}
+
+// ciOnlyProperty reports a JVM option, as -Dgpg.passphrase or
+// -Psigning.password, of a plugin that runs no tests: GPG signing (gpg.*),
+// Gradle's signing plugin (signing.*) or the Sonar scanner (sonar.*, as
+// -Dsonar.host.url). A credential the tests read, as -Ddb.password, or any
+// other property still requires review, whatever its or its value's name.
+func ciOnlyProperty(option string) bool {
+	property, ok := strings.CutPrefix(option, "-D")
+	if !ok {
+		property, ok = strings.CutPrefix(option, "-P")
+	}
+	return ok && slices.ContainsFunc(ciOnlyPlugins, func(prefix string) bool { return strings.HasPrefix(property, prefix) })
+}
+
+// ciOnlyPlugins prefix the properties of the plugins ciOnlyProperty names.
+var ciOnlyPlugins = []string{"gpg.", "signing.", "sonar."}
+
+// ciExpressionVariable stands for the CI expression it numbers while
+// omitCIOnlyOptions reads a command line, which does not parse them.
+const ciExpressionVariable = "DDTEST_CI_EXPRESSION_"
+
+// withoutCIOnlyOptions leaves out of run the CI-only options whose values are
+// CI expressions, as -Dgpg.passphrase=${{ secrets.GPG }} or
+// -s ${{ secrets.SETTINGS }} (see omitCIOnlyOptions), adding the removed
+// Maven settings options to omitted and the emptied JVM options to without,
+// the values validation runs without.
+func withoutCIOnlyOptions(run string, omitted, without []string) (string, []string, []string) {
+	expressions := workflowExpression.FindAllString(run, -1)
+	if len(expressions) == 0 {
+		return run, omitted, without
+	}
+	index := 0
+	placeholders := workflowExpression.ReplaceAllStringFunc(run, func(string) string {
+		index++
+		return "${" + ciExpressionVariable + strconv.Itoa(index-1) + "}"
+	})
+	text, removed, emptied := omitCIOnlyOptions(placeholders, func(name string) bool { return strings.HasPrefix(name, ciExpressionVariable) })
+	if len(removed)+len(emptied) == 0 {
+		return run, omitted, without
+	}
+	restore := func(text string) string {
+		for i, expression := range expressions {
+			text = strings.ReplaceAll(text, "${"+ciExpressionVariable+strconv.Itoa(i)+"}", expression)
+		}
+		return text
+	}
+	for _, option := range removed {
+		omitted = append(omitted, restore(option))
+	}
+	for _, option := range emptied {
+		if !slices.Contains(without, option) {
+			without = append(without, option)
+		}
+	}
+	return restore(text), omitted, without
+}
+
+var credentialName = regexp.MustCompile(`(?i)(?:^|_)(?:TOKEN|SECRET|PASSWORD|PASSWD|PASSPHRASE|API_?KEY|ACCESS_?KEY|SECRET_?KEY|PRIVATE_?KEY|CREDENTIALS?|AUTH)$`)
 
 // remoteGridProviders maps credential variable prefixes to remote browser
 // grids whose sessions run outside the local machine.
@@ -474,6 +662,32 @@ func keptRuntimeRead(parameter *syntax.ParamExp) bool {
 		return ok
 	})
 }
+
+// otherLanguageSetupExport is what the Datadog installer exports into key
+// for a language other than current, without the job's own value.
+func otherLanguageSetupExport(current discoveryLanguage, key string) (string, bool) {
+	for _, language := range discoveryLanguages {
+		if current != nil && language.name() == current.name() {
+			continue
+		}
+		exported, _ := language.setupShellExports(map[string]string{})
+		if value, ok := exported[key]; ok && value != "" {
+			return value, true
+		}
+		// A setup that changes key only where the job already set it, as
+		// Python's installer puts its tracer path before the job's
+		// PYTHONPATH, adds what surrounds the job's value.
+		exported, _ = language.setupShellExports(map[string]string{key: setupExportProbe})
+		if before, after, found := strings.Cut(exported[key], setupExportProbe); found && strings.TrimSpace(before+after) != "" {
+			return strings.TrimSpace(before + after), true
+		}
+	}
+	return "", false
+}
+
+// setupExportProbe stands for the job's own value of a variable when
+// otherLanguageSetupExport asks a setup what it adds to it.
+const setupExportProbe = "\x00job\x00"
 
 // readsKeptRuntimeVariable reports a word that reads such a variable.
 func readsKeptRuntimeVariable(word *syntax.Word) bool {

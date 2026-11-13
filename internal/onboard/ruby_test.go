@@ -299,7 +299,50 @@ func TestI18nOriginalRakeAndNumericMatrixNeedOnlyInstrumentation(t *testing.T) {
 	require.Equal(t, workflow, string(after))
 }
 
+// rubyIsolationTest is a Minitest file using Rails' fork isolation.
+const (
+	rubyIsolationTest       = "test/isolated_test.rb"
+	rubyIsolationTestSource = "require 'active_support/testing/isolation'\nclass IsolatedTest < ActiveSupport::TestCase\n  include ActiveSupport::Testing::Isolation\nend\n"
+)
+
+// rubyIsolationRepository is a repository whose Minitest tests fork with
+// Rails' isolation.
+func rubyIsolationRepository(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	writeFile(t, root, rubyIsolationTest, rubyIsolationTestSource)
+	return root
+}
+
+// brakeman runs Minitest threads with parallelize_me! and calls exit! in
+// its library, but no test forks: the SyncWriter initializer stays out.
+func TestMinitestForkSetupOnlyForForkIsolation(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "test/tests/only_files_option.rb", "class OnlyFilesOptionTests < Minitest::Test\n  parallelize_me!\nend\n")
+	writeFile(t, root, "test/test_helper.rb", "class ActiveSupport::TestCase\n  parallelize(workers: :number_of_processors)\nend\n")
+	writeFile(t, root, "lib/brakeman.rb", "module Brakeman\n  def self.quit\n    exit!\n  end\nend\n")
+	writeFile(t, root, "vendor/bundle/ruby/3.4.0/gems/railties/test/isolation/abstract_unit.rb", "include ActiveSupport::Testing::Isolation\n")
+	writeFile(t, root, ".bundle/gems/isolated_test.rb", "include ActiveSupport::Testing::Isolation\n")
+	for _, provider := range []ciProvider{circleCI{}, gitLabCI{}, buildkite{}, jenkins{}} {
+		text := providerSetupInstructions(root, provider, "ruby", "minitest", "", true)
+		require.NotContains(t, text, "SyncWriter", provider.displayName())
+		require.NotContains(t, text, "datadog_test_optimization.rb", provider.displayName())
+	}
+	t.Chdir(root)
+	require.NotContains(t, instructions("ruby", "minitest"), "SyncWriter")
+	require.NotContains(t, rubyDiscovery{}.agentInstructions("minitest", ""), "SyncWriter")
+
+	writeFile(t, root, rubyIsolationTest, rubyIsolationTestSource)
+	for _, provider := range []ciProvider{circleCI{}, gitLabCI{}, buildkite{}, jenkins{}} {
+		require.Contains(t, providerSetupInstructions(root, provider, "ruby", "minitest", "", true), "SyncWriter", provider.displayName())
+	}
+	require.Contains(t, instructions("ruby", "minitest"), "SyncWriter")
+	require.Contains(t, rubyDiscovery{}.agentInstructions("minitest", ""), "SyncWriter")
+	require.NotContains(t, rubyDiscovery{}.agentInstructions("rspec", ""), "SyncWriter")
+}
+
 func TestMinitestInstructionsKeepIsolationAndConfigureBothEnvironments(t *testing.T) {
+	t.Chdir(rubyIsolationRepository(t))
 	text := instructions("ruby", "minitest")
 	for _, expected := range []string{"ActiveSupport::Testing::Isolation", "Datadog::Tracing::SyncWriter", "${{ env.RUBYOPT }} -r./ci/datadog_test_optimization.rb", "Keep isolation", "3.4.22", "--check-only --tracer-version"} {
 		require.Contains(t, text, expected)

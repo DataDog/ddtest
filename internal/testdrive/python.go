@@ -6,7 +6,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"strings"
 	"time"
@@ -14,46 +13,6 @@ import (
 	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/DataDog/ddtest/internal/platform"
 )
-
-// Selection only affects testdrive. Production pytest discovery and RunTests
-// continue to use the command chosen by the framework.
-func pythonTestdriveCommand(root, command string, args []string, explicit bool) (string, []string, string) {
-	if explicit {
-		return command, args, "Explicit test command"
-	}
-	if uvLockRoot(root) != "" {
-		return "uv", []string{"run", "--no-sync", "python", "-m", "pytest"}, "uv project (uv.lock)"
-	}
-	for _, variable := range []string{"VIRTUAL_ENV", "CONDA_PREFIX"} {
-		if directory := os.Getenv(variable); directory != "" {
-			return environmentPython(directory), args, "Activated environment (" + variable + ")"
-		}
-	}
-	return command, args, "Python from PATH"
-}
-
-func environmentPython(directory string) string {
-	if runtime.GOOS == "windows" {
-		// Conda puts python.exe at its root; venv uses Scripts.
-		if _, err := os.Stat(filepath.Join(directory, "python.exe")); err == nil {
-			return filepath.Join(directory, "python.exe")
-		}
-		return filepath.Join(directory, "Scripts", "python.exe")
-	}
-	return filepath.Join(directory, "bin", "python")
-}
-
-func uvLockRoot(root string) string {
-	for directory := root; ; directory = filepath.Dir(directory) {
-		if info, err := os.Stat(filepath.Join(directory, "uv.lock")); err == nil && !info.IsDir() {
-			return directory
-		}
-		// Do not select an unrelated project outside this checkout.
-		if _, err := os.Stat(filepath.Join(directory, ".git")); err == nil || filepath.Dir(directory) == directory {
-			return ""
-		}
-	}
-}
 
 func pythonEnvironmentInfo(ctx context.Context, command string, args []string, source string, env map[string]string, timeout time.Duration) (environmentInfo, *reportCard) {
 	info := environmentInfo{Source: source, Runtime: "Python"}
@@ -80,7 +39,7 @@ func pythonEnvironmentInfo(ctx context.Context, command string, args []string, s
 				if platform.IsPythonExecutable(arg) {
 					probeCommand, prefix = arg, prefix[i+1:]
 					if filepath.Base(arg) == arg {
-						candidate := filepath.Join(filepath.Dir(environmentPython(selected)), arg)
+						candidate := filepath.Join(filepath.Dir(platform.PythonEnvironmentExecutable(selected)), arg)
 						if _, err := os.Stat(candidate); err == nil {
 							probeCommand = candidate
 						}
@@ -122,8 +81,8 @@ pathlib.Path(sys.argv[1]).write_text(json.dumps(result))
 func pythonProbeCommand(command string, args []string) (string, []string, error) {
 	base := strings.TrimSuffix(filepath.Base(command), ".exe")
 	if platform.IsPythonExecutable(command) {
-		if index, _ := onboard.PythonModule(args); index >= 0 {
-			return command, slices.Clone(args[:index]), nil
+		if options, ok := onboard.PythonInterpreterOptions(args); ok {
+			return command, options, nil
 		}
 		return command, nil, nil
 	}

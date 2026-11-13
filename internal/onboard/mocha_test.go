@@ -131,3 +131,52 @@ func TestMochaOnboardFindsWrappedAndProgrammaticAliases(t *testing.T) {
 	require.Contains(t, output.String(), "Istanbul/NYC")
 	require.NotContains(t, output.String(), "summary.final_response")
 }
+
+// pipeline-schema (Buildkite) runs Mocha in test/, whose only JavaScript is
+// schema.test.js validating ../schema.json: nyc would instrument nothing, so
+// onboarding prescribes no nyc wrapper there, and still does for a package
+// with source or an nyc configuration that may include more.
+func TestMochaPackageWithoutSourceGetsNoNYCPrescription(t *testing.T) {
+	useCIProvider(t, "buildkite")
+	files := map[string]string{
+		".buildkite/pipeline.yml":         "steps:\n  - name: \":mocha: Test\"\n    command: npm test && npm run format:write\n    plugins:\n      - docker-compose#v4.16.0:\n          config: test/docker-compose.yml\n          run: tests\n",
+		"test/docker-compose.yml":         "services:\n  tests:\n    build: .\n    volumes:\n      - \"../schema.json:/app/schema.json\"",
+		"test/Dockerfile":                 "FROM node:24\nWORKDIR /app\nCOPY . .\nRUN npm ci\n",
+		"test/package.json":               `{"scripts":{"test":"mocha *.test.js","format:write":"prettier --write ../schema.json **/*.js **/*.yml"},"dependencies":{"ajv":"^6.12.3","chai":"^4.2.0","js-yaml":"^3.15.0","mocha":"^11.7.5"},"devDependencies":{"prettier":"3.6.2"}}`,
+		"test/schema.test.js":             "const schema = require('../schema.json')\ndescribe('schema', () => { it('loads', () => {}) })\n",
+		"test/valid-pipelines/simple.yml": "steps: []\n",
+		"schema.json":                     "{}",
+	}
+	for _, tc := range []struct {
+		name    string
+		extra   map[string]string
+		wrapped bool
+	}{
+		{"no source", nil, false},
+		{"a source file", map[string]string{"test/lib/load.js": "module.exports = require('../../schema.json')\n"}, true},
+		{"an nyc configuration", map[string]string{"test/.nycrc.json": `{"include":["**/*.js"]}`}, true},
+		{"an nyc key", map[string]string{"test/package.json": `{"scripts":{"test":"mocha *.test.js"},"dependencies":{"mocha":"^11.7.5"},"nyc":{"all":true}}`}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			for path, contents := range files {
+				writeFile(t, root, path, contents)
+			}
+			for path, contents := range tc.extra {
+				writeFile(t, root, path, contents)
+			}
+			scope, err := DiscoverValidationScope(root, "mocha")
+			require.NoError(t, err)
+			require.Len(t, scope.Commands, 1)
+			require.Equal(t, "test", scope.Commands[0].Directory)
+			_, err = PlanJavaScriptSetup(root, "mocha", "5.134.0", "datadoghq.com", ">=18")
+			if tc.wrapped {
+				require.Equal(t, "npx --no-install nyc -- npm test", scope.Commands[0].CICoverageCommand)
+				require.ErrorContains(t, err, MochaCoverageGap)
+				return
+			}
+			require.Empty(t, scope.Commands[0].CICoverageCommand)
+			require.NoError(t, err)
+		})
+	}
+}

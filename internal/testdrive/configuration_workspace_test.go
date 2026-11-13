@@ -2,6 +2,7 @@ package testdrive
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/DataDog/ddtest/internal/environment"
@@ -52,4 +53,16 @@ func TestConfigurationNodeOptionsOverrideInheritedShellFlags(t *testing.T) {
 	}
 	drive := Testdrive{}
 	require.Equal(t, "--max-old-space-size=4096", drive.nodeOptions(), "a focused local command retains its actual shell settings")
+}
+
+// Checks of what the user commits, such as a Gemfile.lock pin, read the
+// checkout a configuration copy was made from.
+func TestCommittedCheckoutIsTheCopySource(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.Mkdir(filepath.Join(root, ".git"), 0o700))
+	td := &Testdrive{repositoryRoot: root}
+	require.Equal(t, root, td.committedCheckout())
+	td.configurationRoot, td.configurationSourceRoot = t.TempDir(), root
+	require.Equal(t, root, td.committedCheckout())
+	require.NotEqual(t, root, td.checkoutRoot())
 }

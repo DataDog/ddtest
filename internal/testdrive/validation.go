@@ -22,8 +22,10 @@ import (
 	"github.com/DataDog/ddtest/internal/ext"
 	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/DataDog/ddtest/internal/platform"
+	"github.com/DataDog/ddtest/internal/usagetelemetry"
 
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
+	"github.com/DataDog/ddtest/internal/testdrive/workspace"
 )
 
 type verdict struct {
@@ -42,12 +44,14 @@ type featureResult struct {
 	Project string `json:"project,omitempty"`
 	Name    string `json:"name"`
 	Status  string `json:"status"`
-	// Code marks failures no customer change is expected to fix.
+	// Code identifies tracer limitations and unsupported capabilities.
 	Code string `json:"code,omitempty"`
 	// ObservedCode keeps the evaluated failure code when Code reports a
 	// known limitation instead, such as tracer_control_not_applied.
 	ObservedCode string `json:"observed_code,omitempty"`
 	Reason       string `json:"reason"`
+
+	Evidence *usagetelemetry.FeatureEvidence `json:"evidence,omitempty"`
 }
 
 const (
@@ -55,6 +59,8 @@ const (
 	tracerControlNotApplied = "tracer_control_not_applied"
 	// A required feature the tracer is known not to apply for this setup.
 	tracerLimitation = "tracer_limitation"
+	// Validated probe controls advertised capabilities but omitted this feature.
+	tracerFeatureUnsupported = "tracer_feature_not_supported"
 )
 
 // tracerOnly reports whether the feature failed in a way only a tracer change
@@ -103,7 +109,10 @@ type validationRun struct {
 	root                string
 	checkoutRoot        string
 	// Why a real-suite Mocha run may report no per-test coverage.
-	coverageCause                   string
+	coverageCause string
+	// noCoverableSource marks a Mocha package with no file nyc instruments,
+	// whose real suite can report no source coverage.
+	noCoverableSource               bool
 	framework                       string
 	Name                            string
 	Command                         string
@@ -177,12 +186,19 @@ type runSummary struct {
 	SuiteErrorCount                 int                 `json:"suite_error_count"`
 	TestEventCount                  int                 `json:"test_event_count"`
 	// Runtimes are the runtime versions the tracer reported running on.
-	Runtimes []string `json:"runtimes,omitempty"`
+	Runtimes          []string                    `json:"runtimes,omitempty"`
+	FrameworkVersions []string                    `json:"framework_versions,omitempty"`
+	TracerVersions    []string                    `json:"tracer_versions,omitempty"`
+	TracerState       *usagetelemetry.TracerState `json:"tracer_state,omitempty"`
 }
 
 func (r validationRun) summary() runSummary {
 	summary := runSummary{Coverage: r.Coverage, FrameworkNode: r.FrameworkNode, ProbeExecutions: r.ProbeExecutions, NativeCommand: r.NativeCommand, ExecutionContext: r.ExecutionContext, ReplacedReporters: r.ReplacedReporters, Role: r.Role, ExecutionPath: r.ExecutionPath, Workers: r.Workers, PlannerSkipped: r.PlannerSkipped, Name: r.Name, Project: r.Project, Skipping: r.Skipping, Command: r.Command, Instrumented: r.Instrumented,
 		ProbeLintSkipped: r.ProbeLintSkipped, ProbeMode: r.ProbeMode, ResultError: reportText(r.ResultError), Timeout: r.Timeout, ProbeCoverageThresholdsDisabled: r.ProbeCoverageThresholdsDisabled, Diagnostic: reportText(r.Diagnostic), NotExercised: r.NotExercised, SuiteErrorCount: len(r.SuiteErrors), TestEventCount: r.Facts.TestEventCount, Runtimes: r.Facts.RuntimeVersions}
+	summary.FrameworkVersions, summary.TracerVersions = r.Facts.FrameworkVersions, r.Facts.TracerVersions
+	if r.Instrumented {
+		summary.TracerState = observedTracerState(r.Facts)
+	}
 	if r.framework == "cucumber" || r.framework == "webdriverio" {
 		summary.NativeResults = "observed"
 		if r.ResultError != "" {
@@ -204,6 +220,12 @@ func (r validationRun) summary() runSummary {
 			return filepath.Ext(test.File) == ".mjs" || filepath.Ext(test.File) == ".mts"
 		}) {
 			cause = mochaESMCoverageCause
+		}
+		if status != "observed" && r.noCoverableSource {
+			// As for Jest and Vitest, which have no such check, a suite with
+			// nothing to cover is not blocked on coverage.
+			summary.Coverage.Status = "not applicable"
+			cause = mochaNoSourceCause
 		}
 		if status != "observed" && cause != "" {
 			summary.Coverage.Reason += " " + cause
@@ -239,6 +261,11 @@ type validationResult struct {
 	TelemetryOnly  bool `json:"telemetry_only,omitempty"`
 	SchemaVersion  int  `json:"schema_version"`
 	FocusedCommand bool `json:"focused_command,omitempty"`
+	// All marks a run of every discovered configuration (--all).
+	All bool `json:"all,omitempty"`
+	// KeptReport is the saved --all report this narrower run did not
+	// replace; its own results are beside it (see keepsSavedReport).
+	KeptReport string `json:"kept_report,omitempty"`
 	// A workflow gate stopped this attempt before any test command. The earlier
 	// execution and its HTML findings stay as history; the handoff is still invalidated.
 	StoppedBeforeExecution bool `json:"stopped_before_execution,omitempty"`
@@ -318,14 +345,141 @@ func reportText(value string) string {
 const validationFilename = "testdrive.json"
 
 func validationPath(repositoryRoot string) string {
-	return filepath.Join(repositoryRoot, constants.PlanDirectory, validationFilename)
+	return filepath.Join(reportRoot(repositoryRoot), constants.PlanDirectory, validationFilename)
+}
+
+// reportRedirect keeps the reports of a run in a package below the
+// repository root at that root, where onboarding of the same package keeps
+// them (see UseReportRoot).
+var reportRedirect struct{ from, to string }
+
+// UseReportRoot keeps the reports of runs whose working root is from in the
+// repository root to: a focused run in a package directory reports where
+// onboarding of that package does. Empty arguments remove the redirect.
+func UseReportRoot(from, to string) {
+	reportRedirect.from, reportRedirect.to = from, to
+	if from != "" {
+		reportRedirect.from = workspace.CanonicalRoot(from)
+	}
+}
+
+// reportLock holds the locks of a run's report root and of its own root.
+type reportLock struct{ locks []*workspace.Lock }
+
+// Close releases every lock, the run root's first.
+func (lock *reportLock) Close() error {
+	var errs []error
+	for i := len(lock.locks) - 1; i >= 0; i-- {
+		errs = append(errs, lock.locks[i].Close())
+	}
+	return errors.Join(errs...)
+}
+
+// lockReports excludes other ddtest invocations that read or write the
+// reports of a run rooted at root, or use its owned storage: invocations
+// rooted at the same report root, which a focused run in a package shares
+// with onboarding and CI-wide runs at the repository root (see
+// UseReportRoot), and invocations rooted at root itself.
+func lockReports(root string) (*reportLock, error) {
+	lock := &reportLock{}
+	for _, directory := range slices.Compact([]string{workspace.CanonicalRoot(reportRoot(root)), workspace.CanonicalRoot(root)}) {
+		held, err := workspace.AcquireLock(directory)
+		if err != nil {
+			_ = lock.Close()
+			return nil, err
+		}
+		lock.locks = append(lock.locks, held)
+	}
+	return lock, nil
+}
+
+// reportRoot is the directory whose .testoptimization holds the reports of a
+// run rooted at root. An empty root names the relative report location the
+// working directory displays.
+func reportRoot(root string) string {
+	if reportRedirect.from == "" {
+		return root
+	}
+	if root == "" || workspace.CanonicalRoot(root) == reportRedirect.from {
+		return reportRedirect.to
+	}
+	return root
+}
+
+// focusedValidationFilename and focusedReportFilename hold a narrower run's
+// results when the saved report validated every discovered configuration,
+// so that a focused probe never replaces that report.
+const (
+	focusedValidationFilename = "testdrive-command.json"
+	focusedReportFilename     = "report-command.html"
+)
+
+// retainedReports are every report a run can leave, relative to the
+// repository root: the saved pair and the focused pair beside it. Git and
+// package exclusion checks cover all of them.
+var retainedReports = []string{
+	constants.PlanDirectory + "/" + validationFilename,
+	constants.PlanDirectory + "/" + reportFilename,
+	constants.PlanDirectory + "/" + focusedValidationFilename,
+	constants.PlanDirectory + "/" + focusedReportFilename,
+}
+
+// keepsSavedReport reports whether result, a run of one command, goes beside
+// the saved report instead of replacing it: that report is an --all run of
+// the same framework that executed tests. Another --all run, a configuration
+// check (which keeps executions as history) or a run after a focused one
+// replaces the saved report as before.
+func keepsSavedReport(root, framework string, result validationResult) bool {
+	if result.All || result.CheckOnly || result.Workflow != nil || result.KeptReport != "" {
+		return result.KeptReport != ""
+	}
+	previous, err := readPreviousValidation(root)
+	if err != nil || previous == nil || previous.Framework != framework || !hasValidationExecution(*previous) {
+		return false
+	}
+	// Reports from before All existed name --all in their workflow command.
+	return previous.All || previous.Workflow != nil && slices.Contains(previous.Workflow.ValidationCommand, "--all")
+}
+
+// keepSavedReport records on result that it goes beside the saved --all
+// report (see keepsSavedReport): KeptReport is that report relative to the
+// run's root, which is ../.. for a focused run in a package below the
+// repository root that keeps its reports there (see UseReportRoot).
+func keepSavedReport(root, framework string, result *validationResult) {
+	if keepsSavedReport(root, framework, *result) {
+		result.KeptReport = filepath.ToSlash(validationPath(""))
+		if reportRoot(root) != root {
+			if relative, err := filepath.Rel(workspace.CanonicalRoot(root), validationPath(root)); err == nil {
+				result.KeptReport = filepath.ToSlash(relative)
+			}
+		}
+	}
+}
+
+// jsonReportPath is where result's JSON report is written for a run rooted
+// at root: beside the kept --all report, in the report root.
+func (result validationResult) jsonReportPath(root string) string {
+	if result.KeptReport != "" {
+		return filepath.Join(reportRoot(root), constants.PlanDirectory, focusedValidationFilename)
+	}
+	return validationPath(root)
+}
+
+// htmlReportPath is where result's HTML report is written for a run rooted
+// at root: beside the kept --all report, in the report root.
+func (result validationResult) htmlReportPath(root string) string {
+	if result.KeptReport != "" {
+		return filepath.Join(reportRoot(root), constants.PlanDirectory, focusedReportFilename)
+	}
+	return htmlReportPath(root)
 }
 
 func finishValidation(output io.Writer, repositoryRoot string, result validationResult) error {
 	result.SchemaVersion = 1
+	keepSavedReport(repositoryRoot, result.Framework, &result)
 	if !result.CheckOnly && !result.StoppedBeforeExecution && !result.HTMLReportCurrent {
-		if info, err := os.Lstat(htmlReportPath(repositoryRoot)); err == nil && (info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0) {
-			if err := os.Remove(htmlReportPath(repositoryRoot)); err != nil {
+		if info, err := os.Lstat(result.htmlReportPath(repositoryRoot)); err == nil && (info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0) {
+			if err := os.Remove(result.htmlReportPath(repositoryRoot)); err != nil {
 				return err
 			}
 		}
@@ -341,10 +495,12 @@ func finishValidation(output io.Writer, repositoryRoot string, result validation
 		if err != nil {
 			return fmt.Errorf("encode testdrive results: %w", err)
 		}
-		if err := writeValidation(validationPath(repositoryRoot), append(data, '\n')); err != nil {
+		if err := writeValidation(result.jsonReportPath(repositoryRoot), append(data, '\n')); err != nil {
 			return err
 		}
-		_, _ = fmt.Fprintf(output, "\nResults JSON: %s\n", validationPath(""))
+		_, _ = fmt.Fprintf(output, "\nResults JSON: %s\n", result.jsonReportPath(""))
+		usagetelemetry.ObserveResult(output, "unsupported", "validation", "framework_unsupported")
+		usagetelemetry.SetTroubleshootingReport(output, result.jsonReportPath(repositoryRoot))
 		return nil
 	}
 	if err := checkCIPreservation(repositoryRoot, &result); err != nil {
@@ -369,12 +525,15 @@ func finishValidation(output io.Writer, repositoryRoot string, result validation
 	if err != nil {
 		return fmt.Errorf("encode validation results: %w", err)
 	}
-	path := validationPath(repositoryRoot)
+	path := result.jsonReportPath(repositoryRoot)
 	if err := writeValidation(path, append(data, '\n')); err != nil {
 		return err
 	}
+	usagetelemetry.SetTroubleshootingReport(output, path)
 
-	if !result.CheckOnly && result.Workflow != nil {
+	// The receipt binds the report testdrive --report verifies, which a run
+	// beside the --all report leaves in place.
+	if !result.CheckOnly && result.Workflow != nil && result.KeptReport == "" {
 		if err := saveWorkflowReceipt(repositoryRoot, result); err != nil {
 			return fmt.Errorf("save private validation receipt: %w", err)
 		}
@@ -406,7 +565,7 @@ func finishValidation(output io.Writer, repositoryRoot string, result validation
 			_, _ = fmt.Fprintln(output)
 		}
 		for _, entry := range result.CIRuntime.Review {
-			command := entry.Command
+			command := onboard.StepCommandLabel(entry.Command)
 			if onboard.RedactsCommandKeys(result.Framework) {
 				command = onboard.RedactCypressCommand(command)
 			}
@@ -433,7 +592,14 @@ func finishValidation(output io.Writer, repositoryRoot string, result validation
 		}
 		_, _ = fmt.Fprintf(output, "Feature %s: %s — %s\n", label, feature.Status, feature.Reason)
 	}
-	_, _ = fmt.Fprintf(output, "\nValidation verdict: %s\nLocal validation: %s\n", result.Summary.Status, result.Summary.LocalValidation)
+	standalone := standaloneLanguage(result.Framework)
+	local := result.Summary.LocalValidation
+	if standalone && local == "PASSED" && result.Summary.Status != "PASSED" {
+		// Standalone output is what an agent reads: a bare PASSED beside an
+		// incomplete verdict was reported as success.
+		local += " (local checks only; they do not complete onboarding)"
+	}
+	_, _ = fmt.Fprintf(output, "\nValidation verdict: %s\nLocal validation: %s\n", result.Summary.Status, local)
 	if execution := result.Summary.ExecutedValidation; execution != nil {
 		_, _ = fmt.Fprintf(output, "Executed %s validations: %s — %s\n", displayName(result.Framework), execution.Status, execution.Reason)
 	}
@@ -467,14 +633,27 @@ func finishValidation(output io.Writer, repositoryRoot string, result validation
 		}
 		_, _ = fmt.Fprintln(output, "Keep the earlier commands and feature results in retained_execution.result when reporting onboarding progress.")
 	}
-	_, _ = fmt.Fprintf(output, "Datadog library: %s\nResults JSON: %s\n", tracerDescription(result), validationPath(""))
+	_, _ = fmt.Fprintf(output, "Datadog library: %s\nResults JSON: %s\n", tracerDescription(result), result.jsonReportPath(""))
+	if result.KeptReport != "" {
+		_, _ = fmt.Fprintf(output, "Kept the --all report %s: this run of one command is written beside it and does not replace it. Rerun --all to replace that report.\n", result.KeptReport)
+	}
 	_, _ = fmt.Fprintln(output, "Keep this JSON report and the HTML findings report after cleanup, including when validation fails.")
+	if standalone && !result.CheckOnly && result.Summary.FinalResponse != "" {
+		_, _ = fmt.Fprintf(output, "\nCoding agents: %s %s\nfinal_response:\n%s\n", onboard.FinalResponseInstruction, onboard.StandaloneVerdictInstruction(displayName(result.Framework)), strings.TrimRight(result.Summary.FinalResponse, "\n"))
+	}
 	if result.CheckOnly && result.ChecksPassed {
+		usagetelemetry.ObserveResult(output, "passed", "configuration_check", "")
 		return nil
 	}
 	if !result.Success {
+		if result.CheckOnly {
+			usagetelemetry.ObserveResult(output, "needs_input", "configuration_check", "configuration_check_failed")
+		} else {
+			usagetelemetry.ObserveResult(output, "validation_failed", "validation", "validation_incomplete")
+		}
 		return fmt.Errorf("validation is incomplete or found an unexpected difference; see %s", path)
 	}
+	usagetelemetry.ObserveResult(output, "passed", "validation", "")
 	return nil
 }
 
@@ -669,7 +848,7 @@ func tracerDescription(result validationResult) string {
 // The reason of the first real-suite run without coverage, or "".
 func missingRealCoverageReason(result validationResult) string {
 	for _, run := range result.Runs {
-		if run.Coverage != nil && run.Coverage.Status != "observed" {
+		if run.Coverage != nil && run.Coverage.Status != "observed" && run.Coverage.Status != "not applicable" {
 			return run.Coverage.Reason
 		}
 	}
@@ -681,7 +860,7 @@ func missingRealCoverage(result validationResult) bool {
 		return false
 	}
 	for _, run := range result.Runs {
-		if run.Coverage != nil && run.Coverage.Status != "observed" {
+		if run.Coverage != nil && run.Coverage.Status != "observed" && run.Coverage.Status != "not applicable" {
 			return true
 		}
 	}

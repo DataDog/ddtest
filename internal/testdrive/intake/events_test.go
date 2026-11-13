@@ -6,8 +6,11 @@
 package intake
 
 import (
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -35,6 +38,127 @@ func TestTestEventCountRecognizesOneTest(t *testing.T) {
 	count, err := server.TestEventCount()
 	require.NoError(t, err)
 	require.Equal(t, 1, count)
+}
+
+func TestEventsInheritCapabilitiesFromPayloadMetadata(t *testing.T) {
+	const capability = "_dd.library_capabilities.auto_test_retries"
+	payload, err := msgp.AppendIntf(nil, map[string]any{
+		"metadata": map[string]any{
+			"*":              map[string]any{"library_version": "1.2.3", capability: "0"},
+			"test":           map[string]any{capability: "1"},
+			"test_suite_end": map[string]any{"suite-only": "yes"},
+		},
+		"events": []any{
+			map[string]any{"type": "test", "content": map[string]any{"meta": map[string]any{"test.name": "inherited"}}},
+			map[string]any{"type": "test", "content": map[string]any{"meta": map[string]any{"test.name": "overridden", capability: "2"}}},
+			map[string]any{"type": "test_suite_end", "content": map[string]any{}},
+		},
+	})
+	require.NoError(t, err)
+	server := &Server{collectEvents: true, requests: []RawRequest{{Method: http.MethodPost, Path: constants.TestCycleURLPath, Body: payload}}}
+	facts, err := server.Facts()
+	require.NoError(t, err)
+	require.Len(t, facts.Events, 3)
+	require.Equal(t, "1", facts.Events[0].Tags[capability], "event type metadata overrides wildcard metadata")
+	require.Equal(t, "2", facts.Events[1].Tags[capability], "event metadata overrides shared metadata")
+	require.Equal(t, "0", facts.Events[2].Tags[capability], "test metadata does not leak into suites")
+	require.Equal(t, "1.2.3", facts.Events[0].Tags["library_version"])
+	require.NotContains(t, facts.Events[0].Tags, "suite-only")
+}
+
+func TestFactsRetainsOnlyNormalizedCapabilitiesBeforeDiscardingEvents(t *testing.T) {
+	const prefix = "_dd.library_capabilities."
+	payload, err := msgp.AppendIntf(nil, map[string]any{
+		"metadata": map[string]any{
+			"*": map[string]any{prefix + "auto_test_retries": "0"},
+			"test": map[string]any{
+				prefix + "auto_test_retries": "1", prefix + "test_management.quarantine": "2",
+				prefix + "test_management.disable": "PRIVATE_SECRET", prefix + "test_management.attempt_to_fix": "-1",
+			},
+		},
+		"events": []any{
+			map[string]any{"type": "test", "content": map[string]any{"meta": map[string]any{"test.name": "PRIVATE_CUSTOMER_TEST", prefix + "PRIVATE_FEATURE": "PRIVATE_SECRET"}}},
+			map[string]any{"type": "test", "content": map[string]any{"meta": map[string]any{prefix + "auto_test_retries": "0", prefix + "test_impact_analysis": "0"}}},
+			map[string]any{"type": "test_suite_end", "content": map[string]any{"meta": map[string]any{prefix + "early_flake_detection": "1"}}},
+		},
+	})
+	require.NoError(t, err)
+	for _, collect := range []bool{false, true} {
+		server := &Server{collectEvents: collect, requests: []RawRequest{{Method: http.MethodPost, Path: constants.TestCycleURLPath, Body: payload}}}
+		facts, err := server.Facts()
+		require.NoError(t, err)
+		require.Equal(t, map[string]string{
+			"auto_test_retries": "mixed", "test_impact_analysis": "unavailable", "test_management.quarantine": "available",
+			"test_management.disable": "unknown", "test_management.attempt_to_fix": "unknown",
+		}, facts.LibraryCapabilities)
+		require.NotContains(t, facts.LibraryCapabilities, "early_flake_detection", "suite-only advertisements are not test capabilities")
+		if collect {
+			require.Len(t, facts.Events, 3)
+		} else {
+			require.Empty(t, facts.Events, "ordinary runs still discard customer tags")
+		}
+		data, err := json.Marshal(facts.LibraryCapabilities)
+		require.NoError(t, err)
+		require.NotContains(t, string(data), "PRIVATE_")
+	}
+}
+
+func TestFactsReportsEffectiveVersionsAndObservedControlRequests(t *testing.T) {
+	payload, err := msgp.AppendIntf(nil, map[string]any{
+		"metadata": map[string]any{
+			"*":    map[string]any{"library_version": "6.20.0", "runtime.version": "22.14.0"},
+			"test": map[string]any{"test.framework_version": "30.1.2"},
+		},
+		"events": []any{map[string]any{"type": "test", "content": map[string]any{"meta": map[string]any{"library_version": "6.20.1"}}}},
+	})
+	require.NoError(t, err)
+	server := &Server{requests: []RawRequest{
+		{Method: http.MethodPost, Path: constants.SettingsURLPath},
+		{Method: http.MethodPost, Path: constants.KnownTestsURLPath},
+		{Method: http.MethodPost, Path: constants.TestManagementTestsURLPath},
+		{Method: http.MethodGet, Path: constants.SkippableTestsURLPath},
+		{Method: http.MethodPost, Path: constants.TestCycleURLPath, Body: payload},
+	}}
+	facts, err := server.Facts()
+	require.NoError(t, err)
+	require.True(t, facts.RequestsObserved)
+	require.Equal(t, []string{"6.20.1"}, facts.TracerVersions, "event overrides must not make the default look loaded")
+	require.Equal(t, []string{"30.1.2"}, facts.FrameworkVersions)
+	require.Equal(t, []string{"22.14.0"}, facts.RuntimeVersions)
+	require.Equal(t, 1, facts.SettingsRequests)
+	require.Equal(t, 1, facts.KnownTestsRequests)
+	require.Equal(t, 1, facts.ManagementRequests)
+	require.Zero(t, facts.SkippableRequests, "GET is not a tracer control request")
+	require.Empty(t, facts.Events, "ordinary runs must not retain customer event tags")
+	_, err = (&Server{requests: []RawRequest{{Method: http.MethodPost, Path: constants.TestCycleURLPath, Body: []byte("invalid")}}}).Facts()
+	require.Error(t, err)
+}
+
+func TestOrdinaryFactsAvoidsCopyingAllSharedTags(t *testing.T) {
+	shared := map[string]any{"runtime.version": "22.14.0", "library_version": "6.20.1"}
+	for i := range 256 {
+		shared[fmt.Sprintf("private.tag.%d", i)] = strings.Repeat("private-value", 8)
+	}
+	var events []any
+	for i := range 128 {
+		events = append(events, map[string]any{"type": "test", "content": map[string]any{"span_id": uint64(i + 1)}})
+	}
+	payload, err := msgp.AppendIntf(nil, map[string]any{"metadata": map[string]any{"*": shared}, "events": events})
+	require.NoError(t, err)
+	allocated := func(collect bool) int64 {
+		server := &Server{collectEvents: collect, requests: []RawRequest{{Method: http.MethodPost, Path: constants.TestCycleURLPath, Body: payload}}}
+		measurement := testing.Benchmark(func(b *testing.B) {
+			for range b.N {
+				if _, err := server.Facts(); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+		return measurement.AllocedBytesPerOp()
+	}
+	ordinary, probe := allocated(false), allocated(true)
+	t.Logf("ordinary facts: %d bytes/op; collected probe facts: %d bytes/op", ordinary, probe)
+	require.Less(t, ordinary*2, probe, "ordinary runs must avoid the full tag-copy allocation required by probe runs")
 }
 
 func TestTestReferencesReadReportFields(t *testing.T) {

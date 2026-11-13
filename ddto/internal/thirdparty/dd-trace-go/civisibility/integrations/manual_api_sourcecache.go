@@ -69,6 +69,10 @@ type namedFunctionMetadata struct {
 	bodyStartLine   int
 	endLine         int
 	testUnskippable bool
+	// noAutoRetry and preventFailureSuppression record the declaration's
+	// //dd:test.no_auto_retry and //dd:test.prevent_failure_suppression comments.
+	noAutoRetry               bool
+	preventFailureSuppression bool
 }
 
 // functionLiteralMetadata stores the source range for a function literal.
@@ -118,6 +122,19 @@ func TestFuncSourceMetadata(fn *runtime.Func) (startLine, endLine int, unskippab
 	unskippable = metadata.fileMetadata.parseOK &&
 		(metadata.fileMetadata.suiteUnskippable || metadata.resolution.functionUnskippable)
 	return
+}
+
+// TestFuncExclusions reports the automation exclusions that the comments on
+// fn's declaration request. Like //dd:test.unskippable, they are read from the
+// cached source that SetTestFunc also uses, so a missing or unparsable source
+// requests none. Function literals cannot carry them.
+func TestFuncExclusions(fn *runtime.Func) (noAutoRetry, preventFailureSuppression bool) {
+	metadata := loadSourceFunctionMetadata(fn)
+	declaration := metadata.resolution.matchedDeclaration
+	if !metadata.fileMetadata.parseOK || declaration == nil {
+		return false, false
+	}
+	return declaration.noAutoRetry, declaration.preventFailureSuppression
 }
 
 func isTestFuncModified(analyzer impactedTestClassifier, testName string, fn *runtime.Func) bool {
@@ -291,8 +308,10 @@ func parseSourceFileMetadata(absolutePath string) sourceFileMetadata {
 			}
 
 			function := namedFunctionMetadata{
-				declStartLine:   fset.Position(funcDecl.Pos()).Line,
-				testUnskippable: commentListContains(docComments, "//dd:test.unskippable"),
+				declStartLine:             fset.Position(funcDecl.Pos()).Line,
+				testUnskippable:           commentListContains(docComments, "//dd:test.unskippable"),
+				noAutoRetry:               commentListContains(docComments, "//dd:test.no_auto_retry"),
+				preventFailureSuppression: commentListContains(docComments, "//dd:test.prevent_failure_suppression"),
 			}
 			if funcDecl.Body != nil {
 				// Keep the same body-based range the old SetTestFunc implementation used for end-line resolution.

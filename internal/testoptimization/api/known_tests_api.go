@@ -89,11 +89,10 @@ func (c *transport) GetKnownTests() (*KnownTestsResponseData, error) {
 					Env:            c.environment,
 					RepositoryURL:  c.repositoryURL,
 					Configurations: c.testConfigurations,
+					// An empty page_info enables pagination on the first request.
+					PageInfo: &knownTestsRequestPageInfo{PageState: cursor},
 				},
 			},
-		}
-		if cursor != "" {
-			body.Data.Attributes.PageInfo = &knownTestsRequestPageInfo{PageState: cursor}
 		}
 
 		request := c.getPostRequestConfig(constants.KnownTestsURLPath, body)

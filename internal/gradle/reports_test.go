@@ -83,3 +83,9 @@ func TestTaskPath(t *testing.T) {
 	require.Equal(t, ":app:test", TaskPath(":app", "test"))
 	require.Equal(t, ":services:api:integrationTest", TaskPath(":services:api", "integrationTest"))
 }
+
+func TestBuildFailure(t *testing.T) {
+	output := "FAILURE: Build failed with an exception.\n\n* What went wrong:\nExecution failed for task ':app:licenseTest'.\n> License violations were found: DdtestValidationTest.java\n\n* Try:\n> Run with --stacktrace\n"
+	require.Equal(t, "Execution failed for task ':app:licenseTest'. > License violations were found: DdtestValidationTest.java", BuildFailure(output))
+	require.Empty(t, BuildFailure("BUILD SUCCESSFUL in 3s\n"))
+}

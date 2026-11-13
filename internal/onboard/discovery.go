@@ -13,31 +13,6 @@ type workflowDiscovery struct {
 	Workflows, Configured, Unresolved, Review []string
 }
 
-type runDefaults struct {
-	WorkingDirectory string `yaml:"working-directory"`
-	Shell            string `yaml:"shell"`
-}
-
-type ciDefaults struct {
-	Run runDefaults `yaml:"run"`
-}
-
-type ciWorkflow struct {
-	On       any `yaml:"on"`
-	Path     string
-	Defaults ciDefaults            `yaml:"defaults"`
-	Env      map[string]string     `yaml:"env"`
-	Jobs     map[string]runtimeJob `yaml:"jobs"`
-	// Files are the other repository files the provider read for this
-	// workflow, such as included configuration.
-	Files []string `yaml:"-"`
-	// Review lists configuration the provider read as outside every test
-	// path, reported without blocking.
-	Review []string `yaml:"-"`
-	// Caveats summarize that configuration, one line per group.
-	Caveats []string `yaml:"-"`
-}
-
 func findWorkflows(root, language, name string) (workflowDiscovery, error) {
 	var result workflowDiscovery
 	workflows, err := readWorkflows(root)
@@ -62,7 +37,7 @@ func findWorkflows(root, language, name string) (workflowDiscovery, error) {
 				}
 				resolution := resolveTestStep(root, workflow, job, step, language, name)
 				if resolution.Review {
-					result.Review = append(result.Review, fmt.Sprintf("%s / %s / step %d (%s): %s", workflow.Path, jobName, stepNumber(step, i), step.Run, resolution.Reason))
+					result.Review = append(result.Review, fmt.Sprintf("%s / %s / step %d (%s): %s", workflow.Path, jobName, stepNumber(step, i), StepCommandLabel(step.Run), resolution.Reason))
 					continue
 				}
 				if resolution.Matched || resolution.Reason != "" {
@@ -70,7 +45,7 @@ func findWorkflows(root, language, name string) (workflowDiscovery, error) {
 					configured = configured && hasAction && resolution.Reason == ""
 				}
 				if resolution.Reason != "" {
-					result.Unresolved = append(result.Unresolved, fmt.Sprintf("%s / %s / step %d (%s): %s", workflow.Path, jobName, stepNumber(step, i), step.Run, resolution.Reason))
+					result.Unresolved = append(result.Unresolved, fmt.Sprintf("%s / %s / step %d (%s): %s", workflow.Path, jobName, stepNumber(step, i), StepCommandLabel(step.Run), resolution.Reason))
 				}
 			}
 		}

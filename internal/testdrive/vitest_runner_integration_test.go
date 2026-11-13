@@ -9,9 +9,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/DataDog/ddtest/internal/testutil"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -25,8 +27,7 @@ func TestPublicVitestRunnerTestdrive(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
-	binary := filepath.Join(t.TempDir(), "ddtest-under-test")
-	integrationCommand(t, ctx, "../..", nil, "go", "build", "-o", binary, ".")
+	binary := testutil.DDTest(t)
 	root := t.TempDir()
 	integrationCommand(t, ctx, root, nil, "git", "init", "-q")
 	vitest, tracer := os.Getenv("DDTEST_VITEST_VERSION"), os.Getenv("DDTEST_VITEST_TRACER_VERSION")
@@ -84,6 +85,7 @@ func TestPublicVitestRunnerTestdrive(t *testing.T) {
 	}
 	originalConfig, err := os.ReadFile(filepath.Join(root, "vitest.config.js"))
 	require.NoError(t, err)
+	var allReport []byte
 	for _, mode := range []struct {
 		name                   string
 		args                   []string
@@ -145,8 +147,21 @@ func TestPublicVitestRunnerTestdrive(t *testing.T) {
 			require.NoError(t, err, string(output))
 			require.Contains(t, string(output), "Open report:")
 			t.Log(string(output))
-			data, err := os.ReadFile(filepath.Join(root, ".testoptimization/testdrive.json"))
+			// A run of one command after an --all run is written beside that
+			// report, which it leaves in place for --report.
+			reportName, htmlName := "testdrive.json", "report.html"
+			if !slices.Contains(mode.args, "--all") {
+				reportName, htmlName = "testdrive-command.json", "report-command.html"
+				kept, err := os.ReadFile(filepath.Join(root, ".testoptimization/testdrive.json"))
+				require.NoError(t, err)
+				require.Equal(t, string(allReport), string(kept), "a run of one command must not replace the --all report")
+				require.Contains(t, string(output), "Results JSON: .testoptimization/testdrive-command.json")
+			}
+			data, err := os.ReadFile(filepath.Join(root, ".testoptimization", reportName))
 			require.NoError(t, err)
+			if reportName == "testdrive.json" {
+				allReport = data
+			}
 			var report struct {
 				Error   string
 				Summary struct {
@@ -173,7 +188,7 @@ func TestPublicVitestRunnerTestdrive(t *testing.T) {
 			require.Equal(t, "passed", report.Cleanup.Status)
 			// Runner modes execute in a disposable copy; the report must outlive it.
 			require.True(t, report.HTMLReportCurrent)
-			require.FileExists(t, filepath.Join(root, ".testoptimization/report.html"))
+			require.FileExists(t, filepath.Join(root, ".testoptimization", htmlName))
 			require.Equal(t, "PASSED", report.Summary.ExecutedValidation.Status, string(data))
 			require.GreaterOrEqual(t, len(report.Runs), 2)
 			paths := map[string]bool{}

@@ -28,6 +28,8 @@ jobs:
           go-version-file: go.mod
 
       - name: Build binaries
+        env:
+          DDTEST_CLIENT_PUBLIC_TOKEN: ${{ secrets.DDTEST_CLIENT_PUBLIC_TOKEN }}
         run: |
           SHORT_SHA=$(git rev-parse --short HEAD)
           echo "VERSION=pre-release-$SHORT_SHA" >> "$GITHUB_ENV"

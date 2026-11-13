@@ -22,9 +22,12 @@ func TestReleaseCommit(t *testing.T) {
 	}
 	git := func(dir string, args ...string) string {
 		t.Helper()
-		out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).Output()
+		command := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		var diagnostic bytes.Buffer
+		command.Stderr = &diagnostic
+		out, err := command.Output()
 		if err != nil {
-			t.Fatalf("git %s: %v", strings.Join(args, " "), err)
+			t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, diagnostic.String())
 		}
 		return strings.TrimSpace(string(out))
 	}

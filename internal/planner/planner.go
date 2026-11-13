@@ -127,6 +127,7 @@ type testFileDurationSource string
 const (
 	testFileDurationSourceKnown   testFileDurationSource = "known"
 	testFileDurationSourceDefault testFileDurationSource = "default"
+	testFileDurationSourceMixed   testFileDurationSource = "mixed"
 )
 
 type testSuiteAggregate struct {
@@ -255,19 +256,22 @@ func (tp *TestPlanner) Plan(ctx context.Context) error {
 		return errcode.WithCode(errcode.PlanParallelRunnersWriteFailed, fmt.Errorf("failed to write parallel runners: %w", err))
 	}
 
+	if err := tp.CreateTestSplits(tp.testFileWeights, parallelRunners, constants.TestFilesOutputPath); err != nil {
+		return errcode.WithCode(errcode.PlanTestSplitsWriteFailed, fmt.Errorf("failed to create test splits: %w", err))
+	}
+
 	if ciProvider, err := tp.ciProviderDetector.DetectCIProvider(); err == nil {
 		slog.Debug("CI provider detected, configuring with parallel runners",
 			"provider", ciProvider.Name(), "parallelRunners", parallelRunners)
 
-		if err := ciProvider.Configure(parallelRunners); err != nil {
-			slog.Warn("Failed to configure CI provider", "provider", ciProvider.Name(), "error", err)
+		if err := ciProvider.Configure(environment.CIPlan{
+			ParallelRunners: parallelRunners,
+			HasTests:        len(tp.testFileWeights) > 0,
+		}); err != nil {
+			return errcode.WithCode(errcode.PlanMetadataWriteFailed, fmt.Errorf("failed to configure CI provider %s: %w", ciProvider.Name(), err))
 		}
 	} else {
 		slog.Info("No CI provider detected, running tests without CI integration", "error", err)
-	}
-
-	if err := tp.CreateTestSplits(tp.testFileWeights, parallelRunners, constants.TestFilesOutputPath); err != nil {
-		return errcode.WithCode(errcode.PlanTestSplitsWriteFailed, fmt.Errorf("failed to create test splits: %w", err))
 	}
 
 	if settings.GetReportEnabled() {
@@ -561,10 +565,14 @@ func completeRuntimeTags(tags map[string]string) bool {
 func (tp *TestPlanner) recordPlanningTelemetry(selection splitSelection) {
 	backendDurationTestFiles := 0
 	defaultDurationTestFiles := 0
+	mixedDurationTestFiles := 0
 	for _, source := range tp.testFileDurationSources {
-		if source == testFileDurationSourceKnown {
+		switch source {
+		case testFileDurationSourceKnown:
 			backendDurationTestFiles++
-		} else {
+		case testFileDurationSourceMixed:
+			mixedDurationTestFiles++
+		default:
 			defaultDurationTestFiles++
 		}
 	}
@@ -589,6 +597,7 @@ func (tp *TestPlanner) recordPlanningTelemetry(selection splitSelection) {
 		FullySkippedTestFiles:     fullySkippedTestFiles,
 		BackendDurationTestFiles:  backendDurationTestFiles,
 		DefaultDurationTestFiles:  defaultDurationTestFiles,
+		MixedDurationTestFiles:    mixedDurationTestFiles,
 		EstimatedTimeSavedPercent: tp.skippablePercentage,
 		ParallelRunners:           selection.selected.parallelRunners,
 		ExpectedFullRuntime:       tp.expectedFullDuration(),
@@ -705,7 +714,6 @@ func (tp *TestPlanner) estimateDiscoveredSuiteDurations() {
 }
 
 func (tp *TestPlanner) addDurationDataForFastDiscoveryFallback() {
-	seenSourceFiles := make(map[string]struct{})
 	for module, suites := range tp.testSuiteDurations {
 		for suite, suiteInfo := range suites {
 			key := testSuiteKey{Module: module, Suite: suite}
@@ -722,15 +730,11 @@ func (tp *TestPlanner) addDurationDataForFastDiscoveryFallback() {
 			}
 
 			duration, ok := parseDurationP50(suiteInfo)
+			source := testFileDurationSourceKnown
 			if !ok {
-				continue
-			}
-
-			// Fast discovery only sees files, not test cases. For suite-level TIA we
-			// assume a single backend suite maps to a single source file, so one
-			// duration-backed aggregate per source file is enough and avoids double-counting.
-			if _, ok := seenSourceFiles[sourceFile]; ok {
-				continue
+				// Missing timing must not hide a runnable sibling suite.
+				duration = float64(time.Second)
+				source = testFileDurationSourceDefault
 			}
 
 			tp.suiteAggregates[key] = testSuiteAggregate{
@@ -739,11 +743,10 @@ func (tp *TestPlanner) addDurationDataForFastDiscoveryFallback() {
 				SourceFile:        sourceFile,
 				TotalDuration:     duration,
 				EstimatedDuration: duration,
-				DurationSource:    testFileDurationSourceKnown,
+				DurationSource:    source,
 				NumTests:          1,
 				NumTestsSkipped:   0,
 			}
-			seenSourceFiles[sourceFile] = struct{}{}
 		}
 	}
 }
@@ -873,7 +876,7 @@ func (tp *TestPlanner) estimateTestFileWeight(testFile string) (testFileWeightEs
 			continue
 		}
 		hasRunnableSuite = true
-		source = aggregate.DurationSource
+		source = mergeDurationSources(source, aggregate.DurationSource)
 		duration += aggregate.EstimatedDuration
 	}
 	if !hasRunnableSuite {
@@ -900,4 +903,19 @@ func (tp *TestPlanner) estimateTestFileWeight(testFile string) (testFileWeightEs
 		weight: weight,
 		source: source,
 	}, true
+}
+
+// mergeDurationSources folds only runnable contributions; the empty accumulator
+// is distinct from an unspecified contribution, which uses the default estimate.
+func mergeDurationSources(current, next testFileDurationSource) testFileDurationSource {
+	if next == "" {
+		next = testFileDurationSourceDefault
+	}
+	if current == "" {
+		return next
+	}
+	if current != next {
+		return testFileDurationSourceMixed
+	}
+	return current
 }

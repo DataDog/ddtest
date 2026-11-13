@@ -36,12 +36,19 @@ var rubyMinitestForkInstructions string
 //go:embed instructions/ruby_agent.md
 var rubyAgentInstructions string
 
+// rubyExampleRelease is an exact datadog-ci release for messages.
+const rubyExampleRelease = "1.42.0"
+
 // rubyDiscovery onboards RSpec and Minitest with datadog-ci.
 type rubyDiscovery struct{}
 
 func (rubyDiscovery) name() string { return "ruby" }
 
+func (rubyDiscovery) displayName() string { return "Ruby" }
+
 func (rubyDiscovery) actionLanguage() string { return "ruby" }
+
+func (rubyDiscovery) runtimeSetupAction() string { return "ruby/setup-ruby" }
 
 func (rubyDiscovery) bootstrap(string) string { return rubyBootstrap }
 
@@ -87,6 +94,22 @@ func (rubyDiscovery) ciSetupConfigured(root, framework, site string) bool {
 	return instrumented
 }
 
+// RubyCIHandWritten reports whether every instrumented CI entry of
+// framework sets up datadog-ci by hand, with at least one such entry.
+func RubyCIHandWritten(root, framework string) bool {
+	handWritten := false
+	for _, job := range RubyCIConfiguration(root, framework).Jobs {
+		if job.Status == "excluded" {
+			continue
+		}
+		if job.handWritten == nil {
+			return false
+		}
+		handWritten = true
+	}
+	return handWritten
+}
+
 // exactRubyRelease is a single RubyGems release, never a requirement or "latest".
 var exactRubyRelease = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(?:\.[0-9A-Za-z]+)*$`)
 
@@ -95,6 +118,9 @@ var exactRubyRelease = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(?:\.[0-9A-Za-
 // release, an API key, an exact tracer release and the selected site (empty:
 // not selected). Empty when it is.
 func rubyActionProblem(job RuntimeFinding, site string) string {
+	if job.handWritten != nil {
+		return job.handWritten.problem()
+	}
 	provider := job.setupProvider
 	if provider == nil {
 		provider = activeOrDefaultCIProvider()
@@ -105,7 +131,7 @@ func rubyActionProblem(job RuntimeFinding, site string) string {
 	}
 	inputs["ruby-tracer-version"] = job.TracerRequested
 	supported := job.setupSupported || provider.sharedSyntax() && setupActionSupported(job.Action)
-	return provider.setupProblem(ciSetup{Reference: job.Action, Pinned: true, Supported: supported, Problem: job.setupReadProblem, Inputs: inputs}, "ruby-tracer-version", exactRubyRelease.MatchString, "1.42.0", site)
+	return provider.setupProblem(ciSetup{Reference: job.Action, Pinned: true, Supported: supported, Problem: job.setupReadProblem, Inputs: inputs}, "ruby-tracer-version", exactRubyRelease.MatchString, rubyExampleRelease, site)
 }
 
 func (rubyDiscovery) agentInstructions(framework, site string) string {
@@ -113,8 +139,8 @@ func (rubyDiscovery) agentInstructions(framework, site string) string {
 	if site != "" && site != defaultDatadogSite {
 		siteInput = ", `site: " + site + "` (the selected Datadog site)"
 	}
-	text := strings.NewReplacer("__FRAMEWORK__", framework, "__SITE_INPUT__", siteInput, " and from gem packaging.", rubyGemPackaging(".")).Replace(rubyAgentInstructions)
-	return withMinitestForkSetup(text, framework)
+	text := strings.NewReplacer("__FRAMEWORK__", framework, "__TRACER_EXAMPLE__", rubyExampleRelease, "__SITE_INPUT__", siteInput, " and from gem packaging.", rubyGemPackaging(".")).Replace(rubyAgentInstructions)
+	return withMinitestForkSetup(".", text, framework)
 }
 
 func (rubyDiscovery) frameworks() []string { return []string{"rspec", "minitest"} }
@@ -174,13 +200,13 @@ func (rubyDiscovery) variantValue(workflow ciWorkflow, job runtimeJob, step runt
 func (rubyDiscovery) skipsUnsupportedNode() bool { return false }
 
 func (rubyDiscovery) instructions(framework string) string {
-	return withMinitestForkSetup(strings.ReplaceAll(rubyInstructions, "__FRAMEWORK__", framework), framework)
+	return withMinitestForkSetup(".", strings.NewReplacer("__FRAMEWORK__", framework, "__TRACER_EXAMPLE__", rubyExampleRelease).Replace(rubyInstructions), framework)
 }
 
 // withMinitestForkSetup inserts the forked-test transport setup after the
-// heading of Minitest instructions.
-func withMinitestForkSetup(text, framework string) string {
-	if framework != "minitest" {
+// heading of Minitest instructions for a repository whose tests fork.
+func withMinitestForkSetup(root, text, framework string) string {
+	if !rubyForkSetupNeeded(root, framework) {
 		return text
 	}
 	heading, rest, _ := strings.Cut(text, "\n\n")
@@ -206,16 +232,25 @@ func (rubyDiscovery) ciSetupRequest(root, framework, site string, terms ciSetupT
 	}
 	request := ciSetupRequest{Language: "ruby", Site: site, TracerInput: "ruby-tracer-version", TracerVersion: "<exact datadog-ci release>"}
 	request.Notes = []string{
-		"Replace <exact datadog-ci release> with an exact datadog-ci release compatible with every instrumented Ruby, such as 1.42.0; when the bundle already locks datadog-ci, use that release. Keep the existing Gemfile, lockfile, Ruby images, bundle exec/binstub/Rake/Rails entry points and test arguments: the " + terms.Installer + " adds datadog-ci to the CI bundle itself, so do not edit the Gemfile. In a mixed RSpec/Minitest repository, scope this change to " + framework + ".",
+		"Replace <exact datadog-ci release> with an exact datadog-ci release compatible with every instrumented Ruby, such as " + rubyExampleRelease + "; when the bundle already locks datadog-ci, use that release. Keep the existing Gemfile, lockfile, Ruby images, bundle exec/binstub/Rake/Rails entry points and test arguments: the " + terms.Installer + " adds datadog-ci to the CI bundle itself, so do not edit the Gemfile. In a mixed RSpec/Minitest repository, scope this change to " + framework + ".",
 		"The " + terms.Installer + " replaces RUBYOPT with -rbundler/setup -rdatadog/ci/auto_instrument. When the job sets RUBYOPT, re-add those options right after " + terms.Entry + " with " + terms.Persist(`export RUBYOPT="$RUBYOPT <existing options>"`) + "; never replace RUBYOPT after it. Set BUNDLE_GEMFILE in " + terms.Variables + " (one per matrix entry where the matrix selects it), so datadog-ci joins the bundle the tests use.",
 		rubyGemsNote(root, framework, terms),
 		rubyRakeOptionsNote(root),
 		setupImageNote(root, "ruby", framework),
+		handWrittenSetupNote(root, "ruby", framework, site),
 		"If a job or matrix entry runs a Ruby the tracer cannot instrument (head, JRuby, TruffleRuby), keep its tests running uninstrumented in a job without " + terms.Entry + "; ddtest reports such jobs as excluded. To split a shared matrix, exclude those entries from the instrumented job " + terms.MatrixExclusion + " and run them in that separate job. Report each exclusion and its reason; do not drop entries, guard the tests or change Ruby versions to obtain a pass. At least one compatible instrumented job is required.",
 		"Exclude .testoptimization/ from Git (add /.testoptimization/ to the repository .gitignore)" + rubyGemPackaging(root),
 	}
+	if terms.Beside != "" {
+		// The other mechanism's bundle add would change the release.
+		request.Notes[0] = "The build also runs " + terms.Beside + ", for Ruby in the same workspace, which runs bundle add datadog-ci there unless Gemfile.lock pins it, and the " + terms.Installer + " then uses the bundle's release: pin datadog-ci exactly in the Gemfile and Gemfile.lock, as the instructions for those stages show, and replace <exact datadog-ci release> with that release. Keep the existing Ruby images, bundle exec/binstub/Rake/Rails entry points and test arguments. In a mixed RSpec/Minitest repository, scope this change to " + framework + "."
+		if locked := rubyLockedTracer(root); locked != "" {
+			request.TracerVersion = locked
+			request.Notes[0] = "Gemfile.lock pins datadog-ci " + locked + ", which the " + terms.Installer + " uses as is, and the build also runs " + terms.Beside + ": keep the pin, and keep the Gemfile, Gemfile.lock, Ruby images, bundle exec/binstub/Rake/Rails entry points and test arguments unchanged. In a mixed RSpec/Minitest repository, scope this change to " + framework + "."
+		}
+	}
 	request.Notes = slices.DeleteFunc(request.Notes, func(note string) bool { return note == "" })
-	if framework == "minitest" {
+	if rubyForkSetupNeeded(root, framework) {
 		request.Notes = append(request.Notes, rubyShellForkSetup(terms))
 	}
 	return request
@@ -224,11 +259,12 @@ func (rubyDiscovery) ciSetupRequest(root, framework, site string, terms ciSetupT
 // rubyPluginSetupRequest is the Ruby part of a CI server plugin's setup: the
 // plugin uses the datadog-ci the root bundle pins, so the bundle pins it.
 func rubyPluginSetupRequest(root, framework, site string, terms ciSetupTerms) ciSetupRequest {
-	request := ciSetupRequest{Language: "ruby", Site: site}
-	pin := "Pin datadog-ci in the bundle: add gem \"datadog-ci\", \"<exact datadog-ci release>\", group: :test to the Gemfile at the checkout root (in a group the tests load; keep every other line) and run bundle lock, so Gemfile.lock pins it, then commit both. Use an exact release compatible with every instrumented Ruby, such as 1.42.0; when Gemfile.lock already locks datadog-ci, keep that release. The " + terms.Installer + " uses a datadog-ci the bundle already has; without one it runs bundle config set frozen false and bundle add datadog-ci on the agent, installing the latest release, which ddtest cannot validate."
+	request := ciSetupRequest{Language: "ruby", Site: site, Service: rubyGemspecName(root)}
+	pin := "Pin datadog-ci in the bundle: add gem \"datadog-ci\", \"<exact datadog-ci release>\", group: :test to the Gemfile at the checkout root (in a group the tests load; keep every other line) and run bundle lock, so Gemfile.lock pins it, then commit both. Use an exact release compatible with every instrumented Ruby, such as " + rubyExampleRelease + "; when Gemfile.lock already locks datadog-ci, keep that release. The " + terms.Installer + " uses a datadog-ci the bundle already has; without one it runs bundle config set frozen false and bundle add datadog-ci on the agent, installing the latest release, which ddtest cannot validate."
 	if locked := rubyLockedTracer(root); locked != "" {
 		pin = "The Gemfile.lock at the checkout root already pins datadog-ci " + locked + ", which the " + terms.Installer + " uses as is and ddtest validates; keep it pinned, and keep the Gemfile and Gemfile.lock unchanged."
 	}
+	pin += " With the pin, the " + terms.Installer + " finds datadog-ci only once bundle install has run in the build: run bundle install in a step before the tests. The steps before it get no Datadog variables, and for each the " + terms.Installer + " logs ERROR: [datadog] with a stack trace and still runs bundle config set frozen false; tell the user these errors are expected."
 	request.Notes = []string{
 		pin,
 		"The " + terms.Installer + " configures datadog-ci from the checkout root with the build agent's default ruby and bundle, so keep the Gemfile at the checkout root and run the " + framework + " tests from there: not inside dir(…), and without BUNDLE_GEMFILE. Keep the existing bundle exec/binstub/Rake/Rails entry points and test arguments.",
@@ -236,18 +272,71 @@ func rubyPluginSetupRequest(root, framework, site string, terms ciSetupTerms) ci
 		"The " + terms.Installer + " refuses Ruby older than 2.7 and RubyGems older than 3.3.22: on agents with Ruby 2.7 or 3.0, run gem update --system 3.4.22 on the agent (or in an earlier step) before the tests.",
 		rubyRakeOptionsNote(root),
 		setupUnsupportedNote(root, "ruby", framework),
-		"If a stage runs a Ruby the tracer cannot instrument (head, JRuby, TruffleRuby), tell the user: the " + terms.Installer + " instruments every stage of the pipeline, so it cannot leave that stage out. Report it; do not drop stages or change Ruby versions to obtain a pass.",
+		handWrittenSetupNote(root, "ruby", framework, site),
+		"If a stage runs a Ruby the tracer cannot instrument (head, JRuby, TruffleRuby), tell the user: the " + terms.Installer + " instruments every stage in its option's scope, so that stage stays out of it only when the option is in the stages' own options instead of the pipeline's. Report it; do not drop stages or change Ruby versions to obtain a pass.",
 		"Exclude .testoptimization/ from Git (add /.testoptimization/ to the repository .gitignore)" + rubyGemPackaging(root),
 	}
 	request.Notes = slices.DeleteFunc(request.Notes, func(note string) bool { return note == "" })
-	if framework == "minitest" {
+	if rubyForkSetupNeeded(root, framework) {
 		request.Notes = append(request.Notes, rubyShellForkSetup(terms))
 	}
 	return request
 }
 
-// Agents apply Ruby setup by hand on every provider.
+// rubyGemspecName is the gem name the only gemspec at the checkout root
+// sets literally, or empty.
+func rubyGemspecName(root string) string {
+	specs, _ := filepath.Glob(filepath.Join(root, "*.gemspec"))
+	if len(specs) != 1 {
+		return ""
+	}
+	data, err := os.ReadFile(specs[0])
+	if err != nil {
+		return ""
+	}
+	if match := rubyGemspecNameAssignment.FindSubmatch(data); match != nil {
+		return string(match[1])
+	}
+	return ""
+}
+
+// rubyGemspecNameAssignment is a gemspec's literal name assignment.
+var rubyGemspecNameAssignment = regexp.MustCompile(`(?m)^\s*\w+\.name\s*=\s*["']([A-Za-z0-9_.-]+)["']`)
+
+// Agents apply Ruby setup by hand on every provider; where the provider's
+// setup is a plugin, onboard --apply enables it (see
+// providerWritesPluginSetup) and the rest stays the agent's.
 func (rubyDiscovery) automaticProviderSetup(string) bool { return false }
+
+// rubyForkIsolation is Rails' test isolation, which runs each test in a fork
+// that ends with exit!, skipping the tracer's asynchronous delivery. Rails
+// parallel workers and Minitest's threads exit normally and need no setup.
+var rubyForkIsolation = regexp.MustCompile(`\bTesting::Isolation\b|active_support/testing/isolation`)
+
+// rubyForkSetupNeeded reports whether the Minitest fork setup applies: a Ruby
+// file below root, outside dependencies, uses rubyForkIsolation.
+func rubyForkSetupNeeded(root, framework string) bool {
+	if framework != "minitest" {
+		return false
+	}
+	found := false
+	_ = filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		switch {
+		case err != nil:
+		case entry.IsDir():
+			if path != root && (strings.HasPrefix(entry.Name(), ".") || slices.Contains([]string{"vendor", "node_modules", "tmp", "log"}, entry.Name())) {
+				return filepath.SkipDir
+			}
+		case strings.HasSuffix(entry.Name(), ".rb"):
+			if data, readErr := os.ReadFile(path); readErr == nil && rubyForkIsolation.Match(data) {
+				found = true
+				return filepath.SkipAll
+			}
+		}
+		return nil
+	})
+	return found
+}
 
 // rubyShellForkSetup is the Minitest fork setup for a setup that runs in the
 // job's shell: the initializer extends the exported RUBYOPT after it.
@@ -278,8 +367,8 @@ func (rubyDiscovery) unsupportedImage(image string) string {
 }
 
 // Its own step rules decide which uninstrumented commands are outside scope.
-func (rubyDiscovery) outsideFrameworkJob(string, ciWorkflow, runtimeJob, map[string]any, string) bool {
-	return false
+func (rubyDiscovery) outsideFrameworkJob(string, ciWorkflow, runtimeJob, map[string]any, string) (bool, []string) {
+	return false, nil
 }
 
 // rubyGemsNote names the CI Ruby images whose RubyGems is older than the
@@ -430,8 +519,24 @@ func rubyGemspecAllowlist(gemspec string) bool {
 	return len(paths) > 0
 }
 
+// The shared scan follows this language's package and repository scripts.
+func (rubyDiscovery) stepMayStartTests(string, ciWorkflow, runtimeJob, runtimeStep) (bool, bool) {
+	return false, false
+}
+
+func (rubyDiscovery) preloadVariable(name string) bool { return name == "RUBYOPT" }
+
+// The Ruby CI check reads hand-written datadog-ci setups (see
+// RubyCIConfiguration).
+func (rubyDiscovery) validatesHandWrittenSetup() bool { return true }
+
 func (rubyDiscovery) runtimeVariable(name string) bool {
 	return slices.Contains([]string{"RUBYOPT", "RUBYLIB", "GEM_HOME", "GEM_PATH"}, name) || strings.HasPrefix(name, "BUNDLE_")
+}
+
+// Ruby, Bundler, RubyGems, RSpec and Minitest read these.
+func (rubyDiscovery) toolVariable(name string) bool {
+	return slices.Contains([]string{"SPEC_OPTS", "TESTOPTS", "TEST", "TESTS", "SEED"}, name) || slices.ContainsFunc([]string{"RUBY", "BUNDLE_", "GEM_"}, func(prefix string) bool { return strings.HasPrefix(name, prefix) })
 }
 
 func (rubyDiscovery) cacheVariable(name string) bool {
@@ -533,12 +638,20 @@ func rubyShellSelection(words []string) (version, versionFile string, ok bool) {
 
 func (rubyDiscovery) statedRuntime() *statedRuntime { return rubyStatedRuntime }
 
+// The plugin has no setting for this language's tracer release.
+func (rubyDiscovery) ciPluginTracerRelease(map[string]string) (string, bool) { return "", false }
+
 func (rubyDiscovery) ciPluginLanguage() string { return "RUBY" }
 
 // The Datadog Jenkins plugin replaces RUBYOPT with the datadog-ci preload,
 // as the installer does.
 // The Datadog Jenkins plugin replaces RUBYOPT.
 func (rubyDiscovery) ciPluginComposes(string) string { return "" }
+
+// Ruby's setup needs no command after it in the test's shell.
+func (rubyDiscovery) ciShellAfter(ciWorkflow, runtimeJob, runtimeStep, string, commandResolution) (bool, string) {
+	return false, ""
+}
 
 // Ruby version managers: rbenv, rvm, chruby, and sourcing the scripts that
 // load RVM or chruby.
@@ -553,6 +666,21 @@ func (rubyDiscovery) selectsShellRuntime(words []string) bool {
 		return len(words) > 1 && slices.Contains([]string{"rvm", "rvm.sh", "chruby.sh", "auto.sh"}, path.Base(words[1]))
 	}
 	return false
+}
+
+// ciPluginContainerEffect: a real Jenkins run showed the plugin's RUBYOPT
+// reaching docker.image(…).inside steps.
+func (rubyDiscovery) ciPluginContainerEffect() string {
+	return "for Ruby, the plugin's RUBYOPT (" + rubyInstallerPreload + ") makes every Ruby process in the container fail to start, bundle install and bundle exec included, which fails the build, because the plugin adds datadog-ci to the agent's gems, not the container's; with datadog-ci pinned in Gemfile.lock, the plugin's check on the agent never passes, so the container gets no variables and the tests run untraced"
+}
+
+// lockedTracer is the datadog-ci release Gemfile.lock pins, which the
+// installer uses as is.
+func (rubyDiscovery) lockedTracer(root string) string { return rubyLockedTracer(root) }
+
+// ciPluginReset removes the plugin's RUBYOPT, which replaces the step's.
+func (rubyDiscovery) ciPluginReset() string {
+	return `if [ "${RUBYOPT:-}" = "` + rubyInstallerPreload + `" ]; then unset RUBYOPT; fi`
 }
 
 func (rubyDiscovery) ciPluginExports(map[string]string) (map[string]string, map[string]string) {
@@ -579,13 +707,55 @@ func rubyTestStep(root string, workflow ciWorkflow, job runtimeJob, step runtime
 
 // rubyImageSelection is the Ruby version or engine a job's image selects, or
 // a Ruby image's floating tag (latest, current, or none): that image's runtime
-// is not the user's to state.
+// is not the user's to state, unless the job's agent keeps the release the
+// tag selects (FloatingTagStated).
 func rubyImageSelection(job runtimeJob) string {
 	if version, engine := rubyImageRuntime(job.Image); version+engine != "" {
 		return version + engine
 	}
-	if match := rubyImage.FindStringSubmatch(withImplicitTag(job.Image)); match != nil {
+	if match := rubyImage.FindStringSubmatch(withImplicitTag(mirroredImage(job.Image))); match != nil && !job.FloatingTagStated {
 		return match[2]
 	}
 	return ""
 }
+
+// rubyCheckTools never start a test runner: linters, formatters, audits and
+// documentation tools.
+var rubyCheckTools = []string{"rubocop", "standardrb", "brakeman", "bundle-audit", "bundler-audit", "reek", "rufo", "erb_lint", "erblint", "yard", "yardoc", "rdoc"}
+
+// Bundler subcommands that only manage the bundle.
+var rubyBundleSubcommands = []string{"install", "config", "update", "lock", "package", "cache", "check", "binstubs", "clean", "outdated", "add", "remove", "platform", "list", "info", "show", "doctor", "version", "--version", "-v"}
+
+// Ruby's tools: gem exec and bundle exec run an executable; gem and bundle
+// otherwise manage gems.
+func (rubyDiscovery) checkTool(_, _ string, words []string) (bool, bool) {
+	name := filepath.Base(words[0])
+	switch {
+	case slices.Contains(rubyCheckTools, name):
+		return false, true
+	case name == "gem":
+		return len(words) > 1 && words[1] == "exec", true
+	case name == "bundle":
+		return len(words) > 1 && !slices.Contains(rubyBundleSubcommands, words[1]), true
+	}
+	return false, false
+}
+
+func (rubyDiscovery) ciStepVariables(string) map[string]string { return nil }
+
+func (rubyDiscovery) keepsHandWrittenJobs() bool { return false }
+
+// The fallback setup (see ciFallbackLanguage) does what the official
+// installer does for Ruby, which downloads nothing itself: it adds datadog-ci
+// to the bundle unless the bundle has it, and replaces RUBYOPT.
+func (rubyDiscovery) ciFallbackInstall(string) (install, exports string) {
+	return `{ bundle info datadog-ci >/dev/null 2>&1 || { bundle config set frozen false >&2 && bundle add datadog-ci -v "$DD_TRACER_VERSION_RUBY" >&2; }; }`,
+		`RUBYOPT="` + rubyInstallerPreload + `"`
+}
+
+func (rubyDiscovery) ciFallbackTool() string { return "Bundler" }
+
+// Ruby images carry Bundler.
+func (rubyDiscovery) ciFallbackUnavailable(string) string { return "" }
+
+func (rubyDiscovery) scriptInterpreter(name string) bool { return name == "ruby" }

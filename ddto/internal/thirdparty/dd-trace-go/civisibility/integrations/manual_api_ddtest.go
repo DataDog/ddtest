@@ -387,6 +387,14 @@ func (t *tslvTest) SetTestFunc(fn *runtime.Func) {
 			telemetry.ITRUnskippable(telemetry.TestEventType)
 			t.setContextValue(constants.TestUnskippable, true)
 		}
+		if declaration := resolution.matchedDeclaration; declaration != nil {
+			if declaration.noAutoRetry {
+				t.SetTag(constants.TestNoAutoRetry, "true")
+			}
+			if declaration.preventFailureSuppression {
+				t.SetTag(constants.TestPreventFailureSuppression, "true")
+			}
+		}
 
 		// if impacted tests analyzer was loaded, we run it
 		if analyzer := GetImpactedTestsAnalyzer(); analyzer != nil {

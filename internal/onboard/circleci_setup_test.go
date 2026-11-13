@@ -106,11 +106,12 @@ func TestCircleCIRubyAgentOnboarding(t *testing.T) {
 
 // Options that must follow the orb persist through $BASH_ENV.
 func TestCircleCIMinitestInstructionsExtendTheExportedOptions(t *testing.T) {
-	text := providerSetupInstructions(t.TempDir(), circleCI{}, "ruby", "minitest", "", true)
+	root := rubyIsolationRepository(t)
+	text := providerSetupInstructions(root, circleCI{}, "ruby", "minitest", "", true)
 	require.Contains(t, text, "Right after the Datadog orb step, append the initializer to the exported options:")
 	require.Contains(t, text, `- run: echo 'export RUBYOPT="$RUBYOPT -r./ci/datadog_test_optimization.rb"' >> "$BASH_ENV"`)
 	require.NotContains(t, text, "${{ env.RUBYOPT }}")
-	text = providerSetupInstructions(t.TempDir(), gitLabCI{}, "ruby", "minitest", "", true)
+	text = providerSetupInstructions(root, gitLabCI{}, "ruby", "minitest", "", true)
 	require.Contains(t, text, "Right after the Datadog setup entry, append the initializer to the exported options:")
 }
 

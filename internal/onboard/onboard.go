@@ -25,6 +25,10 @@ func Run(output io.Writer) error { return run(output, nil) }
 type agentHandoff struct {
 	// site is the selected Datadog site; empty selects the default.
 	site string
+	// handWritten reports a handoff that completes a CI job's hand-written
+	// setup, which onboard --apply refuses until then, so its agent hands
+	// off validation even where onboard --apply writes the provider's setup.
+	handWritten bool
 }
 
 // run prints the onboarding guidance; a non-nil agent selects the agent's
@@ -53,18 +57,15 @@ func run(output io.Writer, agent *agentHandoff) error {
 	if len(files) == 0 {
 		return fmt.Errorf("onboard: no supported CI provider detected in repository")
 	}
-	if !languageSupportsCIProvider(detectedPlatform.Name(), provider) {
-		return &CIProviderUnsupportedError{Language: detectedPlatform.Name(), Framework: frameworkName, Provider: provider.displayName()}
-	}
-	if reason := unsupportedTestJobs(repositoryRoot, provider, detectedPlatform.Name(), frameworkName); reason != "" {
-		return &CIProviderUnsupportedError{Language: detectedPlatform.Name(), Framework: frameworkName, Provider: provider.displayName(), Reason: reason, Setup: provider.setupName()}
+	if err := providerSupportError(repositoryRoot, provider, detectedPlatform.Name(), frameworkName); err != nil {
+		return err
 	}
 	return onboardCI(output, provider, repositoryRoot, detectedPlatform.Name(), frameworkName, agent)
 }
 
 // onboardCI prints the onboarding guidance for the selected CI provider.
 func onboardCI(output io.Writer, provider ciProvider, repositoryRoot, language, name string, agent *agentHandoff) error {
-	workflows, configured, err := provider.findTestWorkflows(repositoryRoot, language, name)
+	workflows, configured, err := findTestWorkflows(provider, repositoryRoot, language, name)
 	if err != nil {
 		return err
 	}
@@ -75,7 +76,7 @@ func onboardCI(output io.Writer, provider ciProvider, repositoryRoot, language, 
 		validatesConfigurations = discover || registered.coordinated()
 		// A coding agent applying the setup by hand needs the scope it is for,
 		// unresolved entries included.
-		discover = discover || agent != nil && !provider.sharedSyntax() && !providerAutomaticSetup(provider, registered, name)
+		discover = discover || agent != nil && !provider.sharedSyntax() && !providerAutomaticSetup(repositoryRoot, provider, registered, name, agent.site)
 	}
 	if discover {
 		discovered, err := DiscoverValidationScope(repositoryRoot, name)
@@ -135,7 +136,7 @@ func onboardCI(output io.Writer, provider ciProvider, repositoryRoot, language, 
 	}
 	text := instructions(language, name)
 	if registered := discoveryLanguageNamed(language); agent != nil && !provider.sharedSyntax() {
-		text = providerSetupInstructions(repositoryRoot, provider, language, name, agent.site, !providerAutomaticSetup(provider, registered, name))
+		text = providerSetupInstructions(repositoryRoot, provider, language, name, agent.site, agent.handWritten || !providerAutomaticSetup(repositoryRoot, provider, registered, name, agent.site))
 	} else if agent != nil && registered != nil && registered.agentInstructions(name, agent.site) != "" {
 		text = registered.agentInstructions(name, agent.site)
 	}

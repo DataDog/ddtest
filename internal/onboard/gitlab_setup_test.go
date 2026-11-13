@@ -10,6 +10,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -129,7 +130,7 @@ func TestGitLabRubyAgentOnboarding(t *testing.T) {
 }
 
 func TestGitLabMinitestInstructionsExtendTheExportedOptions(t *testing.T) {
-	text := providerSetupInstructions(t.TempDir(), gitLabCI{}, "ruby", "minitest", "", true)
+	text := providerSetupInstructions(rubyIsolationRepository(t), gitLabCI{}, "ruby", "minitest", "", true)
 	require.Contains(t, text, `- export RUBYOPT="$RUBYOPT -r./ci/datadog_test_optimization.rb"`)
 	require.Contains(t, text, "Datadog.configure")
 	require.NotContains(t, text, "${{ env.RUBYOPT }}")
@@ -275,9 +276,10 @@ func TestGitLabApplyRefusesUnsafeEdits(t *testing.T) {
 	_, err = PlanJavaScriptSetup(root, "jest", "6.22.0", "datadoghq.com", ">=22")
 	var runtime *NodeRuntimeGap
 	require.ErrorAs(t, err, &runtime)
+	// Cucumber's package scripts get NYC coverage, as on GitHub Actions.
 	_, err = PlanJavaScriptSetup(root, "cucumber", "6.22.0", "datadoghq.com", "")
-	var gap *SetupGap
-	require.True(t, errors.As(err, &gap) && strings.Contains(gap.Reason, "package scripts"), err)
+	var dependency *SetupDependencyGap
+	require.True(t, errors.As(err, &dependency) && slices.Equal(dependency.Packages, []string{"nyc"}), err)
 }
 
 // The Node runtime check reads the image's Node and the setup script's
@@ -381,24 +383,19 @@ func TestGitLabRubyFixture(t *testing.T) {
 	require.True(t, rubyDiscovery{}.ciSetupConfigured(root, "rspec", ""), "the JRuby job stays excluded")
 }
 
-// Scoped JavaScript initialization is set up by hand on GitLab: onboarding
-// asks for the setup script, then hands off validation once it is complete.
-func TestGitLabCucumberSetupIsManual(t *testing.T) {
+// Scoped JavaScript initialization is applied on GitLab as on GitHub
+// Actions: onboarding hands off to onboard --apply, and a job already set up
+// by hand goes there too, so its package scripts are scoped.
+func TestGitLabCucumberSetupIsAutomatic(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, root, "package.json", `{"scripts": {"test": "cucumber-js"}, "devDependencies": {"@cucumber/cucumber": "11.0.0"}}`)
 	writeFile(t, root, ".gitlab-ci.yml", "test:\n  image: node:22\n  script:\n    - npm test\n")
 	t.Chdir(root)
 	useCIProvider(t, "gitlab")
 	state, err := rubyAgentStart(t, StartOptions{Format: "json"})
-	require.Error(t, err)
-	require.Equal(t, "ci_setup_required", state.Code, state.Reason)
-	require.Contains(t, state.Instruction, `LANGUAGES="js"`)
-	require.Contains(t, state.Instruction, "DD_CIVISIBILITY_IMPACTED_TESTS_DETECTION_ENABLED=false")
-	writeFile(t, root, ".gitlab-ci.yml", "test:\n  image: node:22\n  script:\n"+gitLabSetupEntry(gitLabJestSetup)+"    - "+esmImportCommand+"\n    - npm test\n")
-	state, err = rubyAgentStart(t, StartOptions{Format: "json"})
 	require.NoError(t, err, state.Reason)
 	require.Equal(t, "ready", state.Status)
-	require.Equal(t, []string{"testdrive", "--framework", "cucumber", "--all", "--agent", "--yes"}, state.NextCommand[1:7])
+	require.Equal(t, []string{"onboard", "--framework", "cucumber", "--apply"}, state.NextCommand[1:5])
 }
 
 // gitLabGuardedEntry is the setup entry ddtest writes: the README's entry
@@ -469,22 +466,28 @@ func TestGitLabMissingKeyDisablesTheSetup(t *testing.T) {
 }
 
 // The setup entry needs Bash; images known to lack it run the job with sh.
+// Their jobs get the setup without Bash or curl instead, never another
+// image; an image without any shell gets no setup.
 func TestGitLabSetupNeedsBash(t *testing.T) {
 	useCIProvider(t, "gitlab")
 	root := gitLabRubyRepository(t, rubyJob("ruby:3.3-alpine", "", ""))
 	require.False(t, rubyDiscovery{}.ciSetupConfigured(root, "rspec", ""))
 	jobs, _ := gitLabJobs(t, root)
 	require.Contains(t, jobs["rspec"].Steps[0].Setup.Problem, "has no Bash")
+	require.Contains(t, jobs["rspec"].Steps[0].Setup.Problem, "Use the "+fallbackSetupName+" in this job instead")
+	require.NotContains(t, jobs["rspec"].Steps[0].Setup.Problem, "Bash-capable image")
 	require.Empty(t, jobs["rspec"].Steps[1].Env["RUBYOPT"], "a setup that cannot run exports nothing")
-	for image, refused := range map[string]bool{"node:22-alpine": true, "node:22-alpine3.20": true, "busybox": true, "gcr.io/distroless/nodejs22-debian12": true, "node:22": false, "registry.example.com/ci/node:22": false} {
-		_, _, err := planGitLab(t, "jest", map[string]string{".gitlab-ci.yml": "unit:\n  image: " + image + "\n  script:\n    - npm test\n"})
-		if refused {
+	for image, setup := range map[string]string{"node:22-alpine": fallbackComment[0], "node:22-alpine3.20": fallbackComment[0], "busybox": fallbackComment[0], "gcr.io/distroless/nodejs22-debian12": "", "node:22": gitLabSetupDownload, "registry.example.com/ci/node:22": gitLabSetupDownload} {
+		plan, _, err := planGitLab(t, "jest", map[string]string{".gitlab-ci.yml": "unit:\n  image: " + image + "\n  script:\n    - npm test\n"})
+		if setup == "" {
 			var gap *SetupGap
 			require.ErrorAs(t, err, &gap, image)
-			require.Contains(t, gap.Reason, "Bash-capable image", image)
-		} else {
-			require.NoError(t, err, image)
+			require.Contains(t, gap.Reason, "the image has no shell to run any setup in", image)
+			require.Contains(t, gap.Reason, "do not change its image", image)
+			continue
 		}
+		require.NoError(t, err, image)
+		require.Contains(t, plannedFile(t, plan, ".gitlab-ci.yml"), setup, image)
 	}
 }
 
@@ -565,7 +568,7 @@ func TestGitLabApplyRefusesAnUnresolvedLanguageSelector(t *testing.T) {
 }
 
 func TestGitLabApplyMochaNeedsCoverage(t *testing.T) {
-	files := map[string]string{"package.json": `{"devDependencies": {"mocha": "11.0.0", "nyc": "17.0.0"}}`, "test/unit.js": "it('a', () => {})\n", "test/esm.mjs": "it('b', () => {})\n"}
+	files := map[string]string{"package.json": `{"devDependencies": {"mocha": "11.0.0", "nyc": "17.0.0"}}`, "lib/index.js": "module.exports = 1\n", "test/unit.js": "it('a', () => {})\n", "test/esm.mjs": "it('b', () => {})\n"}
 	files[".gitlab-ci.yml"] = "unit:\n  image: node:22\n  script:\n    - npx mocha test/unit.js\n"
 	_, root, err := planGitLab(t, "mocha", files)
 	var gap *SetupGap
@@ -667,11 +670,13 @@ func TestGitLabRenewedtabFixture(t *testing.T) {
 	// are replayed as reviewed preparation.
 	require.Equal(t, []string{"cp config.example.json config.json", "npm run trans:compile", "npm run trans:check"}, preparation)
 	review := strings.Join(scope.Review, "\n")
-	for _, want := range []string{"sentry / step 9 (sentry-cli releases new ${VERSION}): Uninstrumented CI job that never runs mocha", "chrome / step 4 (npm run upload:chrome chrome.zip): Uninstrumented CI job that never runs mocha", "webext / step 4 (npm run package:webext): Uninstrumented CI job that never runs mocha"} {
+	for _, want := range []string{"sentry / step 9 (sentry-cli releases new ${VERSION}): Uninstrumented CI job that never runs mocha", "Not a mocha test consumer: .gitlab-ci.yml / chrome / step 4 (npm run upload:chrome chrome.zip)", "webext / step 4 (npm run package:webext): Uninstrumented CI job that never runs mocha"} {
 		require.Contains(t, review, want)
 	}
 	require.NotContains(t, review, "${{", "unresolved values are named by their CI text")
-	require.Contains(t, review, "its CI value renewedtab@$CI_COMMIT_TAG reads values only CI knows")
+	// VERSION, a value only CI knows, is left out, so the commands that expand
+	// it still need review.
+	require.Contains(t, review, "sentry-cli releases new ${VERSION}; CI parameter VERSION requires explicit environment review")
 	caveats := strings.Join(scope.Caveats, "\n")
 	for _, job := range []string{"chrome", "firefox", "sentry", "webext"} {
 		require.Contains(t, caveats, ".gitlab-ci.yml / "+job+": CI job without the Datadog setup that never runs mocha")
@@ -822,8 +827,10 @@ func TestNodeLaunchersAreInspectedThroughImports(t *testing.T) {
 	writeFile(t, root, "lib/launch.js", "const Mocha = require('mocha')\nnew Mocha().run()\n")
 	writeFile(t, root, "spawner.js", "const { execSync } = require('child_process')\nexecSync('npm test')\n")
 	writeFile(t, root, "computed.js", "const { execSync } = require('child_process')\nexecSync(process.argv[2])\n")
-	writeFile(t, root, "generate.js", "const { execSync } = require('child_process')\nexecSync(`formatjs compile ${input} --out-file out.json`)\n")
-	for script, mayRun := range map[string]bool{"runner.js": true, "spawner.js": true, "computed.js": true, "generate.js": false} {
+	writeFile(t, root, "generate.js", "const { execSync } = require('child_process')\nexecSync(`formatjs compile src/locales/${item.name} --out-file src/compiled/${item.name}`)\n")
+	// A computed whole argument may be an option or, through the shell, another command.
+	writeFile(t, root, "computed-argument.js", "const { execSync } = require('child_process')\nexecSync(`formatjs compile ${input} --out-file out.json`)\n")
+	for script, mayRun := range map[string]bool{"runner.js": true, "spawner.js": true, "computed.js": true, "generate.js": false, "computed-argument.js": true} {
 		resolution := resolveTestStep(root, ciWorkflow{}, runtimeJob{}, runtimeStep{Run: "node " + script}, "javascript", "mocha")
 		if mayRun {
 			require.NotEmpty(t, resolution.Reason, script)
@@ -887,22 +894,26 @@ func TestGitLabRubyGemsUpdateMustPrecedeTheSetup(t *testing.T) {
 }
 
 // Official slim images have no curl, so the setup script can't be
-// downloaded: the setup is incomplete and apply asks for the fix. An
-// earlier curl install makes it runnable.
+// downloaded: the setup is incomplete, and apply writes the setup without
+// Bash or curl instead. An earlier curl install makes the script runnable.
 func TestGitLabSlimImagesNeedCurl(t *testing.T) {
 	useCIProvider(t, "gitlab")
 	root := gitLabRubyRepository(t, rubyJob("ruby:3.3-slim", "", ""))
 	require.False(t, rubyDiscovery{}.ciSetupConfigured(root, "rspec", ""))
 	jobs, _ := gitLabJobs(t, root)
 	require.Contains(t, jobs["rspec"].Steps[0].Setup.Problem, "has no curl")
+	require.Contains(t, jobs["rspec"].Steps[0].Setup.Problem, "Use the "+fallbackSetupName+" in this job instead")
 	root = gitLabRubyRepository(t, rubyJob("ruby:3.3-slim", "    - "+gitLabCurlInstall+"\n", ""))
 	require.True(t, rubyDiscovery{}.ciSetupConfigured(root, "rspec", ""))
-	_, _, err := planGitLab(t, "jest", map[string]string{".gitlab-ci.yml": "unit:\n  image: node:22-bookworm-slim\n  script:\n    - npm test\n"})
-	var gap *EditThenApplyGap
-	require.ErrorAs(t, err, &gap)
-	require.Contains(t, gap.Reason, gitLabCurlInstall)
-	_, _, err = planGitLab(t, "jest", map[string]string{".gitlab-ci.yml": "unit:\n  image: node:22-slim\n  script:\n    - " + gitLabCurlInstall + "\n    - npm test\n"})
+	plan, _, err := planGitLab(t, "jest", map[string]string{".gitlab-ci.yml": "unit:\n  image: node:22-bookworm-slim\n  script:\n    - npm test\n"})
 	require.NoError(t, err)
+	written := plannedFile(t, plan, ".gitlab-ci.yml")
+	require.Contains(t, written, fallbackComment[1])
+	require.Contains(t, written, `npm install -g "dd-trace@$DD_TRACER_VERSION_JS"`)
+	require.NotContains(t, written, gitLabSetupDownload)
+	plan, _, err = planGitLab(t, "jest", map[string]string{".gitlab-ci.yml": "unit:\n  image: node:22-slim\n  script:\n    - " + gitLabCurlInstall + "\n    - npm test\n"})
+	require.NoError(t, err)
+	require.Contains(t, plannedFile(t, plan, ".gitlab-ci.yml"), gitLabSetupDownload)
 }
 
 // An image ddtest cannot resolve may lack Bash or curl: no apply, no
@@ -976,7 +987,33 @@ func TestNodeLauncherImportsAndComputedCommands(t *testing.T) {
 	writeFile(t, root, "mixed.js", "const { execSync } = require('child_process')\nexecSync('eslint .')\nexecSync(process.env.RUN_CMD)\n")
 	writeFile(t, root, "literal.js", "const { execSync } = require('child_process')\nexecSync('eslint .')\n")
 	for script, mayRun := range map[string]bool{"runner.js": true, "mixed.js": true, "literal.js": false} {
-		require.Equal(t, mayRun, nodeScriptMayRun(root, filepath.Join(root, script), "mocha", map[string]bool{}), script)
+		require.Equal(t, mayRun, nodeScriptMayRun(root, root, filepath.Join(root, script), "mocha", map[string]bool{}), script)
+	}
+}
+
+// A template expression that may choose what a process runs keeps the
+// command computed: in the executable, a subcommand, a script name or a
+// whole argument, in the command string or its argument list. A value
+// inside a literal path only names a file there.
+func TestNodeProcessCommandsWithComputedValues(t *testing.T) {
+	root := t.TempDir()
+	writeScripts(t, root, map[string]string{"test": "mocha", "build": "tsc"})
+	for source, mayRun := range map[string]bool{
+		"execSync(`npm ${process.env.CI_TASK}`)":                                            true,
+		"execSync(`npm run build:${target}`)":                                               true,
+		"execSync(`${bin} --version`)":                                                      true,
+		"execSync(`./node_modules/.bin/${tool}`)":                                           true,
+		"execSync(`npm run build ${flag}`)":                                                 true,
+		"spawnSync('npm', [`${task}`])":                                                     true,
+		"spawnSync('npm', ['run', `${script}`])":                                            true,
+		"spawnSync(`${runner}`, ['run'])":                                                   true,
+		"execSync(`git show HEAD:src/${file} > /tmp/en.json`)":                              false,
+		"spawnSync('formatjs', ['compile', `src/locales/${name}`, '--out-file', 'x.json'])": false,
+		"execSync('npm run build')":                                                         false,
+	} {
+		writeFile(t, root, "script.js", "const { execSync, spawnSync } = require('child_process')\n"+source+"\n")
+		require.Equal(t, mayRun, nodeScriptMayRun(root, root, filepath.Join(root, "script.js"), "mocha", map[string]bool{}), source)
+		require.Equal(t, mayRun, mayStartTestsIn(root, root, runtimeStep{Run: "node script.js"}, "mocha", 0), source)
 	}
 }
 

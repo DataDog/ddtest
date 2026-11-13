@@ -105,27 +105,24 @@ func TestProtocolSelectionSurvivesEarlierFlagError(t *testing.T) {
 	require.False(t, protocolArguments(command, []string{"testdrive", "--", "--agent"}))
 }
 
-func TestUnsupportedLanguageDoesNotRequestExecutionConsent(t *testing.T) {
-	for _, fixture := range []struct{ name, contents string }{{"pytest.ini", "[pytest]\n"}} {
-		t.Run(fixture.name, func(t *testing.T) {
-			t.Chdir(t.TempDir())
-			viper.Reset()
-			settings.Init()
-			t.Cleanup(func() { viper.Reset(); settings.Init() })
-			require.NoError(t, os.WriteFile(fixture.name, []byte(fixture.contents), 0600))
-			command := newTestdriveCommand()
-			command.SetArgs([]string{"--format", "json"})
-			var out bytes.Buffer
-			command.SetOut(&out)
-			command.SetErr(io.Discard)
-			require.Error(t, command.ExecuteContext(t.Context()))
-			var state onboard.AgentResult
-			require.NoError(t, json.Unmarshal(out.Bytes(), &state))
-			require.Equal(t, "unsupported", state.Status)
-			require.Equal(t, "framework_unsupported", state.Code)
-			require.Empty(t, state.NextCommand)
-		})
-	}
+// pytest validation is standalone, but testdrive --agent runs it like the
+// coordinator: after the same consent, never with a dead-end unsupported.
+func TestPytestStructuredValidationRequiresConsent(t *testing.T) {
+	t.Chdir(t.TempDir())
+	viper.Reset()
+	settings.Init()
+	t.Cleanup(func() { viper.Reset(); settings.Init() })
+	require.NoError(t, os.WriteFile("pytest.ini", []byte("[pytest]\n"), 0600))
+	command := newTestdriveCommand()
+	command.SetArgs([]string{"--format", "json"})
+	var out bytes.Buffer
+	command.SetOut(&out)
+	command.SetErr(io.Discard)
+	require.Error(t, command.ExecuteContext(t.Context()))
+	var state onboard.AgentResult
+	require.NoError(t, json.Unmarshal(out.Bytes(), &state))
+	require.Equal(t, "consent_required", state.Code)
+	require.NotEqual(t, "framework_unsupported", state.Code)
 }
 
 func TestRubyStructuredValidationRequiresConsent(t *testing.T) {

@@ -61,6 +61,24 @@ func TestJavaScriptBundlesAreNotRuby(t *testing.T) {
 	Check(t, dir)
 }
 
+// .datadog-ci-container.XXXXXX names a folder, not the datadog-ci gem, which
+// still counts as Ruby.
+func TestTracerFolderIsNotRuby(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "ci_provider_example.go"), []byte("package p\n\nconst folder = \"$(mktemp -d \\\"$PWD/.datadog-ci-container.XXXXXX\\\")\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	CheckNeutral(t, dir, "ci_provider*.go")
+	if err := os.WriteFile(filepath.Join(dir, "ci_provider_gem.go"), []byte("package p\n\nconst gem = \"datadog-ci\"\nconst repository = \"datadog-ci-rb\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var report recorder
+	CheckNeutral(&report, dir, "ci_provider*.go")
+	if len(report.errors) != 2 {
+		t.Fatalf("want 2 violations (datadog-ci, datadog-ci-rb), got %d: %s", len(report.errors), strings.Join(report.errors, "; "))
+	}
+}
+
 // "java" is a prefix of "javascript": neither the JavaScript language file nor
 // JavaScript tokens may be attributed to Java.
 func TestJavaScriptIsNotJava(t *testing.T) {
@@ -134,6 +152,8 @@ func TestJavaNamesCucumberJVMButNotJavaScript(t *testing.T) {
 		"java_cucumber.go": "package p\n\nconst glue = \"io.cucumber.junit.platform.engine\"\nconst javaCucumberProbe = 1\n",
 		// Other JavaScript terms stay out, even next to a shared one.
 		"java_steps.go": "package p\n\nconst runner = \"cucumber with dd-trace\"\n",
+		// Another tracer's repository names no JavaScript.
+		"java_release.go": "package p\n\nconst release = \"https://github.com/DataDog/dd-trace-java/releases\"\n",
 		// Shared code keeps naming Cucumber.js.
 		"cucumber.go": "package p\n\nconst runner = \"cucumber-js\"\n",
 	}

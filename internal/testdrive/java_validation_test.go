@@ -100,6 +100,13 @@ func TestJavaAgentEnvironmentAttachesTheAgentOnce(t *testing.T) {
 	require.NotContains(t, javaLanguage{}.runEnvironment(drive, ""), "JAVA_TOOL_OPTIONS", "the baseline never attaches the agent")
 }
 
+func TestJavaRunsRemoveAQuotedDatadogAgent(t *testing.T) {
+	require.Equal(t, `-Dname="a b" -Xmx256m`, withoutDatadogAgent("JAVA_TOOL_OPTIONS", `-javaagent:"/opt/ci tools/dd-java-agent-1.67.1.jar" -Dname="a b" -Xmx256m`), "the quoted path is one option")
+	require.Equal(t, "-Xmx1g", withoutDatadogAgent("GRADLE_OPTS", "-javaagent:'/opt/ci tools/dd-java-agent.jar' -Xmx1g"))
+	// Maven's launcher expands MAVEN_OPTS unquoted: an apostrophe is a character.
+	require.Equal(t, "-Dservice=team's-tests -Xmx256m", withoutDatadogAgent("MAVEN_OPTS", "-javaagent:/opt/dd-java-agent.jar -Dservice=team's-tests -Xmx256m"))
+}
+
 func TestJavaRunsRemoveAnInheritedDatadogAgent(t *testing.T) {
 	// The GitHub action attaches dd-java-agent to MAVEN_OPTS, or with
 	// java-instrumented-build-system: all to JAVA_TOOL_OPTIONS.
@@ -179,6 +186,20 @@ func TestJavaReactorIncludesMavenConfig(t *testing.T) {
 	requireWriteFile(t, filepath.Join(root, "service", ".mvn", "jvm.config"), "-javaagent:dd-java-agent.jar\n")
 	_, _, err = drive.javaReactor([]string{"-f", "service", "test"})
 	require.ErrorContains(t, err, ".mvn/jvm.config attaches dd-java-agent")
+}
+
+func TestJavaRunsWriteTheXMLReportsAPropertyTurnsOff(t *testing.T) {
+	root := t.TempDir()
+	requireWriteFile(t, filepath.Join(root, "pom.xml"), `<project><artifactId>root</artifactId><properties><closeTestReports>true</closeTestReports></properties>
+		<build><plugins><plugin><artifactId>maven-surefire-plugin</artifactId><configuration><disableXmlReport>${closeTestReports}</disableXmlReport></configuration></plugin></plugins></build></project>`)
+	drive := &Testdrive{repositoryRoot: root, configurationRoot: root, command: "mvn", args: []string{"verify"}}
+	build, err := drive.javaBuild([]string{"verify"})
+	require.NoError(t, err)
+	args := []string{"verify"}
+	require.Equal(t, []string{"verify", "-DcloseTestReports=false", "-Dgpg.skip=true"}, build.arguments(args, nil), "validation reads the reports and signs nothing")
+	require.Equal(t, []string{"verify"}, args)
+	probe := &javaProbe{args: []string{"-Dtest=" + javaProbeClass}}
+	require.Equal(t, append(append([]string{"test", "-Dtest=" + javaProbeClass}, javaProbeSourceCheckSkips...), "-DcloseTestReports=false", "-Dgpg.skip=true"), build.arguments(args, probe), "probe runs read them too")
 }
 
 func TestJavaRefusesADatadogAgentInJVMConfig(t *testing.T) {
@@ -391,7 +412,7 @@ func TestJavaNativeTestsUseTheirModules(t *testing.T) {
 		{module: "Customer API", Test: maven.Test{Module: "api", Suite: "example.ApiTest", Name: "works()", Status: "passed"}},
 		{module: ":app:test", Test: maven.Test{Module: "app", Suite: "example.AppTest", Name: "fails()", Status: "failed", Failure: "AssertionError: no\n"}},
 		{module: "core", Test: maven.Test{Module: "core", Suite: javaProbeClass, Name: "ddtestProbe()", Status: "passed"}},
-	}, true)
+	}, "junit5", true)
 	require.Equal(t, "Customer API / example.ApiTest", tests[0].File)
 	require.Equal(t, ":app:test / example.AppTest", tests[1].File, "a Gradle result is its test task's")
 	probe := tests[2]
@@ -401,12 +422,12 @@ func TestJavaNativeTestsUseTheirModules(t *testing.T) {
 	karate := javaNativeTests([]javaResult{
 		{module: "core", Test: maven.Test{Module: "core", Suite: "[src/test/resources/ddtest/DdtestValidation] " + javaProbeClass, Name: "ddtestProbe", Status: "passed"}},
 		{module: "core", Test: maven.Test{Module: "core", Suite: "[example/calc] Calculator", Name: "adds", Status: "passed"}},
-	}, true)
+	}, "karate", true)
 	require.True(t, karate[0].probe, "a Karate probe is its feature's path and name")
 	require.False(t, karate[1].probe)
 	// Gradle names a TestNG data-provider invocation with its arguments' toString.
 	invocation := func(address string) string {
-		return javaNativeTests([]javaResult{{module: ":test", Test: maven.Test{Suite: "com.beust.jcommander.CmdTest", Name: "testArgsWithDefaultCmd[0](--cmd-one, false, [Ljava.lang.String;@" + address + ")", Status: "passed"}}}, false)[0].Name
+		return javaNativeTests([]javaResult{{module: ":test", Test: maven.Test{Suite: "com.beust.jcommander.CmdTest", Name: "testArgsWithDefaultCmd[0](--cmd-one, false, [Ljava.lang.String;@" + address + ")", Status: "passed"}}}, "testng", false)[0].Name
 	}
 	require.Equal(t, invocation("20ca951f"), invocation("89caf47"), "one invocation has one name in every run")
 	require.Equal(t, "testArgsWithDefaultCmd", javaTestName(invocation("20ca951f")))
@@ -483,7 +504,7 @@ func TestJavaTelemetryMatchesGradleDisplayNames(t *testing.T) {
 
 	// A display name with a lambda's identity, as sshj's ConnectedSocketTest.
 	display := "[1] example.SocketTest$$Lambda$1352/0x000000980176c488@4f3b5c60"
-	lambda := javaNativeTests([]javaResult{{module: ":test", Test: maven.Test{Suite: "example.SocketTest", Name: display, Status: "passed"}}}, false)
+	lambda := javaNativeTests([]javaResult{{module: ":test", Test: maven.Test{Suite: "example.SocketTest", Name: display, Status: "passed"}}}, "junit5", false)
 	run = javaTelemetryRun(lambda, reported(":test", "example.SocketTest", "connects", `{"metadata":{"test_name":"`+display+`"}}`, intake.TestRun{Status: "pass", SpanID: 5}))
 	require.Equal(t, verdict{}, verifyJavaTelemetry(run), "the native name and the tracer's display name read the identity alike")
 }
@@ -524,10 +545,10 @@ func TestJavaProbeRunsInAModuleThatRanTests(t *testing.T) {
 	projects := newMavenBuild(t.TempDir(), javaFixtureProjects())
 	module, ok := javaProbeModule(projects, []nativeTest{{File: "Customer API / example.ApiTest"}, {File: "core / example.CoreTest"}}, "junit5")
 	require.True(t, ok)
-	require.Equal(t, "core", module, "a module declaring the selected framework is preferred")
+	require.Equal(t, javaProbeTarget{directory: "core", module: "core"}, module, "a module declaring the selected framework is preferred")
 	module, ok = javaProbeModule(projects, []nativeTest{{File: "Customer API / example.ApiTest"}}, "junit5")
 	require.True(t, ok)
-	require.Equal(t, "api", module, "an inherited framework dependency still runs the probe")
+	require.Equal(t, javaProbeTarget{directory: "api", module: "Customer API"}, module, "an inherited framework dependency still runs the probe")
 	_, ok = javaProbeModule(projects, nil, "junit5")
 	require.False(t, ok)
 }
@@ -707,7 +728,7 @@ func TestJavaCIRuntimeCertifiesTheValidatedJDKOrAnAcceptedSubstitute(t *testing.
 	drive.args = []string{"test"}
 	ci, _, err = drive.javaCIRuntime("17.0.20")
 	require.NoError(t, err)
-	require.Contains(t, ci.Reason, "No CI consumer matches this Maven command", "a local command that CI does not run certifies no CI row")
+	require.Contains(t, ci.Reason, "No CI consumer matches this command", "a local command that CI does not run certifies no CI row")
 }
 
 func TestJavaRuntimeChecksMergeAcrossConfigurations(t *testing.T) {
@@ -775,6 +796,7 @@ func TestJavaPackageCheckFindsResourcesThatPackageTheReports(t *testing.T) {
 		{"whole root", `<resource><directory>.</directory></resource>`, "failed", "add <exclude>.testoptimization/**</exclude>"},
 		{"root json files", `<resource><directory>${basedir}</directory><includes><include>**/*.json</include></includes></resource>`, "failed", "including .testoptimization/"},
 		{"root with reports excluded", `<resource><directory>.</directory><excludes><exclude>.testoptimization/</exclude></excludes></resource>`, "passed", "none packages"},
+		{"root html except the saved report", `<resource><directory>.</directory><includes><include>**/*.html</include></includes><excludes><exclude>**/report.html</exclude></excludes></resource>`, "failed", "including .testoptimization/"},
 		{"unresolved directory", `<resource><directory>${shared}</directory></resource>`, "failed", "cannot resolve"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -901,4 +923,63 @@ func TestJavaPackageCheckInspectsTheReactorsCommandsSelect(t *testing.T) {
 	drive.workflowScope.Commands[0].Command = "mvn -f missing.xml verify"
 	check, _ = javaLanguage{}.packageExclusions(drive, t.Context())
 	require.Equal(t, "failed", check.Status, "an unreadable reactor cannot be ruled out")
+
+	// Gradle packages its source sets' resources, never the repository root's.
+	drive.workflowScope.Commands = []onboard.TestCommand{{Directory: ".", Command: "./gradlew check"}}
+	check, _ = javaLanguage{}.packageExclusions(drive, t.Context())
+	require.Equal(t, "passed", check.Status)
+	require.Equal(t, "Gradle commands package only their source sets' resource directories, which do not hold the repository root's .testoptimization/.", check.Reason, "no Maven resources are claimed for a Gradle scope")
+	requireWriteFile(t, filepath.Join(root, "pom-ci.xml"), `<project><artifactId>ci</artifactId></project>`)
+	drive.workflowScope.Commands = append(drive.workflowScope.Commands, onboard.TestCommand{Directory: ".", Command: "mvn -B -f pom-ci.xml verify"})
+	check, _ = javaLanguage{}.packageExclusions(drive, t.Context())
+	require.Equal(t, "passed", check.Status)
+	require.Contains(t, check.Reason, "Maven resource declarations; none packages the reports. Gradle commands package only")
+}
+
+// From camunda/feel-scala: a profile binds license-maven-plugin's check to
+// validate, so the probe build failed on the probe's own missing header and
+// was diagnosed as missing XML reporting. Probe runs skip source checks that
+// would judge the synthetic probe, and a build that fails before any test
+// reports names its failure.
+func TestJavaProbeRunsSkipSourceChecks(t *testing.T) {
+	root := t.TempDir()
+	requireWriteFile(t, filepath.Join(root, "pom.xml"), `<project><artifactId>feel-engine</artifactId></project>`)
+	drive := &Testdrive{repositoryRoot: root, configurationRoot: root, command: "mvn", args: []string{"-B", "clean", "-P", "checkFormat", "verify"}}
+	build, err := drive.javaBuild(drive.args)
+	require.NoError(t, err)
+	probe := &javaProbe{args: []string{"-Dtest=" + javaProbeClass}}
+	args := build.arguments(drive.args, probe)
+	for _, skip := range []string{"-Dlicense.skip=true", "-Dlicense.skipCheckLicense=true", "-Drat.skip=true", "-Dcheckstyle.skip=true", "-Dspotless.check.skip=true"} {
+		require.Contains(t, args, skip)
+	}
+	require.Equal(t, []string{"-B", "clean", "-P", "checkFormat", "verify", "-Dgpg.skip=true"}, build.arguments(drive.args, nil), "the customer's own runs keep every check, skipping only signing")
+}
+
+func TestJavaBuildFailureBeforeTestsIsNamed(t *testing.T) {
+	root := t.TempDir()
+	requireWriteFile(t, filepath.Join(root, "pom.xml"), `<project><artifactId>feel-engine</artifactId></project>`)
+	drive := &Testdrive{repositoryRoot: root, configurationRoot: root, command: "mvn", args: []string{"verify"}}
+	build, err := drive.javaBuild(drive.args)
+	require.NoError(t, err)
+	output := "[WARNING] Missing header in: " + filepath.Join(root, "src/test/scala/ddtest/DdtestValidationTest.scala") + "\n[INFO] BUILD FAILURE\n" +
+		"[ERROR] Failed to execute goal com.mycila:license-maven-plugin:3.0:check (check-license) on project feel-engine: Some files do not have the expected license header -> [Help 1]\n"
+	_, _, err = build.results(1, output)
+	require.ErrorIs(t, err, errNoJavaResults)
+	require.ErrorContains(t, err, "the Maven build failed before any test wrote native results: Failed to execute goal com.mycila:license-maven-plugin:3.0:check (check-license) on project feel-engine: Some files do not have the expected license header")
+	require.NotContains(t, err.Error(), "configure Surefire", "the XML reporting advice does not explain a failed build")
+	// A build that ran and wrote nothing still gets the reporting advice.
+	_, _, err = build.results(0, "[INFO] BUILD SUCCESS\n")
+	require.ErrorContains(t, err, "configure Surefire")
+}
+
+func TestJavaGradleBuildFailureBeforeTestsIsNamed(t *testing.T) {
+	root := t.TempDir()
+	requireWriteFile(t, filepath.Join(root, "settings.gradle.kts"), "rootProject.name = \"app\"\n")
+	requireWriteFile(t, filepath.Join(root, "build.gradle.kts"), "plugins { java }\ndependencies { testImplementation(\"junit:junit:4.13.2\") }\n")
+	drive := &Testdrive{repositoryRoot: root, configurationRoot: root, command: "gradle", args: []string{"test"}}
+	build, err := drive.javaBuild(drive.args)
+	require.NoError(t, err)
+	_, _, err = build.results(1, "FAILURE: Build failed with an exception.\n\n* What went wrong:\nExecution failed for task ':licenseTest'.\n> License violations were found\n\n* Try:\n")
+	require.ErrorIs(t, err, errNoJavaResults)
+	require.ErrorContains(t, err, "the Gradle build failed before any test wrote native results: Execution failed for task ':licenseTest'. > License violations were found")
 }

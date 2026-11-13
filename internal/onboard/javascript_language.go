@@ -7,8 +7,12 @@ package onboard
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"maps"
+	"os"
 	"path"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -19,7 +23,11 @@ type javascriptDiscovery struct{}
 
 func (javascriptDiscovery) name() string { return "javascript" }
 
+func (javascriptDiscovery) displayName() string { return "JavaScript" }
+
 func (javascriptDiscovery) actionLanguage() string { return "js" }
+
+func (javascriptDiscovery) runtimeSetupAction() string { return setupNodeSource }
 
 func (javascriptDiscovery) bootstrap(framework string) string {
 	if framework == "cucumber" {
@@ -42,12 +50,17 @@ func (javascriptDiscovery) supportsCIProvider(provider string) bool {
 	return provider == gitHubActionsProvider || provider == gitLabCIProvider || provider == circleCIProvider || provider == buildkiteProvider || provider == jenkinsProvider
 }
 
-// Outside GitHub Actions the installer appends its require preload to the
-// current NODE_OPTIONS and exports the ESM loader path for an explicit
-// --import.
+// Outside GitHub Actions the installer (install_test_visibility_v15.sh, which
+// the GitLab setup script, the CircleCI orb and the Buildkite setup snippet
+// run) appends its require preload to the current NODE_OPTIONS and exports
+// the ESM loader path for an explicit --import. It exports DD_TRACE_PACKAGE
+// only on GitHub Actions, which cannot set NODE_OPTIONS: a later
+// $DD_TRACE_PACKAGE is empty here, so it stays unknown to the model.
+// ${{ env.DD_TRACE_PACKAGE }} in the exported NODE_OPTIONS stands for the
+// preload's path, which only CI knows.
 func (javascriptDiscovery) setupShellExports(current map[string]string) (map[string]string, map[string]string) {
 	options := strings.TrimSpace(current["NODE_OPTIONS"] + " -r ${{ env.DD_TRACE_PACKAGE }}")
-	return map[string]string{"NODE_OPTIONS": options}, map[string]string{"DD_TRACE_ESM_IMPORT": "${{ env.DD_TRACE_ESM_IMPORT }}", "DD_TRACE_PACKAGE": "${{ env.DD_TRACE_PACKAGE }}"}
+	return map[string]string{"NODE_OPTIONS": options}, map[string]string{"DD_TRACE_ESM_IMPORT": "${{ env.DD_TRACE_ESM_IMPORT }}"}
 }
 
 // On GitHub Actions onboard --apply owns the JavaScript setup check. Other
@@ -57,7 +70,7 @@ func (javascriptDiscovery) ciSetupConfigured(root, framework, site string) bool 
 	if err != nil || provider.sharedSyntax() {
 		return false
 	}
-	return providerSetupConfigured(root, provider, "javascript", framework, site, "js-tracer-version", exactRelease)
+	return providerSetupConfigured(root, provider, "javascript", framework, "", "js-tracer-version", exactRelease)
 }
 
 func (javascriptDiscovery) agentInstructions(string, string) string { return "" }
@@ -106,6 +119,73 @@ const esmImportCommand = `if [ -n "${DD_TRACE_ESM_IMPORT:-}" ]; then export NODE
 // DD_TRACE_PATH; without the plugin's setup it adds nothing.
 const pluginESMImportCommand = `if [ -n "${DD_TRACE_PATH:-}" ]; then export NODE_OPTIONS="${NODE_OPTIONS:-} --import $DD_TRACE_PATH/register.js"; fi`
 
+// pluginOptionsCommand adds options to the NODE_OPTIONS a CI server
+// plugin's setup sets, in the test's shell.
+func pluginOptionsCommand(options string) string {
+	return `export NODE_OPTIONS="${NODE_OPTIONS:-} ` + options + `"`
+}
+
+// providerScopedCommand moves the preload a provider's setup appends to
+// NODE_OPTIONS into the framework's scoped variable (DD_CUCUMBER_NODE_OPTIONS
+// or DD_WDIO_NODE_OPTIONS), with the ESM loader and options, such as an
+// Istanbul ESM loader, as on GitHub Actions: only package-script leaves that
+// start with the scoped prefix load the tracer, not the job's other Node
+// processes. It changes nothing when the setup did not install the tracer.
+//
+// Outside GitHub Actions the installer exports only NODE_OPTIONS, which ends
+// with its -r preload, and DD_TRACE_ESM_IMPORT (no DD_TRACE_PACKAGE), so the
+// command reads the preload's path after NODE_OPTIONS's last "-r " and then
+// removes that preload, in one export that reads NODE_OPTIONS before
+// changing it.
+func providerScopedCommand(framework, options string) string {
+	value := "-r ${NODE_OPTIONS##*-r } --import $DD_TRACE_ESM_IMPORT"
+	if options != "" {
+		value += " " + options
+	}
+	return `if [ -n "${DD_TRACE_ESM_IMPORT:-}" ]; then export ` + scopedEnvironment(framework) + `="` + value + `" NODE_OPTIONS="${NODE_OPTIONS%-r *}"; fi`
+}
+
+// scopedProviderOptions are the Node options framework's scoped variable
+// adds after the tracer's preload and ESM loader, as on GitHub Actions: the
+// Istanbul ESM loader for native ESM Cucumber, a "type": "module" package or
+// selected ESM inputs (see cucumberNativeESM).
+func scopedProviderOptions(root, framework string) string {
+	if framework != "cucumber" {
+		return ""
+	}
+	data, err := os.ReadFile(filepath.Join(root, "package.json"))
+	var pkg struct{ Type string }
+	if err != nil || json.Unmarshal(data, &pkg) != nil {
+		return ""
+	}
+	var commands []TestCommand
+	if pkg.Type != "module" {
+		if scope, err := DiscoverValidationScope(root, framework); err == nil {
+			commands = scope.Commands
+		}
+	}
+	if !cucumberNativeESM(root, pkg.Type, commands) {
+		return ""
+	}
+	return cucumberESMLoaderHook
+}
+
+// scopedProviderNote explains the scoped preload providerScopedCommand
+// exports and the package-script prefix that consumes it.
+func scopedProviderNote(framework string, terms ciSetupTerms) string {
+	variable := scopedEnvironment(framework)
+	prefix := cucumberScopedOptions
+	leaves := "Cucumber package script that runs cucumber-js"
+	edits := " It also wraps cucumber-js with npx --no-install nyc -- (NYC is a dev dependency) and adds " + cucumberImpactedWorkaround + "."
+	direct := " A CI command that runs cucumber-js directly, not through a package script, starts with " + prefix + " " + cucumberImpactedWorkaround + " and wraps cucumber-js the same way; onboard --apply names the exact command."
+	if framework == "webdriverio" {
+		prefix, leaves, edits = webdriverIOScopedOptions, "WebdriverIO package script that runs wdio with the local runner", ""
+		direct = " A CI command that runs wdio with the local runner directly, not through a package script, starts with " + prefix + "; onboard --apply names the exact command."
+	}
+	edits += direct
+	return "The " + terms.Installer + " appends its dd-trace preload to NODE_OPTIONS; the command after it moves that preload, with the ESM loader, into " + variable + ", so only the test processes load the tracer, not the job's other Node commands. Run the tests on Node.js 20.6 or newer, or 18.19 or a later 18 release (the job's image), which the ESM loader needs. Start each " + leaves + " with " + prefix + ", keeping its command after it; onboard --apply makes this package.json edit." + edits + " After " + terms.Entry + ", extend NODE_OPTIONS and " + variable + " instead of replacing them."
+}
+
 func (javascriptDiscovery) ciSetupRequest(root, framework, site string, terms ciSetupTerms) ciSetupRequest {
 	if terms.Plugin {
 		return javascriptPluginSetupRequest(root, framework, site, terms)
@@ -114,11 +194,19 @@ func (javascriptDiscovery) ciSetupRequest(root, framework, site string, terms ci
 	if setupImportsESM(framework) || framework == "mocha" {
 		request.After = []string{esmImportCommand}
 	}
-	request.Notes = append(request.Notes, "The "+terms.Installer+" appends its dd-trace preload to NODE_OPTIONS for "+terms.Later+". Run the tests on Node.js 18 or newer (the job's image). After "+terms.Entry+", extend NODE_OPTIONS ("+terms.Persist(`export NODE_OPTIONS="$NODE_OPTIONS ..."`)+") instead of replacing it, including in an inline NODE_OPTIONS=... prefix of the test command.")
+	if scopedEnvironment(framework) != "NODE_OPTIONS" {
+		request.After = []string{providerScopedCommand(framework, scopedProviderOptions(root, framework))}
+		request.Notes = append(request.Notes, scopedProviderNote(framework, terms))
+	} else {
+		request.Notes = append(request.Notes, "The "+terms.Installer+" appends its dd-trace preload to NODE_OPTIONS for "+terms.Later+". Run the tests on Node.js 18 or newer (the job's image). After "+terms.Entry+", extend NODE_OPTIONS ("+terms.Persist(`export NODE_OPTIONS="$NODE_OPTIONS ..."`)+") instead of replacing it, including in an inline NODE_OPTIONS=... prefix of the test command.")
+	}
 	if framework == "mocha" {
 		request.Notes = append(request.Notes, "Keep the export after "+terms.Entry+" only for Mocha ESM test files; CommonJS suites need only the preload.")
 	}
 	if note := setupImageNote(root, "javascript", framework); note != "" {
+		request.Notes = append(request.Notes, note)
+	}
+	if note := handWrittenSetupNote(root, "javascript", framework, site); note != "" {
 		request.Notes = append(request.Notes, note)
 	}
 	if framework == "cucumber" {
@@ -130,16 +218,25 @@ func (javascriptDiscovery) ciSetupRequest(root, framework, site string, terms ci
 // javascriptPluginSetupRequest is the JavaScript part of a CI server plugin's
 // setup: the plugin installs the latest dd-trace and sets NODE_OPTIONS itself.
 func javascriptPluginSetupRequest(root, framework, site string, terms ciSetupTerms) ciSetupRequest {
-	request := ciSetupRequest{Language: "js", Site: site}
+	request := ciSetupRequest{Language: "js", Site: site, Service: packageName(root)}
 	if setupImportsESM(framework) || framework == "mocha" {
 		request.After = []string{pluginESMImportCommand}
 	}
-	request.Notes = append(request.Notes, "The "+terms.Installer+" installs the latest dd-trace release with the build agent's default npm when each build runs (it cannot pin a release) and prepends its dd-trace preload to NODE_OPTIONS for "+terms.Later+". ddtest validates locally with the latest release and reports that it floats. The agents need npm on their default PATH, and the tests Node.js 18 or newer.",
+	if options := scopedProviderOptions(root, framework); options != "" {
+		// Native ESM Cucumber also needs the Istanbul ESM loader, which the
+		// plugin's NODE_OPTIONS reaches the tests with, as the scoped
+		// variable carries it on the other providers.
+		request.After = append(request.After, pluginOptionsCommand(options))
+	}
+	request.Notes = append(request.Notes, "The "+terms.Installer+" installs the latest dd-trace release with the build agent's default npm when each build runs (it cannot pin a release) and prepends its dd-trace preload to NODE_OPTIONS for "+terms.Later+". ddtest validates locally with the latest release and reports that it floats. The agents need npm on their default PATH, and the tests a Node version the latest dd-trace release supports (its package.json engines): ddtest checks the stated CI Node against the latest release, and a Node it excludes cannot use the "+terms.Installer+".",
 		"Set Node options inside the sh script that runs the tests (export NODE_OPTIONS=\"$NODE_OPTIONS ...\" before the test command): the "+terms.Installer+" sets NODE_OPTIONS once per build, so a NODE_OPTIONS in a stage's environment directive or withEnv is overwritten.")
 	if framework == "mocha" {
 		request.Notes = append(request.Notes, "Keep the ESM line only for Mocha ESM test files; CommonJS suites need only the preload.")
 	}
 	if note := setupUnsupportedNote(root, "javascript", framework); note != "" {
+		request.Notes = append(request.Notes, note)
+	}
+	if note := handWrittenSetupNote(root, "javascript", framework, site); note != "" {
 		request.Notes = append(request.Notes, note)
 	}
 	if framework == "cucumber" {
@@ -148,17 +245,36 @@ func javascriptPluginSetupRequest(root, framework, site string, terms ciSetupTer
 	return request
 }
 
-// Scoped initialization (Cucumber, WebdriverIO) edits package scripts for
-// a per-step variable; outside GitHub Actions it is set up manually.
-func (javascriptDiscovery) automaticProviderSetup(framework string) bool {
-	return framework != "cucumber" && framework != "webdriverio"
-}
+// Every framework's setup is written on providers that edit their
+// configuration; Cucumber and WebdriverIO also get their scoped package
+// scripts (see providerScopedCommand).
+func (javascriptDiscovery) automaticProviderSetup(string) bool { return true }
 
 // Node versions no tracer supports are skipped through skipsUnsupportedNode.
 func (javascriptDiscovery) unsupportedImage(string) string { return "" }
 
+// The shared scan follows this language's package and repository scripts.
+func (javascriptDiscovery) stepMayStartTests(string, ciWorkflow, runtimeJob, runtimeStep) (bool, bool) {
+	return false, false
+}
+
+func (javascriptDiscovery) preloadVariable(name string) bool { return name == "NODE_OPTIONS" }
+
+// The JavaScript CI check reads hand-written dd-trace setups (see
+// checkRuntimeJob).
+func (javascriptDiscovery) validatesHandWrittenSetup() bool { return true }
+
 func (javascriptDiscovery) runtimeVariable(name string) bool {
 	return slices.Contains([]string{"NODE_OPTIONS", "NODE_PATH", "NODE_ENV"}, name) || strings.HasPrefix(strings.ToLower(name), "npm_config_")
+}
+
+// Node, the package managers and the JavaScript runners read these; Cypress
+// reads every CYPRESS_ variable as a configuration override, as
+// CYPRESS_BASE_URL or CYPRESS_SPEC_PATTERN. npm reads only npm_config_
+// variables (runtimeVariable): an NPM_TOKEN is a credential .npmrc reads.
+func (javascriptDiscovery) toolVariable(name string) bool {
+	upper := strings.ToUpper(name)
+	return slices.ContainsFunc([]string{"NODE_", "YARN_", "PNPM_", "COREPACK_", "JEST_", "VITEST_", "MOCHA_", "CYPRESS_", "PLAYWRIGHT_", "WDIO_", "TS_NODE_"}, func(prefix string) bool { return strings.HasPrefix(upper, prefix) })
 }
 
 func (javascriptDiscovery) cacheVariable(name string) bool {
@@ -296,6 +412,9 @@ func javascriptShellSelection(words []string) (version, versionFile string, ok b
 
 func (javascriptDiscovery) statedRuntime() *statedRuntime { return javascriptStatedRuntime }
 
+// The plugin has no setting for this language's tracer release.
+func (javascriptDiscovery) ciPluginTracerRelease(map[string]string) (string, bool) { return "", false }
+
 func (javascriptDiscovery) ciPluginLanguage() string { return "JAVASCRIPT" }
 
 // The Datadog Jenkins plugin prepends its dd-trace preload to NODE_OPTIONS
@@ -308,7 +427,32 @@ func (javascriptDiscovery) ciPluginComposes(key string) string {
 	if key != "NODE_OPTIONS" {
 		return ""
 	}
-	return "on each agent it sets NODE_OPTIONS for every step to its preload followed by the NODE_OPTIONS of the first step it configures there, so this value is lost, or, when its step is that first one, it reaches every later step on the agent. ddtest validates with the pipeline's NODE_OPTIONS"
+	return "on each agent it sets NODE_OPTIONS for every step to its preload followed by the NODE_OPTIONS of the first step it configures there, so this value is lost, or, when its step is that first one (on a fresh workspace, and so on every build of an ephemeral agent, the first step after the workspace exists), it reaches every later step on the agent. ddtest validates with the NODE_OPTIONS where the datadog option is (the pipeline's environment, or the stage's)"
+}
+
+// Every test step registers the ESM loader in its own shell, except Mocha's
+// CommonJS ones: the step's effective NODE_OPTIONS, as the shell's
+// statements before it leave it, must have the plugin's loader.
+func (javascriptDiscovery) ciShellAfter(workflow ciWorkflow, job runtimeJob, step runtimeStep, framework string, resolution commandResolution) (bool, string) {
+	if framework == "mocha" && !slices.ContainsFunc(resolution.Tests, func(command TestCommand) bool { return command.mochaESM }) {
+		return false, ""
+	}
+	variable := scopedEnvironment(framework)
+	if variable != "NODE_OPTIONS" {
+		for _, layer := range []map[string]string{workflow.Env, job.Env, step.Env} {
+			if options, ok := layer[variable]; ok {
+				step.Env = maps.Clone(step.Env)
+				if step.Env == nil {
+					step.Env = map[string]string{}
+				}
+				step.Env["NODE_OPTIONS"] = options
+			}
+		}
+	}
+	if checkJestBootstrap(workflow, job, step, nil, true) != "" {
+		return true, "its " + variable + " does not register the tracer's ESM loader (--import), so nothing between those commands and the test command may replace NODE_OPTIONS"
+	}
+	return true, ""
 }
 
 // Node version managers: n 20, nvm use, fnm use, volta, nodenv, and
@@ -328,6 +472,18 @@ func (javascriptDiscovery) selectsShellRuntime(words []string) bool {
 		return len(words) > 1 && path.Base(words[1]) == "nvm.sh"
 	}
 	return false
+}
+
+// ciPluginContainerEffect: a real Jenkins run showed the plugin's
+// NODE_OPTIONS reaching docker.image(…).inside and agent { docker } steps.
+func (javascriptDiscovery) ciPluginContainerEffect() string {
+	return "for JavaScript, the plugin's NODE_OPTIONS preloads the dd-trace it installed into the workspace with the agent's npm, so Node processes in the container load it only by accident, because Jenkins mounts the workspace there at the same path (with another path, every Node process fails to start), and on an agent without npm the plugin sets nothing, so the tests run untraced without any error"
+}
+
+// ciPluginReset removes the plugin's preload, which DD_TRACE_PATH locates,
+// from NODE_OPTIONS (it prepends it), keeping the step's own options.
+func (javascriptDiscovery) ciPluginReset() string {
+	return `if [ -n "${DD_TRACE_PATH:-}" ]; then export NODE_OPTIONS="${NODE_OPTIONS#"-r $DD_TRACE_PATH/ci/init"}"; unset DD_TRACE_PATH; fi`
 }
 
 func (javascriptDiscovery) ciPluginExports(current map[string]string) (map[string]string, map[string]string) {
@@ -375,13 +531,35 @@ var nodeImageTag = regexp.MustCompile(`^(?:(?:docker\.io/)?(?:library/)?node|cim
 
 // javascriptImageRuntime is the Node version a job's image selects, or a
 // Node image's floating tag (lts, current, or none): that image's runtime is
-// not the user's to state.
+// not the user's to state, unless the job's agent keeps the release the tag
+// selects (FloatingTagStated).
 func javascriptImageRuntime(job runtimeJob) string {
 	if node := imageNode(job.Image); node != "" {
 		return node
 	}
-	if match := nodeImageTag.FindStringSubmatch(withImplicitTag(job.Image)); match != nil {
+	if match := nodeImageTag.FindStringSubmatch(withImplicitTag(mirroredImage(job.Image))); match != nil && !job.FloatingTagStated {
 		return match[1]
 	}
 	return ""
 }
+
+// JavaScript's tools are classified with the shared ones (see recognizedTool).
+func (javascriptDiscovery) checkTool(string, string, []string) (bool, bool) { return false, false }
+
+func (javascriptDiscovery) ciStepVariables(string) map[string]string { return nil }
+
+func (javascriptDiscovery) keepsHandWrittenJobs() bool { return false }
+
+// The fallback setup (see ciFallbackLanguage) installs dd-trace as the
+// official installer does: a global npm install with its prefix in the
+// tracer folder, so a later npm install or checkout cannot remove it, then
+// the same NODE_OPTIONS preload and DD_TRACE_ESM_IMPORT.
+func (javascriptDiscovery) ciFallbackInstall(string) (install, exports string) {
+	return `NPM_CONFIG_PREFIX="$DD_TRACER_FOLDER" npm install -g "dd-trace@$DD_TRACER_VERSION_JS" >&2`,
+		`NODE_OPTIONS="${NODE_OPTIONS:-} -r $DD_TRACER_FOLDER/lib/node_modules/dd-trace/ci/init" DD_TRACE_ESM_IMPORT="$DD_TRACER_FOLDER/lib/node_modules/dd-trace/register.js"`
+}
+
+func (javascriptDiscovery) ciFallbackTool() string { return "npm" }
+
+// Node images carry npm.
+func (javascriptDiscovery) ciFallbackUnavailable(string) string { return "" }

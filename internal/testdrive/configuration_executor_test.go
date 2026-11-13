@@ -90,8 +90,8 @@ func TestEveryConfigurationCommandRunsWithoutOmittedSecrets(t *testing.T) {
 
 func TestFocusedCommandsKeepOmittedSecretsFromAdoptedOrAmbiguousConfigurations(t *testing.T) {
 	plan := onboard.TestCommand{Command: "npm test", Environment: map[string]string{"TZ": "UTC"}}
-	adoptConfigurationPreparation(&plan, onboard.TestCommand{Command: "npm test", Prerequisites: []onboard.BuildCommand{{Command: "npm run build"}}, Environment: map[string]string{"CI": "true"}, WithoutSecrets: []string{"SONAR_TOKEN"}})
-	require.Equal(t, []string{"SONAR_TOKEN"}, plan.WithoutSecrets, "adopted CI preparation brings its omitted secrets")
+	adoptConfigurationPreparation(&plan, onboard.TestCommand{Command: "npm test", Prerequisites: []onboard.BuildCommand{{Command: "npm run build"}}, Environment: map[string]string{"CI": "true"}, WithoutCIValues: []string{"SONAR_TOKEN"}})
+	require.Equal(t, []string{"SONAR_TOKEN"}, plan.WithoutCIValues, "adopted CI preparation brings its omitted secrets")
 	require.Equal(t, map[string]string{"CI": "true", "TZ": "UTC"}, plan.Environment)
 	require.Len(t, plan.Prerequisites, 1)
 
@@ -106,4 +106,30 @@ func TestFocusedCommandsKeepOmittedSecretsFromAdoptedOrAmbiguousConfigurations(t
 	env, without := matchingConfigurationEnvironment(scope, nil, root, "jest", "npm test")
 	require.Nil(t, env)
 	require.Equal(t, []string{"SONAR_TOKEN"}, without)
+}
+
+// A CI variable validation leaves out, such as one the script sets only on
+// some paths, is unset like an omitted secret: a value this host sets would
+// otherwise reach the tests the report says ran without it.
+func TestFocusedCommandRunsWithoutTheMatchedConfigurationsLeftOutVariables(t *testing.T) {
+	onboard.UseCIProvider("gitlab")
+	t.Cleanup(func() { onboard.UseCIProvider("") })
+	root := t.TempDir()
+	t.Chdir(root)
+	requireWriteFile(t, filepath.Join(root, "package.json"), `{"scripts":{"test":"jest"}}`)
+	requireWriteFile(t, filepath.Join(root, ".gitlab-ci.yml"), "variables:\n  IOS_DERIVED_DATA_PATH: $CI_PROJECT_DIR/DerivedData\ntest:\n  image: node:22\n  script:\n    - if [[ \"$CI_COMMIT_BRANCH\" == \"main\" ]]; then export COVERAGE=0; fi\n    - npm test\n")
+	scope, err := onboard.DiscoverValidationScope(root, "jest")
+	require.NoError(t, err)
+	require.Len(t, scope.Commands, 1)
+	require.Equal(t, []string{"COVERAGE", "IOS_DERIVED_DATA_PATH"}, scope.Commands[0].WithoutCIValues, "%v", scope.Caveats)
+	env, without := matchingConfigurationEnvironment(scope, nil, root, "jest", "npm test")
+	require.NotContains(t, env, "COVERAGE")
+	require.Equal(t, []string{"COVERAGE", "IOS_DERIVED_DATA_PATH"}, without)
+	executor := configurationExecutor{environment: env, without: without}
+	require.Equal(t, ext.UnsetEnvironment, executor.commandEnvironment(nil)["COVERAGE"], "a value this host sets does not replace the left-out CI value")
+	require.Equal(t, ext.UnsetEnvironment, executor.commandEnvironment(nil)["IOS_DERIVED_DATA_PATH"])
+
+	plan := onboard.TestCommand{Command: "npm test"}
+	adoptConfigurationPreparation(&plan, onboard.TestCommand{Command: "npm test", WithoutCIValues: []string{"COVERAGE"}})
+	require.Equal(t, []string{"COVERAGE"}, plan.WithoutCIValues, "adopted CI preparation brings its left-out variables")
 }

@@ -8,7 +8,7 @@ platforms or frameworks require explicit selection.
 
 | CLI flag | Environment variable | Env alias | Default | What it does |
 | --- | --- | --- | ---: | --- |
-| `--platform` | `DD_TEST_OPTIMIZATION_RUNNER_PLATFORM` | | auto-detected | Language/platform. Currently supported: `ruby`, `python`, `javascript`. |
+| `--platform` | `DD_TEST_OPTIMIZATION_RUNNER_PLATFORM` | | auto-detected | Language of the tests: `javascript`, `python`, `ruby` or `java`. Not the CI provider: `onboard` and `testdrive` select that with `--ci-provider`. |
 | `--framework` | `DD_TEST_OPTIMIZATION_RUNNER_FRAMEWORK` | | auto-detected | Test framework. Currently supported: `rspec`, `minitest`, `pytest`, `cucumber`, `cypress`, `jest`, `mocha`, `playwright`, `vitest`, `webdriverio` (`wdio`). |
 | `--command` | `DD_TEST_OPTIMIZATION_RUNNER_COMMAND` | | `""` | Override the default base test command for supported framework modes. Used by RSpec and Minitest run/discovery, Cucumber, Cypress, Jest, Mocha, Playwright, and WebdriverIO run/discovery. DDTest appends selected tests and framework-specific flags. Vitest rejects this option; use `--vitest-config` and configure options in Vitest. |
 | `--vitest-config` | `DD_TEST_OPTIMIZATION_RUNNER_VITEST_CONFIG` | | `""` | Vitest config file used by both planning and execution; defaults to Vitest config discovery. See [migration instructions](running.md#vitest-integration). |

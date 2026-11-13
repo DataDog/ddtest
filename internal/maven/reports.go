@@ -11,6 +11,8 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -59,6 +61,95 @@ var reportDirectories = []string{filepath.Join("target", "surefire-reports"), fi
 
 // karateReports is where Karate writes one *.karate-json.txt per feature.
 var karateReports = filepath.Join("target", "karate-reports")
+
+var (
+	// reportSwitch is a disableXmlReport set from a property, as
+	// <disableXmlReport>${closeTestReports}</disableXmlReport>.
+	reportSwitch = regexp.MustCompile(`<disableXmlReport>\s*\$\{([\w.-]+)\}\s*</disableXmlReport>`)
+	// pomPlugin is one plugin declaration; plugins don't nest.
+	pomPlugin = regexp.MustCompile(`(?s)<plugin>.*?</plugin>`)
+	// testPlugin is Surefire's or Failsafe's artifact.
+	testPlugin = regexp.MustCompile(`<artifactId>\s*maven-(?:surefire|failsafe)-plugin\s*</artifactId>`)
+	xmlComment = regexp.MustCompile(`(?s)<!--.*?-->`)
+)
+
+// ReportSwitches are the properties the reactor's POMs turn Surefire or
+// Failsafe XML reports off with, so setting them to false writes the reports.
+// A property the POMs name anywhere else, as a profile's activation does, or
+// that a project's sources mention, as filtered resources or tests reading
+// the user property do, may change the build too and is left alone.
+func ReportSwitches(root string, projects []Project) ([]string, error) {
+	var poms []string
+	for _, project := range projects {
+		data, err := os.ReadFile(filepath.Join(root, project.POM))
+		if err != nil {
+			return nil, err
+		}
+		poms = append(poms, string(data))
+	}
+	source := xmlComment.ReplaceAllString(strings.Join(poms, "\n"), "")
+	switches := map[string]bool{}
+	// Only Surefire's and Failsafe's disableXmlReport turns their reports off.
+	for _, plugin := range pomPlugin.FindAllString(source, -1) {
+		if !testPlugin.MatchString(plugin) {
+			continue
+		}
+		for _, match := range reportSwitch.FindAllStringSubmatch(plugin, -1) {
+			switches[match[1]] = true
+		}
+	}
+	var properties []string
+	for _, property := range slices.Sorted(maps.Keys(switches)) {
+		name := regexp.QuoteMeta(property)
+		// The report switches and the property's literal definitions are
+		// the only mentions that leave the build as it is.
+		rest := regexp.MustCompile(`<disableXmlReport>\s*\$\{`+name+`\}\s*</disableXmlReport>|<`+name+`>[^<$]*</`+name+`>`).ReplaceAllString(source, "")
+		if regexp.MustCompile(`(^|[^\w.-])` + name + `([^\w.-]|$)`).MatchString(rest) {
+			continue
+		}
+		mentioned, err := sourcesMention(root, projects, property)
+		if err != nil {
+			return nil, err
+		}
+		if !mentioned && !pluginProperty(property) {
+			properties = append(properties, property)
+		}
+	}
+	return properties, nil
+}
+
+// pluginProperty reports a user property that Maven, Surefire or Failsafe
+// read on their own, without the POM naming it, such as skipTests: setting it
+// would change which tests run or how they report.
+func pluginProperty(property string) bool {
+	return strings.HasPrefix(property, "maven.") || strings.HasPrefix(property, "surefire.") || strings.HasPrefix(property, "failsafe.") ||
+		slices.Contains([]string{"skip", "skipTests", "skipITs", "test", "it.test", "groups", "excludedGroups", "argLine", "parallel", "threadCount",
+			"forkCount", "reuseForks", "trimStackTrace", "failIfNoTests", "failIfNoSpecifiedTests", "useFile", "printSummary",
+			"redirectTestOutputToFile", "enableAssertions", "childDelegation", "useSystemClassLoader", "useManifestOnlyJar"}, property)
+}
+
+// sourcesMention reports whether any file under a project's src directory
+// contains text.
+func sourcesMention(root string, projects []Project, text string) (bool, error) {
+	found := false
+	for _, project := range projects {
+		err := filepath.WalkDir(filepath.Join(root, project.Directory, "src"), func(path string, entry fs.DirEntry, err error) error {
+			if err != nil || found || !entry.Type().IsRegular() {
+				return err
+			}
+			data, err := os.ReadFile(path)
+			found = err == nil && strings.Contains(string(data), text)
+			return err
+		})
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return false, err
+		}
+		if found {
+			return true, nil
+		}
+	}
+	return false, nil
+}
 
 // ReadReports reads the native reports of every project under root. Call it
 // only on fresh build output: reports from an earlier build are read as well.
@@ -291,4 +382,18 @@ func testFailures(message string, next []string) bool {
 		}
 	}
 	return false
+}
+
+// BuildFailure is the first goal failure a Maven build's output reports, as
+// "Failed to execute goal com.mycila:license-maven-plugin:3.0:check
+// (check-license) on project feel-engine: Some files do not have the expected
+// license header"; empty when it names none.
+func BuildFailure(output string) string {
+	for _, line := range strings.Split(ansiEscape.ReplaceAllString(output, ""), "\n") {
+		failure, found := strings.CutPrefix(strings.TrimSpace(line), "[ERROR] ")
+		if found && strings.HasPrefix(failure, "Failed to execute goal") {
+			return strings.TrimSpace(strings.TrimSuffix(failure, " -> [Help 1]"))
+		}
+	}
+	return ""
 }

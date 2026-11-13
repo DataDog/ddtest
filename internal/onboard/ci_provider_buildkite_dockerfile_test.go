@@ -170,16 +170,22 @@ func TestBuildkiteComposeServicesBuiltFromADockerfile(t *testing.T) {
 }
 
 // The setup snippet needs Bash and curl or wget in the image a Dockerfile
-// builds: the base image's, or what its RUN instructions install.
+// builds: the base image's, or what its RUN instructions install. A step
+// whose image lacks them takes the setup without Bash or curl instead; one
+// ddtest cannot read reports it before the snippet is written.
 func TestBuildkiteDockerfileImagesRunTheSetup(t *testing.T) {
 	snippet := buildkiteSnippetText("js", "5.133.0", "datadoghq.com", "      ")
-	for _, tc := range []struct{ name, dockerfile, problem string }{
-		{"a slim base without curl", "FROM node:22-slim\nRUN apt-get update && apt-get install -y git\n", "The step's image is built from Dockerfile, whose final stage is FROM node:22-slim, which has neither curl nor wget, and no RUN instruction of the Dockerfile installs them, so the Datadog installer cannot be downloaded and its tests would run untraced. Install curl in the Dockerfile (add curl to its apt-get install packages, or RUN apt-get update && apt-get install -y --no-install-recommends curl), or build FROM the full image (without -slim)."},
-		{"a slim base installing curl", "FROM node:22-slim\nRUN apt-get update \\\n  && apt-get install -y --no-install-recommends git curl\n", ""},
-		{"a full base", "FROM node:22\n", ""},
-		{"Alpine without Bash", "FROM node:22-alpine\n", "whose final stage is FROM node:22-alpine, which has no Bash, which the Datadog installer needs. Install bash in the Dockerfile (for Alpine: RUN apk add --no-cache bash)"},
-		{"Alpine installing Bash", "FROM node:22-alpine\nRUN apk add --no-cache bash\n", ""},
-		{"a base ddtest cannot resolve", "ARG BASE\nFROM $BASE\n", "The step's container cannot be checked: its Docker Compose service app is built from Dockerfile, whose base image $BASE reads the build argument BASE, which has no literal default ddtest can resolve, so ddtest cannot tell whether the image it builds has the Bash and the curl or wget the Datadog installer needs."},
+	instead := "Use the " + fallbackSetupName + " in this step instead, as ddtest's instructions show, and do not change the image"
+	for _, tc := range []struct {
+		name, dockerfile, problem string
+		fallback                  bool
+	}{
+		{"a slim base without curl", "FROM node:22-slim\nRUN apt-get update && apt-get install -y git\n", "The step's image is built from Dockerfile, whose final stage is FROM node:22-slim, which has neither curl nor wget, and no RUN instruction of the Dockerfile installs them, so the Datadog installer cannot be downloaded and its tests would run untraced. " + instead, true},
+		{"a slim base installing curl", "FROM node:22-slim\nRUN apt-get update \\\n  && apt-get install -y --no-install-recommends git curl\n", "", false},
+		{"a full base", "FROM node:22\n", "", false},
+		{"Alpine without Bash", "FROM node:22-alpine\n", "whose final stage is FROM node:22-alpine, which has no Bash, which the Datadog installer needs. " + instead, true},
+		{"Alpine installing Bash", "FROM node:22-alpine\nRUN apk add --no-cache bash\n", "", false},
+		{"a base ddtest cannot resolve", "ARG BASE\nFROM $BASE\n", "The step's container cannot be checked: its Docker Compose service app is built from Dockerfile, whose base image $BASE reads the build argument BASE, which has no literal default ddtest can resolve, so ddtest cannot tell whether the image it builds has the Bash and the curl or wget the Datadog installer needs, and does not validate this step's setup", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := buildkiteComposeRepository(t, snippet+"      - npm test\n", "docker-compose.yml", "services:\n  app:\n    build: .\n    volumes:\n      - .:/app\n", map[string]string{"Dockerfile": tc.dockerfile})
@@ -187,20 +193,28 @@ func TestBuildkiteDockerfileImagesRunTheSetup(t *testing.T) {
 			index := slices.IndexFunc(job.Steps, func(step runtimeStep) bool { return step.Setup != nil })
 			require.GreaterOrEqual(t, index, 0)
 			require.Equal(t, tc.problem == "", javascriptDiscovery{}.ciSetupConfigured(root, "jest", ""))
-			require.Equal(t, job.SetupImageProblem, job.Steps[index].Setup.Problem, "before the snippet is written, the job already reports it")
+			_, fallback := fallbackJob(job)
+			require.Equal(t, tc.fallback, fallback)
+			if !tc.fallback {
+				require.Equal(t, job.SetupImageProblem, job.Steps[index].Setup.Problem, "before the snippet is written, the job already reports it")
+			}
 			if tc.problem == "" {
 				require.Empty(t, job.Steps[index].Setup.Problem)
 				return
 			}
 			require.Contains(t, job.Steps[index].Setup.Problem, tc.problem)
+			require.NotContains(t, job.Steps[index].Setup.Problem, "build FROM")
 		})
 	}
-	t.Run("the instructions name the image before the snippet is written", func(t *testing.T) {
+	t.Run("the instructions prescribe the setup without Bash or curl before the snippet is written", func(t *testing.T) {
 		root := buildkiteComposeRepository(t, "      - npm test\n", "docker-compose.yml", "services:\n  app:\n    build: .\n    volumes:\n      - .:/app\n", map[string]string{"Dockerfile": "FROM node:22-slim\n"})
 		text := providerSetupInstructions(root, buildkite{}, "javascript", "jest", "", true)
-		require.Contains(t, text, "These CI steps cannot run the Datadog setup snippet in their current image, so their tests would stay untraced even with it in place; changing an image or Dockerfile is not part of this setup, so tell the user and ask before making it:\n  .buildkite/pipeline.yml / test: The step's image is built from Dockerfile, whose final stage is FROM node:22-slim, which has neither curl nor wget")
+		require.Contains(t, text, "These jobs (.buildkite/pipeline.yml / test) run in node:22-slim, which has neither curl nor wget, so Datadog's official installer cannot run there")
+		require.Contains(t, text, buildkiteEscape(fallbackComment[0]))
 		writeFile(t, root, "Dockerfile", "FROM node:22\n")
-		require.NotContains(t, providerSetupInstructions(root, buildkite{}, "javascript", "jest", "", true), "These CI steps cannot run")
+		require.NotContains(t, providerSetupInstructions(root, buildkite{}, "javascript", "jest", "", true), fallbackComment[0])
+		writeFile(t, root, "Dockerfile", "ARG BASE\nFROM $BASE\n")
+		require.Contains(t, providerSetupInstructions(root, buildkite{}, "javascript", "jest", "", true), "ddtest cannot check that these CI steps can run the Datadog setup snippet in their image, so it does not validate their setup. Never change an image or Dockerfile: tell the user.\n  .buildkite/pipeline.yml / test: The step's container cannot be checked")
 	})
 }
 

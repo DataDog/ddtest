@@ -44,6 +44,62 @@ func newTestRuby() *Ruby {
 	return NewRuby(settings.TestSkippingLevelTest)
 }
 
+func TestRubySelectedGemfile(t *testing.T) {
+	for _, fw := range []string{"rspec", "minitest"} {
+		for _, tc := range []struct {
+			name     string
+			selected string
+			absolute bool
+			rootGem  bool
+			missing  bool
+		}{
+			{name: "default", rootGem: true},
+			{name: "relative", selected: "config/Gemfile.test"},
+			{name: "absolute", selected: "config/Gemfile.test", absolute: true},
+			{name: "relative overrides root", selected: "config/Gemfile.test", rootGem: true},
+			{name: "absolute overrides root", selected: "config/Gemfile.test", absolute: true, rootGem: true},
+			{name: "missing does not fall back", selected: "config/Gemfile.test", rootGem: true, missing: true},
+		} {
+			t.Run(fw+"/"+tc.name, func(t *testing.T) {
+				resetDetectionSettings(t)
+				root := t.TempDir()
+				t.Chdir(root)
+				selected := tc.selected
+				if tc.absolute {
+					selected = filepath.Join(root, selected)
+				}
+				t.Setenv("BUNDLE_GEMFILE", selected)
+				if tc.rootGem {
+					gem := fw
+					if selected != "" {
+						gem = "rspec"
+						if fw == gem {
+							gem = "minitest"
+						}
+					}
+					require.NoError(t, os.WriteFile("Gemfile", []byte("gem '"+gem+"'\n"), 0644))
+				}
+				if selected != "" && !tc.missing {
+					require.NoError(t, os.MkdirAll(filepath.Dir(selected), 0755))
+					require.NoError(t, os.WriteFile(selected, []byte("gem '"+fw+"'\n"), 0644))
+				}
+				p, err := DetectPlatform()
+				if tc.missing {
+					require.ErrorContains(t, err, "could not detect a supported platform")
+					_, err = newTestRuby().DetectFramework()
+					require.ErrorContains(t, err, "could not detect a supported ruby test framework")
+					return
+				}
+				require.NoError(t, err)
+				require.Equal(t, "ruby", p.Name())
+				selectedFramework, err := p.DetectFramework()
+				require.NoError(t, err)
+				require.Equal(t, fw, selectedFramework.Name())
+			})
+		}
+	}
+}
+
 func TestRuby_Name(t *testing.T) {
 	ruby := newTestRuby()
 	expected := "ruby"
@@ -467,7 +523,7 @@ func TestDetectPlatform_Unsupported(t *testing.T) {
 		t.Error("expected nil platform for unsupported platform")
 	}
 
-	expectedError := "unsupported platform: go"
+	expectedError := "unsupported platform: go; supported platforms: javascript, python, ruby, java. --platform selects the language of the tests; select a CI provider with --ci-provider."
 	if err.Error() != expectedError {
 		t.Errorf("expected error %q, got %q", expectedError, err.Error())
 	}

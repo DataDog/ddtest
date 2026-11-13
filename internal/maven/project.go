@@ -409,19 +409,37 @@ func Metadata(args []string) bool {
 	})
 }
 
+// OptionTakesValue reports a Maven option whose next argument is its value.
+func OptionTakesValue(arg string) bool { return slices.Contains(optionsWithValue, arg) }
+
 // Goals returns the phases and plugin goals in Maven arguments, without
 // options or their values.
 func Goals(args []string) []string {
 	var goals []string
 	for i := 0; i < len(args); i++ {
 		switch {
-		case slices.Contains(optionsWithValue, args[i]):
+		case OptionTakesValue(args[i]):
 			i++
 		case !strings.HasPrefix(args[i], "-"):
 			goals = append(goals, args[i])
 		}
 	}
 	return goals
+}
+
+// MutationGoal reports a goal of PIT's Maven plugin (org.pitest:pitest-maven),
+// such as pitest:mutationCoverage or
+// org.pitest:pitest-maven:1.15.0:mutationCoverage: mutation testing, which
+// runs the tests in PIT's own processes and writes no Surefire reports.
+func MutationGoal(goal string) bool {
+	parts := strings.Split(goal, ":")
+	switch len(parts) {
+	case 2:
+		return parts[0] == "pitest"
+	case 3, 4:
+		return parts[0] == "org.pitest" && parts[1] == "pitest-maven"
+	}
+	return false
 }
 
 // ModuleDirectories maps the names the Java agent reports as test.module, a

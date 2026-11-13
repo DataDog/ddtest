@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/DataDog/ddtest/internal/testdrive/workspace"
+	"github.com/DataDog/ddtest/internal/testutil"
 	"github.com/kballard/go-shellquote"
 	"github.com/stretchr/testify/require"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -81,9 +83,7 @@ func TestPublicJestPackageConfiguration(t *testing.T) {
 		cmd.Env = append(cmd.Env, "NODE_OPTIONS=--conditions=development")
 		return cmd.CombinedOutput()
 	}
-	binary := filepath.Join(t.TempDir(), "ddtest")
-	data, err = command("../..", "go", "build", "-o", binary, ".")
-	require.NoError(t, err, string(data))
+	binary := testutil.DDTest(t)
 	data, err = command(root, "git", "init", "-q")
 	require.NoError(t, err, string(data))
 	for _, args := range [][]string{{"--all", "--check-only"}, {"--all"}} {
@@ -173,6 +173,8 @@ func TestPublicJestPackageConfiguration(t *testing.T) {
 	// Default execution must match CI independently of --showConfig. The fixture
 	// does not inherit extra options for this final root comparison.
 	t.Setenv("NODE_OPTIONS", "")
+	kept := readValidationReport(t, root)
+	require.True(t, kept.All, "the earlier explicit run validated every configuration")
 	for _, extra := range [][]string{nil, {"--command", "npm test"}, {"--all"}} {
 		args := append([]string{"testdrive", "--framework", "jest", "--yes"}, extra...)
 		cmd := exec.CommandContext(ctx, binary, args...)
@@ -180,6 +182,15 @@ func TestPublicJestPackageConfiguration(t *testing.T) {
 		data, err = cmd.CombinedOutput()
 		require.NoError(t, err, string(data))
 		report := readValidationReport(t, root)
+		if !slices.Contains(extra, "--all") {
+			// A run of one command after an --all run is written beside
+			// that report, which it leaves in place.
+			require.Equal(t, kept.Session, report.Session)
+			report = readFocusedValidationReport(t, root)
+		} else {
+			require.True(t, report.All)
+			require.NotEqual(t, kept.Session, report.Session, "--all replaces the saved report")
+		}
 		require.Equal(t, err == nil, report.Success, string(data))
 		require.Equal(t, "passed", report.Configurations[0].Status)
 	}
@@ -244,9 +255,7 @@ func TestPublicJestTwoPackageConfiguration(t *testing.T) {
 	}
 	data, err := command(root, "git", "init", "-q")
 	require.NoError(t, err, string(data))
-	binary := filepath.Join(t.TempDir(), "ddtest")
-	data, err = command("../..", "go", "build", "-o", binary, ".")
-	require.NoError(t, err, string(data))
+	binary := testutil.DDTest(t)
 	for _, args := range [][]string{{"--all", "--check-only"}, {"--all"}} {
 		data, err = command(root, binary, append([]string{"testdrive", "--framework", "jest", "--yes"}, args...)...)
 		require.NoError(t, err, string(data))
@@ -271,9 +280,20 @@ func TestPublicJestTwoPackageConfiguration(t *testing.T) {
 	}
 	// A focused nested invocation still reports correct paths; it cannot certify
 	// checkout CI from this package, so its separate CI finding remains incomplete.
+	// Its report is written at the checkout root, like every other run's,
+	// beside the --all report there, which it keeps.
+	all := readValidationReport(t, root)
 	data, err = command(filepath.Join(root, "packages/a"), binary, "testdrive", "--framework", "jest", "--yes")
 	require.Error(t, err, string(data))
-	nested := readValidationReport(t, filepath.Join(root, "packages/a"))
+	for _, report := range retainedReports {
+		require.NoFileExists(t, filepath.Join(root, "packages/a", filepath.FromSlash(report)), "the package keeps no report")
+	}
+	require.Equal(t, all.Session, readValidationReport(t, root).Session, "the --all report stays in place")
+	data, err = os.ReadFile(filepath.Join(root, ".testoptimization", focusedValidationFilename))
+	require.NoError(t, err)
+	var nested validationResult
+	require.NoError(t, json.Unmarshal(data, &nested))
+	require.Equal(t, "../../.testoptimization/testdrive.json", nested.KeptReport)
 	require.Equal(t, "compatible", nested.Compatibility.Status, string(data))
 	require.Len(t, nested.Features, 6)
 	for _, feature := range nested.Features {

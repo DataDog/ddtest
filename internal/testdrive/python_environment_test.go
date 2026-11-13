@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/DataDog/ddtest/internal/framework"
@@ -14,58 +15,6 @@ import (
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
 	"github.com/stretchr/testify/require"
 )
-
-func TestPythonEnvironmentSelection(t *testing.T) {
-	for _, tc := range []struct {
-		name, active   string
-		lock, explicit bool
-		want           string
-	}{
-		{name: "PATH", want: "python"},
-		{name: "uv lock", lock: true, want: "uv"},
-		{name: "explicit overrides uv", lock: true, explicit: true, want: "custom-python"},
-		{name: "activated venv", active: "VIRTUAL_ENV"},
-		{name: "uv overrides activated venv", lock: true, active: "VIRTUAL_ENV", want: "uv"},
-		{name: "activated conda", active: "CONDA_PREFIX"},
-		{name: "uv overrides activated conda", lock: true, active: "CONDA_PREFIX", want: "uv"},
-		{name: "explicit overrides uv and activated venv", lock: true, active: "VIRTUAL_ENV", explicit: true, want: "custom-python"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			root := t.TempDir()
-			t.Setenv("VIRTUAL_ENV", "")
-			t.Setenv("CONDA_PREFIX", "")
-			if tc.lock {
-				requireWriteFile(t, filepath.Join(root, "uv.lock"), "")
-			}
-			want := tc.want
-			if tc.active != "" {
-				t.Setenv(tc.active, root)
-				if want == "" {
-					want = environmentPython(root)
-				}
-			}
-			command := "python"
-			if tc.explicit {
-				command = "custom-python"
-			}
-			got, args, _ := pythonTestdriveCommand(root, command, []string{"-m", "pytest"}, tc.explicit)
-			require.Equal(t, want, got)
-			if got == "uv" {
-				require.Equal(t, []string{"run", "--no-sync", "python", "-m", "pytest"}, args)
-			}
-		})
-	}
-}
-
-func TestUVLockDiscoveryStopsAtCheckoutBoundary(t *testing.T) {
-	root := t.TempDir()
-	requireWriteFile(t, filepath.Join(root, "uv.lock"), "")
-	member := filepath.Join(root, "packages", "member")
-	require.NoError(t, os.MkdirAll(member, 0755))
-	require.Equal(t, root, uvLockRoot(member))
-	requireWriteFile(t, filepath.Join(member, ".git"), "gitdir: elsewhere")
-	require.Empty(t, uvLockRoot(member))
-}
 
 func TestPythonProbePreservesEnvironmentSelectors(t *testing.T) {
 	for _, tc := range []struct {
@@ -81,6 +30,9 @@ func TestPythonProbePreservesEnvironmentSelectors(t *testing.T) {
 		{"python3.13d", []string{"-W", "error", "-m", "pytest"}, []string{"-W", "error"}},
 		{"uv", []string{"run", "python3.13d", "-m", "pytest"}, []string{"run", "--no-sync", "python3.13d"}},
 		{"python_d.exe", []string{"-m", "pytest"}, []string{}},
+		{"python3", []string{"-Im", "pytest"}, []string{"-I"}},
+		{"python3", []string{"-X", "dev", "-IBu", "-m", "pytest"}, []string{"-X", "dev", "-I", "-B", "-u"}},
+		{"uv", []string{"run", "python", "-Im", "pytest"}, []string{"run", "--no-sync", "python", "-I"}},
 		{"uv", []string{"run", "--only-group", "test", "--all-groups", "--no-group=docs", "--no-dev", "--all-extras", "--no-extra", "slow", "pytest"}, []string{"run", "--no-sync", "--only-group", "test", "--all-groups", "--no-group=docs", "--no-dev", "--all-extras", "--no-extra", "slow", "python"}},
 		{"poetry", []string{"run", "python", "-m", "pytest"}, []string{"run", "python"}},
 	} {
@@ -95,6 +47,18 @@ func TestPythonProbePreservesEnvironmentSelectors(t *testing.T) {
 	require.ErrorContains(t, err, "cannot identify a Python interpreter")
 	_, _, err = pythonProbeCommand("uv", []string{"run", "python-wrapper", "-m", "pytest"})
 	require.ErrorContains(t, err, "python-wrapper")
+}
+
+// Isolated interpreters get the observer through a bootstrap, also when -I
+// is clustered with -m or other flags.
+func TestPytestObserverArgumentsReadClusteredFlags(t *testing.T) {
+	for args, want := range map[string][]string{
+		"-Im pytest -q":       {"-I", "-c", pytestObserverBootstrap, "observer", "tracer", "-q"},
+		"-X dev -IBum pytest": {"-X", "dev", "-I", "-B", "-u", "-c", pytestObserverBootstrap, "observer", "tracer"},
+		"-Bu -m pytest -q":    {"-Bu", "-m", "pytest", "-q"},
+	} {
+		require.Equal(t, want, pytestObserverArguments("python3", strings.Fields(args), "observer", "tracer"), args)
+	}
 }
 
 func TestUVPreflightReportsBeforeInstallation(t *testing.T) {
@@ -114,7 +78,7 @@ func TestUVPreflightReportsBeforeInstallation(t *testing.T) {
 			t.Cleanup(func() { settings.Get().Command = old })
 			requireWriteFile(t, "pyproject.toml", "[tool.pytest.ini_options]\n")
 			requireWriteFile(t, "uv.lock", "")
-			python := environmentPython(filepath.Join(root, ".venv"))
+			python := platform.PythonEnvironmentExecutable(filepath.Join(root, ".venv"))
 			if outcome != "uv missing" {
 				result, err := json.Marshal(map[string]any{"executable": python, "version": "3.13.15", "pytest": outcome == "ready", "error": "No module named pytest"})
 				require.NoError(t, err)
@@ -184,18 +148,4 @@ func TestPythonFrameworkCommandUnaffectedByUV(t *testing.T) {
 	command, args := framework.NewPytest(platform.NewPython()).Command()
 	require.Equal(t, "python", command)
 	require.Equal(t, []string{"-m", "pytest"}, args)
-}
-
-func TestParentLockSelectsUVWithoutProbing(t *testing.T) {
-	root := t.TempDir()
-	requireWriteFile(t, filepath.Join(root, "uv.lock"), "")
-	child := filepath.Join(root, "packages", "member")
-	require.NoError(t, os.MkdirAll(child, 0755))
-	t.Setenv("PATH", "")
-	t.Setenv("VIRTUAL_ENV", "")
-	t.Setenv("CONDA_PREFIX", "")
-	command, args, source := pythonTestdriveCommand(child, "python", []string{"-m", "pytest"}, false)
-	require.Equal(t, "uv", command)
-	require.Equal(t, []string{"run", "--no-sync", "python", "-m", "pytest"}, args)
-	require.Equal(t, "uv project (uv.lock)", source)
 }

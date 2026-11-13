@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -8,6 +9,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 // keepRunEnvironment restores, after t, the variables that run sets for the
@@ -194,8 +196,10 @@ func dispatchHelper(t *testing.T, args ...string) (string, string, int) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	command := exec.Command(executable, "-test.run=^TestDispatchHelper$")
-	for _, entry := range os.Environ() {
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
+	defer cancel()
+	command := exec.CommandContext(ctx, executable, "-test.run=^TestDispatchHelper$")
+	for _, entry := range helperEnvironment() {
 		if !strings.HasPrefix(entry, "_DD_ROOT_GO_SESSION_ID=") {
 			command.Env = append(command.Env, entry)
 		}

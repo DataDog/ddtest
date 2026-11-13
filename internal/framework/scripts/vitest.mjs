@@ -25,6 +25,7 @@ const validation = !request.discover && process.env.DDTEST_VITEST_VALIDATION
   : undefined
 if (validation) {
   config.reporters = ['default', 'json']
+  if (process.env.DDTEST_VITEST_IDENTITY_REPORTER) config.reporters.push(process.env.DDTEST_VITEST_IDENTITY_REPORTER)
   config.outputFile = resolve(validation.directory, `${process.pid}.results.json`)
   config.coverage = validationCoverage(resolve(validation.directory, `${process.pid}.coverage`), validation.probe)
   if (validation.probe) {

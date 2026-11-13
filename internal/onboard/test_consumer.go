@@ -23,6 +23,17 @@ var frameworkExecutables = map[string][]string{
 	"cypress": {"cypress"}, "cucumber": {"cucumber", "cucumber-js"}, "webdriverio": {"wdio", "webdriverio"},
 }
 
+// scriptInterpreter lets a language register its interpreter without naming it
+// in another language's discovery rules.
+func registeredScriptInterpreter(name string) bool {
+	for _, language := range discoveryLanguages {
+		if registered, ok := language.(interface{ scriptInterpreter(string) bool }); ok && registered.scriptInterpreter(name) {
+			return true
+		}
+	}
+	return false
+}
+
 // Task runners and package binaries runners that can start any test suite.
 var taskRunners = []string{"npx", "bunx", "make", "just", "task", "nx", "turbo", "lerna", "rush", "gulp", "grunt"}
 
@@ -37,7 +48,13 @@ var scriptSubcommands = []string{"test", "t", "tst", "run", "run-script", "exec"
 // Package-manager subcommands that never start a script or test binary.
 var managerOnlySubcommands = []string{"install", "i", "ci", "add", "remove", "uninstall", "audit", "config", "publish", "pack", "why", "list", "ls", "outdated", "dedupe", "store", "version", "view", "info", "cache", "stage", "login", "whoami", "dist-tag"}
 
-var commandSeparator = regexp.MustCompile(`\n|&&|\|\||;|\||\$\(|` + "`" + `|\bthen\b|\bdo\b|\belse\b|\belif\b`)
+// Redirections that duplicate or join file descriptors (2>&1, &>log, <&3)
+// contain an & that starts no command.
+var fileDescriptorRedirect = regexp.MustCompile(`\d*[<>]&\d*-?|&>>?`)
+
+// A single & backgrounds the command before it; <( and >( substitute a
+// command's output, like $(.
+var commandSeparator = regexp.MustCompile(`\n|&&|\|\||;|\||&|<\(|>\(|\$\(|` + "`" + `|\bthen\b|\bdo\b|\belse\b|\belif\b`)
 
 var heredocStart = regexp.MustCompile(`<<-?\s*['"]?([A-Za-z_][A-Za-z0-9_]*)['"]?`)
 
@@ -47,20 +64,32 @@ var heredocStart = regexp.MustCompile(`<<-?\s*['"]?([A-Za-z_][A-Za-z0-9_]*)['"]?
 // publishing, or another framework are outside the test path; an unknown
 // executable, action, package script or repository file may wrap a test.
 func mayStartTests(step runtimeStep, framework string) bool {
-	return mayStartTestsIn("", step, framework, 0)
+	return mayStartTestsIn("", "", step, framework, 0)
 }
 
 // stepMayStartTests is mayStartTests with the step's package scripts readable,
 // so a known script whose body can't start a test is not a possible wrapper.
+// A language that reads its steps more precisely answers for its frameworks.
 func stepMayStartTests(root string, workflow ciWorkflow, job runtimeJob, step runtimeStep, framework string) bool {
+	if language := discoveryLanguageFor(framework); language != nil {
+		if may, handled := language.stepMayStartTests(root, workflow, job, step); handled {
+			return may
+		}
+	}
 	directory, err := repositoryDirectory(root, root, stepDirectory(workflow, job, step))
 	if err != nil {
 		directory = ""
 	}
-	return mayStartTestsIn(directory, step, framework, 0)
+	return mayStartTestsIn(root, directory, step, framework, 0)
 }
 
-func mayStartTestsIn(directory string, step runtimeStep, framework string, depth int) bool {
+// mayStartTestsIn is mayStartTests with the package scripts of directory
+// readable, and the repository scripts, Dockerfiles and Angular workspace
+// files the step runs readable under root ("" reads none).
+func mayStartTestsIn(root, directory string, step runtimeStep, framework string, depth int) bool {
+	if root == "" {
+		root = directory
+	}
 	if strings.TrimSpace(step.Run) == "" {
 		// An unresolved action, or configuration its provider could not
 		// read, can run anything.
@@ -95,11 +124,19 @@ func mayStartTestsIn(directory string, step runtimeStep, framework string, depth
 		}
 		lines = append(lines, line)
 	}
+	original := fileDescriptorRedirect.ReplaceAllString(shellCommandText(strings.Join(lines, "\n")), " ")
 	text := strings.ToLower(strings.Join(lines, "\n"))
 	if namesFramework(text, framework, true) {
 		return true
 	}
-	text = shellCommandText(text)
+	text = fileDescriptorRedirect.ReplaceAllString(shellCommandText(text), " ")
+	// Repository paths keep their case: read them from the original text when
+	// it splits into the same segments.
+	originals := commandSeparator.Split(original, -1)
+	segments := commandSeparator.Split(text, -1)
+	if len(originals) != len(segments) {
+		originals = segments
+	}
 	scripts := packageScripts(directory)
 	inlineCodeSafe := inlineEvalsCannotLaunch(step.Run, directory, framework, depth)
 	// A heredoc feeds its body to the interpreter on stdin: JavaScript is read
@@ -110,24 +147,44 @@ func mayStartTestsIn(directory string, step runtimeStep, framework string, depth
 		case slices.Contains(javaScriptInterpreters, doc.command):
 			heredocsSafe = heredocsSafe && inlineCodeCannotLaunch(doc.body, directory, framework, depth)
 		case slices.Contains(interpreters, doc.command):
-			heredocsSafe = heredocsSafe && depth < 8 && !mayStartTestsIn(directory, runtimeStep{Run: doc.body}, framework, depth+1)
+			heredocsSafe = heredocsSafe && depth < 8 && !mayStartTestsIn(root, directory, runtimeStep{Run: doc.body}, framework, depth+1)
 		}
 	}
-	for _, segment := range commandSeparator.Split(text, -1) {
+	for index, segment := range segments {
 		words := strings.Fields(segment)
+		cased := strings.Fields(originals[index])
+		if len(cased) != len(words) || !strings.EqualFold(originals[index], segment) {
+			cased = words
+		}
+		// A directory change moves what later commands read: a plain cd to a
+		// literal repository folder as the first command is followed; any
+		// other (later, so possibly conditional, inside a subshell, or to a
+		// folder ddtest can't resolve) leaves later commands' folder
+		// unreadable, so their scripts and files may start the tests.
+		if directoryChange(words) {
+			next := ""
+			if index == 0 && len(cased) == 2 && words[0] == "cd" && directory != "" {
+				if resolved, err := repositoryDirectory(root, directory, strings.Trim(cased[1], `"'`)); err == nil {
+					next = resolved
+				}
+			}
+			directory, scripts = next, packageScripts(next)
+			continue
+		}
 		for len(words) > 0 && (strings.Contains(words[0], "=") || slices.Contains([]string{"sudo", "env", "time", "exec", "xargs", "command", "if", "while", "until", "!", "{", "("}, words[0])) {
-			words = words[1:]
+			words, cased = words[1:], cased[1:]
 		}
 		if len(words) > 0 {
 			words[0] = strings.TrimLeft(words[0], "({!")
+			cased[0] = strings.TrimLeft(cased[0], "({!")
 		}
 		for len(words) > 0 && strings.HasPrefix(words[0], "-") {
-			words = words[1:] // xargs/env options before the command.
+			words, cased = words[1:], cased[1:] // xargs/env options before the command.
 		}
 		// Bundler's exec runs a gem's executable, which a JavaScript suite
 		// is not: classify that executable.
 		if len(words) > 2 && words[0] == "bundle" && words[1] == "exec" {
-			words = words[2:]
+			words, cased = words[2:], cased[2:]
 		}
 		if len(words) == 0 {
 			continue
@@ -135,9 +192,36 @@ func mayStartTestsIn(directory string, step runtimeStep, framework string, depth
 		// A segment that runs another framework is outside this one's scope.
 		other := namesFramework(segment, framework, false)
 		command := strings.Trim(words[0], `"'`)
+		// A package's installed executable is classified by its name.
+		if _, executable, found := strings.Cut(command, "node_modules/.bin/"); found && !strings.Contains(executable, "/") {
+			command = executable
+			words[0], cased[0] = executable, executable
+		}
 		base := filepath.Base(command)
+		if mayStart, handled := recognizedTool(root, directory, cased, framework, depth); handled {
+			if mayStart && !other {
+				return true
+			}
+			continue
+		}
 		switch {
-		case strings.HasPrefix(command, "./") || strings.HasPrefix(command, "../") || slices.Contains([]string{".sh", ".js", ".mjs", ".cjs", ".ts"}, filepath.Ext(command)):
+		case strings.ContainsAny(command, "/\\") || slices.Contains([]string{".sh", ".js", ".mjs", ".cjs", ".ts"}, filepath.Ext(command)):
+			// Any path, as ci/git or bin/eslint, is a script, not the tool
+			// its name suggests.
+			// A repository script is as safe as what it runs.
+			if !repositoryScriptMayStart(root, directory, strings.Trim(cased[0], `"'`), framework, depth) {
+				continue
+			}
+			return true
+		case slices.Contains([]string{"npx", "bunx", "pnpx"}, base):
+			// A package runner starts its target: classify the target.
+			if other {
+				continue
+			}
+			target := packageRunnerTarget(cased)
+			if depth < 8 && len(target) > 0 && !strings.HasPrefix(target[0], "(") && !mayStartTestsIn(root, directory, runtimeStep{Run: strings.Join(target, " ")}, framework, depth+1) {
+				continue
+			}
 			return true
 		case slices.Contains(taskRunners, base):
 			if !other {
@@ -156,6 +240,10 @@ func mayStartTestsIn(directory string, step runtimeStep, framework string, depth
 			if inlineCodeSafe && evaluatesInlineCode(words[1:]) || heredocsSafe && readsHeredoc(words[1:]) {
 				continue
 			}
+			// A repository script is as safe as what it runs.
+			if script, ok := interpreterScript(base, cased[1:]); ok && !repositoryScriptMayStart(root, directory, script, framework, depth) {
+				continue
+			}
 			return true
 		case slices.Contains([]string{"npm", "pnpm", "yarn", "bun"}, base):
 			// npm --version and npm --help only print.
@@ -163,6 +251,23 @@ func mayStartTestsIn(directory string, step runtimeStep, framework string, depth
 				continue
 			}
 			words, elsewhere := managerSubcommand(words)
+			// npm exec, yarn dlx and similar start their target: classify it.
+			if len(words) > 1 && slices.Contains([]string{"exec", "x", "dlx"}, words[1]) && !elsewhere && !other {
+				target := packageRunnerTarget(append([]string{"npx"}, words[2:]...))
+				if depth < 8 && len(target) > 0 && !strings.HasPrefix(target[0], "(") && !mayStartTestsIn(root, directory, runtimeStep{Run: strings.Join(target, " ")}, framework, depth+1) {
+					continue
+				}
+				return true
+			}
+			// A publication runs the publish lifecycle scripts of the package
+			// it publishes; another workspace's may start anything.
+			if len(words) > 1 && slices.Contains([]string{"publish", "pack"}, words[1]) {
+				casedWords, _ := managerSubcommand(cased)
+				if !elsewhere && len(casedWords) == len(words) && !publicationMayStart(root, directory, casedWords[2:], framework, depth) {
+					continue
+				}
+				return true
+			}
 			starts := len(words) == 1 || slices.Contains(scriptSubcommands, words[1])
 			// pnpm/yarn/bun <name> run a script or binary of that name.
 			starts = starts || base != "npm" && !strings.HasPrefix(words[1], "-") && !slices.Contains(managerOnlySubcommands, words[1])
@@ -170,10 +275,17 @@ func mayStartTestsIn(directory string, step runtimeStep, framework string, depth
 				continue
 			}
 			// A known package script is as safe as its body (and npm's hooks).
-			if body, ok := scriptBody(scripts, base, words); ok && !elsewhere && depth < 8 && !mayStartTestsIn(directory, runtimeStep{Run: body}, framework, depth+1) {
+			if body, ok := scriptBody(scripts, base, words); ok && !elsewhere && depth < 8 && !mayStartTestsIn(root, directory, runtimeStep{Run: body}, framework, depth+1) {
 				continue
 			}
 			return true
+		case base == "find" && slices.ContainsFunc(words, func(word string) bool { return slices.Contains([]string{"-exec", "-execdir", "-ok", "-okdir"}, word) }):
+			// find runs the command after -exec: classify it.
+			for i, word := range words {
+				if slices.Contains([]string{"-exec", "-execdir", "-ok", "-okdir"}, word) && (depth >= 8 || mayStartTestsIn(root, directory, runtimeStep{Run: strings.Join(cased[i+1:], " ")}, framework, depth+1)) {
+					return true
+				}
+			}
 		case base == "" || slices.Contains(nonTestTools, base):
 		default:
 			if !other {
@@ -184,12 +296,21 @@ func mayStartTestsIn(directory string, step runtimeStep, framework string, depth
 	return false
 }
 
+// directoryChange reports a command, by its words, that changes directory:
+// cd, pushd or popd after the prefixes a segment may carry.
+func directoryChange(words []string) bool {
+	for len(words) > 0 && (strings.Contains(words[0], "=") || slices.Contains([]string{"sudo", "env", "time", "exec", "command", "if", "while", "until", "!", "{", "(", "builtin"}, words[0])) {
+		words = words[1:]
+	}
+	return len(words) > 0 && slices.Contains([]string{"cd", "pushd", "popd"}, strings.TrimLeft(words[0], "({!"))
+}
+
 // Shell builtins and tools that never start a JavaScript test suite.
 var nonTestTools = []string{
 	"echo", "printf", "cd", "pushd", "popd", "export", "set", "unset", "shopt", "exit", "return", "true", "false", ":", "[", "[[", "test", "fi", "then", "else", "elif", "done", "esac", "for", "case", "select", "function", "}", ")", "read", "sleep", "wait", "trap", "local", "declare",
 	"mkdir", "cp", "mv", "rm", "rmdir", "cat", "ls", "touch", "chmod", "chown", "ln", "tee", "sed", "awk", "grep", "find", "jq", "yq", "tar", "zip", "unzip", "gzip", "curl", "wget", "git", "gh", "head", "tail", "sort", "uniq", "wc", "cut", "tr", "base64", "sha256sum", "shasum", "md5sum", "date", "uname", "whoami", "hostname", "nproc", "df", "du", "basename", "dirname", "realpath", "which", "type",
 	"apt", "apt-get", "dpkg", "brew", "choco", "winget", "yum", "dnf", "apk", "pip", "pip3", "pipx", "corepack", "nvm", "volta", "fnm", "asdf", "rustup", "cargo", "go",
-	"lcov", "genhtml", "codecov", "coveralls", "cspell", "markdownlint", "markdownlint-cli2", "prettier", "eslint", "tsc", "stylelint", "commitlint", "biome", "oxlint",
+	"lcov", "genhtml", "codecov", "coveralls", "allure", "print-env", "cspell", "markdownlint", "markdownlint-cli2", "prettier", "eslint", "tsc", "stylelint", "commitlint", "biome", "oxlint",
 	"tsd", "vue-tsc", "attw", "publint", "depcheck",
 	"yard", "rdoc", "jsdoc", "mkdocs",
 	"tsup", "unbuild", "esbuild", "rollup", "webpack", "vite", "babel", "swc", "parcel", "typedoc", "rimraf",
@@ -317,7 +438,7 @@ func inlineCodeCannotLaunch(code, directory, framework string, depth int) bool {
 		} else {
 			return false
 		}
-		if mayStartTestsIn(directory, runtimeStep{Run: command}, framework, depth+1) {
+		if mayStartTestsIn("", directory, runtimeStep{Run: command}, framework, depth+1) {
 			return false
 		}
 	}
@@ -549,4 +670,24 @@ func readOnlyCall(call *syntax.CallExpr) bool {
 		return packages > 0
 	}
 	return false
+}
+
+var shellOptions = regexp.MustCompile(`^-[eux]+$`)
+
+// interpreterScript returns the repository script an interpreter runs, as in
+// node scripts/build.js or bash -e ci/package.sh: the first argument, after
+// only options that select no other code. ok is false for inline code,
+// stdin, preloaded modules or any other option.
+func interpreterScript(interpreter string, args []string) (string, bool) {
+	for len(args) > 0 && strings.HasPrefix(args[0], "-") {
+		shell := slices.Contains([]string{"bash", "sh", "zsh"}, interpreter)
+		if !shell || !shellOptions.MatchString(args[0]) {
+			return "", false
+		}
+		args = args[1:]
+	}
+	if len(args) == 0 || strings.HasPrefix(args[0], "<") {
+		return "", false
+	}
+	return strings.Trim(args[0], `"'`), true
 }

@@ -292,7 +292,8 @@ guards are mandatory, and `ddtrace/tracer`, for the
 from v2.10.0 and the main branch. For Orchestrion, it supports the releases of
 the last two minors and the main branch.
 [`scripts/supported_versions.json`](../scripts/supported_versions.json) lists
-them, with main at a fixed pseudo-version, and the integration tests read it:
+them, with main at a fixed pseudo-version, or at a release while its tip is
+the tagged commit, and the integration tests read it:
 
 - `TestMiniSDKSupportedVersions` applies every SDK edit to each listed
   version, with `runner.SDKEdits` and the same steps as a compile. It only
@@ -305,9 +306,10 @@ them, with main at a fixed pseudo-version, and the integration tests read it:
   so the newest of them stands for the others. On 2026-10-28, v2.10.0 and
   v2.10.1 shared one, and v2.11.1 and v2.11.2 another.
 - `TestMiniOrchestrionSupportedVersions`, on Linux, builds each listed
-  Orchestrion version and composes it with Mini and the pinned SDK. Orchestrion
-  is not edited, so every version runs. The deeper Orchestrion tests use the
-  pinned reference.
+  Orchestrion version and composes it with Mini and the SDK that a project
+  using that version gets: the pinned one, or the newer one that the version
+  requires. Orchestrion is not edited, so every version runs. The deeper
+  Orchestrion tests use the pinned reference, which must keep the pinned SDK.
 
 Pull requests and pushes test the list. The nightly run of the
 [Go instrumentation workflow](../../.github/workflows/go-instrumentation.yml)
@@ -315,7 +317,7 @@ tests the window that the module proxy has then, from
 `supported_versions.py resolve`, through `DDTO_SUPPORTED_VERSIONS`, and fails
 when `supported_versions.py check` finds releases that the list lacks or no
 longer includes. Update the list in a pull request then, with main's new
-pseudo-version from `supported_versions.py resolve`. Before each release the
+version from `supported_versions.py resolve`. Before each release the
 release workflow runs the whole workflow on that live window with
 `DDTO_COMPATIBILITY=full`, which runs every version even when fingerprints
 match; the release job waits for it.

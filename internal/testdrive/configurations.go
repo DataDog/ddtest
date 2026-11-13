@@ -152,7 +152,7 @@ func matchingConfigurationPreparation(scope onboard.ValidationScope, scopeErr er
 		}
 		candidate := entry
 		if found != nil {
-			candidate.WithoutSecrets = slices.Compact(slices.Sorted(slices.Values(append(slices.Clone(found.WithoutSecrets), entry.WithoutSecrets...))))
+			candidate.WithoutCIValues = slices.Compact(slices.Sorted(slices.Values(append(slices.Clone(found.WithoutCIValues), entry.WithoutCIValues...))))
 		}
 		found = &candidate
 	}
@@ -164,19 +164,20 @@ func matchingConfigurationPreparation(scope onboard.ValidationScope, scopeErr er
 
 // adoptConfigurationPreparation gives a selected command the preparation of
 // the one CI configuration it is: preparation and tests run with that
-// configuration's environment, and without its omitted secrets.
+// configuration's environment, and without its omitted secrets and
+// variables.
 func adoptConfigurationPreparation(plan *onboard.TestCommand, entry onboard.TestCommand) {
 	if plan.Command == "" {
 		plan.Command, plan.Directory = entry.Command, entry.Directory
 	}
 	plan.Prerequisites = entry.Prerequisites
 	plan.Environment = mergeConfigurationEnvironment(entry.Environment, plan.Environment)
-	plan.WithoutSecrets = slices.Compact(slices.Sorted(slices.Values(append(slices.Clone(plan.WithoutSecrets), entry.WithoutSecrets...))))
+	plan.WithoutCIValues = slices.Compact(slices.Sorted(slices.Values(append(slices.Clone(plan.WithoutCIValues), entry.WithoutCIValues...))))
 }
 
 // Never guess between two CI variants with different environments. Omitted
-// secrets are collected from every matching variant either way: the command
-// runs without each of them.
+// secrets and variables are collected from every matching variant either
+// way: the command runs without each of them.
 func matchingConfigurationEnvironment(scope onboard.ValidationScope, scopeErr error, root, framework, command string) (map[string]string, []string) {
 	if scopeErr != nil {
 		return nil, nil
@@ -189,7 +190,7 @@ func matchingConfigurationEnvironment(scope onboard.ValidationScope, scopeErr er
 			if !sameConfiguration(selected, entry) || !hostConfiguration(entry) || len(entry.UnvalidatedSetup) > 0 {
 				continue
 			}
-			without = slices.Compact(slices.Sorted(slices.Values(append(without, entry.WithoutSecrets...))))
+			without = slices.Compact(slices.Sorted(slices.Values(append(without, entry.WithoutCIValues...))))
 			candidate := mergeConfigurationEnvironment(entry.Environment, selected.Environment)
 			if matched && !maps.Equal(result, candidate) {
 				ambiguous = true
@@ -231,6 +232,59 @@ func applyScopeVerdict(result *validationResult) {
 	}
 }
 
+func configurationReportLabel(entry onboard.TestCommand, framework string) string {
+	command, environment := entry.Command, entry.Environment
+	if onboard.RedactsCommandKeys(framework) {
+		command, environment = onboard.RedactCypressCommand(command), onboard.RedactCypressEnvironment(environment)
+	}
+	if entry.Directory != "" && filepath.Clean(entry.Directory) != "." {
+		command = entry.Directory + " › " + command
+	}
+	for _, key := range slices.Sorted(maps.Keys(environment)) {
+		if environment[key] == "" {
+			command += " (" + key + " cleared)"
+		} else {
+			command += " (" + key + "=" + environment[key] + ")"
+		}
+	}
+	return command
+}
+
+// Only otherwise identical labels need preparation details. Retain the CI
+// entry number as a fallback when those details still don't distinguish them.
+func configurationReportLabels(commands []onboard.TestCommand, framework string) []string {
+	labels := make([]string, len(commands))
+	counts := make(map[string]int)
+	for i, entry := range commands {
+		labels[i] = configurationReportLabel(entry, framework)
+		counts[labels[i]]++
+	}
+	for i, entry := range commands {
+		if counts[labels[i]] < 2 {
+			continue
+		}
+		var preparation []string
+		for _, build := range entry.Prerequisites {
+			preparation = append(preparation, configurationReportLabel(onboard.TestCommand{Command: build.Command, Directory: build.Directory, Environment: build.Environment}, framework))
+		}
+		if len(preparation) == 0 {
+			labels[i] += " (without preparation)"
+		} else {
+			labels[i] += " (after " + strings.Join(preparation, "; ") + ")"
+		}
+	}
+	clear(counts)
+	for _, label := range labels {
+		counts[label]++
+	}
+	for i, label := range labels {
+		if counts[label] > 1 {
+			labels[i] += fmt.Sprintf(" [CI entry %d]", i+1)
+		}
+	}
+	return labels
+}
+
 // All evidence comes from this invocation. No earlier success is reused after
 // source, configuration, runtime or tracer edits. Each configuration has its own
 // paired comparison and feature controls, and shares only the final report pair.
@@ -246,10 +300,10 @@ func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) 
 		err = fmt.Errorf("no explicit %s CI invocations discovered; review discovery and use --command for local validation", t.framework.Name())
 	}
 	if err != nil {
-		result := validationResult{Session: workspace.PlanSession().ID(), Framework: t.framework.Name(), Tracer: t.tracerLabel, CheckOnly: t.checkOnly, Scope: &scope, Error: err.Error(), Compatibility: verdict{Status: "not exercised", Reason: "Discovery failed; no test commands were executed."}}
+		result := validationResult{Session: workspace.PlanSession().ID(), Framework: t.framework.Name(), Tracer: t.tracerLabel, CheckOnly: t.checkOnly, All: true, Scope: &scope, Error: err.Error(), Compatibility: verdict{Status: "not exercised", Reason: "Discovery failed; no test commands were executed."}}
 		return errors.Join(err, finishValidation(output, t.repositoryRoot, result))
 	}
-	result := validationResult{Session: workspace.PlanSession().ID(), Framework: t.framework.Name(), Tracer: "not selected", CheckOnly: t.checkOnly, Scope: &scope,
+	result := validationResult{Session: workspace.PlanSession().ID(), Framework: t.framework.Name(), Tracer: "not selected", CheckOnly: t.checkOnly, All: true, Scope: &scope,
 		Compatibility: verdict{Status: "compatible", Reason: "Every discovered configuration passed its own paired comparison; configurations were not compared against each other."}, Cleanup: &verdict{Status: "passed", Reason: "Temporary sessions removed for all configurations."}}
 	var models []reportModel
 	var runErrors []error
@@ -257,7 +311,8 @@ func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) 
 	var leftovers []string
 	ambient := map[string]string{}
 	result.CIRuntime = t.lang().configurationsCIRuntime(t, scope)
-	for _, entry := range scope.Commands {
+	reportLabels := configurationReportLabels(scope.Commands, t.framework.Name())
+	for entryIndex, entry := range scope.Commands {
 		item := configurationResult{TestCommand: entry, Status: "not exercised", Compatibility: verdict{Status: "not exercised", Reason: "Configuration did not execute."}}
 		if ciInstrumentationDisabled(entry) {
 			result.Configurations = append(result.Configurations, excludedConfiguration(entry))
@@ -380,7 +435,7 @@ func (t *Testdrive) runAllConfigurations(ctx context.Context, output io.Writer) 
 		}
 
 		for i := before; i < len(models); i++ {
-			labelConfigurationModel(&models[i], label)
+			models[i].Configuration = reportLabels[entryIndex]
 		}
 	}
 	discloseConfigurationSideEffects(&result, leftovers, ambient)
@@ -431,24 +486,8 @@ func (t *Testdrive) configurationExecutable(command string) string {
 	return filepath.Join(t.repositoryRoot, "node_modules", ".bin", command)
 }
 
-func labelConfigurationModel(model *reportModel, command string) {
-	model.Configuration = command
-	if model.EvidenceName != "" {
-		command += " / " + model.EvidenceName
-	}
-	for i := range model.Tests {
-		model.Tests[i].Label = command + " › " + model.Tests[i].Label
-	}
-	for i := range model.Suites {
-		model.Suites[i].Name = command + " › " + model.Suites[i].Name
-	}
-	for i := range model.Cards {
-		model.Cards[i].Title = command + " — " + model.Cards[i].Title
-	}
-}
-
 func writeConfigurationHTML(output io.Writer, root string, models []reportModel) error {
-	model := reportModel{Aggregated: true, NoTestEvents: true, Summary: fmt.Sprintf("%d instrumented reporting snapshots retained, including repeated pairs. Aggregate execution counts include each primary reporting run once. See validation JSON for configuration completeness, compatibility and features.", len(models)), Artifacts: []reportArtifact{{Title: "Validation JSON", Href: validationFilename}}}
+	model := reportModel{Aggregated: true, NoTestEvents: true, Artifacts: []reportArtifact{{Title: "Validation JSON", Href: validationFilename}}}
 	var counts []*executionCounts
 	var commands, outputs, failures []string
 	for index, part := range models {
@@ -462,11 +501,25 @@ func writeConfigurationHTML(output io.Writer, root string, models []reportModel)
 			model.CoverageLevel = ""
 		}
 		model.NoTestEvents = model.NoTestEvents && part.NoTestEvents
-		label := fmt.Sprintf("Reporting snapshot %d: %s / %s / %s", index+1, part.Configuration, part.EvidenceName, part.Runtime.Command)
-		commands = append(commands, label)
-		outputs = append(outputs, label+"\n"+part.Runtime.Output)
-		if part.Runtime.Error != "" {
-			failures = append(failures, label+": "+part.Runtime.Error)
+		label := part.Configuration
+		if label == "" {
+			label = part.Runtime.Command
+		}
+		if part.EvidenceRole == roleRepeat {
+			label += " (repeat)"
+		}
+		if len(models) == 1 {
+			commands = append(commands, part.Runtime.Command)
+			outputs = append(outputs, part.Runtime.Output)
+			if part.Runtime.Error != "" {
+				failures = append(failures, part.Runtime.Error)
+			}
+		} else {
+			commands = append(commands, label)
+			outputs = append(outputs, label+"\n"+part.Runtime.Output)
+			if part.Runtime.Error != "" {
+				failures = append(failures, label+": "+part.Runtime.Error)
+			}
 		}
 		// Suite links address positions in the combined test table. Clone the
 		// rows because finding cards can share their source model's slices.
@@ -476,6 +529,18 @@ func writeConfigurationHTML(output io.Writer, root string, models []reportModel)
 		for i := range part.Cards {
 			part.Cards[i].Suites = offsetSuiteTests(part.Cards[i].Suites, offset)
 		}
+		if len(models) > 1 {
+			part.Tests = slices.Clone(part.Tests)
+			for i := range part.Tests {
+				part.Tests[i].Label = label + " › " + part.Tests[i].Label
+			}
+			for i := range part.Suites {
+				part.Suites[i].Name = label + " › " + part.Suites[i].Name
+			}
+			for i := range part.Cards {
+				part.Cards[i].Title = label + " — " + part.Cards[i].Title
+			}
+		}
 		model.Cards = append(model.Cards, part.Cards...)
 		model.Suites = append(model.Suites, part.Suites...)
 		model.Tests = append(model.Tests, part.Tests...)
@@ -484,14 +549,8 @@ func writeConfigurationHTML(output io.Writer, root string, models []reportModel)
 	model.Runtime.Output = strings.Join(outputs, "\n\n")
 	model.Runtime.Error = strings.Join(failures, "\n")
 	model.ExecutionCounts = combineExecutionCounts(counts)
-	model.Facts = []reportFact{{Label: "Reporting snapshots retained", Value: fmt.Sprint(len(models))}, {Label: "Reported test executions", Value: fmt.Sprint(len(model.Tests)), Tooltip: sourceIdentityScope}}
-	if model.ExecutionCounts != nil {
-		model.Facts[1].Value = fmt.Sprint(model.ExecutionCounts.TestExecutions)
-		identityFact := reportFact{Label: "Source-test identities", Value: "Unavailable", Tooltip: model.ExecutionCounts.Reason}
-		if model.ExecutionCounts.SourceTestIdentities != nil {
-			identityFact.Value, identityFact.Tooltip = fmt.Sprint(*model.ExecutionCounts.SourceTestIdentities), sourceIdentityScope
-		}
-		model.Facts = append(model.Facts, identityFact)
+	if model.ExecutionCounts != nil && model.ExecutionCounts.SourceTestIdentities == nil {
+		model.Facts = []reportFact{{Label: "Unique tests", Value: "Unavailable", Tooltip: "Not enough information to count unique tests."}}
 	}
 	var content bytes.Buffer
 	if err := testdriveReport.Execute(&content, model); err != nil {
@@ -500,7 +559,7 @@ func writeConfigurationHTML(output io.Writer, root string, models []reportModel)
 	if err := writeValidation(htmlReportPath(root), content.Bytes()); err != nil {
 		return err
 	}
-	return writeHTMLReportLink(output, root)
+	return writeHTMLReportLink(output, root, validationResult{All: true})
 }
 
 func offsetSuiteTests(suites []reportSuite, offset int) []reportSuite {

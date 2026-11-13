@@ -20,6 +20,12 @@ type scopeDiagnostic struct {
 	Reason   string
 }
 
+// StepCommandLabel is a step's command as a label shows it, without the
+// line break that ends a command written as a block (command: |).
+func StepCommandLabel(command string) string {
+	return strings.TrimRight(command, " \t\r\n")
+}
+
 func matrixLabel(row map[string]any) string {
 	var values []string
 	for _, key := range slices.Sorted(maps.Keys(row)) {
@@ -35,7 +41,7 @@ func (location commandLocation) String() string {
 		label += " (" + matrixLabel(location.Matrix) + ")"
 	}
 	if location.Step > 0 {
-		label += fmt.Sprintf(" / step %d (%s)", location.Step, location.Command)
+		label += fmt.Sprintf(" / step %d (%s)", location.Step, StepCommandLabel(location.Command))
 	}
 	return label
 }

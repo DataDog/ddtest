@@ -135,6 +135,9 @@ type (
 		testName   string
 		identity   *testIdentity
 		sourceFunc *runtime.Func
+		// declarationFunc is the declaration that source comments annotate when
+		// it differs from sourceFunc, as a Testify method does; nil means sourceFunc.
+		declarationFunc *runtime.Func
 		// Known-test lookup, reused by later callers, and whether testing runs the instrumented test function directly. Set while instrumenting.
 		knownTestChecked, knownTest, knownTestData, directTestFunc bool
 	}
@@ -1485,4 +1488,12 @@ func setTestingMExitCode(m *testing.M, code int) {
 	if field.IsValid() && field.Kind() == reflect.Int && field.CanAddr() {
 		*(*int)(unsafe.Pointer(field.UnsafeAddr())) = code
 	}
+}
+
+// declaration returns the function whose declaration comments annotate the test.
+func (info *commonInfo) declaration() *runtime.Func {
+	if info.declarationFunc != nil {
+		return info.declarationFunc
+	}
+	return info.sourceFunc
 }

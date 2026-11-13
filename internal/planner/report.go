@@ -351,6 +351,7 @@ func printDurationEstimatesPlanningReport(w io.Writer, durations durationApplica
 	reportFprintln(w, "  Duration estimates")
 	reportFprintf(w, "    Backend durations used: %s\n", formatCountWithUnit(durations.BackendDurationsApplied, "suite", "suites"))
 	reportFprintf(w, "    Default durations used: %s\n", formatCountWithUnit(durations.SuitesWithoutDurations, "suite", "suites"))
+	reportFprintf(w, "    Mixed backend/default durations: %s\n", formatCountWithUnit(durations.FilesWithMixedDurations, "file", "files"))
 	reportFprintf(w, "    Backend-only suites added: %s\n", formatCount(durations.BackendSuitesAdded))
 }
 

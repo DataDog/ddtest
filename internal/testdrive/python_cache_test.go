@@ -9,11 +9,12 @@ import (
 	"github.com/DataDog/ddtest/internal/ext"
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
 	"github.com/DataDog/ddtest/internal/testdrive/workspace"
+	"github.com/DataDog/ddtest/internal/testutil"
 	"github.com/stretchr/testify/require"
 )
 
 func TestPytestPairedRunsPreserveStartingCache(t *testing.T) {
-	python := feedbackPython(t)
+	python := testutil.PytestPython(t)
 	for _, mode := range []string{"default", "custom", "clear"} {
 		t.Run(mode, func(t *testing.T) {
 			root := t.TempDir()

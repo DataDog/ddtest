@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -25,7 +26,11 @@ type rubyReadinessExecutor struct {
 	environments []map[string]string
 }
 
-func (e *rubyReadinessExecutor) CombinedOutput(context.Context, string, []string, map[string]string) ([]byte, error) {
+func (e *rubyReadinessExecutor) CombinedOutput(_ context.Context, name string, args []string, _ map[string]string) ([]byte, error) {
+	if name == "git" && len(args) > 0 && args[0] == "check-ignore" {
+		// The repository ignores .testoptimization/: every path is ignored.
+		return []byte(strings.Join(args[slices.Index(args, "--")+1:], "\n") + "\n"), nil
+	}
 	return nil, nil
 }
 
@@ -71,7 +76,7 @@ func TestRubyReadinessRunsWithoutOmittedSecrets(t *testing.T) {
 	requireWriteFile(t, filepath.Join(root, "Gemfile.lock"), "installed lock\n")
 	executor := &rubyReadinessExecutor{}
 	drive := &Testdrive{repositoryRoot: root, executor: executor}
-	scope := onboard.ValidationScope{Commands: []onboard.TestCommand{{Directory: ".", WithoutSecrets: []string{"GITHUB_TOKEN"}}}}
+	scope := onboard.ValidationScope{Commands: []onboard.TestCommand{{Directory: ".", WithoutCIValues: []string{"GITHUB_TOKEN"}}}}
 	_, err := drive.rubyBundleReadiness(t.Context(), scope)
 	require.NoError(t, err)
 	require.Len(t, executor.environments, 1)
@@ -433,7 +438,8 @@ func TestRubyGemPackagingUsesCopyAndChecksReportMembership(t *testing.T) {
 	if _, err := exec.LookPath("ruby"); err != nil {
 		t.Skip("Ruby is required")
 	}
-	for _, glob := range []string{"lib/**/*", "{lib,.testoptimization}/**/*", "git-index"} {
+	// The focused pair a run after --all leaves counts too.
+	for _, glob := range []string{"lib/**/*", "{lib,.testoptimization}/**/*", "{lib/**/*,.testoptimization/*-command.*}", "git-index"} {
 		t.Run(glob, func(t *testing.T) {
 			root := t.TempDir()
 			require.NoError(t, os.MkdirAll(filepath.Join(root, "lib"), 0700))
@@ -460,7 +466,7 @@ func TestRubyGemPackagingUsesCopyAndChecksReportMembership(t *testing.T) {
 			require.NoError(t, err)
 			drive := &Testdrive{repositoryRoot: root, language: "ruby", executor: &ext.DefaultCommandExecutor{}}
 			result := drive.rubyPackageExclusions(t.Context())
-			if glob != "{lib,.testoptimization}/**/*" {
+			if !strings.Contains(glob, ".testoptimization") {
 				require.Equal(t, "passed", result.Status, result.Reason)
 			} else {
 				require.Equal(t, "failed", result.Status, result.Reason)
@@ -561,6 +567,7 @@ func TestRubyCoordinatedWorkflowKeepsTheSharedCheckCopyForGemspecs(t *testing.T)
 	require.NoError(t, os.MkdirAll(filepath.Join(root, "lib"), 0700))
 	requireWriteFile(t, filepath.Join(root, "lib/fixture.rb"), "module Fixture;end\n")
 	requireWriteFile(t, filepath.Join(root, "fixture.gemspec"), "Gem::Specification.new do |s|\n s.name='fixture';s.version='1.0';s.files=Dir['lib/**/*']\nend\n")
+	requireWriteFile(t, filepath.Join(root, ".gitignore"), "/.testoptimization/\n")
 	gitInit(t, root)
 	drive := &Testdrive{repositoryRoot: root, language: "ruby", framework: framework.NewRSpec(platform.NewRuby("")), executor: &installedBundleExecutor{},
 		runtimeVersion: func() string { return "ruby 3.3.11 arm64" },

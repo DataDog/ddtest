@@ -1,0 +1,45 @@
+{
+ "schema_version": 1,
+ "framework": "mocha",
+ "compatibility": {
+  "status": "compatible"
+ },
+ "features": [
+  {
+   "project": "configuration 1: npm test (NODE_OPTIONS cleared)",
+   "name": "auto-retries",
+   "status": "passed"
+  },
+  {
+   "project": "configuration 1: npm test (NODE_OPTIONS cleared)",
+   "name": "early-flake-detection",
+   "status": "passed"
+  },
+  {
+   "project": "configuration 1: npm test (NODE_OPTIONS cleared)",
+   "name": "skipping",
+   "status": "passed"
+  },
+  {
+   "project": "configuration 1: npm test (NODE_OPTIONS cleared)",
+   "name": "quarantine",
+   "status": "passed"
+  },
+  {
+   "project": "configuration 1: npm test (NODE_OPTIONS cleared)",
+   "name": "disabled",
+   "status": "passed"
+  },
+  {
+   "project": "configuration 1: npm test (NODE_OPTIONS cleared)",
+   "name": "attempt-to-fix",
+   "status": "passed"
+  }
+ ],
+ "summary": {
+  "status": "COMPLETE LOCALLY",
+  "local_validation": "PASSED",
+  "blocking_checks": [],
+  "final_response": "Executed Mocha validations: PASSED (1/1).\nOnboarding validation: COMPLETE LOCALLY. Local validation: PASSED.\nConfigurations: 1/1 validated; 1 executed with paired comparison; 0 blocked, 0 not exercised, 0 incomplete.\nReporting: 131 test executions; 131 source-test identities.\nCompatibility: compatible. Features: 6/6 supported checks passed.\nReal-suite coverage: not applicable in 1 reporting run(s); the package has no source file nyc instruments.\nCI configuration: compatible (static analysis). CI execution and Datadog backend processing: not exercised.\nHuman action: Provide DD_API_KEY to the Buildkite steps that run the tests from an agent environment hook, a secrets plugin (such as the Buildkite secrets, AWS Secrets Manager or Vault plugins) or the pipeline's environment in the Buildkite UI; with the docker or docker-compose plugin, the plugin's environment list passes it into the container. Never write the key into the pipeline YAML. Until it is available, those steps log that Test Optimization is disabled and their tests run untraced.\nCI runtime scope (static): Node versions 1 instrumented, 0 excluded, 0 unverified (each version counted once; per-job findings in Results JSON).\nLocal runtime: Node v24.19.0.\n\n[Open report](</trial/repo/.testoptimization/report.html>)\n[Results JSON](</trial/repo/.testoptimization/testdrive.json>)\nCleanup: passed (ddtest sessions only).\nWorkflow checks: 6 recorded; Git/package exclusions and owned cleanup: passed. Preserve both reports. No further cache or package audit is required for unchanged inputs."
+ }
+}

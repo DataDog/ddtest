@@ -22,6 +22,29 @@ import (
 // selectCIProvider resolves the CI provider; tests replace it.
 var selectCIProvider = onboard.SelectCIProvider
 
+// ciOptions keeps the shared CI flags and their resolution order together.
+// Each command owns an instance so flag values never leak between commands.
+type ciOptions struct {
+	provider string
+	runtimes []string
+	facts    []string
+}
+
+func (options *ciOptions) addFlags(command *cobra.Command) {
+	command.Flags().StringVar(&options.provider, "ci-provider", "", ciProviderFlagUsage())
+	ciStatementFlags(command, &options.runtimes, &options.facts)
+}
+
+func (options ciOptions) resolve(command *cobra.Command, structured bool) error {
+	if err := resolveCIProvider(command, options.provider); err != nil {
+		return ciProviderFailure(command, structured, err)
+	}
+	if err := resolveCIStatements(options.runtimes, options.facts); err != nil {
+		return ciStatementFailure(command, structured, err)
+	}
+	return nil
+}
+
 // ciProviderFlagUsage describes --ci-provider on onboard and testdrive.
 func ciProviderFlagUsage() string {
 	return "CI provider whose configuration to discover, set up and validate (" + strings.Join(onboard.CIProviderNames(), ", ") + "); required when several contain tests"
@@ -82,6 +105,14 @@ func ciProviderFailure(cmd *cobra.Command, structured bool, err error) error {
 	var invalid invalidCIProvider
 	var choice *onboard.CIProviderChoice
 	switch {
+	case errors.As(err, &invalid):
+		observeUsage(cmd, "failed", "options", "invalid_options")
+	case errors.As(err, &choice):
+		observeUsage(cmd, "needs_input", "discovery", "ci_provider_required")
+	default:
+		observeUsage(cmd, "needs_input", "discovery", "ci_discovery")
+	}
+	switch {
 	case !structured:
 		return err
 	case errors.As(err, &invalid):
@@ -96,7 +127,7 @@ func ciProviderFailure(cmd *cobra.Command, structured bool, err error) error {
 // ciStatementFlags adds --ci-runtime and --ci-confirm, which state what the
 // CI configuration cannot show ddtest.
 func ciStatementFlags(command *cobra.Command, runtimes, facts *[]string) {
-	command.Flags().StringArrayVar(runtimes, "ci-runtime", nil, "Runtime of CI jobs whose configuration names none, as [<job>:]<runtime>=<version> (node, ruby); repeatable; only the user can state it")
+	command.Flags().StringArrayVar(runtimes, "ci-runtime", nil, "Runtime of CI jobs whose configuration names none, as [<job>:]<runtime>=<version> ("+strings.Join(onboard.StatedRuntimeNames(), ", ")+"); repeatable; only the user can state it")
 	command.Flags().StringArrayVar(facts, "ci-confirm", nil, "CI fact the selected provider asks the user to confirm, as <fact>[=<value>]; repeatable")
 }
 
@@ -138,6 +169,14 @@ func ciStatementFailure(cmd *cobra.Command, structured bool, err error) error {
 	var invalid invalidCIStatement
 	var conflict *onboard.CIRuntimeConflict
 	var ambiguity *onboard.CIRuntimeAmbiguity
+	switch {
+	case errors.As(err, &invalid), errors.As(err, &ambiguity):
+		observeUsage(cmd, "failed", "options", "invalid_options")
+	case errors.As(err, &conflict):
+		observeUsage(cmd, "needs_input", "discovery", "ci_runtime_conflict")
+	default:
+		observeUsage(cmd, "needs_input", "discovery", "ci_discovery")
+	}
 	switch {
 	case !structured:
 		return err

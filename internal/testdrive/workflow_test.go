@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -36,7 +37,8 @@ func (e workflowCheckExecutor) CombinedOutput(_ context.Context, name string, ar
 	switch filepath.Base(name) {
 	case "git":
 		if args[0] == "check-ignore" {
-			return []byte(".testoptimization/testdrive.json\n.testoptimization/report.html\n"), nil
+			// The repository ignores .testoptimization/: every path is ignored.
+			return []byte(strings.Join(args[slices.Index(args, "--")+1:], "\n") + "\n"), nil
 		}
 		return nil, nil
 	case "npm":
@@ -55,7 +57,7 @@ func TestSharedWorkflowAcrossFrameworksPreservesAssertionsAndPackagingFailures(t
 			t.Run(runner.Name()+map[bool]string{true: "/package-leak", false: "/pass"}[leak], func(t *testing.T) {
 				root := t.TempDir()
 				t.Chdir(root)
-				requireWriteFile(t, filepath.Join(root, "package.json"), `{"name":"fixture"}`)
+				requireWriteFile(t, filepath.Join(root, "package.json"), `{"name":"fixture","version":"1.0.0"}`)
 				drive := &Testdrive{repositoryRoot: root, framework: runner, language: "javascript", tracerVersion: "latest", executor: workflowCheckExecutor{leak}, command: "vitest", nodeVersion: func() string { return "v24.0.0" }}
 				calls := 0
 				drive.workflowRun = func(ctx context.Context, out io.Writer) error {
@@ -243,4 +245,66 @@ func TestStoppedWorkflowCannotLeaveEarlierSuccessAsCurrent(t *testing.T) {
 	require.False(t, current.LastExecution.Current)
 	require.False(t, current.Success)
 	require.Empty(t, current.Runs)
+}
+
+// unignoredReportsExecutor is workflowCheckExecutor in a repository whose
+// .gitignore lacks /.testoptimization/ until ignored is set.
+type unignoredReportsExecutor struct {
+	workflowCheckExecutor
+	ignored *bool
+}
+
+func (e unignoredReportsExecutor) CombinedOutput(ctx context.Context, name string, args []string, env map[string]string) ([]byte, error) {
+	if filepath.Base(name) == "git" && args[0] == "check-ignore" && !*e.ignored {
+		return nil, errors.New("exit status 1")
+	}
+	return e.workflowCheckExecutor.CombinedOutput(ctx, name, args, env)
+}
+
+// A missing Git exclusion of the reports stops the workflow before any test
+// runs, with the message the check after the run gives, so the agent edits
+// .gitignore once instead of repeating a full validation. The check after
+// the run stays.
+func TestWorkflowChecksTheGitReportExclusionBeforeValidation(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir())
+	root := t.TempDir()
+	t.Chdir(root)
+	requireWriteFile(t, filepath.Join(root, "package.json"), `{"name":"fixture","version":"1.0.0","private":true}`)
+	ignored := false
+	executor := unignoredReportsExecutor{ignored: &ignored}
+	drive := &Testdrive{repositoryRoot: root, framework: &framework.Vitest{}, language: "javascript", tracerVersion: "latest", executor: executor, command: "vitest", nodeVersion: func() string { return "v24.0.0" }}
+	calls := 0
+	drive.workflowRun = func(ctx context.Context, out io.Writer) error {
+		calls++
+		return finishValidation(out, root, completeValidationFixture("vitest"))
+	}
+	var output bytes.Buffer
+	require.ErrorContains(t, drive.Workflow(t.Context(), &output, WorkflowOptions{Format: "json"}), "report_exclusions_required")
+	require.Zero(t, calls, "no configuration runs before the exclusion is fixed")
+	var result onboard.AgentResult
+	require.NoError(t, json.Unmarshal(output.Bytes(), &result))
+	require.Equal(t, "needs_input", result.Status)
+	require.Equal(t, "apply_source_edit", result.NextAction)
+	reason := "workflow git_report_exclusions: failed — " + gitExclusionReason(retainedReports)
+	require.Equal(t, reason, result.Reason)
+	require.Equal(t, []string{reason}, result.RequiredInput)
+	require.Contains(t, result.ResumeCommand, "--resume")
+
+	ignored = true
+	output.Reset()
+	require.NoError(t, drive.Workflow(t.Context(), &output, WorkflowOptions{Format: "json", Resume: result.RunID}))
+	require.Equal(t, 1, calls)
+
+	// The check after the run still fails a run whose reports Git stops
+	// ignoring while it runs.
+	drive.workflowRun = func(ctx context.Context, out io.Writer) error {
+		calls++
+		ignored = false
+		return finishValidation(out, root, completeValidationFixture("vitest"))
+	}
+	ignored = true
+	output.Reset()
+	require.ErrorContains(t, drive.Workflow(t.Context(), &output, WorkflowOptions{Format: "json"}), "validation_incomplete")
+	require.Equal(t, 2, calls)
+	require.Contains(t, strings.Join(readValidationReport(t, root).Summary.BlockingChecks, " "), "git_report_exclusions")
 }

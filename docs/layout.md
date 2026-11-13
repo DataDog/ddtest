@@ -6,7 +6,8 @@ directory. Copy this directory from the planning job to every CI job that runs
 
 Most integrations should treat `.testoptimization/` as a generated artifact. The
 stable files for external consumers are the manifest, the plan file lists under
-`.testoptimization/runner/`, the GitHub Actions matrix file, and the HTTP cache.
+`.testoptimization/runner/`, the GitHub Actions matrix file, CircleCI continuation
+parameters, and the HTTP cache.
 Files under `runner/cache/` and `tests-discovery/` are documented for
 troubleshooting, but they are DDTest implementation details.
 
@@ -28,6 +29,8 @@ troubleshooting, but they are DDTest implementation details.
       test_suite_durations.json
   github/
     config
+  circleci/
+    parameters.json
   cache/
     http/
       settings.json
@@ -39,8 +42,9 @@ troubleshooting, but they are DDTest implementation details.
 ```
 
 Some files are conditional. For example, `github/config` is only written when
-DDTest detects GitHub Actions, and individual `cache/http/*.json` files are only
-written when the corresponding Datadog Test Optimization data is available.
+DDTest detects GitHub Actions, `circleci/parameters.json` is only written when
+CircleCI is detected, and individual `cache/http/*.json` files are only written
+when the corresponding Datadog Test Optimization data is available.
 
 ## Manifest
 
@@ -105,7 +109,8 @@ execute tests itself.
 
 Plain text integer with the selected parallelism count. In CI-node mode, this is
 the CI node count. In a single-node run, this is the worker count. There is no
-percent sign or extra JSON wrapper.
+percent sign or extra JSON wrapper. This remains positive for compatibility even
+when there are no runnable files. Use the CI `has_tests` signal to gate workers.
 
 ```text
 8
@@ -147,7 +152,11 @@ matrix={"include":[{"ci_node_index":0,"ci_node_total":2},{"ci_node_index":1,"ci_
 
 When `ddtest plan` runs in GitHub Actions, DDTest also appends the same
 `matrix=...` assignment to `$GITHUB_OUTPUT`. Give the plan step an `id`, then
-use the matching `steps.<id>.outputs.matrix` value in the job output:
+use the matching `steps.<id>.outputs.matrix` value in the job output. DDTest also
+appends `has_tests=true` or `has_tests=false` to `$GITHUB_OUTPUT`. This signal is
+not added to the legacy single-assignment `github/config` file. Gate the worker
+job on `needs.<plan-job>.outputs.has_tests == 'true'` as shown in the
+[GitHub Actions example](examples/github-actions.md):
 
 ```yaml
 - id: dd_plan
@@ -160,6 +169,29 @@ The resulting matrix entries expose:
 | --- | --- |
 | `ci_node_index` | Zero-indexed CI node number to pass to `ddtest run --ci-node`. |
 | `ci_node_total` | Total number of CI nodes DDTest selected. |
+
+## CircleCI Continuation Parameters
+
+### `.testoptimization/circleci/parameters.json`
+
+JSON object for the continuation orb's `parameters` argument:
+
+```json
+{"parallelism": 2, "has_tests": true}
+```
+
+`parallelism` matches `runner/parallel-runners.txt`. `has_tests` is a boolean
+indicating whether any files remain runnable after planning. Pass this file to
+`continuation/continue`, declare both pipeline parameters in the continuation
+configuration, and gate the test workflow with
+`when: << pipeline.parameters.has_tests >>`. See the
+[CircleCI example](examples/circleci.md).
+
+For both CI providers, `has_tests=false` describes a successful plan with no
+runnable files. Fatal discovery errors and CI-output write failures fail planning
+rather than publishing a successful empty plan. Existing workflows need the
+documented conditions to skip worker allocation; runner counts and split
+artifacts retain their existing behavior.
 
 ## Datadog HTTP Cache
 

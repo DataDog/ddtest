@@ -150,7 +150,62 @@ func unresolvedCIValue(written string) string {
 	return "${{ unresolved " + strconv.Quote(written) + " }}"
 }
 
-var unresolvedCIMarker = regexp.MustCompile(`\$\{\{ unresolved ("(?:[^"\\]|\\.)*") \}\}`)
+// unresolvedCIProvidedValue marks a value that reads only variables the CI
+// provider defines for every job, as GitLab's renewedtab@$CI_COMMIT_TAG: a
+// value only CI provides, which local validation leaves out and reports.
+func unresolvedCIProvidedValue(written string) string {
+	return "${{ unresolved ci " + strconv.Quote(written) + " }}"
+}
+
+var unresolvedCIMarker = regexp.MustCompile(`\$\{\{ unresolved (?:ci )?("(?:[^"\\]|\\.)*") \}\}`)
+
+// unresolvedCIProvided reports a value whose every unresolvedCIValue marker
+// is an unresolvedCIProvidedValue one.
+func unresolvedCIProvided(value string) bool {
+	markers := unresolvedCIMarker.FindAllString(value, -1)
+	return len(markers) > 0 && !slices.ContainsFunc(markers, func(marker string) bool { return !strings.HasPrefix(marker, "${{ unresolved ci ") })
+}
+
+// ciVariableRead is a $NAME or ${NAME…} read.
+var ciVariableRead = regexp.MustCompile(`\$(?:\{([A-Za-z_][A-Za-z0-9_]*)|([A-Za-z_][A-Za-z0-9_]*))`)
+
+// ciPredefinedReads reports a value whose every variable read names a
+// variable the provider predefines, by its prefixes, and that runs no command.
+func ciPredefinedReads(value string, prefixes ...string) bool {
+	if strings.Contains(value, "$(") || strings.Contains(value, "`") {
+		return false
+	}
+	reads := ciVariableRead.FindAllStringSubmatch(strings.ReplaceAll(value, "$$", ""), -1)
+	return len(reads) > 0 && !slices.ContainsFunc(reads, func(read []string) bool {
+		name := read[1] + read[2]
+		return !slices.ContainsFunc(prefixes, func(prefix string) bool { return strings.HasPrefix(name, prefix) })
+	})
+}
+
+// conditionalCIPrefix starts the written text of a conditionalCIValue.
+const conditionalCIPrefix = "\x00set only on some paths of "
+
+// conditionalCIValue marks a variable a CI script sets only under a
+// condition ddtest cannot decide, in statement: it may keep its earlier
+// value or take the new one. It is an unresolvedCIValue, so every value that
+// reads it is unresolved too.
+func conditionalCIValue(statement string) string {
+	return unresolvedCIValue(conditionalCIPrefix + statement)
+}
+
+// conditionalCIStatement is the statement of a value that is exactly a
+// conditionalCIValue marker.
+func conditionalCIStatement(value string) (string, bool) {
+	match := unresolvedCIMarker.FindStringSubmatch(value)
+	if match == nil || match[0] != value {
+		return "", false
+	}
+	written, err := strconv.Unquote(match[1])
+	if err != nil {
+		return "", false
+	}
+	return strings.CutPrefix(written, conditionalCIPrefix)
+}
 
 // unresolvedCIError explains a value holding an unresolvedCIValue marker.
 func unresolvedCIError(value string) error {
@@ -162,7 +217,30 @@ func unresolvedCIError(value string) error {
 	if err != nil {
 		written = match[1]
 	}
+	if statement, conditional := strings.CutPrefix(written, conditionalCIPrefix); conditional {
+		return fmt.Errorf("the CI script sets it only on some paths of %s, under a condition ddtest cannot decide locally", statement)
+	}
+	written = displayCIValue(written)
+	if strings.Contains(written, "$DD_TRACE_PACKAGE") || strings.Contains(written, "${DD_TRACE_PACKAGE") {
+		// Only the Datadog GitHub action exports it; the installer elsewhere
+		// appends its preload to NODE_OPTIONS itself.
+		return fmt.Errorf("its CI value %s reads $DD_TRACE_PACKAGE, which only the Datadog GitHub Actions setup exports: here it is empty, so Node would get -r without a module and fail to start; remove that -r, since the setup already appends its preload to NODE_OPTIONS", written)
+	}
 	return fmt.Errorf("its CI value %s reads values only CI knows (predefined CI variables or command output); ddtest cannot resolve it locally", written)
+}
+
+// displayCIValue writes a CI value the model read for output, in the
+// selected provider's own terms: outside the shared workflow syntax, where
+// the provider's setup appends its preload to NODE_OPTIONS itself, without
+// the -r ${{ env.DD_TRACE_PACKAGE }} that stands for that preload (see
+// javascriptDiscovery.setupShellExports), leaving what the CI configuration
+// writes, and with $DD_TRACE_ESM_IMPORT for the loader path it exports.
+func displayCIValue(value string) string {
+	if activeOrDefaultCIProvider().sharedSyntax() || !strings.Contains(value, "${{ env.DD_TRACE_") {
+		return value
+	}
+	value = strings.NewReplacer("-r ${{ env.DD_TRACE_PACKAGE }}", "", "${{ env.DD_TRACE_ESM_IMPORT }}", "$DD_TRACE_ESM_IMPORT").Replace(value)
+	return strings.Join(strings.Fields(value), " ")
 }
 
 // matrixProperty looks up key the way GitHub resolves context properties,

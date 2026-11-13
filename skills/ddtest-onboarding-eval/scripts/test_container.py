@@ -11,11 +11,13 @@ import subprocess
 import sys
 import tempfile
 import time
+import tarfile
 import unittest
 from unittest.mock import patch
 
 import isolation
 import run_eval
+import prepare_dependencies
 
 
 IMAGE=os.environ.get('DDTEST_EVAL_TEST_IMAGE')
@@ -29,8 +31,8 @@ class FixtureContainer(isolation.Container):
         super().start()
         (self.trial.parent/'active.json').write_text(json.dumps({'trial':str(self.trial),'container':self.name}))
     def execute(self,argv,*args):
-        if argv[:3]==['git','clone','--']:
-            argv=[*argv[:3],str(self.trial/'source'),argv[-1]]
+        if argv[:5]==['git','remote','add','--','origin']:
+            argv=[*argv[:5],str(self.trial/'source')]
         return super().execute(argv,*args)
 
 
@@ -80,6 +82,52 @@ class ContainerTests(unittest.TestCase):
             self.assertIn('file_change' if agent=='codex' else 'Write',activity)
         self.assertEqual(canary.read_text(),'HOST-CREDENTIAL-CANARY')
 
+    def test_prepared_image_restores_clean_fresh_trials_without_setup(self):
+        context = self.root / 'prepared-context'
+        context.mkdir()
+        repo = context / 'repo'
+        subprocess.run(['git', 'clone', '--quiet', '--no-local', '--depth=1', '--', SOURCE, str(repo)], check=True, capture_output=True)
+        commit = subprocess.check_output(['git', '-C', str(repo), 'rev-parse', 'HEAD'], text=True).strip()
+        subprocess.run(['git', '-C', str(repo), 'remote', 'set-url', 'origin', self.args.repo], check=True)
+        dependency = repo / 'node_modules' / 'fixture-dependency'
+        dependency.mkdir(parents=True)
+        (dependency / 'ready').write_text('Prepared project dependency')
+        with (repo / '.git/info/exclude').open('a') as stream:
+            stream.write('\nnode_modules/\n')
+        import prepare_case_images
+        case = {'id': 'fixture', 'repo': self.args.repo, 'commit': commit, 'framework': 'jest',
+                'harness': {}, 'trims': {}, 'setup_commands': [
+                    "python3 -c \"import pathlib; p=pathlib.Path('/trial/caches/pip/private-cache'); p.write_text('project cache'); p.chmod(0o600); d=pathlib.Path('/trial/home/.gradle/private-daemon'); d.mkdir(); d.chmod(0o700)\""],
+                'readiness_commands': []}
+        text = prepare_case_images.dockerfile(case, IMAGE)
+        # The same builder runs against a local fixture source, without network.
+        lines = [line for line in text.splitlines() if not line.startswith('RUN ["git",')]
+        lines.insert(lines.index('WORKDIR /trial/repo'), 'COPY repo /trial/repo')
+        (context / 'Dockerfile').write_text('\n'.join(lines) + '\n')
+        config = self.root / 'empty-docker-config'
+        client = prepare_case_images.docker_client(config)
+        commands = prepare_case_images.image_build_commands(client, IMAGE,
+                    ['--network=none', '--iidfile', str(context / 'image-id'), str(context)])
+        prepare_case_images.execute_image_build(commands, timeout=120)
+        self.assertEqual(subprocess.check_output([*client, 'image', 'inspect', '--format', '{{.Id}}', IMAGE], text=True).strip(), IMAGE)
+        image = (context / 'image-id').read_text().strip()
+        self.addCleanup(lambda: subprocess.run(['docker', 'image', 'rm', image], capture_output=True))
+        self.args.image, self.args.ref, self.args.framework = image, commit, 'jest'
+        self.args.case_image = True
+        self.args.pnpm = '12.14.0'
+        self.args.readiness_command = ['test -f node_modules/fixture-dependency/ready']
+        for number in range(2):
+            self.args.output = self.root / ('prepared-evidence-' + str(number))
+            with patch.object(run_eval, 'trial_root', return_value=self.root), contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                code = run_eval.run(self.args)
+            result = json.loads((self.args.output / 'run.json').read_text())
+            self.assertEqual(code, 0, result.get('error'))
+            self.assertEqual(result['prepared_image']['baseline'], commit)
+            self.assertEqual(result['prepared_image']['image_id'], image)
+            commands = [item['argv'] for item in result['commands']]
+            self.assertFalse(any(command[:2] == ['git', 'clone'] or command[:2] == ['npm', 'install'] for command in commands))
+            self.assertEqual(result['isolation']['cleanup'], 'removed')
+
     def test_pnpm_configuration_uses_container_paths(self):
         import shlex
         script="import subprocess; p=subprocess.check_output(['pnpm','config','get','store-dir'],text=True).strip(); assert p=='/trial/caches/pnpm-store',p"
@@ -87,6 +135,85 @@ class ContainerTests(unittest.TestCase):
         code,manifest=self.trial()
         self.assertEqual(code,0,manifest.get('error'))
         self.assertEqual(manifest['isolation']['cleanup'],'removed')
+
+    def test_dependency_cache_round_trip_keeps_source_and_agent_state_fresh(self):
+        import shlex
+        import uuid
+        key = 'a' * 64
+        self.args.prepare_cache = key
+        write = "import os,pathlib; p=pathlib.Path(os.environ['npm_config_cache'])/'cached-package'; p.write_text('public-package')"
+        self.args.setup_command = [shlex.join(['/usr/bin/python3', '-c', write])]
+        code, manifest = self.trial()
+        self.assertEqual(code, 0, manifest)
+        self.assertEqual(manifest['status'], 'prepared')
+        self.assertFalse((Path(manifest['checkout'])/'observed.json').exists())
+        context = self.root/'cache-image'
+        context.mkdir()
+        prepare_dependencies.copy_archive(Path(manifest['trial_directory']), context/'cache.tar', key)
+        tag = 'ddtest-eval-cache-test:' + uuid.uuid4().hex
+        try:
+            prepare_dependencies.build_image(context, IMAGE, tag, 120)
+            self.args.image = subprocess.check_output(['docker', 'image', 'inspect', '--format', '{{.Id}}', tag], text=True).strip()
+            self.args.prepare_cache = None
+            self.args.dependency_cache = key
+            self.args.output = self.root/'restored-evidence'
+            check = "import os,pathlib; assert (pathlib.Path(os.environ['npm_config_cache'])/'cached-package').read_text()=='public-package'; assert not pathlib.Path('observed.json').exists(); assert not (pathlib.Path(os.environ['HOME'])/'.codex/auth.json').exists()"
+            self.args.setup_command = [shlex.join(['/usr/bin/python3', '-c', check])]
+            code, restored = self.trial()
+            self.assertEqual(code, 0, restored)
+            self.assertEqual(restored['dependency_cache']['fingerprint'], key)
+            self.assertEqual(restored['commit'], manifest['commit'])
+            self.assertTrue((Path(restored['checkout'])/'observed.json').exists())
+            self.assertEqual(restored['isolation']['cleanup'], 'removed')
+            self.args.output = self.root/'mismatched-evidence'
+            self.args.dependency_cache = 'b' * 64
+            self.args.login_json = self.root/'model-login-must-not-be-read.json'
+            code, mismatch = self.trial()
+            self.assertEqual(code, 1)
+            self.assertEqual(mismatch['failure_stage'], 'dependency_cache_restore')
+            self.assertEqual(mismatch['isolation']['cleanup'], 'removed')
+            self.assertNotIn('authentication', mismatch)
+            self.assertFalse((Path(mismatch['checkout'])/'observed.json').exists())
+        finally:
+            subprocess.run(['docker', 'image', 'rm', tag], capture_output=True)
+
+    def test_failed_cache_build_preserves_an_untagged_base_image(self):
+        import uuid
+        context = self.root/'failed-cache-image'
+        context.mkdir()
+        archive = context/'cache.tar'
+        with tarfile.open(archive, 'w'):
+            pass
+        base = subprocess.check_output([
+            'docker', 'image', 'import', '--change', 'LABEL ddtest.eval.fixture=' + uuid.uuid4().hex,
+            str(archive)], text=True).strip()
+        try:
+            tags = subprocess.check_output(['docker', 'image', 'inspect', '--format', '{{json .RepoTags}}', base], text=True)
+            self.assertFalse(json.loads(tags))
+            with self.assertRaises(subprocess.CalledProcessError):
+                prepare_dependencies.build_image(context, base, 'INVALID/OUTPUT', 120)
+            result = subprocess.run(['docker', 'image', 'inspect', base], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, 'Failed preparation removed the caller\'s base image: ' + result.stderr)
+        finally:
+            subprocess.run(['docker', 'image', 'rm', '--force', base], capture_output=True)
+
+    def test_changes_patch_excludes_trim_commits_made_in_the_container(self):
+        import run_catalog
+        tracked='skills/ddtest-onboarding-eval/catalog/cases.yaml'
+        # The fake agent rewrites observed.json; tracking it in the trim commit
+        # makes that agent edit part of changes.patch.
+        case={'trims':{'required':{'reason':'container trim','commands':[
+            "sh -c ': > observed.json && git add observed.json'",f'git rm -q {tracked}']}}}
+        self.args.setup_command=run_catalog.trim_commands(case)
+        code,manifest=self.trial()
+        self.assertEqual(code,0,str(manifest.get('error'))+json.dumps(manifest['commands'][-2:]))
+        self.assertRegex(manifest['agent_baseline'],r'^[0-9a-f]{40}$')
+        self.assertNotEqual(manifest['agent_baseline'],manifest['commit'])
+        patch_text=(self.args.output/'changes.patch').read_text()
+        self.assertIn('observed.json',patch_text)
+        self.assertIn('fake_agent',patch_text)
+        self.assertNotIn(tracked,patch_text)
+        self.assertEqual((self.args.output/'status.txt').read_text().strip(),'M observed.json')
 
     def test_selected_fake_login_preflight_keeps_credentials_out_of_setup(self):
         import shlex
@@ -146,6 +273,24 @@ class ContainerTests(unittest.TestCase):
             canary.kill();canary.wait(timeout=5)
         time.sleep(3)
         self.assertFalse(sentinel.exists())
+
+    def test_default_datadog_intakes_resolve_only_to_loopback(self):
+        trial=self.root/'intake-guard';trial.mkdir()
+        container=isolation.Container(trial,IMAGE)
+        env=isolation.environment(trial);env['PATH']=container.path
+        script="""import os,socket
+hosts=['instrumentation-telemetry-intake.datadoghq.com','citestcycle-intake.datadoghq.com','citestcov-intake.datadoghq.com','cicov-intake.datadoghq.com','api.datadoghq.com']
+for host in hosts:
+    addresses={row[4][0] for row in socket.getaddrinfo(host,443)}
+    assert addresses=={'127.0.0.1'},(host,addresses)
+assert os.environ.get('DD_INSTRUMENTATION_TELEMETRY_ENABLED')=='false'
+"""
+        try:
+            container.start()
+            self.assertEqual(container.execute(['/usr/bin/python3','-c',script],trial,env,10,
+                                               lambda _:None,None,run_eval.execute),0)
+        finally:
+            container.close()
 
     def test_forwarded_environment_is_exact_and_absent_from_docker_argv(self):
         trial=self.root/'env-trial';trial.mkdir()

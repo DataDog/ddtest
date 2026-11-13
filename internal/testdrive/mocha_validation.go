@@ -164,6 +164,7 @@ func (t *Testdrive) runMocha(ctx context.Context, output io.Writer, session *wor
 	directoryRoot := t.repositoryRoot
 	if probePath == "" && instrumented {
 		run.coverageCause = mochaCoverageCause(onboard.MochaCoverageSetup(t.repositoryRoot, shellquote.Join(append([]string{command}, args...)...)))
+		run.noCoverableSource = onboard.MochaCoverageNotApplicable(t.checkoutRoot(), t.repositoryRoot, shellquote.Join(append([]string{command}, args...)...))
 	}
 	if probePath != "" {
 		original := shellquote.Join(append([]string{command}, args...)...)
@@ -307,6 +308,8 @@ ddtestSuite('ddtest', () => {
   });
 });
 `
+
+const mochaNoSourceCause = "The Mocha package has no file nyc instruments: only test files, configuration and non-JavaScript files such as data or schemas. No setup can report source coverage for these tests, so coverage is not applicable and does not block; Test Impact Analysis has no source to link them to."
 
 const mochaESMCoverageCause = "Native ESM coverage is not supported by NYC's require hook. Tracing imports do not instrument source coverage; review a separate ESM instrumentation step."
 

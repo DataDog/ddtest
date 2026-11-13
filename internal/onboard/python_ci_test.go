@@ -50,6 +50,15 @@ func TestPythonInvocationStopsAtTheExecutionTarget(t *testing.T) {
 		{[]string{"poetry", "run", "python", "-mpytest"}, true},
 		{[]string{"python3.12", "-I", "-W", "error", "-Xdev", "-m", "pytest"}, true},
 		{[]string{"python", "--check-hash-based-pycs", "always", "-m", "pytest"}, true},
+		{[]string{"python", "-Im", "pytest"}, true},
+		{[]string{"python3", "-IBu", "-m", "pytest"}, true},
+		{[]string{"python", "-IBmpytest"}, true},
+		{[]string{"python", "-X", "dev", "-W", "ignore::DeprecationWarning", "-u", "-m", "pytest"}, true},
+		{[]string{"python", "-IWerror", "-m", "pytest"}, true},
+		{[]string{"python", "-IW", "error", "-Bm", "pytest"}, true},
+		{[]string{"python", "-Ic", "print('wrapper')", "-m", "pytest"}, false},
+		{[]string{"python", "-IZ", "-m", "pytest"}, false},
+		{[]string{"python", "-Im"}, false},
 		{[]string{"python", "wrapper.py", "-m", "pytest"}, false},
 		{[]string{"python", "wrapper.py", "-mpytest"}, false},
 		{[]string{"python", "-c", "print('wrapper')", "-mpytest"}, false},
@@ -129,7 +138,7 @@ func TestPythonCIReleaseAndMatrixValidation(t *testing.T) {
 			require.NoError(t, os.MkdirAll(filepath.Join(root, ".github/workflows"), 0755))
 			contents := "jobs:\n  test:\n    strategy:\n      matrix:\n        python: ['" + tc.python + "']\n    steps:\n      - uses: actions/setup-python@v6\n        with:\n          python-version: ${{ matrix.python }}\n      - uses: datadog/test-visibility-github-action@v3\n        with:\n          languages: python\n          python-tracer-version: '" + tc.version + "'\n      - run: python -m pytest\n        env:\n          PYTEST_ADDOPTS: '" + tc.options + "'\n"
 			require.NoError(t, os.WriteFile(filepath.Join(root, ".github/workflows/test.yml"), []byte(contents), 0644))
-			check := checkPythonCIRuntimes(t.Context(), root, "4.16.0", func(_ context.Context, version string) (PythonRelease, error) {
+			check := checkPythonCIRuntimes(t.Context(), root, "4.16.0", "", func(_ context.Context, version string) (PythonRelease, error) {
 				return PythonRelease{version, ">=3.9,<3.15"}, nil
 			}, func(context.Context, string) (string, error) {
 				t.Fatal("explicit version must not resolve action default")
@@ -509,4 +518,47 @@ func TestPythonInlineAddoptsInstrumentation(t *testing.T) {
 			require.Contains(t, check.Jobs[0].Reason, tc.reason)
 		})
 	}
+}
+
+// The B08 shape: python -Im pytest and other clustered interpreter flags
+// read as pytest, with each option as Python reads it.
+func TestPythonClusteredInterpreterFlagsRunPytest(t *testing.T) {
+	for _, tc := range []struct {
+		args, options []string
+	}{
+		{[]string{"-Im", "pytest"}, []string{"-I"}},
+		{[]string{"-IBu", "-m", "pytest"}, []string{"-I", "-B", "-u"}},
+		{[]string{"-X", "dev", "-Werror", "-mpytest"}, []string{"-X", "dev", "-W", "error"}},
+		{[]string{"-bW", "ignore", "-Ximporttime", "-Em", "pytest"}, []string{"-b", "-W", "ignore", "-X", "importtime", "-E"}},
+	} {
+		options, ok := PythonInterpreterOptions(tc.args)
+		require.True(t, ok, "%v", tc.args)
+		require.Equal(t, tc.options, options, "%v", tc.args)
+		_, module := PythonModule(tc.args)
+		require.Equal(t, "pytest", module[0], "%v", tc.args)
+	}
+	require.True(t, pythonIgnoresEnvironment([]string{"python", "-Im", "pytest"}))
+	require.True(t, pythonIgnoresEnvironment([]string{"python", "-uEm", "pytest"}))
+	require.False(t, pythonIgnoresEnvironment([]string{"python", "-Bum", "pytest"}))
+
+	root := pythonWorkflow(t, `jobs:
+  testwheel:
+    steps:
+      - uses: actions/setup-python@v6
+        with: {python-version: '3.12'}
+      - uses: datadog/test-visibility-github-action@v3
+        with: {languages: python, python-tracer-version: '4.16.0'}
+      - run: pip install pytest
+      - run: python -Im pytest
+      - run: python -X dev -W error -Bu -m pytest -q
+`)
+	scope, err := DiscoverValidationScope(root, "pytest")
+	require.NoError(t, err)
+	require.Empty(t, scope.Unresolved)
+	require.Len(t, scope.Commands, 2)
+	require.Equal(t, "python -Im pytest", scope.Commands[0].Command)
+	require.Equal(t, "python -X dev -W error -Bu -m pytest -q", scope.Commands[1].Command)
+	options, _, err := PytestCommandOptions("--ddtrace", []string{"python", "-IBm", "pytest", "-k", "selected"}, nil)
+	require.NoError(t, err)
+	require.Equal(t, []string{"--ddtrace", "-k", "selected"}, options)
 }

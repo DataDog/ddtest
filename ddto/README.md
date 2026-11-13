@@ -8,8 +8,8 @@ This directory holds its Go module, `github.com/DataDog/ddtest/ddto`; `ddto` is
 the internal name of the module and its packages. The default Mini runtime
 contains the CI policies from `dd-trace-go` and a small event client. It adds
 no external runtime module dependencies. Your application can still use the
-full SDK for APM. The instrumentation is experimental; compatibility is
-checked against pinned Go, SDK and library versions.
+full SDK for APM. Compatibility is checked against pinned Go, SDK and library
+versions.
 
 ## Install
 
@@ -260,7 +260,7 @@ for another platform; then the CLI warns and runs it without its `go`.
 | Testify suites | Any release or compatible fork whose `suite.Run(*testing.T, TestingSuite)` runs each method with `t.Run`, from v1.2.0; v1.3.0 and v1.10.0 to v1.12.1 are tested. The code decides, not the version; an unrecognized entry warns and its methods run as ordinary subtests. [Details](docs/testify.md) |
 | Goleak | Automatic Mini integration for any release or compatible fork with `IgnoreAnyFunction`, which v1.3.0 added; real test leaks remain visible. [Details](docs/delivery.md#automatic-goleak-integration) |
 | Orchestrion and APM | Combined builds; SDK spans under context-associated Mini tests report to Test Optimization, not APM. [Build commands](docs/orchestrion.md), [span association](docs/sdk-span-mirror.md) |
-| Bazel | `ddtest instrument bazel` writes an instrumented Go SDK and Mini's repository for rules_go; the rules_test_optimization version that uses them is in development. A basic Bazel test runs on Linux and macOS in Bzlmod and WORKSPACE modes. [Details](docs/bazel.md) |
+| Bazel | `ddtest instrument bazel` writes an instrumented Go SDK and Mini's repository for rules_go; rules_test_optimization uses them from version 2.0.0. A basic Bazel test runs on Linux and macOS in Bzlmod and WORKSPACE modes. [Details](docs/bazel.md) |
 | Platforms | Linux with Go 1.25/1.26/1.27 and tip, macOS and Windows with Go 1.27; Linux also runs Go 1.25 and 1.27 with `-race`. [CI matrix](docs/validation.md#go-instrumentation-workflow) |
 
 With `ddtest instrument`, a client's `go.mod` can declare Go 1.21 or newer; the
@@ -274,6 +274,36 @@ Standard-library test targets are unsupported, and explicit `.go` file mode
 runs native Go without instrumentation and prints a warning. The
 [validation contract](docs/validation.md) distinguishes loopback protocol
 checks from live intake, UI and downstream-project validation.
+
+## Test automation exclusions
+
+A test can opt out of automatic Test Optimization behavior with a comment on
+its declaration, the way `//dd:test.unskippable` keeps it from being skipped:
+
+```go
+//dd:test.no_auto_retry
+//dd:test.prevent_failure_suppression
+func TestCritical(t *testing.T) {
+	// ...
+}
+```
+
+- `//dd:test.no_auto_retry` runs the test once: no automatic retries, early
+  flake detection or attempt to fix. Go retries a test as a whole, so a Testify
+  suite in which such a method ran is not retried either, and its other methods
+  lose their retries in that run.
+- `//dd:test.prevent_failure_suppression` keeps the test's failure blocking when
+  Test Management quarantines or disables that test. It applies to the test's
+  own assignment: a quarantined or disabled parent, such as a whole Testify
+  suite, still suppresses it.
+
+Both work on test functions, Testify methods, named subtest callbacks, fuzz
+targets and examples.
+Test events carry `test.test_management.no_auto_retry` and
+`test.test_management.prevent_failure_suppression` when their declaration has
+the comment, and report the Test Management state that actually applied. As with
+`//dd:test.unskippable`, the comments are read from the test's source file when
+the test runs, so they have no effect if that file is not available.
 
 ## Environment variables
 

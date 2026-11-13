@@ -507,7 +507,8 @@ func explainCypressCodeCoverageSkips(features []featureResult, codeCoverage stri
 }
 
 const cypressProbeSource = `let attempts = 0;
-const mode = typeof Cypress.expose === 'function' ? Cypress.expose('__ddtest_probe_mode') : Cypress.env('__ddtest_probe_mode');
+const exposed = typeof Cypress.expose === 'function' ? Cypress.expose('__ddtest_probe_mode') : undefined;
+const mode = exposed === undefined ? Cypress.env('__ddtest_probe_mode') : exposed;
 describe('ddtest', () => { (mode ? it : it.skip)('validation probe', () => {
  attempts++;
  return cy.task('ddtest:validation:attempt').then(() => {

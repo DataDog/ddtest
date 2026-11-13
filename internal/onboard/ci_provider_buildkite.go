@@ -39,7 +39,9 @@ type buildkite struct{}
 
 func (buildkite) name() string { return buildkiteProvider }
 
-func (buildkite) displayName() string { return "Buildkite" }
+func (buildkite) displayName() string       { return "Buildkite" }
+func (buildkite) checkoutReference() string { return "$BUILDKITE_BUILD_CHECKOUT_PATH" }
+func (buildkite) checkoutVariable() string  { return "BUILDKITE_BUILD_CHECKOUT_PATH" }
 
 func (buildkite) environment() map[string]string {
 	return map[string]string{"CI": "true", "BUILDKITE": "true"}
@@ -132,15 +134,6 @@ func (b buildkite) readWorkflows(root string) ([]ciWorkflow, error) {
 		workflows = append(workflows, config.workflow(file, config.documents[file]))
 	}
 	return workflows, nil
-}
-
-func (b buildkite) findTestWorkflows(root, language, framework string) ([]string, []string, error) {
-	workflows, err := b.readWorkflows(root)
-	if err != nil {
-		return nil, nil, err
-	}
-	found, configured := testWorkflowsWithSetup(root, workflows, language, framework)
-	return found, configured, nil
 }
 
 func (buildkite) setupStep(step runtimeStep) (ciSetup, bool) {
@@ -243,7 +236,7 @@ func (c *buildkiteConfig) workflow(file string, body *yaml.Node) ciWorkflow {
 		for _, key := range gitLabKeys(envNode) {
 			value, unknown := buildkiteInterpolate(gitLabScalar(gitLabMembers(envNode)[key]), scope.known)
 			if len(unknown) > 0 && !strings.HasPrefix(key, "DD_") {
-				value = unresolvedCIValue(value)
+				value = buildkiteUnresolved(value, unknown)
 			} else {
 				scope.known[key] = value
 			}
@@ -414,7 +407,11 @@ func (c *buildkiteConfig) command(workflow *ciWorkflow, item *yaml.Node, fields 
 				keyProblem = true
 			}
 			if (len(unknown) > 0 || problem != "") && !strings.HasPrefix(key, "DD_") {
-				value = unresolvedCIValue(value)
+				if problem != "" {
+					value = unresolvedCIValue(value)
+				} else {
+					value = buildkiteUnresolved(value, unknown)
+				}
 			}
 			env[key] = value
 		}
@@ -449,12 +446,19 @@ func (c *buildkiteConfig) command(workflow *ciWorkflow, item *yaml.Node, fields 
 			}
 		}
 		job := runtimeJob{Env: env, Image: executor.image, ImageTemplate: executor.template, ImageProblem: executor.imageProblem}
+		job.KeyProblem = executor.keyReachProblem()
 		if disabled {
 			job.If = "false"
 		}
 		job.Steps = c.steps(name, scope, commands, matrix, env, executor)
-		curl := slices.ContainsFunc(job.Steps, func(step runtimeStep) bool { return installsCurl(step.Run) })
-		job.SetupImageProblem = executor.imageSetupProblem(curl)
+		curl := curlBeforeTests(setupFreeCommands(job.Steps))
+		if missing := executor.missingTools(curl); missing != "" {
+			// The installer cannot run here: the step gets the setup
+			// without Bash or curl instead.
+			job.SetupProvider = newImageFallback(buildkite{}, executor.image, missing)
+		} else {
+			job.SetupImageProblem = executor.imageSetupProblem(curl)
+		}
 		workflow.Jobs[name] = job
 	}
 }
@@ -533,7 +537,7 @@ func (c *buildkiteConfig) steps(name string, scope buildkiteScope, commands *yam
 	state := ciShellState{dialect: buildkiteShellDialect, env: map[string]string{}, references: map[string]string{}, job: env, directory: executor.directory}
 	var steps []runtimeStep
 	add := func(entry buildkiteEntry, run, problem string) *runtimeStep {
-		step := runtimeStep{Number: len(steps) + 1, Source: entry.file + ":" + strconv.Itoa(entry.fileLine()), origin: entry, Shell: executor.shell}
+		step := runtimeStep{Number: len(steps) + 1, Source: entry.file + ":" + strconv.Itoa(entry.fileLine()), origin: entry, Shell: executor.shell, sameShell: len(steps) > 0}
 		if len(state.env) > 0 {
 			step.Env = maps.Clone(state.env)
 		}
@@ -571,7 +575,11 @@ func (c *buildkiteConfig) steps(name string, scope buildkiteScope, commands *yam
 			current := entry
 			current.line, current.first = int(file.Stmts[i].Pos().Line()), i == 0
 			known := mergeEnvironment(mergeEnvironment(env, state.env), state.references)
-			if setup, consumed, ok := buildkiteSetupAt(file.Stmts, i, known); ok {
+			setup, consumed, ok := fallbackSetupAt(text, file.Stmts, i, known, buildkiteSnippetForm, nil)
+			if !ok {
+				setup, consumed, ok = buildkiteSetupAt(file.Stmts, i, known)
+			}
+			if ok {
 				statement := buildkiteStatementText(text, file.Stmts, i, i+consumed)
 				if !setup.shaped {
 					// It may run anything, tests included: an unresolved
@@ -580,11 +588,15 @@ func (c *buildkiteConfig) steps(name string, scope buildkiteScope, commands *yam
 					i += consumed - 1
 					continue
 				}
+				mechanism := "Datadog setup snippet"
+				if setup.fallback {
+					mechanism = fallbackSetupName
+				}
 				if reads := buildkiteReads(statement, unknown); len(reads) > 0 && setup.Problem == "" {
-					setup.Problem = "The Datadog setup snippet reads " + strings.Join(reads, ", ") + " without escaping the $: buildkite-agent pipeline upload replaces it when the pipeline is uploaded (with the upload step's value, or empty), so write every $ in the snippet as $$, as ddtest's instructions show."
+					setup.Problem = "The " + mechanism + " reads " + strings.Join(reads, ", ") + " without escaping the $: buildkite-agent pipeline upload replaces it when the pipeline is uploaded (with the upload step's value, or empty), so write every $ in the snippet as $$, as ddtest's instructions show."
 				}
 				if setup.Problem == "" {
-					setup.Problem = executor.setupProblem(state.curl)
+					setup.Problem = executor.setupProblem(state.curl, setup.fallback)
 				}
 				if key, changed := state.env["DD_API_KEY"]; changed && setup.Problem == "" {
 					switch {
@@ -600,7 +612,7 @@ func (c *buildkiteConfig) steps(name string, scope buildkiteScope, commands *yam
 					step.ResolutionError = "Buildkite step " + name + ": " + state.problem
 				}
 				if executor.problem != "" && setup.Problem == "" {
-					setup.Problem = "The step cannot run the Datadog setup snippet: " + executor.problem + "."
+					setup.Problem = "The step cannot run the " + mechanism + ": " + executor.problem + "."
 				}
 				step.Setup = &setup
 				if setup.Supported && setup.Problem == "" {
@@ -613,7 +625,7 @@ func (c *buildkiteConfig) steps(name string, scope buildkiteScope, commands *yam
 				continue
 			}
 			statement := buildkiteStatementText(text, file.Stmts, i, i+1)
-			command := gitLabResolveBranches(statement, known)
+			command := state.dialect.resolveBranches(statement, known)
 			state.curl = state.curl || installsCurl(command)
 			problem := ""
 			if reads := buildkiteReads(statement, unknown); len(reads) > 0 {
@@ -635,6 +647,9 @@ func (c *buildkiteConfig) steps(name string, scope buildkiteScope, commands *yam
 			}
 			if consumed := strings.TrimSpace(command) == "" || state.apply(command, mergeEnvironment(env, state.env)); consumed {
 				step.Run = ""
+			} else {
+				step.readScopedPrefix()
+				step.foldInlineEnvironment(mergeEnvironment(mergeEnvironment(env, state.env), state.references), state.dialect.projectVariable)
 			}
 		}
 	}
@@ -796,6 +811,15 @@ var buildkiteBuildVariables = []string{
 // own variables stay reads. unknown lists every other variable read: upload
 // replaces it with the upload step's environment, which ddtest cannot know
 // and which never holds the step's own env.
+// buildkiteUnresolved marks a value that reads unknown variables: one only
+// Buildkite's predefined BUILDKITE_ variables provide, or another unresolved.
+func buildkiteUnresolved(value string, unknown []string) string {
+	if !slices.ContainsFunc(unknown, func(name string) bool { return !strings.HasPrefix(name, "BUILDKITE_") }) {
+		return unresolvedCIProvidedValue(value)
+	}
+	return unresolvedCIValue(value)
+}
+
 func buildkiteInterpolate(text string, known map[string]string) (string, []string) {
 	var unknown []string
 	result := buildkiteVariable.ReplaceAllStringFunc(text, func(match string) string {

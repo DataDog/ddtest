@@ -19,8 +19,10 @@ import (
 	"testing"
 
 	"github.com/DataDog/ddtest/internal/framework"
+	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
 	"github.com/DataDog/ddtest/internal/testdrive/workspace"
+	"github.com/spf13/viper"
 	"github.com/stretchr/testify/require"
 )
 
@@ -44,6 +46,7 @@ type simulatedBuild struct {
 	// unreportedSkips writes no report for a probe that never starts, as
 	// Surefire 3.0.0-M5 does for a skipped Spock specification.
 	unreportedSkips bool
+	probeTags       map[string]string
 	calls           []map[string]string
 	args            [][]string
 }
@@ -127,6 +130,9 @@ func (m *simulatedBuild) run(t *testing.T, args []string, env map[string]string)
 	var events []intake.Event
 	event := func(status string, tags ...string) {
 		values := map[string]string{"test.module": m.scenario.Module, "test.suite": javaProbeClass, "test.name": "ddtestProbe", "test.status": status}
+		for key, value := range m.probeTags {
+			values[key] = value
+		}
 		for i := 0; i+1 < len(tags); i += 2 {
 			values[tags[i]] = tags[i+1]
 		}
@@ -145,8 +151,10 @@ func (m *simulatedBuild) run(t *testing.T, args []string, env map[string]string)
 	switch m.scenario.Feature {
 	case "reporting-only":
 		status := body()
+		event(status)
+		events[0].Tags["test.module"] = m.module(false)
 		native = map[string]string{"pass": "", "fail": "fail"}[status]
-		m.facts = intake.Facts{TestEventCount: 1, Tests: []intake.Test{{
+		m.facts = intake.Facts{TestEventCount: 1, Events: events, Tests: []intake.Test{{
 			Module: m.module(false), Suite: javaProbeClass, Name: "ddtestProbe", SourceFile: javaProbeSourceFile,
 			Attempts: []intake.TestRun{{Status: status, SpanID: 1}},
 		}}}
@@ -422,6 +430,34 @@ func TestJavaValidationReportsTheCIPinnedAgent(t *testing.T) {
 	require.Equal(t, "compatible", result.CIRuntime.Status, "%+v", result.CIRuntime)
 }
 
+// An explicit --tracer-version latest validates the exact latest release,
+// which the setup onboarding prescribed pins in CI, so the pinned row is
+// compatible, not a mismatch between latest and that release.
+func TestJavaValidationResolvesAnExplicitLatest(t *testing.T) {
+	root := t.TempDir()
+	requireWriteFile(t, filepath.Join(root, "pom.xml"), `<project><artifactId>fixture</artifactId><dependencies><dependency><groupId>org.junit.jupiter</groupId><artifactId>junit-jupiter</artifactId></dependency></dependencies></project>`)
+	t.Chdir(root)
+	viper.Reset()
+	settings.Init()
+	t.Cleanup(func() { viper.Reset(); settings.Init() })
+	prepared, err := Prepare(PrepareOptions{TracerVersion: "latest", CheckOnly: true})
+	require.NoError(t, err)
+	require.Equal(t, "1.68.1", prepared.tracerVersion, "the release every Java setup of this run pins")
+	require.Equal(t, "dd-java-agent@1.68.1", prepared.tracerLabel)
+
+	drive, _, _ := javaSimulation(t)
+	require.NoError(t, os.MkdirAll(filepath.Join(drive.repositoryRoot, ".github/workflows"), 0755))
+	requireWriteFile(t, filepath.Join(drive.repositoryRoot, ".github/workflows/ci.yml"), "jobs:\n  test:\n    steps:\n      - uses: actions/setup-java@v4\n        with: {java-version: '17'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: java, api_key: '${{ secrets.DD_API_KEY }}', java-tracer-version: '1.68.1'}\n      - run: mvn -B test\n")
+	drive.configurationEnvironment = map[string]string{"JAVA_HOME": writeJDK(t, "17.0.20")}
+	drive.platform = &fakeTracer{preloadPath: "/agent/dd-java-agent.jar"}
+	drive.tracerVersion, drive.tracerLabel = prepared.tracerVersion, prepared.tracerLabel
+	drive.preflight = drive.frameworkPreflight()
+	var output bytes.Buffer
+	result, err := drive.run(t.Context(), &output)
+	require.NoError(t, err, output.String())
+	require.Equal(t, "compatible", result.CIRuntime.Status, "%+v", result.CIRuntime)
+}
+
 func TestJavaFeaturesPassWhenSurefireReportsNoSkippedProbe(t *testing.T) {
 	drive, maven, session := javaSimulation(t)
 	maven.unreportedSkips = true
@@ -440,8 +476,8 @@ func TestJavaProbesStopAtTheTestPhase(t *testing.T) {
 	drive.args = []string{"-B", "verify", "-Pcoverage"}
 	result := &validationResult{Framework: "junit5"}
 	require.NoError(t, drive.runFrameworkValidation(t.Context(), &bytes.Buffer{}, session, "/agent/dd-java-agent.jar", result))
-	require.Equal(t, []string{"-B", "verify", "-Pcoverage"}, maven.args[0], "the paired runs keep the selected command")
-	require.Equal(t, []string{"-B", "verify", "-Pcoverage"}, maven.args[1])
+	require.Equal(t, []string{"-B", "verify", "-Pcoverage", "-Dgpg.skip=true"}, maven.args[0], "the paired runs keep the selected command, without signing")
+	require.Equal(t, []string{"-B", "verify", "-Pcoverage", "-Dgpg.skip=true"}, maven.args[1])
 	for _, args := range maven.args[2:] {
 		require.Equal(t, []string{"-B", "test", "-Pcoverage"}, args[:3], "post-test checks such as license headers never judge the probe")
 		require.Contains(t, args, "-Dtest="+javaProbeClass)

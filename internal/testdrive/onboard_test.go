@@ -34,7 +34,7 @@ func TestOnboardUnresolvedScopeReturnsActionWithoutEditsOrTests(t *testing.T) {
 	require.Equal(t, "needs_input", result.Status)
 	require.Equal(t, "discovery", result.Phase)
 	require.Contains(t, result.Reason, "custom-setup")
-	require.Contains(t, result.Needs, "do not rewrite CI or package scripts only so ddtest can parse them")
+	require.Contains(t, result.Needs, onboard.ScopeBlockerInstruction, "unresolved scope is reported, never rewritten into something ddtest accepts")
 	require.Equal(t, "run_command", result.NextAction)
 	require.Equal(t, []string{"onboard", "--framework", "vitest", "--instructions"}, result.NextCommand[1:])
 	require.Empty(t, result.RequiredInput)

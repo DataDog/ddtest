@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"time"
 
@@ -152,7 +153,7 @@ var runPersistentFlagBindings = []persistentFlagBinding{
 func init() {
 	rootCmd.SetVersionTemplate("{{ .Version }}\n")
 
-	rootCmd.PersistentFlags().String("platform", "", "Platform that runs tests (auto-detected when omitted)")
+	rootCmd.PersistentFlags().String("platform", "", "Language of the tests: "+strings.Join(platform.Names(), ", ")+" (auto-detected when omitted). Not the CI provider: select that with --ci-provider")
 	rootCmd.PersistentFlags().String("framework", "", "Test framework to use (auto-detected when omitted)")
 	rootCmd.PersistentFlags().Int("min-parallelism", defaultParallelism, "Minimum number of parallel test processes (default: number of physical CPUs)")
 	rootCmd.PersistentFlags().Int("max-parallelism", defaultParallelism, "Maximum number of parallel test processes (default: number of physical CPUs)")
@@ -214,6 +215,7 @@ func bindPersistentFlags(cmd *cobra.Command, bindings []persistentFlagBinding) e
 func runPersistentPreRun(cmd *cobra.Command, _ []string) error {
 	if err := git.CheckAvailable(); err != nil {
 		if cmd.Name() == "onboard" || cmd.Name() == "testdrive" {
+			observeUsage(cmd, "blocked_environment", "preparation", "git_unavailable")
 			agent, _ := cmd.Flags().GetBool("agent")
 			if agent || cmd.Flags().Changed("format") {
 				return protocolFailure(cmd, "preparation", "git_unavailable", err, nil)
@@ -226,6 +228,9 @@ func runPersistentPreRun(cmd *cobra.Command, _ []string) error {
 		return runWithTelemetry(commandContext(cmd), commandType, func(telemetry.Client) error {
 			return errcode.WithCode(errorCode, err)
 		})
+	}
+	if cmd.Name() == "onboard" || cmd.Name() == "testdrive" {
+		return locatePackage(cmd)
 	}
 	return nil
 }
@@ -355,7 +360,7 @@ func commandSignalContext(parent context.Context) (context.Context, func()) {
 func Execute() error {
 	ctx, stop := commandSignalContext(context.Background())
 	defer stop()
-	return rootCmd.ExecuteContext(ctx)
+	return executeWithUsage(ctx, rootCmd)
 }
 
 // Resolve selection once. Execution requires tracer prerequisites; planning

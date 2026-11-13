@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/DataDog/ddtest/internal/environment"
+	"github.com/DataDog/ddtest/internal/testcommand"
 	"github.com/kballard/go-shellquote"
 	"mvdan.cc/sh/v3/syntax"
 )
@@ -31,11 +31,14 @@ func resolveRubyStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 	if rubyMaintenanceStep(step.Run) {
 		return commandResolution{Review: true, Reason: "Documentation, lint or release tooling is maintenance, outside " + framework + " test scope."}
 	}
+	if resolution, ok := rubyDatabaseSetup(root, directory, step.Run, framework); ok {
+		return resolution
+	}
 	if resolution, handled := resolveRubyStepWithSetup(root, workflow, job, step, framework); handled {
 		return resolution
 	}
 	parts, parseErr := staticCommands(step.Run)
-	matched := environment.LooksLikeTestCommand(filepath.Join(root, directory), step.Run, "ruby", framework)
+	matched := testcommand.Matches(filepath.Join(root, directory), step.Run, "ruby", framework)
 	if parseErr == nil && len(parts) == 1 {
 		words := parts[0]
 		if len(words) > 2 && filepath.Base(words[0]) == "bundle" && words[1] == "exec" {
@@ -53,10 +56,13 @@ func resolveRubyStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 			}
 		}
 		if len(words) > 0 && filepath.Base(words[0]) == "rake" {
-			if !environment.LooksLikeTestCommand(filepath.Join(root, directory), step.Run, "ruby", framework) {
+			if !testcommand.Matches(filepath.Join(root, directory), step.Run, "ruby", framework) {
 				return commandResolution{Review: true, Reason: "Ruby maintenance task is outside test validation."}
 			}
 			if resolution, done := resolveRubyRakeTargets(root, directory, step.Run, parts[0], words, framework); done {
+				for i := range resolution.Tests {
+					resolution.Tests[i].StepScopeNotes = append(resolution.Tests[i].StepScopeNotes, outputPipeNotes(step.Run, resolution.Tests[i].Command)...)
+				}
 				return resolution
 			}
 		}
@@ -90,7 +96,8 @@ func resolveRubyStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 	if err != nil || len(parts) != 1 || len(parts[0]) == 0 || strings.Contains(parts[0][0], "=") {
 		return unresolvedCommand("Ruby test entry point requires a single explicit command; ddtest cannot replay its shell setup: " + step.Run)
 	}
-	return commandResolution{Matched: true, Tests: []TestCommand{{Directory: directory, Command: shellquote.Join(parts[0]...)}}}
+	command := shellquote.Join(parts[0]...)
+	return commandResolution{Matched: true, Tests: []TestCommand{{Directory: directory, Command: command, StepScopeNotes: outputPipeNotes(step.Run, command)}}}
 }
 
 // rubyArtifactCommands only create directories, move or copy files, or
@@ -111,9 +118,12 @@ func resolveRubyStepWithSetup(root string, workflow ciWorkflow, job runtimeJob, 
 	if !ok || len(file.Stmts) == 0 {
 		return commandResolution{}, false
 	}
-	if len(file.Stmts) == 1 {
+	// Commands joined by && run in order, like separate lines; only a test
+	// and the tools rubyOutsideTool accepts may be joined so.
+	statements, chained := rubySequence(file.Stmts)
+	if len(statements) == 1 {
 		// One statement is the single-command rules' unless it extends RUBYOPT.
-		call, isCall := file.Stmts[0].Cmd.(*syntax.CallExpr)
+		call, isCall := statements[0].Cmd.(*syntax.CallExpr)
 		if !isCall || !slices.ContainsFunc(call.Args, func(word *syntax.Word) bool { _, ok := rubyExtendedOptions(word); return ok }) {
 			return commandResolution{}, false
 		}
@@ -122,10 +132,14 @@ func resolveRubyStepWithSetup(root string, workflow ciWorkflow, job runtimeJob, 
 	env := map[string]string{}
 	test := -1
 	var command string
+	var notes []string
 	extended := false
-	for i, stmt := range file.Stmts {
+	for i, stmt := range statements {
 		if stmt.Background || stmt.Coprocess || stmt.Negated || len(stmt.Redirs) > 0 {
 			return unresolved, len(file.Stmts) > 1
+		}
+		if _, call := stmt.Cmd.(*syntax.CallExpr); chained[i] && !call {
+			return unresolved, true
 		}
 		switch cmd := stmt.Cmd.(type) {
 		case *syntax.DeclClause:
@@ -146,6 +160,19 @@ func resolveRubyStepWithSetup(root string, workflow ciWorkflow, job runtimeJob, 
 				return unresolved, len(file.Stmts) > 1
 			}
 			name, _ := rubyLiteralWord(cmd.Args[0])
+			// A lint, audit or release tool can't start the tests, and it
+			// leaves the sources they run as they are.
+			if tool, ok := rubyOutsideTool(cmd); ok {
+				position := "before"
+				if test >= 0 {
+					position = "after"
+				}
+				notes = append(notes, "This CI step also runs "+tool+" "+position+" its "+framework+" tests; it can't start "+framework+" and is outside this validation.")
+				continue
+			}
+			if chained[i] && test >= 0 {
+				return unresolved, true
+			}
 			if test >= 0 && slices.Contains(rubyArtifactCommands, name) {
 				for _, word := range cmd.Args[1:] {
 					text, literal := rubyLiteralWord(word)
@@ -183,7 +210,7 @@ func resolveRubyStepWithSetup(root string, workflow ciWorkflow, job runtimeJob, 
 			return unresolved, len(file.Stmts) > 1
 		}
 	}
-	if test < 0 || len(file.Stmts) == 1 && !extended {
+	if test < 0 || len(statements) == 1 && !extended {
 		return commandResolution{}, false
 	}
 	single := step
@@ -206,7 +233,76 @@ func resolveRubyStepWithSetup(root string, workflow ciWorkflow, job runtimeJob, 
 		env["RUBYOPT"] = strings.Join(strings.Fields(inherited+" "+extra), " ")
 	}
 	resolution.Tests[0].Environment = mergeEnvironment(resolution.Tests[0].Environment, env)
+	resolution.Tests[0].StepScopeNotes = append(resolution.Tests[0].StepScopeNotes, notes...)
+	if len(notes) > 0 {
+		resolution.ReviewReason = joinDiagnostic(resolution.ReviewReason, strings.Join(notes, " "))
+	}
 	return resolution, true
+}
+
+// rubySequence flattens statements joined by && into the commands they run in
+// order, reporting which ones came from such a chain. Any other operator
+// stays one statement, which the caller rejects.
+func rubySequence(statements []*syntax.Stmt) ([]*syntax.Stmt, []bool) {
+	var flat []*syntax.Stmt
+	var chained []bool
+	for _, stmt := range statements {
+		if binary, ok := stmt.Cmd.(*syntax.BinaryCmd); ok && binary.Op == syntax.AndStmt && !stmt.Background && !stmt.Coprocess && !stmt.Negated && len(stmt.Redirs) == 0 {
+			inner, _ := rubySequence([]*syntax.Stmt{binary.X, binary.Y})
+			flat = append(flat, inner...)
+			for range inner {
+				chained = append(chained, true)
+			}
+			continue
+		}
+		flat, chained = append(flat, stmt), append(chained, false)
+	}
+	return flat, chained
+}
+
+// rubyAutocorrectCluster matches short options combined with -a, -A or -x.
+var rubyAutocorrectCluster = regexp.MustCompile(`^-[a-zA-Z]*[aAx][a-zA-Z]*$`)
+
+// Options that make a Ruby lint or format tool rewrite sources.
+var rubyAutocorrectOptions = []string{"-a", "-A", "-x", "--autocorrect", "--autocorrect-all", "--auto-correct", "--auto-correct-all", "--fix", "--fix-layout", "--write", "-w", "--fix-unsafely"}
+
+// rubyOutsideTool reports a command, as in bundle exec rubocop --parallel,
+// that runs a Ruby lint, audit, documentation or gem release tool, which can't
+// start tests, without autocorrection: tests before or after it in the job
+// run the same code.
+func rubyOutsideTool(call *syntax.CallExpr) (string, bool) {
+	if len(call.Assigns) > 0 {
+		return "", false
+	}
+	var words []string
+	for _, word := range call.Args {
+		text, literal := rubyLiteralWord(word)
+		if !literal {
+			return "", false
+		}
+		words = append(words, text)
+	}
+	tool := words
+	if len(tool) > 2 && tool[0] == "bundle" && tool[1] == "exec" {
+		tool = tool[2:]
+	}
+	if len(tool) == 0 || strings.ContainsAny(tool[0], "$=") {
+		return "", false
+	}
+	name := strings.TrimPrefix(tool[0], "bin/")
+	switch {
+	case slices.Contains(rubyMaintenanceTools, name) && strings.Count(tool[0], "/") <= 1:
+		if slices.ContainsFunc(tool[1:], func(arg string) bool {
+			option, _, _ := strings.Cut(arg, "=")
+			return slices.Contains(rubyAutocorrectOptions, option) || rubyAutocorrectCluster.MatchString(arg)
+		}) {
+			return "", false
+		}
+	case len(tool) > 1 && slices.Contains(rubyReleaseSubcommands[name], tool[1]) && tool[1] != "build":
+	default:
+		return "", false
+	}
+	return strings.Join(words, " "), true
 }
 
 // rubyReportPaths are directories that only hold test reports and coverage.
@@ -624,6 +720,15 @@ func RubyCIConfiguration(root, framework string) RuntimeCheck {
 // instrumented entry's Datadog action to report to the selected site (empty:
 // any site). An incomplete action keeps its entry inconclusive.
 func RubyCIConfigurationForSite(root, framework, site string) RuntimeCheck {
+	return RubyCIConfigurationFrom(root, root, framework, site)
+}
+
+// RubyCIConfigurationFrom is RubyCIConfigurationForSite for a copy of the
+// checkout at source, such as one local validation prepared: the
+// datadog-ci release a setup takes from the bundle (a plugin's, or the one
+// beside it) is the one source's Gemfile.lock pins, not one the copy's
+// bundle gained for local validation.
+func RubyCIConfigurationFrom(root, source, framework, site string) RuntimeCheck {
 	result := RuntimeCheck{Status: "not applicable", Reason: "No candidate Ruby CI commands found."}
 	provider, err := currentCIProvider(root)
 	if err != nil {
@@ -633,9 +738,15 @@ func RubyCIConfigurationForSite(root, framework, site string) RuntimeCheck {
 	if err != nil {
 		return RuntimeCheck{Status: "inconclusive", Reason: err.Error()}
 	}
+	leaks := sharedSetupLeaks(root, workflows, "ruby", framework)
 	for _, workflow := range workflows {
 		for _, name := range slices.Sorted(maps.Keys(workflow.Jobs)) {
 			job := workflow.Jobs[name]
+			if leak, found := sharedSetupLeak(leaks, workflow, name); found {
+				result.Jobs = append(result.Jobs, leak)
+				continue
+			}
+			provider := setupProviderFor(provider, job)
 			rows, err := runtimeMatrix(job.Strategy.Matrix)
 			if err != nil {
 				result.Jobs = append(result.Jobs, RuntimeFinding{Workflow: workflow.Path, Job: name, Status: "inconclusive", Reason: err.Error()})
@@ -658,10 +769,20 @@ func RubyCIConfigurationForSite(root, framework, site string) RuntimeCheck {
 				}
 				tracer, action, rubygems, gemsAtSetup := "", "", "", ""
 				var setup *ciSetup
+				var setupStep runtimeStep
+				// expired is the source of a shell-local setup whose shell
+				// ended before the step (see ciSetup.shellLocal).
+				expired := ""
 				var inputs map[string]string
 				skippedAction := false
 				var actionErr error
 				for i, step := range job.Steps {
+					if setup != nil && setup.shellLocal && !sameShell(setupStep, step) {
+						// Its exports reach only the later commands of its own
+						// shell; this step runs in another one.
+						expired = setupStep.Source
+						tracer, action, actionErr, inputs, setup = "", "", nil, nil, nil
+					}
 					uses, _, hasVersion := strings.Cut(strings.ToLower(step.Uses), "@")
 					current, isSetup := datadogSetup(step)
 					active, stepErr := rubyStepActive(workflow, job, step, row)
@@ -685,7 +806,7 @@ func RubyCIConfigurationForSite(root, framework, site string) RuntimeCheck {
 						hostRuby, statedRuby = false, false
 					}
 					if isSetup {
-						tracer, action, actionErr, inputs, setup = "", "", nil, nil, nil
+						tracer, action, actionErr, inputs, setup, expired = "", "", nil, nil, nil, ""
 					}
 					if version := rubyGemsUpdate(step.Run); version != "" {
 						rubygems = version
@@ -707,11 +828,11 @@ func RubyCIConfigurationForSite(root, framework, site string) RuntimeCheck {
 							actionErr = err
 							if err == nil && selected {
 								action = current.Reference
-								setup = &current
+								setup, setupStep = &current, step
 								tracer, _ = runtimeValue(current.Inputs["ruby-tracer-version"], row)
 								if current.Floating && tracer == "" {
 									// The mechanism uses a datadog-ci the bundle already pins.
-									tracer = rubyLockedTracer(root)
+									tracer = rubyLockedTracer(source)
 								}
 								inputs = map[string]string{}
 								for key, value := range current.Inputs {
@@ -735,10 +856,36 @@ func RubyCIConfigurationForSite(root, framework, site string) RuntimeCheck {
 						continue
 					}
 					finding := RuntimeFinding{Location: (commandLocation{Workflow: workflow.Path, Job: name, Matrix: row, Step: stepNumber(step, i), Command: step.Run}).String(), Workflow: workflow.Path, Job: name, Step: stepNumber(step, i), Command: resolved.Run, Runtime: ruby, Action: action, TracerRequested: tracer, setupInputs: inputs, setupProvider: provider, Status: "inconclusive", Reason: rubyMissingSetupReason(provider)}
+					if job.SetupUnsupported != "" && setup == nil {
+						finding.Reason = unsupportedSetupReason(provider, job, "ruby")
+					}
+					if setup == nil && expired != "" {
+						finding.Reason = "The " + provider.setupName() + " at " + expired + " runs in another shell than this test command, and its exports reach only the later commands of its own shell; run it in the same shell, before the test command."
+					}
 					if setup != nil {
 						finding.setupSupported, finding.setupReadProblem = setup.Supported, setup.Problem
+						finding.SetupCaveats = slices.Clone(setup.Caveats)
 						if setup.Floating && tracer != "" {
-							finding.SetupCaveats = append(slices.Clone(setup.Caveats), "datadog-ci version: the "+setup.Reference+" uses the datadog-ci release the repository's Gemfile.lock pins ("+tracer+"), which ddtest validated; it installs the latest release instead if that pin is removed.")
+							finding.SetupCaveats = append(finding.SetupCaveats, "datadog-ci version: the "+setup.Reference+" uses the datadog-ci release the repository's Gemfile.lock pins ("+tracer+"), which ddtest validated; it installs the latest release instead if that pin is removed.", rubyPinnedPluginCaveat(setup.Reference))
+						}
+					}
+					// Without a provider setup, the job may set up datadog-ci by
+					// hand; it is checked like the setup's inputs. Each test step
+					// is checked on its own: its setup reaches no other step.
+					action, tracer := action, tracer
+					if action == "" && !skippedAction && resolution.Matched && conditionErr == nil && stepErr == nil && resolveErr == nil && !provider.sharedSyntax() {
+						rowJob := job
+						rowJob.Steps = slices.Clone(job.Steps)
+						rowJob.Steps[i] = resolved
+						if handWritten := (rubyDiscovery{}).handWrittenSetup(root, provider, workflow, rowJob, i, row, framework, site); handWritten != nil {
+							finding.handWritten = handWritten
+							finding.Action, finding.TracerRequested = handWritten.Reference, handWritten.Tracer
+							finding.AgentReporting = handWritten.reportsThroughAgent()
+							if problem := handWritten.problem(); problem != "" {
+								finding.Code, finding.Reason = handWritten.code(), problem
+							} else {
+								action, tracer = handWritten.Reference, handWritten.Tracer
+							}
 						}
 					}
 					if hostRuby {
@@ -765,11 +912,15 @@ func RubyCIConfigurationForSite(root, framework, site string) RuntimeCheck {
 						finding.Status, finding.Reason = "not checked", "Check the selected Ruby with the bundled tracer's RubyGems requirements and compare tracer releases."
 						if reason := rubyActionProblem(finding, site); reason != "" {
 							finding.Status, finding.Code, finding.Reason = "inconclusive", CodeIncompleteCISetup, reason
+						} else if reason := rubyBesideProblem(source, setup, tracer); reason != "" {
+							finding.Status, finding.Code, finding.Reason = "inconclusive", CodeIncompleteCISetup, reason
 						} else if reason := rubyWorkspaceRootProblem(root, workflow, job, resolved, setup, provider); reason != "" {
 							finding.Status, finding.Code, finding.Reason = "inconclusive", CodeIncompleteCISetup, reason
-						} else if reason := rubyGemsResolverProblem(ruby, rubygems, row); !imageRuby && reason != "" {
+						} else if reason := rubyGemsResolverProblem(ruby, rubygems, row); !imageRuby && reason != "" && finding.handWritten == nil {
 							finding.Status, finding.Reason = "inconclusive", reason
-						} else if reason := rubyImageGemsProblem(ruby, gemsAtSetup, provider); imageRuby && reason != "" {
+						} else if reason := rubyImageGemsProblem(ruby, gemsAtSetup, provider); imageRuby && reason != "" && finding.handWritten == nil {
+							// The installer's RubyGems requirement; a bundle that
+							// already locks datadog-ci installs it as locked.
 							finding.Status, finding.Reason = "inconclusive", reason
 						}
 					} else if ruby == "" && hostRuby && action != "" {
@@ -781,8 +932,15 @@ func RubyCIConfigurationForSite(root, framework, site string) RuntimeCheck {
 						finding.Status, finding.Code = "excluded", "excluded_runtime"
 						finding.Reason = "This job runs " + engine + " (image " + job.Image + "), which the tracer cannot instrument, without the " + provider.setupName() + ". Its tests still run without instrumentation; this runtime is not validated with the tracer."
 					}
-					// An explicitly uninstrumented row has no preload to lose.
-					if reason := rubyBootstrapProblem(workflow, job, step, row, framework); finding.Status != "excluded" && reason != "" {
+					// An explicitly uninstrumented row has no preload to lose. A
+					// hand-written setup's own preload was checked with it.
+					bootstrap := rubyBootstrapProblem
+					if finding.handWritten != nil {
+						bootstrap = func(_ ciWorkflow, _ runtimeJob, step runtimeStep, _ map[string]any, _ ...string) string {
+							return rubyRakeOptionsProblem(step.Run)
+						}
+					}
+					if reason := bootstrap(workflow, job, step, row, framework); finding.Status != "excluded" && reason != "" {
 						finding.Status, finding.Reason = "inconclusive", reason
 					}
 					result.Jobs = append(result.Jobs, finding)
@@ -955,10 +1113,37 @@ func rubyLockedTracer(root string) string {
 	return ""
 }
 
+// rubyPinnedPluginCaveat is how a setup that installs datadog-ci only when
+// the bundle lacks it (the Datadog Jenkins plugin) behaves with the pin, as
+// a real Jenkins run showed: it finds the pinned gem only once bundle
+// install has run on the agent.
+func rubyPinnedPluginCaveat(reference string) string {
+	return "With datadog-ci pinned, the " + reference + " finds it only after bundle install has run in the build: the steps before it get no Datadog variables (for each one it logs ERROR: [datadog] with a stack trace and tries again at the next step), so instrumentation starts at the first step after bundle install, and each of those attempts still runs bundle config set frozen false, which writes BUNDLE_FROZEN: \"false\" to the workspace's .bundle/config (or ~/.bundle/config without one). The tests are instrumented when they run after bundle install."
+}
+
+// rubyBesideProblem explains why a setup that installs datadog-ci tracer
+// cannot rely on that release while the build also runs another Datadog
+// setup for Ruby in the same workspace (see ciSetup.Beside), such as the
+// Datadog Jenkins plugin: unless Gemfile.lock pins datadog-ci, the plugin
+// runs bundle add datadog-ci there, which puts the latest release in the
+// Gemfile, and the installer then uses the bundle's release instead.
+func rubyBesideProblem(root string, setup *ciSetup, tracer string) string {
+	if setup == nil || setup.Beside == "" || setup.Floating {
+		return ""
+	}
+	switch locked := rubyLockedTracer(root); {
+	case locked == "":
+		return "The build also runs " + setup.Beside + ", for Ruby in the same workspace: without datadog-ci pinned in Gemfile.lock, it runs bundle add datadog-ci there, which puts the latest release in the Gemfile, and the installer then uses that release instead of datadog-ci " + tracer + ". Pin it: add gem \"datadog-ci\", \"" + tracer + "\", group: :test to the Gemfile at the checkout root and run bundle lock, so Gemfile.lock pins it, then commit both."
+	case locked != tracer:
+		return "Gemfile.lock pins datadog-ci " + locked + ", which the installer uses instead of the setup snippet's " + tracer + "; set DD_SET_TRACER_VERSION_RUBY=\"" + locked + "\" in it."
+	}
+	return ""
+}
+
 // rubyFloatingTracerReason asks to pin datadog-ci in the bundle, which a
 // setup that cannot pin the tracer itself (the Datadog Jenkins plugin) uses.
 func rubyFloatingTracerReason(provider ciProvider) string {
-	return "The " + provider.setupName() + " runs bundle add datadog-ci, which unfreezes the bundle and installs the latest datadog-ci release when each build runs, unless the bundle already has datadog-ci. Pin it: add gem \"datadog-ci\", \"<exact release>\" (such as 1.42.0) to the Gemfile at the checkout root and run bundle lock, so Gemfile.lock pins the release ddtest validates."
+	return "The " + provider.setupName() + " runs bundle add datadog-ci, which unfreezes the bundle and installs the latest datadog-ci release when each build runs, unless the bundle already has datadog-ci. Pin it: add gem \"datadog-ci\", \"<exact release>\" (such as " + rubyExampleRelease + ") to the Gemfile at the checkout root and run bundle lock, so Gemfile.lock pins the release ddtest validates."
 }
 
 // rubyWorkspaceRootProblem explains why a setup that configures the tracer
@@ -1009,9 +1194,10 @@ var rubyImage = regexp.MustCompile(`^(?:cimg/|circleci/|(?:docker\.io/)?(?:libra
 // rubyImageRuntime is the Ruby version a CI job's image selects, or the
 // engine the tracer cannot instrument (JRuby, TruffleRuby, Ruby head). Both
 // are empty when the image selects no static Ruby: no image, another image,
-// a floating tag such as latest, or an unresolved variable.
+// a floating tag such as latest, or an unresolved variable other than a
+// registry prefix (see mirroredImage).
 func rubyImageRuntime(image string) (version, engine string) {
-	match := rubyImage.FindStringSubmatch(strings.TrimSpace(image))
+	match := rubyImage.FindStringSubmatch(mirroredImage(image))
 	if match == nil {
 		return "", ""
 	}
@@ -1060,4 +1246,71 @@ func rubyImageGemsProblem(ruby, rubygems string, provider ciProvider) string {
 		}
 	}
 	return "The Ruby " + ruby + " image ships RubyGems older than 3.3.22, which the " + provider.setupName() + "'s installer requires. Run gem update --system 3.4.22 before it in this job."
+}
+
+var rubyDatabaseTask = regexp.MustCompile(`^db:[a-z0-9_:]+$`)
+
+// rubyDatabaseSetup resolves a step that only runs Rails database tasks, as in
+// RAILS_ENV=test bin/rails db:create db:schema:load: they prepare the test
+// database, which CI sets up and local validation doesn't replay, and they
+// can't start tests. A repository Rakefile or task file that names the
+// framework's task may hook one into them, so it stays unresolved.
+func rubyDatabaseSetup(root, directory, run, framework string) (commandResolution, bool) {
+	parts, err := staticCommands(run)
+	if err != nil || len(parts) != 1 {
+		return commandResolution{}, false
+	}
+	words := parts[0]
+	for len(words) > 0 && shellAssignment(words[0]) {
+		words = words[1:]
+	}
+	if len(words) > 2 && words[0] == "bundle" && words[1] == "exec" {
+		words = words[2:]
+	}
+	if len(words) < 2 || !slices.Contains([]string{"rails", "bin/rails", "./bin/rails", "rake", "bin/rake", "./bin/rake"}, words[0]) {
+		return commandResolution{}, false
+	}
+	var tasks []string
+	for _, word := range words[1:] {
+		switch {
+		case rubyDatabaseTask.MatchString(word):
+			tasks = append(tasks, word)
+		case shellAssignment(word) || word == "--trace":
+		default:
+			return commandResolution{}, false
+		}
+	}
+	if len(tasks) == 0 {
+		return commandResolution{}, false
+	}
+	own := "spec"
+	if framework == "minitest" {
+		own = "test"
+	}
+	// Task files may extend the database tasks, and seeds run with them.
+	names := regexp.MustCompile(`\b(?:` + own + `|` + framework + `)\b`)
+	for _, base := range slices.Compact([]string{filepath.Join(root, directory), root}) {
+		var files []string
+		for _, tree := range []string{"lib/tasks", "db/seeds"} {
+			_ = filepath.WalkDir(filepath.Join(base, tree), func(path string, entry os.DirEntry, err error) error {
+				if err == nil && !entry.IsDir() && (strings.HasSuffix(path, ".rake") || strings.HasSuffix(path, ".rb")) {
+					files = append(files, path)
+				}
+				return nil
+			})
+		}
+		for _, file := range append([]string{filepath.Join(base, "Rakefile"), filepath.Join(base, "db", "seeds.rb")}, files...) {
+			data, err := os.ReadFile(file)
+			if err != nil {
+				continue
+			}
+			text := string(data)
+			seeds := strings.Contains(filepath.ToSlash(file), "/db/seeds")
+			if (seeds || strings.Contains(text, "db:") || strings.Contains(text, ":db")) && names.MatchString(text) {
+				relative, _ := filepath.Rel(root, file)
+				return unresolvedCommand("Rails database task " + strings.Join(tasks, " ") + " runs before the tests, but " + filepath.ToSlash(relative) + " extends database tasks or seeds and names " + framework + ", so ddtest can't tell whether it runs tests: " + run), true
+			}
+		}
+	}
+	return commandResolution{Review: true, Reason: "Rails database setup (" + strings.Join(tasks, " ") + ") prepares the test database; it can't start " + framework + ". CI's database setup is not replayed: prepare the same test database locally before validation."}, true
 }

@@ -558,9 +558,9 @@ func TestExecute(t *testing.T) {
 		"Start here:",
 		"cd <repository>",
 		"ddtest onboard",
-		"onboard     Start here: onboard this repository to Test Optimization",
+		"onboard Start here: onboard this repository to Test Optimization",
 	} {
-		if !strings.Contains(output, expected) {
+		if !strings.Contains(strings.Join(strings.Fields(output), " "), expected) {
 			t.Errorf("help output should contain %q:\n%s", expected, output)
 		}
 	}
@@ -736,6 +736,11 @@ func TestBindPersistentFlagsMissingFlag(t *testing.T) {
 }
 
 func TestCommandUsage(t *testing.T) {
+	// Execute normally initializes these lazily. Do not depend on another
+	// test having executed rootCmd before this test runs in a shard or alone.
+	rootCmd.InitDefaultHelpCmd()
+	rootCmd.InitDefaultCompletionCmd()
+
 	// Get all commands including root and subcommands
 	allCommands := []*cobra.Command{rootCmd}
 	allCommands = append(allCommands, rootCmd.Commands()...)
@@ -765,14 +770,7 @@ func TestCommandUsage(t *testing.T) {
 
 	// Verify we have the expected subcommands
 	subCommands := rootCmd.Commands()
-	subCommandNames := make([]string, len(subCommands))
-	for i, cmd := range subCommands {
-		subCommandNames[i] = cmd.Use
-	}
-
-	// Expected commands (cobra adds completion and help automatically)
-	expectedCommands := []string{"onboard", "plan", "run", "testdrive"}
-	requiredCommands := []string{"completion", "help [command]", "onboard", "plan", "run", "testdrive"}
+	expectedCommands := []string{"completion", "help", "instrument", "onboard", "plan", "run", "testdrive"}
 
 	// Verify minimum expected commands exist
 	for _, expected := range expectedCommands {
@@ -788,11 +786,6 @@ func TestCommandUsage(t *testing.T) {
 		}
 	}
 
-	// Verify we have at least the required commands (cobra adds built-ins)
-	if len(subCommands) < len(requiredCommands) {
-		t.Errorf("expected at least %d subcommands, got %d. Commands: %v",
-			len(requiredCommands), len(subCommands), subCommandNames)
-	}
 }
 
 func TestInitFunction(t *testing.T) {

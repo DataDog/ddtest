@@ -2,7 +2,6 @@ package testdrive
 
 import (
 	"slices"
-	"strings"
 
 	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/DataDog/ddtest/internal/platform"
@@ -26,25 +25,17 @@ func pytestObserverArguments(command string, args []string, observer, tracer str
 		if !platform.IsPythonExecutable(word) {
 			continue
 		}
-		index, module := onboard.PythonModule(words[i+1:])
-		if index < 0 || module[0] != "pytest" {
+		_, module := onboard.PythonModule(words[i+1:])
+		options, ok := onboard.PythonInterpreterOptions(words[i+1:])
+		if !ok || module[0] != "pytest" {
 			continue
 		}
-		flags := words[i+1 : i+1+index]
-		for j := 0; j < len(flags); j++ {
-			flag := flags[j]
-			if slices.Contains([]string{"-W", "-X", "--check-hash-based-pycs"}, flag) {
-				j++
-				continue
-			}
-			if strings.HasPrefix(flag, "-W") || strings.HasPrefix(flag, "-X") {
-				continue
-			}
-			if strings.HasPrefix(flag, "-") && strings.ContainsAny(flag[1:], "IE") {
-				prefix := slices.Clone(words[:i+1+index])
-				prefix = append(prefix, "-c", pytestObserverBootstrap, observer, tracer)
-				return append(prefix, module[1:]...)[1:]
-			}
+		// Isolated (-I) and -E interpreters ignore PYTHONPATH, so a bootstrap
+		// adds the observer instead, after the same options.
+		if slices.Contains(options, "-I") || slices.Contains(options, "-E") {
+			prefix := append(slices.Clone(words[:i+1]), options...)
+			prefix = append(prefix, "-c", pytestObserverBootstrap, observer, tracer)
+			return append(prefix, module[1:]...)[1:]
 		}
 		return args
 	}

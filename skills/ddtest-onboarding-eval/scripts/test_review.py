@@ -176,9 +176,10 @@ class ReviewTests(unittest.TestCase):
             run_eval.run(self.case.args)
         self.assertFalse(self.case.args.output.exists())
         self.case.args.ref='HEAD'
+        self.case.args.repo=Path(self.case.source).as_uri()
         code,manifest=self.case.trial()
         self.assertEqual(code,0)
-        self.assertIn(['git','fetch','--update-shallow','--no-tags','origin','HEAD'],[c['argv'] for c in manifest['commands']])
+        self.assertIn(['git','fetch','--depth=1','--update-shallow','--no-tags','origin','HEAD'],[c['argv'] for c in manifest['commands']])
         self.assertEqual(manifest['submodules'],'not requested')
 
     def test_malformed_nested_report_still_finalizes_evidence_and_cleanup(self):
@@ -190,22 +191,30 @@ class ReviewTests(unittest.TestCase):
         self.assertIn('Invalid report fields', manifest['collection_errors'][0])
 
     def test_ref_outside_branches_and_tags_is_fetched(self):
-        source = self.case.root / 'source.git'
         def git(*args):
             return subprocess.check_output(['git', *args], text=True, stderr=subprocess.PIPE).strip()
-        git('clone', '--bare', '--depth=1', '--single-branch', '--no-tags', '--',
-            Path(self.case.source).as_uri(), str(source))
-        expected = git('-C', str(source), 'rev-parse', 'HEAD')
-        branch = git('-C', str(source), 'symbolic-ref', 'HEAD')
-        git('-C', str(source), 'update-ref', 'refs/pull/1/head', expected)
-        # CI has a depth-one checkout. Remove branch reachability without
-        # requiring a parent commit or creating an unsigned fixture commit.
-        git('-C', str(source), 'update-ref', '-d', branch)
-        self.case.args.repo = str(source)
-        self.case.args.ref = 'refs/pull/1/head'
-        code, manifest = self.case.trial()
-        self.assertEqual(code, 0, manifest)
-        self.assertEqual(manifest['commit'], expected)
+        for detached in (False, True):
+            with self.subTest(detached=detached):
+                source = self.case.root / f'source-{detached}.git'
+                git('clone', '--bare', '--depth=1', '--single-branch', '--no-tags', '--',
+                    Path(self.case.source).as_uri(), str(source))
+                expected = git('-C', str(source), 'rev-parse', 'HEAD')
+                branch = 'refs/heads/juan-fernandez/evaluator-fixture'
+                git('-C', str(source), 'update-ref', branch, expected)
+                git('-C', str(source), 'symbolic-ref', 'HEAD', branch)
+                if detached:
+                    git('-C', str(source), 'update-ref', '--no-deref', 'HEAD', expected)
+                git('-C', str(source), 'update-ref', 'refs/pull/1/head', expected)
+                # A PR checkout can have detached HEAD. Remove every branch
+                # without requiring symbolic HEAD, a parent or a new commit.
+                for ref in git('-C', str(source), 'for-each-ref', '--format=%(refname)', 'refs/heads').splitlines():
+                    git('-C', str(source), 'update-ref', '-d', ref)
+                self.case.args.repo = str(source)
+                self.case.args.ref = 'refs/pull/1/head'
+                self.case.args.output = self.case.root / f'evidence-{detached}'
+                code, manifest = self.case.trial()
+                self.assertEqual(code, 0, manifest)
+                self.assertEqual(manifest['commit'], expected)
 
     def test_cleanup_requires_bound_marker_and_preserves_evidence_and_other_roots(self):
         code,manifest=self.case.trial()

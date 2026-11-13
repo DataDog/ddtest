@@ -2,6 +2,9 @@ package testdrive
 
 import (
 	"bytes"
+	"context"
+	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -47,7 +50,9 @@ func TestEveryFrameworkWithPreflightUsesItsOwnChecks(t *testing.T) {
 		require.True(t, ok, "add %s to this test", name)
 		preflight := (&Testdrive{framework: runner}).frameworkPreflight()
 		require.NotNil(t, preflight, name)
-		function := runtime.FuncForPC(reflect.ValueOf(preflight).Pointer()).Name()
+		adapter, ok := pairedFrameworkNamed(name)
+		require.True(t, ok, name)
+		function := runtime.FuncForPC(reflect.ValueOf(adapter.preflight).Pointer()).Name()
 		switch name {
 		case "pytest":
 			require.Contains(t, function, ".checkPytestPreflight", name)
@@ -60,6 +65,46 @@ func TestEveryFrameworkWithPreflightUsesItsOwnChecks(t *testing.T) {
 		}
 	}
 	require.Nil(t, (&Testdrive{framework: &telemetryOnlyFramework{}}).frameworkPreflight())
+}
+
+type preflightDispatchLanguage struct {
+	validationLanguage
+	adapter pairedFramework
+}
+
+func (language preflightDispatchLanguage) pairedFrameworks() map[string]pairedFramework {
+	return map[string]pairedFramework{"jest": language.adapter}
+}
+
+func TestFrameworkPreflightBindsTheSelectedDrive(t *testing.T) {
+	drive := &Testdrive{framework: framework.NewJest(platform.NewJavaScript())}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	output := &bytes.Buffer{}
+	result := &validationResult{}
+	wantErr := errors.New("preflight blocked")
+	called := false
+	previous := validationLanguages
+	t.Cleanup(func() { validationLanguages = previous })
+	validationLanguages = []validationLanguage{preflightDispatchLanguage{
+		validationLanguage: javascriptLanguage{},
+		adapter: pairedFramework{preflight: func(got *Testdrive, gotCtx context.Context, gotOutput io.Writer, gotResult *validationResult) error {
+			called = true
+			require.Same(t, drive, got)
+			require.Same(t, ctx, gotCtx)
+			require.ErrorIs(t, gotCtx.Err(), context.Canceled)
+			require.Same(t, output, gotOutput)
+			require.Same(t, result, gotResult)
+			gotResult.Tracer = "selected tracer"
+			return wantErr
+		}},
+	}}
+	check := drive.frameworkPreflight()
+	require.NotNil(t, check)
+	require.False(t, called, "binding must not execute project configuration")
+	require.ErrorIs(t, check(ctx, output, result), wantErr)
+	require.True(t, called)
+	require.Equal(t, "selected tracer", result.Tracer)
 }
 
 func TestPlainCheckOnlyRunsTheSelectedFrameworkPreflight(t *testing.T) {

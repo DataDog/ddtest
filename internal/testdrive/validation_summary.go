@@ -41,19 +41,50 @@ type validationSummary struct {
 	ReviewedPreparation []string `json:"reviewed_preparation,omitempty"`
 }
 
-// apiKeyHumanAction is the one step CI needs that no local run can perform,
-// in the selected CI provider's settings. What happens until it exists
-// depends on how the configuration guards the Datadog step: skipped by an
-// env.DD_API_KEY guard (the Cypress setup) or kept with continue-on-error.
-func apiKeyHumanAction(check *onboard.RuntimeCheck) string {
+// apiKeyHumanActions are the steps CI needs that no local run can perform,
+// in the selected CI provider's settings. What happens until the provider's
+// key exists depends on how the configuration guards the Datadog step:
+// skipped by an env.DD_API_KEY guard (the Cypress setup) or kept with
+// continue-on-error. Jobs that set up the tracer by hand read the key where
+// the provider stores secrets, without its setup. A configuration with both
+// kinds of jobs needs both steps when the provider's setup keeps its key
+// elsewhere, as a Jenkins plugin-instrumented stage beside a hand-written
+// container stage does; otherwise the provider's step stores that key. A
+// hand-written setup that reports through a Datadog Agent the user
+// confirmed needs no key in CI: the Agent holds it.
+func apiKeyHumanActions(check *onboard.RuntimeCheck) []string {
+	guarded, provider, handWritten, agent := false, false, false, false
 	if check != nil {
 		for _, job := range check.Jobs {
-			if job.Reason == onboard.GuardedActionBranch {
-				return onboard.CIProviderAPIKeyAction(true)
+			switch {
+			case job.Reason == onboard.GuardedActionBranch:
+				guarded = true
+			case job.Status == "excluded":
+			case onboard.HandWrittenSetupAction(job.Action) && job.AgentReporting:
+				agent = true
+			case onboard.HandWrittenSetupAction(job.Action):
+				handWritten = true
+			default:
+				provider = true
 			}
 		}
 	}
-	return onboard.CIProviderAPIKeyAction(false)
+	var actions []string
+	if guarded || provider || !handWritten && !agent {
+		// The provider's own setups decide its key actions; hand-written
+		// jobs get theirs below.
+		var setups *onboard.RuntimeCheck
+		if check != nil {
+			filtered := *check
+			filtered.Jobs = slices.DeleteFunc(slices.Clone(check.Jobs), func(job onboard.RuntimeFinding) bool { return onboard.HandWrittenSetupAction(job.Action) })
+			setups = &filtered
+		}
+		actions = append(actions, onboard.CIProviderAPIKeyActionFor(setups, guarded))
+	}
+	if handWritten && (len(actions) == 0 || !onboard.CIProviderKeyServesHandWritten()) {
+		actions = append(actions, onboard.CIProviderHandWrittenKeyAction())
+	}
+	return actions
 }
 
 // featureCoverageBlocker is the summary line for incomplete feature results.
@@ -231,7 +262,8 @@ func summarizeValidation(result validationResult) validationSummary {
 	}
 	summary.CIScope = summarizeCIScope(result.CIRuntime)
 	if summary.CIScope != nil && len(summary.CIScope.Instrumented) > 0 {
-		summary.HumanActions = append(summary.HumanActions, apiKeyHumanAction(result.CIRuntime))
+		summary.HumanActions = append(summary.HumanActions, apiKeyHumanActions(result.CIRuntime)...)
+		summary.HumanActions = append(summary.HumanActions, onboard.FallbackHumanActions(result.CIRuntime)...)
 	}
 	summary.OnboardingResponse = fmt.Sprintf("Onboarding validation: %s. Local validation: %s. CI configuration: %s (static analysis). CI execution and Datadog backend processing: not exercised.", summary.Status, summary.LocalValidation, summary.CIConfiguration)
 	if result.focusedLocalCommand() {
@@ -284,6 +316,9 @@ func validationHandoff(result validationResult) string {
 		// results stay on one line that says they don't change the verdict,
 		// instead of standalone PASSED lines next to it.
 		fmt.Fprintf(&block, "NOT COMPLETE: onboarding validation is %s. Report the blockers below; do not describe onboarding as complete or successful.\n", summary.Status)
+		if slices.ContainsFunc(summary.BlockingChecks, isScopeBlocker) {
+			block.WriteString("Unresolved CI scope blockers are limits of ddtest's static analysis: the user decides whether to run the tests in a CI step ddtest can read or to keep those steps reported as not validated. Do not edit CI to make ddtest accept them unless a ddtest result prescribes that edit.\n")
+		}
 		fmt.Fprintf(&block, "Onboarding validation: %s.\n", summary.Status)
 		var partial []string
 		if summary.SelectedValidation != nil {
@@ -377,10 +412,14 @@ func validationHandoff(result validationResult) string {
 	for _, hint := range result.Compatibility.Hints {
 		block.WriteString(hint + "\n")
 	}
-	coverageRuns, coveredRuns, coveredTests, totalTests := 0, 0, 0, 0
+	coverageRuns, coveredRuns, coveredTests, totalTests, notApplicable := 0, 0, 0, 0, 0
 	var levels []string
 	for _, run := range result.Runs {
 		if run.Coverage == nil || !run.Instrumented || run.ProbeMode != "" || !strings.HasPrefix(run.Name, "reporting-only") {
+			continue
+		}
+		if run.Coverage.Status == "not applicable" {
+			notApplicable++
 			continue
 		}
 		coverageRuns++
@@ -403,6 +442,13 @@ func validationHandoff(result validationResult) string {
 			block.WriteString(" (suite-level, not independent per-test coverage)")
 		}
 		block.WriteString(".\n")
+	}
+	if notApplicable > 0 {
+		label := "Real-suite coverage"
+		if !current {
+			label = "Historical real-suite coverage (not revalidated)"
+		}
+		fmt.Fprintf(&block, "%s: not applicable in %d reporting run(s); the package has no source file nyc instruments.\n", label, notApplicable)
 	}
 	fmt.Fprintf(&block, "CI configuration: %s (static analysis). CI execution and Datadog backend processing: not exercised.\n", summary.CIConfiguration)
 	for _, action := range summary.HumanActions {
@@ -488,16 +534,19 @@ func validationHandoff(result validationResult) string {
 		path = strings.NewReplacer("%", "%25", "<", "%3C", ">", "%3E", "\n", "%0A", "\r", "%0D").Replace(filepath.ToSlash(path))
 		return fmt.Sprintf("[%s](<%s>)", label, path)
 	}
-	if info, err := os.Stat(htmlReportPath(result.WorkingDirectory)); err == nil && info.Mode().IsRegular() {
+	if info, err := os.Stat(result.htmlReportPath(result.WorkingDirectory)); err == nil && info.Mode().IsRegular() {
 		label := "Open report"
 		if !result.HTMLReportCurrent {
 			label = "Previous HTML report (not regenerated)"
 		}
-		block.WriteString("\n" + link(label, htmlReportPath(result.WorkingDirectory)) + "\n")
+		block.WriteString("\n" + link(label, result.htmlReportPath(result.WorkingDirectory)) + "\n")
 	} else {
 		block.WriteString("\nHTML report unavailable.\n")
 	}
-	block.WriteString(link("Results JSON", validationPath(result.WorkingDirectory)))
+	block.WriteString(link("Results JSON", result.jsonReportPath(result.WorkingDirectory)))
+	if result.KeptReport != "" {
+		block.WriteString("\nThis run of one command did not replace the --all report, which stays at " + link("--all Results JSON", filepath.Join(result.WorkingDirectory, result.KeptReport)) + "; only that report can certify onboarding.")
+	}
 	if result.Cleanup != nil {
 		fmt.Fprintf(&block, "\nCleanup: %s (ddtest sessions only)", result.Cleanup.Status)
 		if result.Cleanup.Status != "passed" {
@@ -547,7 +596,7 @@ func briefValidationText(value string) string {
 // Use the current report as the source of final-answer facts, including all
 // repetitions. A later successful repetition must not erase an earlier crash.
 func validationFacts(result validationResult) []string {
-	facts := []string{"Report: .testoptimization/testdrive.json", "Session: " + result.Session}
+	facts := []string{"Report: " + filepath.ToSlash(result.jsonReportPath("")), "Session: " + result.Session}
 	appendRuns := func(label string, runs []runSummary) {
 		for _, run := range runs {
 			if !strings.HasPrefix(run.Name, "baseline") && !strings.HasPrefix(run.Name, "reporting-only") {

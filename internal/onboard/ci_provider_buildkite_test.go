@@ -415,7 +415,7 @@ func TestBuildkitePlugins(t *testing.T) {
 // guarded or not, with the loader registration inside the guard.
 func TestBuildkiteRecognizesTheSetupSnippet(t *testing.T) {
 	guarded := buildkiteSnippetText("js", "5.133.0", "datadoghq.com", "      ")
-	unguarded := "      - |\n        " + strings.ReplaceAll(buildkiteEscape(buildkiteSnippet{site: `"datadoghq.eu"`, languages: `"js"`, tracers: []string{`DD_SET_TRACER_VERSION_JS="5.133.0"`}, installer: buildkiteInstaller, checksum: buildkiteInstallerChecksum}.shell()), "\n", "\n        ") + "\n"
+	unguarded := "      - |\n        " + strings.ReplaceAll(buildkiteEscape(buildkiteSnippet{form: buildkiteSnippetForm, site: `"datadoghq.eu"`, languages: `"js"`, tracers: []string{`DD_SET_TRACER_VERSION_JS="5.133.0"`}, installer: buildkiteInstaller, checksum: buildkiteInstallerChecksum}.shell()), "\n", "\n        ") + "\n"
 	loader := buildkiteSnippetText("js", "5.133.0", "datadoghq.com", "      ", esmImportCommand)
 	pipeline := func(snippet string) string {
 		return "steps:\n" + buildkiteDockerStep("test", "node:22", "      - npm ci\n"+snippet+"      - npm test\n")
@@ -517,7 +517,7 @@ func TestBuildkiteJavaScriptCompleteness(t *testing.T) {
 	}{
 		{"complete", complete, "", true},
 		{"selected site", complete, "datadoghq.com", true},
-		{"other site", complete, "datadoghq.eu", false},
+		{"other site", complete, "datadoghq.eu", true},
 		{"missing", strings.Replace(complete, snippet, "", 1), "", false},
 		{"after the tests", strings.Replace(strings.Replace(complete, snippet, "", 1), "      - npm test\n", "      - npm test\n"+snippet, 1), "", false},
 		{"in another step", "steps:\n  - label: setup\n    commands:\n" + snippet + "  - wait\n" + strings.Replace(complete, "steps:\n", "", 1)[0:0] + buildkiteDockerStep("test", "node:22", "      - npm test\n"), "", false},
@@ -606,8 +606,9 @@ func TestBuildkiteApplyRegistersTheESMLoader(t *testing.T) {
 }
 
 // Matrix combinations share one command and get one insertion; commands
-// shared through an anchor, a folded command, an image without Bash and a
-// container ddtest cannot pass the key into are refused.
+// shared through an anchor, a folded command and a container ddtest cannot
+// pass the key into are refused. An image without Bash gets the setup
+// without Bash or curl.
 func TestBuildkiteApplySharedCommands(t *testing.T) {
 	t.Run("matrix", func(t *testing.T) {
 		plan, _, err := planBuildkite(t, "jest", "steps:\n  - label: \"node {{matrix}}\"\n    matrix: [\"20\", \"22\"]\n    commands:\n      - npm test\n    plugins:\n      - docker#v5.12.0:\n          image: \"node:{{matrix}}\"\n", nil)
@@ -616,12 +617,20 @@ func TestBuildkiteApplySharedCommands(t *testing.T) {
 		require.Equal(t, 1, strings.Count(config, buildkiteInstallerChecksum))
 		require.Equal(t, 1, strings.Count(config, "- DD_API_KEY"))
 	})
+	t.Run("alpine", func(t *testing.T) {
+		plan, _, err := planBuildkite(t, "jest", "steps:\n"+buildkiteDockerStep("unit", "node:22-alpine", "      - npm test\n"), nil)
+		require.NoError(t, err)
+		config := plannedFile(t, plan, buildkiteFile)
+		require.Contains(t, config, buildkiteEscape(fallbackComment[0]))
+		require.Contains(t, config, `npm install -g "dd-trace@$$DD_TRACER_VERSION_JS"`)
+		require.NotContains(t, config, buildkiteInstallerChecksum)
+	})
 	for _, tc := range []struct{ name, pipeline, reason string }{
 		{"anchor", "steps:\n  - label: unit\n    commands: &tests\n      - npm test\n  - label: more\n    commands: *tests\n", "YAML anchor and alias"},
 		{"anchored plugin", "plugins: &docker\n  - docker#v5.12.0:\n      image: node:22\nsteps:\n  - label: unit\n    commands:\n      - npm test\n    plugins: *docker\n", "DD_API_KEY never reaches"},
 		{"folded", "steps:\n  - label: unit\n    command: >\n      npm ci &&\n      npm test\n", "write the test command as its own commands entry"},
 		{"later statement", "steps:\n  - label: unit\n    commands:\n      - \"npm ci; npm test\"\n", "is not the first command of its entry"},
-		{"alpine", "steps:\n" + buildkiteDockerStep("unit", "node:22-alpine", "      - npm test\n"), "has no Bash"},
+
 		{"flow plugin", "steps:\n  - label: unit\n    commands:\n      - npm test\n    plugins:\n      - docker#v5.12.0: {image: node:22}\n", "add DD_API_KEY to the plugin's environment list"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -637,7 +646,7 @@ func TestBuildkiteLanguageSupport(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, root, buildkiteFile, "steps:\n  - command: pytest\n")
 	useCIProvider(t, "buildkite")
-	for language, supported := range map[string]bool{"javascript": true, "ruby": true, "python": false, "java": false} {
+	for language, supported := range map[string]bool{"javascript": true, "ruby": true, "python": true, "java": true} {
 		err := CheckCIProviderSupport(root, language, "framework")
 		if supported {
 			require.NoError(t, err, language)

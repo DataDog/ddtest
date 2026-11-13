@@ -23,7 +23,7 @@ const jenkinsProvider = "jenkins"
 // a matrix cell, or a scripted stage) becomes one job of the shared model,
 // and each top-level statement of a literal sh script one step; each sh
 // starts a fresh shell. Its setup mechanism is the Datadog Jenkins plugin,
-// enabled for the whole pipeline with datadog(testOptimization: …) (see
+// enabled for a pipeline or its stages with datadog(testOptimization: …) (see
 // ci_provider_jenkins_setup.go). Anything ddtest cannot read statically, such
 // as shared library steps, computed scripts, Groovy functions or tests started
 // in containers, becomes an unresolved step: it is reported, never dropped or
@@ -32,7 +32,9 @@ type jenkins struct{}
 
 func (jenkins) name() string { return jenkinsProvider }
 
-func (jenkins) displayName() string { return "Jenkins" }
+func (jenkins) displayName() string       { return "Jenkins" }
+func (jenkins) checkoutReference() string { return "${WORKSPACE}" }
+func (jenkins) checkoutVariable() string  { return "WORKSPACE" }
 
 // Jenkins exports these to every step; tools detect a Jenkins build by them.
 func (jenkins) environment() map[string]string {
@@ -41,9 +43,9 @@ func (jenkins) environment() map[string]string {
 
 func (jenkins) sharedSyntax() bool { return false }
 
-// Jenkinsfiles are edited by hand: onboarding gives every language
-// instructions.
-func (jenkins) editsSetup() bool { return false }
+// onboard --apply enables the Datadog Jenkins plugin in Jenkinsfiles (see
+// ci_provider_jenkins_edit.go).
+func (jenkins) editsSetup() bool { return true }
 
 // jenkinsDirectories are where Jenkinsfiles conventionally live besides the
 // repository root.
@@ -107,24 +109,9 @@ func (j jenkins) readWorkflows(root string) ([]ciWorkflow, error) {
 	return workflows, nil
 }
 
-func (j jenkins) findTestWorkflows(root, language, framework string) ([]string, []string, error) {
-	workflows, err := j.readWorkflows(root)
-	if err != nil {
-		return nil, nil, err
-	}
-	found, configured := testWorkflowsWithSetup(root, workflows, language, framework)
-	return found, configured, nil
-}
-
 func (jenkins) setupStep(step runtimeStep) (ciSetup, bool) {
 	if step.Setup == nil {
 		return ciSetup{}, false
 	}
 	return *step.Setup, true
-}
-
-// planSetupEdits never edits a Jenkinsfile: the setup is applied from the
-// instructions (see editsSetup).
-func (jenkins) planSetupEdits(string, []ciWorkflow, []ciSetupTarget, ciSetupRequest) ([]setupEdit, []string, error) {
-	return nil, nil, &SetupGap{"Jenkins", "onboard --apply does not edit Jenkinsfiles; add the Datadog Jenkins plugin setup from onboard --agent instructions, then validate with testdrive --all."}
 }

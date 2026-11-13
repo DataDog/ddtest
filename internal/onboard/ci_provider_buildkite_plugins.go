@@ -156,6 +156,7 @@ func (c *buildkiteConfig) executor(fields map[string]*yaml.Node, scope buildkite
 		text, unknown := buildkiteInterpolate(text, scope.known)
 		return text, problem == "" && len(unknown) == 0 && !strings.Contains(text, "$")
 	}
+	mirrored := func(template string) (string, bool) { return buildkiteMirroredImage(template, scope, matrix) }
 	if image := gitLabScalar(fields["image"]); image != "" || scope.image != "" {
 		executor.template = image
 		if image == "" {
@@ -163,6 +164,9 @@ func (c *buildkiteConfig) executor(fields map[string]*yaml.Node, scope buildkite
 		}
 		var resolved bool
 		executor.image, resolved = value(&yaml.Node{Kind: yaml.ScalarNode, Value: executor.template})
+		if image, ok := mirrored(executor.template); !resolved && ok {
+			executor.image, resolved = image, true
+		}
 		if !resolved {
 			executor.image = ""
 			executor.imageProblem = "its image " + executor.template + " depends on a variable or matrix value ddtest cannot resolve"
@@ -187,7 +191,7 @@ func (c *buildkiteConfig) executor(fields map[string]*yaml.Node, scope buildkite
 		executor.pluginAliased = executor.pluginAliased || c.aliased[plugin.config]
 		switch name {
 		case "buildkite-plugins/docker":
-			c.docker(executor, plugin.config, value, env)
+			c.docker(executor, plugin.config, value, mirrored, env)
 		case "buildkite-plugins/docker-compose":
 			c.compose(executor, plugin.config, value, env)
 		default:
@@ -289,12 +293,15 @@ func buildkiteEntrypointProblem(node *yaml.Node, owner string) string {
 
 // docker reads the docker plugin: commands run in image, with the checkout
 // mounted at its working directory.
-func (c *buildkiteConfig) docker(executor *buildkiteExecutor, config *yaml.Node, value func(*yaml.Node) (string, bool), host map[string]string) {
+func (c *buildkiteConfig) docker(executor *buildkiteExecutor, config *yaml.Node, value func(*yaml.Node) (string, bool), mirrored func(string) (string, bool), host map[string]string) {
 	fields := gitLabMembers(config)
 	executor.plugin = config
 	executor.containerOptions(fields, "docker", value, host)
 	executor.template = gitLabScalar(fields["image"])
 	image, resolved := value(fields["image"])
+	if written, ok := mirrored(executor.template); !resolved && ok {
+		image, resolved = written, true
+	}
 	executor.image, executor.imageProblem = image, ""
 	switch {
 	case executor.template == "":
@@ -374,6 +381,10 @@ func (c *buildkiteConfig) compose(executor *buildkiteExecutor, config *yaml.Node
 		executor.template = gitLabScalar(definition["image"])
 		image, resolved := buildkiteComposeImage(executor.template, env)
 		executor.image = image
+		if !resolved && mirroredImage(executor.template) != executor.template && mirroredImage(image) != image {
+			// Only a registry prefix the environment supplies is unresolved.
+			resolved = true
+		}
 		if !resolved {
 			executor.image = ""
 			executor.imageProblem = "its Docker Compose service " + service + " image " + executor.template + " depends on a variable the step's env does not set, which the agent or a .env file may supply"
@@ -617,6 +628,19 @@ func (c *buildkiteConfig) composeVariable(executor *buildkiteExecutor, name, wri
 	executor.env[name] = value
 }
 
+// buildkiteMirroredImage is an image whose only unresolved part is a
+// registry prefix pipeline upload interpolates from the agent's environment,
+// as ${REGISTRY}/library/node:22 (see mirroredImage), as interpolated. A prefix
+// escaped from upload ($$REGISTRY) is never expanded, so it is not one.
+func buildkiteMirroredImage(template string, scope buildkiteScope, matrix func(string) (string, string)) (string, bool) {
+	text, problem := matrix(template)
+	if problem != "" || mirroredImage(text) == text {
+		return "", false
+	}
+	text, _ = buildkiteInterpolate(text, scope.known)
+	return text, mirroredImage(text) != text
+}
+
 // buildkiteComposeVariable matches Compose's $NAME, ${NAME}, ${NAME:-x}
 // and ${NAME-x}.
 var buildkiteComposeVariable = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)(?:(:?-)([^}]*))?\}|\$([A-Za-z_][A-Za-z0-9_]*)`)
@@ -643,19 +667,20 @@ func buildkiteComposeImage(image string, env map[string]string) (string, bool) {
 	return result, resolved && !strings.Contains(result, "$")
 }
 
-// buildkiteCurlInstall is the command that adds curl to a Debian slim image.
-const buildkiteCurlInstall = "apt-get update && apt-get install -y --no-install-recommends curl"
-
 // setupProblem explains why the step cannot run the Datadog setup snippet,
-// which needs Bash and curl or wget, and DD_API_KEY in the environment.
-// curl reports an earlier command that installed curl.
-func (executor *buildkiteExecutor) setupProblem(curl bool) string {
+// which needs Bash and curl or wget, and DD_API_KEY in the environment, or
+// with fallback the setup without Bash or curl (see imageFallback), which
+// needs only a POSIX shell. curl reports an earlier command that installed
+// curl.
+func (executor *buildkiteExecutor) setupProblem(curl, fallback bool) string {
 	switch {
 	case executor.keyProblem:
 		return "The pipeline sets DD_API_KEY in its configuration; never commit the key, and pipeline upload bakes interpolated values into the uploaded pipeline: remove it and provide DD_API_KEY from an agent environment hook, a secrets plugin or the pipeline's environment in the Buildkite UI."
+	case executor.windows && fallback:
+		return "The step runs on Windows agents, whose default shell is cmd.exe; the " + fallbackSetupName + " needs a POSIX shell. Run the tests on Linux or macOS agents."
 	case executor.windows:
 		return "The step runs on Windows agents, whose default shell is cmd.exe; the Datadog setup snippet needs a POSIX shell and Bash. Run the tests on Linux or macOS agents."
-	case executor.imageSetupProblem(curl) != "":
+	case !fallback && executor.imageSetupProblem(curl) != "":
 		return executor.imageSetupProblem(curl)
 	case executor.keyEmpty:
 		return "The step's container receives DD_API_KEY set to an empty value, which replaces the agent's key, so the Datadog setup snippet always skips: list DD_API_KEY without a value so the agent's key passes through."
@@ -665,24 +690,50 @@ func (executor *buildkiteExecutor) setupProblem(curl bool) string {
 	return ""
 }
 
+// missingTools describes what the step's image lacks for the Datadog
+// installer (see imageMissingTools); empty when it has them or ddtest cannot
+// read it.
+func (executor *buildkiteExecutor) missingTools(curl bool) string {
+	if executor.imageProblem != "" {
+		return ""
+	}
+	return imageMissingTools(executor.image, executor.bash, executor.downloader, curl)
+}
+
+// keyReachProblem explains why the DD_API_KEY the agent provides does not
+// reach the step's commands as configured: a key the pipeline writes, an
+// empty one that replaces it, or a container that does not receive it.
+func (executor *buildkiteExecutor) keyReachProblem() string {
+	switch {
+	case executor.keyProblem:
+		return "The pipeline sets DD_API_KEY in its configuration; never commit the key, and pipeline upload bakes interpolated values into the uploaded pipeline: remove it and provide DD_API_KEY from " + buildkiteKeySources + "."
+	case executor.keyEmpty:
+		return "The step's container receives DD_API_KEY set to an empty value, which replaces the agent's key: list DD_API_KEY without a value so the agent's key passes through."
+	case executor.container && !executor.keyPassed && !executor.propagate:
+		return "The step runs its commands in a container, which receives only the environment its plugin lists, so DD_API_KEY never reaches the tests: add DD_API_KEY to the plugin's environment list."
+	}
+	return ""
+}
+
 // imageSetupProblem explains why the step's container cannot run the
 // Datadog installer, which needs Bash and curl or wget: an image ddtest
-// cannot resolve, or one known to lack them. curl reports an earlier
+// cannot resolve, or one known to lack them, whose steps take the setup
+// without Bash or curl instead (see missingTools). curl reports an earlier
 // command that installed curl.
 func (executor *buildkiteExecutor) imageSetupProblem(curl bool) string {
 	switch {
 	case executor.imageProblem != "" && executor.dockerfile != "":
-		return "The step's container cannot be checked: " + executor.imageProblem + ", so ddtest cannot tell whether the image it builds has the Bash and the curl or wget the Datadog installer needs. Make the Dockerfile's final FROM a literal image that has them, or validate this step's image separately."
+		return "The step's container cannot be checked: " + executor.imageProblem + ", so ddtest cannot tell whether the image it builds has the Bash and the curl or wget the Datadog installer needs, and does not validate this step's setup; tell the user, and validate this step's image separately."
 	case executor.imageProblem != "":
-		return "The step's container cannot be checked: " + executor.imageProblem + ", so ddtest cannot tell whether it has the Bash and the curl or wget the Datadog installer needs. Give the step a literal image that has them."
+		return "The step's container cannot be checked: " + executor.imageProblem + ", so ddtest cannot tell whether it has the Bash and the curl or wget the Datadog installer needs, and does not validate this step's setup. ddtest reads an image written literally in the pipeline; tell the user."
 	case !executor.bash && imageWithoutBash(executor.image) && executor.dockerfile != "":
-		return "The step's image is built from " + executor.dockerfile + ", whose final stage is FROM " + executor.image + ", which has no Bash, which the Datadog installer needs. Install bash in the Dockerfile (for Alpine: RUN apk add --no-cache bash), or build FROM the non-Alpine variant."
+		return "The step's image is built from " + executor.dockerfile + ", whose final stage is FROM " + executor.image + ", which has no Bash, which the Datadog installer needs. " + fallbackInstead("this step")
 	case !executor.bash && imageWithoutBash(executor.image):
-		return "The step's image " + executor.image + " has no Bash, which the Datadog installer needs. Use a Bash-capable image for this step, such as the non-Alpine variant, or a custom image with Bash preinstalled."
+		return "The step's image " + executor.image + " has no Bash, which the Datadog installer needs. " + fallbackInstead("this step")
 	case !curl && !executor.downloader && imageWithoutDownloader(executor.image) && executor.dockerfile != "":
-		return "The step's image is built from " + executor.dockerfile + ", whose final stage is FROM " + executor.image + ", which has neither curl nor wget, and no RUN instruction of the Dockerfile installs them, so the Datadog installer cannot be downloaded and its tests would run untraced. Install curl in the Dockerfile (add curl to its apt-get install packages, or RUN " + buildkiteCurlInstall + "), or build FROM the full image (without -slim)."
+		return "The step's image is built from " + executor.dockerfile + ", whose final stage is FROM " + executor.image + ", which has neither curl nor wget, and no RUN instruction of the Dockerfile installs them, so the Datadog installer cannot be downloaded and its tests would run untraced. " + fallbackInstead("this step")
 	case !curl && !executor.downloader && imageWithoutDownloader(executor.image):
-		return "The step's image " + executor.image + " has neither curl nor wget, so the Datadog installer cannot be downloaded and its tests would run untraced. Use the full image (without -slim), or install curl in a command before the setup: " + buildkiteCurlInstall + "."
+		return "The step's image " + executor.image + " has neither curl nor wget, so the Datadog installer cannot be downloaded and its tests would run untraced. " + fallbackInstead("this step")
 	}
 	return ""
 }

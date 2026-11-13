@@ -15,7 +15,7 @@ import (
 )
 
 func htmlReportPath(root string) string {
-	return filepath.Join(root, constants.PlanDirectory, reportFilename)
+	return filepath.Join(reportRoot(root), constants.PlanDirectory, reportFilename)
 }
 
 // Keep the upstream renderer unchanged. Only link artifacts that survive our
@@ -47,41 +47,43 @@ func (t *Testdrive) writeHTMLReport(output io.Writer, result *validationResult, 
 		result.HTMLReportCurrent = true // The parent publishes all retained models, and propagates publication failure.
 		return nil
 	}
-	if err := writeHTMLReportFile(t.repositoryRoot, model); err != nil {
+	keepSavedReport(t.repositoryRoot, t.framework.Name(), result)
+	if err := writeHTMLReportFile(t.repositoryRoot, model, *result); err != nil {
 		return err
 	}
 	result.HTMLReportCurrent = true
-	return announceHTMLReport(output, t.repositoryRoot, t.framework.Name())
+	return announceHTMLReport(output, t.repositoryRoot, t.framework.Name(), *result)
 }
 
-// writeHTMLReportFile publishes one run's report under root.
-func writeHTMLReportFile(root string, model reportModel) error {
-	model.Artifacts = []reportArtifact{{Title: "Validation JSON", Href: validationFilename}}
+// writeHTMLReportFile publishes one run's report under root, where result's
+// reports go.
+func writeHTMLReportFile(root string, model reportModel, result validationResult) error {
+	model.Artifacts = []reportArtifact{{Title: "Validation JSON", Href: filepath.Base(result.jsonReportPath(""))}}
 	var content bytes.Buffer
 	if err := testdriveReport.Execute(&content, model); err != nil {
 		return fmt.Errorf("render testdrive HTML report: %w", err)
 	}
-	if err := writeValidation(htmlReportPath(root), content.Bytes()); err != nil {
+	if err := writeValidation(result.htmlReportPath(root), content.Bytes()); err != nil {
 		return fmt.Errorf("save testdrive HTML report: %w", err)
 	}
 	return nil
 }
 
-func announceHTMLReport(output io.Writer, root, framework string) error {
-	if err := writeHTMLReportLink(output, root); err != nil {
+func announceHTMLReport(output io.Writer, root, framework string, result validationResult) error {
+	if err := writeHTMLReportLink(output, root, result); err != nil {
 		return err
 	}
 	if supportsValidationFramework(framework) {
-		_, _ = fmt.Fprintf(output, "This HTML shows instrumented suite findings. Compatibility, feature checks and the onboarding verdict are in %s.\n", validationPath(""))
+		_, _ = fmt.Fprintf(output, "This HTML shows instrumented suite findings. Compatibility, feature checks and the onboarding verdict are in %s.\n", result.jsonReportPath(""))
 	}
 	return nil
 }
 
-func writeHTMLReportLink(output io.Writer, root string) error {
-	url, err := fileURL(htmlReportPath(root))
+func writeHTMLReportLink(output io.Writer, root string, result validationResult) error {
+	url, err := fileURL(result.htmlReportPath(root))
 	if err != nil {
 		return err
 	}
-	_, _ = fmt.Fprintf(output, "\nOpen report: %s\n", terminalLink(url, htmlReportPath("")))
+	_, _ = fmt.Fprintf(output, "\nOpen report: %s\n", terminalLink(url, result.htmlReportPath("")))
 	return nil
 }

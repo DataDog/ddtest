@@ -34,7 +34,8 @@ const (
 var circleSetupVersion = regexp.MustCompile(`^2(?:\.[0-9]+\.[0-9]+)?$`)
 
 // circleSetup reads the orb step's parameters as setup inputs: languages,
-// site, service and <language>_tracer_version as <language>-tracer-version.
+// site, service, <language>_tracer_version as <language>-tracer-version and
+// <language>_instrumented_build_system as <language>-instrumented-build-system.
 // A parameter ddtest cannot resolve stays unresolved.
 func (c *circleConfig) circleSetup(orb circleOrb, arguments map[string]*yaml.Node, scope *circleScope) ciSetup {
 	setup := ciSetup{Reference: orb.reference, Pinned: orb.version != "", Supported: circleSetupVersion.MatchString(orb.version), shaped: true, Inputs: map[string]string{}}
@@ -47,10 +48,17 @@ func (c *circleConfig) circleSetup(orb circleOrb, arguments map[string]*yaml.Nod
 		if language, ok := strings.CutSuffix(key, "_tracer_version"); ok && language != "" {
 			input = language + "-tracer-version"
 		}
+		if language, ok := strings.CutSuffix(key, "_instrumented_build_system"); ok && language != "" {
+			input = language + "-instrumented-build-system"
+		}
 		setup.Inputs[input] = text
 	}
 	return setup
 }
+
+// circleSnippetForm is the fallback setup's form in CircleCI jobs (see
+// imageFallback): it runs in the run step that runs the tests.
+var circleSnippetForm = snippetForm{provider: circleCIProvider, job: true}
 
 // circleSetupProblem explains why the orb cannot set up the job it runs in:
 // its exports reach later steps only through Bash, and it downloads the
@@ -64,13 +72,29 @@ func circleSetupProblem(job *circleJob, conditional string, curl bool) string {
 	case conditional != "":
 		return "The Datadog orb step runs only under a condition ddtest cannot decide locally (" + conditional + "); run it unconditionally before the tests."
 	case job.imageProblem != "":
-		return "The job's executor cannot be checked: " + job.imageProblem + ", so ddtest cannot tell whether its image has the Bash and the curl or wget the Datadog orb needs. Give the job a docker image written in the configuration that has them, such as a cimg/ convenience image."
+		return "The job's executor cannot be checked: " + job.imageProblem + ", so ddtest cannot tell whether its image has the Bash and the curl or wget the Datadog orb needs, and does not validate this job's setup. ddtest reads a docker image written in the configuration; tell the user."
 	case job.shell != "" && shellProgram(job.shell) != "bash":
 		return "The job runs its steps with " + job.shell + ", but the Datadog orb's step needs Bash and only Bash reads the $BASH_ENV it exports through. Run the job with the default shell or /bin/bash."
 	case imageWithoutBash(job.image):
-		return "The job image " + job.image + " has no Bash, so CircleCI runs its steps with /bin/sh: the Datadog orb's step cannot run and $BASH_ENV, which carries its exports, is never read. Use a Bash-capable image for this job, such as a cimg/ convenience image or the non-Alpine variant."
+		return "The job image " + job.image + " has no Bash, so CircleCI runs its steps with /bin/sh: the Datadog orb's step cannot run and $BASH_ENV, which carries its exports, is never read. " + fallbackInstead("the run step that runs the tests")
 	case !curl && imageWithoutDownloader(job.image):
-		return "The job image " + job.image + " has neither curl nor wget, which the Datadog orb needs to download the installer, so the job would fail. Use the full image (without -slim) or a cimg/ convenience image, or install curl in an earlier step: apt-get update && apt-get install -y --no-install-recommends curl."
+		return "The job image " + job.image + " has neither curl nor wget, which the Datadog orb needs to download the installer, so the job would fail. " + fallbackInstead("the run step that runs the tests")
+	}
+	return ""
+}
+
+// circleFallbackProblem explains why the setup without Bash or curl cannot
+// set up the run step it runs in: it needs a POSIX shell, and the key from
+// the project settings. It runs in the step of the tests, so a condition on
+// the step applies to both.
+func circleFallbackProblem(job *circleJob) string {
+	switch {
+	case job.keyProblem:
+		return "The job's configuration sets DD_API_KEY in an environment mapping; never commit the key, and CircleCI sets such values as written: remove it and store DD_API_KEY in the CircleCI project settings or a context."
+	case strings.Contains(job.imageProblem, "Windows"):
+		return "The job " + job.imageProblem + ", but the " + fallbackSetupName + " needs a POSIX shell. Run the tests on a Linux executor."
+	case job.shell != "" && !slices.Contains([]string{"bash", "sh", "dash", "ash"}, shellProgram(job.shell)):
+		return "The job runs its steps with " + job.shell + ", but the " + fallbackSetupName + " needs a POSIX shell. Run the job with the default shell."
 	}
 	return ""
 }
@@ -264,6 +288,9 @@ func (circleCI) setupInput(name string) string {
 func (circleCI) setupName() string { return "Datadog Test Optimization orb" }
 
 func (c circleCI) setupProblem(setup ciSetup, tracerInput string, exact func(string) bool, example, site string) string {
+	if setup.fallback {
+		return fallbackSetupProblem(setup, tracerInput, exact, example, site)
+	}
 	if setup.Problem != "" {
 		return setup.Problem
 	}
@@ -309,11 +336,12 @@ func circlePersist(command string) string {
 // The orb's step runs in its own shell and exports through $BASH_ENV.
 func (circleCI) setupTerms() ciSetupTerms {
 	return ciSetupTerms{
-		Installer:  "orb",
-		Entry:      "the orb step",
-		SetupEntry: "the Datadog orb step",
-		Later:      "later steps of the job",
-		Variables:  "the job's environment",
+		Installer:   "orb",
+		SecretStore: "the CircleCI project settings (Project Settings > Environment Variables) or a context every test job uses",
+		Entry:       "the orb step",
+		SetupEntry:  "the Datadog orb step",
+		Later:       "later steps of the job",
+		Variables:   "the job's environment",
 		Persist: func(command string) string {
 			return "a later step that appends it to $BASH_ENV, such as " + circlePersist(command)
 		},
@@ -371,8 +399,9 @@ func (c circleCI) setupInstructions(request ciSetupRequest) string {
 	text.WriteString("3. In every CircleCI job that runs the tests listed above, add this step immediately before the first test step, after checkout, dependency installation and any step that prepares the tests. Keep every existing step, parameter, environment and workflow unchanged; where a reusable command supplies the test step, add it there only when every job using that command runs these tests.\n\n```yaml\n")
 	text.WriteString(circleSetupStep(request, circleSetupAlias, "", 2))
 	text.WriteString("```\n")
-	text.WriteString("\nThe step needs Bash and curl or wget in the job's image: CircleCI runs steps with /bin/sh in images without Bash (Alpine variants, BusyBox, distroless), where $BASH_ENV is never read, and official -slim images have neither curl nor wget. Use a cimg/ convenience image or another image with Bash and curl for those jobs.\n")
+	text.WriteString("\nThe step needs Bash and curl or wget in the job's image: CircleCI runs steps with /bin/sh in images without Bash (Alpine variants, BusyBox, distroless), where $BASH_ENV is never read, and official -slim images have neither curl nor wget. Jobs whose image lacks them get the " + fallbackSetupName + " instead, as their own instructions show; never change a job's image or executor.\n")
 	text.WriteString("\n4. Set the environment and working directory the tests depend on before the step. After it, extend the variables it exports instead of replacing them: appended to $BASH_ENV, or inline before the test command; a later step's environment: does not apply to those variables, because $BASH_ENV overrides it.\n")
+	text.WriteString(circleSharedSetupInstructions(request, "5", circleSetupStep(request, circleSetupAlias, "            ", 2), false))
 	for _, note := range request.Notes {
 		text.WriteString("\n- " + strings.ReplaceAll(note, "\n", "\n  "))
 	}

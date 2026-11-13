@@ -74,7 +74,14 @@ type ciFactDefinition struct {
 
 // ciProviderFacts lists the facts each provider (by --ci-provider name) may
 // ask the user to confirm.
-var ciProviderFacts = map[string][]ciFactDefinition{jenkinsProvider: jenkinsFacts}
+// A setup written by hand that reports through a Datadog Agent depends on
+// handWrittenAgentFact on every provider whose setups ddtest reads by hand.
+var ciProviderFacts = map[string][]ciFactDefinition{
+	jenkinsProvider:   append(slices.Clone(jenkinsFacts), handWrittenAgentFact),
+	gitLabCIProvider:  {handWrittenAgentFact},
+	circleCIProvider:  {handWrittenAgentFact},
+	buildkiteProvider: {handWrittenAgentFact},
+}
 
 // statedRuntimeSource is the NodeSource of a runtime the user stated.
 const statedRuntimeSource = "stated by the user (--ci-runtime)"
@@ -124,6 +131,15 @@ type statedRuntime struct {
 	fileVersion func(line string) string
 }
 
+// StatedRuntimeNames are the runtimes --ci-runtime takes, as node or java.
+func StatedRuntimeNames() []string {
+	var names []string
+	for _, language := range statedRuntimeLanguages() {
+		names = append(names, language.statedRuntime().Names[0])
+	}
+	return names
+}
+
 // statedRuntimeLanguages lists the languages that take runtime statements.
 func statedRuntimeLanguages() []discoveryLanguage {
 	var languages []discoveryLanguage
@@ -149,9 +165,9 @@ func statedRuntimeFor(token string) *statedRuntime {
 // ParseCIRuntime reads one --ci-runtime value. The job part may contain
 // colons: the runtime name follows the last one.
 func ParseCIRuntime(value string) (CIRuntimeStatement, error) {
-	var names, examples []string
+	var examples []string
+	names := StatedRuntimeNames()
 	for _, language := range statedRuntimeLanguages() {
-		names = append(names, language.statedRuntime().Names[0])
 		examples = append(examples, language.statedRuntime().Names[0]+"="+strings.Fields(language.statedRuntime().Example)[0])
 	}
 	index := strings.LastIndex(value, "=")
@@ -353,16 +369,6 @@ func fillStatedRuntimes(workflows []ciWorkflow) {
 	}
 }
 
-// readProviderWorkflows reads a provider's configuration with the user's
-// runtime statements recorded on its jobs.
-func readProviderWorkflows(provider ciProvider, root string) ([]ciWorkflow, error) {
-	workflows, err := provider.readWorkflows(root)
-	if err == nil {
-		fillStatedRuntimes(workflows)
-	}
-	return workflows, err
-}
-
 // runtimeHost describes where a job whose configuration selects no runtime
 // runs on a matrix row (nil: the job without a row), for a person who knows
 // that host's runtime; empty when ddtest does not take the user's statement
@@ -382,6 +388,9 @@ func runtimeHost(job runtimeJob, row map[string]any, runtime string) string {
 		return "the self-hosted runner " + strings.Join(labels, ", ")
 	}
 	switch {
+	case job.Unread:
+		// ddtest could not read the configuration: that is the finding.
+		return ""
 	case job.ImageProblem != "":
 		// Its image is in the configuration: the remedy is to make it readable.
 		return ""
@@ -788,11 +797,11 @@ func RequiredCIConfirmations(root, language, framework string) *CIConfirmationRe
 	for _, workflow := range workflows {
 		for _, name := range slices.Sorted(maps.Keys(workflow.Jobs)) {
 			job := workflow.Jobs[name]
-			if disabledCondition(job.If) {
+			if disabledCondition(job.If) || outsideTestJobs(root, workflow, job, language, framework) {
 				continue
 			}
 			var setup *ciSetup
-			for _, step := range job.Steps {
+			for i, step := range job.Steps {
 				if current, ok := datadogSetup(step); ok {
 					if selected, err := setupSelectsLanguage(current, nil, token); err == nil && selected {
 						setup = &current
@@ -802,11 +811,19 @@ func RequiredCIConfirmations(root, language, framework string) *CIConfirmationRe
 				if resolution.Review || !resolution.Matched && (resolution.Reason == "" || !stepMayStartTests(root, workflow, job, step, framework)) {
 					continue
 				}
-				if setup == nil || setup.Problem != "" {
-					break
+				confirmations := []string(nil)
+				switch {
+				case setup != nil && setup.Problem == "":
+					confirmations = setup.Confirmations
+				case setup == nil && resolution.Matched:
+					// A setup the job writes by hand depends on facts too, once
+					// nothing else is missing.
+					if handWritten := jobHandWrittenSetup(root, workflow, job, i, language, framework, ""); handWritten != nil {
+						confirmations = handWritten.unconfirmed()
+					}
 				}
 				missing := false
-				for _, key := range setup.Confirmations {
+				for _, key := range confirmations {
 					if _, stated := statedFact(key); !stated {
 						needed[key], missing = true, true
 					}
@@ -845,7 +862,7 @@ func CISetupCaveats(check *RuntimeCheck) []string {
 			}
 		}
 	}
-	return caveats
+	return append(caveats, fallbackCaveat(check)...)
 }
 
 // StatedFacts lists, for final_response, what the user stated and ddtest

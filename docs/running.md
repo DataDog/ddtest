@@ -636,7 +636,7 @@ Frameworks without a controlled adapter retain their ordinary feature-enabled te
 
 ## Validate all discovered Jest configurations
 
-Use `ddtest testdrive --framework jest --all --yes` to validate every discovered Jest CI configuration. Known build prerequisites run in disposable copies. Use `--all --check-only` to inspect configurations without builds or tests. `--command` selects one command, without validating unrelated CI configurations. Both modes retain one HTML/JSON report pair.
+Use `ddtest testdrive --framework jest --all --yes` to validate every discovered Jest CI configuration. Known build prerequisites run in disposable copies. Use `--all --check-only` to inspect configurations without builds or tests. `--command` selects one command, without validating unrelated CI configurations. Both modes retain one HTML/JSON report pair. A run of one command after an `--all` run never replaces the `--all` report, which `--report` reads and which alone certifies onboarding: it writes `.testoptimization/testdrive-command.json` and `report-command.html` beside it, names the kept report in `kept_report` and in its final response, and replaces only its own earlier focused report when rerun. Another `--all` run replaces the `--all` report, and without a saved `--all` report a focused run replaces the saved report as before.
 
 
 ### Configuration execution and preparation
@@ -733,9 +733,12 @@ leave that control unvalidated when autouse fixtures parameterize the probe.
 
 Keep `.testoptimization/testdrive.json` and `.testoptimization/report.html` for
 the result. Owned copies, tracer installations, and probes are removed after the
-run. Validation uses a local intake and needs no Datadog credentials. Python
-coding-agent onboarding coordination is a separate follow-up; standalone paired
-testdrive does not enable `--agent`, `--apply`, or `--resume`.
+run. Validation uses a local intake and needs no Datadog credentials. pytest
+validation is standalone: `testdrive --agent` asks the user the coordinator's CI
+questions before anything runs and returns the verdict with `final_response`
+(see [Python on GitLab CI, CircleCI, Buildkite and Jenkins](onboarding.md#python-on-gitlab-ci-circleci-buildkite-and-jenkins)),
+but it keeps no checkpoint: `--resume` and `--facts` are refused, and
+`onboard --apply` returns the setup handoff instead of editing CI.
 
 Without `--command`, pytest validates the selected environment's default local
 command. A standalone command can pass independently of CI readiness: unresolved

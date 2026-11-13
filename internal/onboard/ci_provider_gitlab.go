@@ -6,11 +6,13 @@
 package onboard
 
 import (
+	"cmp"
 	"fmt"
 	"maps"
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -35,7 +37,9 @@ type gitLabCI struct{}
 
 func (gitLabCI) name() string { return gitLabCIProvider }
 
-func (gitLabCI) displayName() string { return "GitLab CI" }
+func (gitLabCI) displayName() string       { return "GitLab CI" }
+func (gitLabCI) checkoutReference() string { return "$CI_PROJECT_DIR" }
+func (gitLabCI) checkoutVariable() string  { return "CI_PROJECT_DIR" }
 
 func (gitLabCI) environment() map[string]string {
 	return map[string]string{"CI": "true", "GITLAB_CI": "true"}
@@ -71,15 +75,6 @@ func (g gitLabCI) readWorkflows(root string) ([]ciWorkflow, error) {
 	return config.workflows(), nil
 }
 
-func (g gitLabCI) findTestWorkflows(root, language, framework string) ([]string, []string, error) {
-	workflows, err := g.readWorkflows(root)
-	if err != nil {
-		return nil, nil, err
-	}
-	found, configured := testWorkflowsWithSetup(root, workflows, language, framework)
-	return found, configured, nil
-}
-
 func (gitLabCI) setupStep(step runtimeStep) (ciSetup, bool) {
 	if step.Setup == nil {
 		return ciSetup{}, false
@@ -106,9 +101,23 @@ type gitLabConfig struct {
 	gaps    []gitLabGap
 	review  []string
 	nonTest []string
+	// components are the commands known components run from their
+	// include inputs, each read as a step of the component's own job.
+	components []gitLabComponentCommands
 }
 
-type gitLabGap struct{ file, reason string }
+// gitLabComponentCommands is a known scanning or release component whose
+// include inputs hand it literal commands, such as gem-release's
+// smoke_test_script: the component's own job runs them.
+type gitLabComponentCommands struct {
+	file, subject string
+	// inputs and commands are the command inputs' names and values.
+	inputs, commands []string
+}
+
+// gitLabGap is configuration ddtest cannot read: subject names it, as in
+// "include gitlab.com/components/sast/sast@1", and reason says why.
+type gitLabGap struct{ file, reason, subject string }
 
 // gitLabReserved are top-level keys that are not jobs.
 var gitLabReserved = []string{"include", "default", "variables", "stages", "workflow", "image", "services", "cache", "before_script", "after_script", "spec", "types", "pages:deploy"}
@@ -121,11 +130,11 @@ const gitLabIncludeLimit = 150
 // does; order lists each file once.
 func (c *gitLabConfig) load(file string, chain []string) error {
 	if slices.Contains(chain, file) {
-		c.gaps = append(c.gaps, gitLabGap{chain[len(chain)-1], "include cycle through " + file})
+		c.gaps = append(c.gaps, gitLabGap{chain[len(chain)-1], "include cycle through " + file, "include " + file})
 		return nil
 	}
 	if c.loads >= gitLabIncludeLimit || len(chain) > 100 {
-		c.gaps = append(c.gaps, gitLabGap{file, "include limit exceeded"})
+		c.gaps = append(c.gaps, gitLabGap{file, "include limit exceeded", "include " + file})
 		return nil
 	}
 	c.loads++
@@ -137,7 +146,7 @@ func (c *gitLabConfig) load(file string, chain []string) error {
 			if len(chain) == 0 {
 				return err
 			}
-			c.gaps = append(c.gaps, gitLabGap{chain[len(chain)-1], err.Error()})
+			c.gaps = append(c.gaps, gitLabGap{chain[len(chain)-1], err.Error(), "include " + file})
 			return nil
 		}
 		if c.parsed == nil {
@@ -209,14 +218,14 @@ func (c *gitLabConfig) readFile(file string) (*yaml.Node, error) {
 		return nil, fmt.Errorf("parse %s: more than two YAML documents", file)
 	}
 	if len(documents) == 2 {
-		c.gaps = append(c.gaps, gitLabGap{file, "the spec: inputs header makes this configuration depend on inputs ddtest cannot supply"})
+		c.gaps = append(c.gaps, gitLabGap{file, "the spec: inputs header makes this configuration depend on inputs ddtest cannot supply", "configuration " + file})
 	}
 	body := documents[len(documents)-1].Content[0]
 	if body.Kind != yaml.MappingNode {
 		return nil, fmt.Errorf("parse %s: the configuration must be a YAML mapping", file)
 	}
 	if strings.Contains(string(data), "$[[") {
-		c.gaps = append(c.gaps, gitLabGap{file, "$[[ inputs ]] interpolation depends on inputs ddtest cannot supply"})
+		c.gaps = append(c.gaps, gitLabGap{file, "$[[ inputs ]] interpolation depends on inputs ddtest cannot supply", "configuration " + file})
 	}
 	return body, nil
 }
@@ -250,7 +259,7 @@ func (c *gitLabConfig) includes(file string, include *yaml.Node) []string {
 		case yaml.ScalarNode:
 			local = entry.Value
 			if strings.Contains(local, "://") {
-				c.gaps = append(c.gaps, gitLabGap{file, "remote include " + local + " cannot be read locally"})
+				c.gaps = append(c.gaps, gitLabGap{file, "remote include " + local + " cannot be read locally", "include " + local})
 				continue
 			}
 		case yaml.MappingNode:
@@ -260,14 +269,31 @@ func (c *gitLabConfig) includes(file string, include *yaml.Node) []string {
 					continue
 				}
 				if purpose := gitLabNonTestInclude(kind, gitLabScalar(members[kind])); purpose != "" {
+					// An input that hands the component a command to run
+					// (gem-release's smoke_test_script) is a step of the
+					// component's job, classified like any other; one whose
+					// value ddtest can't read may start the tests.
+					subject := kind + " include " + gitLabDescribe(members[kind])
+					names, commands, opaque := gitLabCommandInputs(members["inputs"])
+					if len(opaque) > 0 {
+						c.gaps = append(c.gaps, gitLabGap{file, subject + " is GitLab's " + purpose + ", but its inputs " + strings.Join(opaque, ", ") + " give it commands ddtest cannot read (not a literal command)", "include " + gitLabDescribe(members[kind])})
+						continue
+					}
+					if len(names) > 0 {
+						c.components = append(c.components, gitLabComponentCommands{file, subject, names, commands})
+						c.review = append(c.review, file+": "+subject+" is GitLab's "+purpose+"; the commands its inputs "+strings.Join(names, ", ")+" give it are read as its job's steps.")
+						continue
+					}
 					c.nonTest = append(c.nonTest, gitLabScalar(members[kind]))
 					c.review = append(c.review, file+": "+kind+" include "+gitLabDescribe(members[kind])+" is GitLab's "+purpose+"; it runs no tests and is outside this validation.")
 					continue
 				}
-				c.gaps = append(c.gaps, gitLabGap{file, kind + " include " + gitLabDescribe(members[kind]) + " cannot be read locally"})
+				c.gaps = append(c.gaps, gitLabGap{file, kind + " include " + gitLabDescribe(members[kind]) + " cannot be read locally", "include " + gitLabDescribe(members[kind])})
 			}
-			if members["inputs"] != nil {
-				c.gaps = append(c.gaps, gitLabGap{file, "include inputs make " + gitLabDescribe(members["local"]) + " depend on values ddtest cannot supply"})
+			// Inputs only change what ddtest reads of a local include; any
+			// other include is a gap or outside validation already.
+			if members["inputs"] != nil && members["local"] != nil {
+				c.gaps = append(c.gaps, gitLabGap{file, "include inputs make " + gitLabDescribe(members["local"]) + " depend on values ddtest cannot supply", "include " + gitLabDescribe(members["local"])})
 			}
 			local = gitLabScalar(members["local"])
 			if rules := members["rules"]; rules != nil && local != "" {
@@ -277,27 +303,27 @@ func (c *gitLabConfig) includes(file string, include *yaml.Node) []string {
 				case gitLabNever:
 					continue
 				case gitLabPossible:
-					c.gaps = append(c.gaps, gitLabGap{file, "include " + local + " has rules ddtest cannot decide locally"})
+					c.gaps = append(c.gaps, gitLabGap{file, "include " + local + " has rules ddtest cannot decide locally", "include " + local})
 					continue
 				}
 			}
 			if local == "" {
 				if members["remote"] == nil && members["project"] == nil && members["template"] == nil && members["component"] == nil {
-					c.gaps = append(c.gaps, gitLabGap{file, "unrecognized include " + gitLabDescribe(entry)})
+					c.gaps = append(c.gaps, gitLabGap{file, "unrecognized include " + gitLabDescribe(entry), "include " + gitLabDescribe(entry)})
 				}
 				continue
 			}
 		default:
-			c.gaps = append(c.gaps, gitLabGap{file, "unrecognized include " + gitLabDescribe(entry)})
+			c.gaps = append(c.gaps, gitLabGap{file, "unrecognized include " + gitLabDescribe(entry), "include " + gitLabDescribe(entry)})
 			continue
 		}
 		if strings.ContainsAny(local, "$") {
-			c.gaps = append(c.gaps, gitLabGap{file, "include " + local + " depends on a variable ddtest cannot resolve"})
+			c.gaps = append(c.gaps, gitLabGap{file, "include " + local + " depends on a variable ddtest cannot resolve", "include " + local})
 			continue
 		}
 		relative := strings.TrimPrefix(local, "/")
 		if !filepath.IsLocal(relative) {
-			c.gaps = append(c.gaps, gitLabGap{file, "include " + local + " is outside the repository"})
+			c.gaps = append(c.gaps, gitLabGap{file, "include " + local + " is outside the repository", "include " + local})
 			continue
 		}
 		if !strings.ContainsAny(relative, "*?[") {
@@ -305,12 +331,12 @@ func (c *gitLabConfig) includes(file string, include *yaml.Node) []string {
 			continue
 		}
 		if strings.Contains(relative, "**") {
-			c.gaps = append(c.gaps, gitLabGap{file, "recursive include pattern " + local + " is not resolved locally"})
+			c.gaps = append(c.gaps, gitLabGap{file, "recursive include pattern " + local + " is not resolved locally", "include " + local})
 			continue
 		}
 		matches, err := filepath.Glob(filepath.Join(c.root, relative))
 		if err != nil || len(matches) == 0 {
-			c.gaps = append(c.gaps, gitLabGap{file, "include pattern " + local + " matches no repository file"})
+			c.gaps = append(c.gaps, gitLabGap{file, "include pattern " + local + " matches no repository file", "include " + local})
 			continue
 		}
 		slices.Sort(matches)
@@ -355,6 +381,37 @@ var gitLabNonTestTemplates = map[string]string{
 	"Code-Quality.gitlab-ci.yml":                     "code quality template",
 	"Workflows/MergeRequest-Pipelines.gitlab-ci.yml": "merge request pipeline rules template",
 	"Workflows/Branch-Pipelines.gitlab-ci.yml":       "branch pipeline rules template",
+}
+
+// gitLabExecutableInput matches an include input's name that hands the
+// component a command or script to run.
+var gitLabExecutableInput = regexp.MustCompile(`(?i)script|command|cmd|hook|exec|before|after|(?:^|[_-])run(?:[_-]|$)`)
+
+// gitLabCommandInputs reads, sorted by name, the inputs of an include that
+// hand it a command to run: the names and values of literal commands, and
+// the names of those whose value ddtest can't read (not a string, or one
+// that expands a variable).
+func gitLabCommandInputs(inputs *yaml.Node) (names, commands, opaque []string) {
+	inputs = gitLabAlias(inputs)
+	if inputs == nil || inputs.Kind != yaml.MappingNode {
+		return nil, nil, nil
+	}
+	members := gitLabMembers(inputs)
+	for _, key := range slices.Sorted(slices.Values(gitLabKeys(inputs))) {
+		if !gitLabExecutableInput.MatchString(key) {
+			continue
+		}
+		value := gitLabAlias(members[key])
+		switch {
+		case value == nil || value.Kind != yaml.ScalarNode || value.Tag != "!!str" && value.Tag != "":
+			opaque = append(opaque, key)
+		case strings.Contains(value.Value, "$"):
+			opaque = append(opaque, key)
+		case strings.TrimSpace(value.Value) != "":
+			names, commands = append(names, key), append(commands, value.Value)
+		}
+	}
+	return names, commands, opaque
 }
 
 // gitLabNonTestInclude names the purpose of a well-known GitLab component or
@@ -702,7 +759,7 @@ func (c *gitLabConfig) workflows() []ciWorkflow {
 	pipeline := gitLabEvaluateRules(gitLabMembers(c.definitions["workflow"])["rules"], gitLabExpandVariables(globals))
 	pipelineActive := pipeline.state != gitLabNever
 	if pipeline.unknownVariables {
-		c.gaps = append(c.gaps, gitLabGap{c.owners["workflow"], "workflow " + gitLabRuleVariablesGap})
+		c.gaps = append(c.gaps, gitLabGap{c.owners["workflow"], "workflow " + gitLabRuleVariablesGap, "workflow rules"})
 	}
 	globals = mergeEnvironment(globals, pipeline.variables)
 	for _, job := range c.jobs() {
@@ -715,9 +772,29 @@ func (c *gitLabConfig) workflows() []ciWorkflow {
 		}
 	}
 	c.gaps = slices.CompactFunc(c.gaps, func(a, b gitLabGap) bool { return a == b })
-	for i, gap := range c.gaps {
-		name := fmt.Sprintf("(unresolved configuration %d)", i+1)
-		workflow(gitLabCIFile).Jobs[name] = runtimeJob{Steps: []runtimeStep{{Number: 1, Source: gap.file, ResolutionError: "GitLab CI: " + gap.file + ": " + gap.reason + "; its jobs may run tests. Supply the resolved configuration in the repository, or validate those jobs separately."}}}
+	// One pseudo-job per configuration ddtest cannot read, named after it;
+	// it has no runtime to ask for (Unread).
+	var names []string
+	reasons := map[string][]string{}
+	sources := map[string]string{}
+	for _, gap := range c.gaps {
+		name := "(unresolved " + gap.subject + ")"
+		if _, seen := reasons[name]; !seen {
+			names, sources[name] = append(names, name), gap.file
+		}
+		if reason := gap.file + ": " + gap.reason; !slices.Contains(reasons[name], reason) {
+			reasons[name] = append(reasons[name], reason)
+		}
+	}
+	for _, component := range c.components {
+		job := runtimeJob{Unread: true, componentInputs: component.inputs}
+		for i, command := range component.commands {
+			job.Steps = append(job.Steps, runtimeStep{Number: i + 1, Source: component.file, Run: command})
+		}
+		workflow(gitLabCIFile).Jobs["("+component.subject+")"] = job
+	}
+	for _, name := range names {
+		workflow(gitLabCIFile).Jobs[name] = runtimeJob{Unread: true, Steps: []runtimeStep{{Number: 1, Source: sources[name], ResolutionError: "GitLab CI: " + strings.Join(reasons[name], "; ") + "; its jobs may run tests. Supply the resolved configuration in the repository, or validate those jobs separately."}}}
 	}
 	root := workflow(gitLabCIFile)
 	root.Review = slices.Compact(c.review)
@@ -740,7 +817,7 @@ func (c *gitLabConfig) variables(node *yaml.Node, file string) map[string]string
 	}
 	expanded, err := c.expand(node, 0)
 	if err != nil {
-		c.gaps = append(c.gaps, gitLabGap{file, "variables: " + err.Error()})
+		c.gaps = append(c.gaps, gitLabGap{file, "variables: " + err.Error(), "variables of " + file})
 		return map[string]string{}
 	}
 	return gitLabVariables(expanded)
@@ -849,6 +926,11 @@ func (c *gitLabConfig) convert(job gitLabJob, globals map[string]string) map[str
 			converted.Image = gitLabExpand(converted.Image, env)
 		}
 		converted.Steps = c.steps(fields, env, converted.Image)
+		if missing := imageMissingTools(converted.Image, false, false, curlBeforeTests(setupFreeCommands(converted.Steps))); missing != "" {
+			// Datadog's setup script cannot run here: the job gets the
+			// fallback setup, which needs neither Bash nor curl.
+			converted.SetupProvider = newImageFallback(gitLabCI{}, converted.Image, missing)
+		}
 		converted.Env = gitLabDropRuntimeAxes(converted, row, gitLabScalar(fields["image"])+gitLabScalar(gitLabMembers(fields["image"])["name"]))
 		if rules.unknownVariables {
 			for i := range converted.Steps {
@@ -979,7 +1061,11 @@ func gitLabExpandInto(env, added map[string]string) map[string]string {
 	for key, value := range added {
 		value = gitLabExpand(value, scope)
 		if _, input := gitLabSetupInput(key); !input && gitLabReadsUnknown(value) {
-			value = unresolvedCIValue(strings.ReplaceAll(value, "$$", "$"))
+			if ciPredefinedReads(value, "CI_", "GITLAB_") {
+				value = unresolvedCIProvidedValue(strings.ReplaceAll(value, "$$", "$"))
+			} else {
+				value = unresolvedCIValue(strings.ReplaceAll(value, "$$", "$"))
+			}
 		}
 		expanded[key] = strings.ReplaceAll(value, "$$", "$")
 	}
@@ -1366,7 +1452,7 @@ func gitLabShell(entries []gitLabStep, env map[string]string, offset int, image 
 	state := ciShellState{dialect: gitLabShellDialect, env: map[string]string{}, references: map[string]string{}, job: env}
 	var steps []runtimeStep
 	for i, entry := range entries {
-		step := runtimeStep{Number: offset + i + 1, Source: entry.file + ":" + strconv.Itoa(entry.node.Line), origin: entry}
+		step := runtimeStep{Number: offset + i + 1, Source: entry.file + ":" + strconv.Itoa(entry.node.Line), origin: entry, sameShell: i > 0}
 		if len(state.env) > 0 {
 			step.Env = maps.Clone(state.env)
 		}
@@ -1379,6 +1465,27 @@ func gitLabShell(entries []gitLabStep, env map[string]string, offset int, image 
 		}
 		command := entry.node.Value
 		current := mergeEnvironment(env, state.env)
+		if file, parsed := parseCIShell(command); parsed && len(file.Stmts) > 0 {
+			if setup, consumed, ok := fallbackSetupAt(command, file.Stmts, 0, mergeEnvironment(current, state.references), gitLabSnippetForm, nil); ok {
+				if !setup.shaped || consumed != len(file.Stmts) {
+					// It may run anything, tests included: an unresolved
+					// command, never a setup step that hides it.
+					step.Run = command
+					step.ResolutionError = joinDiagnostic(step.ResolutionError, cmp.Or(setup.Problem, "GitLab CI script entry combines the "+fallbackSetupName+" with other commands; give it its own entry, exactly in the form ddtest prescribes"))
+					steps = append(steps, step)
+					continue
+				}
+				step.Setup = &setup
+				if setup.Problem == "" {
+					state.applySetup(setup, current)
+					for _, stmt := range setup.after {
+						state.statement(stmt, mergeEnvironment(mergeEnvironment(current, state.env), state.references))
+					}
+				}
+				steps = append(steps, step)
+				continue
+			}
+		}
 		if setup, ok := gitLabSetupInvocation(command, mergeEnvironment(current, state.references), state.literal); ok {
 			if setup.Problem == "" && !setup.shaped {
 				// Other commands in the entry would disappear with the setup.
@@ -1402,11 +1509,14 @@ func gitLabShell(entries []gitLabStep, env map[string]string, offset int, image 
 			steps = append(steps, step)
 			continue
 		}
-		command = gitLabResolveBranches(command, mergeEnvironment(current, state.references))
+		command = state.dialect.resolveBranches(command, mergeEnvironment(current, state.references))
 		state.curl = state.curl || installsCurl(command)
 		step.Run = command
 		if consumed := strings.TrimSpace(command) == "" || state.apply(command, current); consumed {
 			step.Run = ""
+		} else {
+			step.readScopedPrefix()
+			step.foldInlineEnvironment(mergeEnvironment(mergeEnvironment(env, state.env), state.references), gitLabShellDialect.projectVariable)
 		}
 		steps = append(steps, step)
 	}
@@ -1423,11 +1533,11 @@ func gitLabShellProblem(image string) string {
 	if name == "" {
 		return ""
 	}
-	if strings.Contains(name, "$") {
-		return "The job image " + image + " depends on a variable ddtest cannot resolve, so it cannot tell whether the image has the Bash and curl the Datadog setup script needs. Give the job a literal image (or a variable defined in the configuration) that has both."
+	if strings.Contains(mirroredImage(name), "$") {
+		return "The job image " + image + " depends on a variable ddtest cannot resolve, so it cannot tell whether the image has the Bash and curl the Datadog setup script needs, and does not validate this job's setup. ddtest reads an image written literally in the configuration or in a variable defined there; tell the user."
 	}
 	if imageWithoutBash(image) {
-		return "The job image " + image + " has no Bash, so GitLab runs its script with sh and the Datadog setup script (source, process substitution) cannot run. Use a Bash-capable image for this job, such as the non-Alpine variant, or a custom image with Bash preinstalled; installing Bash in the script does not change the job's shell."
+		return "The job image " + image + " has no Bash, so GitLab runs its script with sh and the Datadog setup script (source, process substitution) cannot run; installing Bash in the script does not change the job's shell. " + fallbackInstead("this job")
 	}
 	return ""
 }
@@ -1443,7 +1553,7 @@ func gitLabImageProblem(image string, curl bool) string {
 		return reason
 	}
 	if !curl && imageWithoutDownloader(image) {
-		return "The job image " + image + " has no curl, so the Datadog setup script cannot be downloaded and its tests would run untraced. Use the full image (without -slim), or add an entry that installs curl before the setup entry: " + gitLabCurlInstall + "."
+		return "The job image " + image + " has no curl, so the Datadog setup script cannot be downloaded and its tests would run untraced. " + fallbackInstead("this job")
 	}
 	return ""
 }

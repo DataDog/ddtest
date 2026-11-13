@@ -8,8 +8,8 @@ executable writes them with `ddtest instrument bazel`.
 
 rules_test_optimization owns the Starlark: the test rule, the transition to
 the instrumented SDK, the toolchains and the repositories that run
-`ddtest instrument bazel` while Bazel fetches. Its major version that uses
-this command is in development. This page covers what ddtest provides to it.
+`ddtest instrument bazel` while Bazel fetches, from its version 2.0.0. This
+page covers what ddtest provides to it.
 
 ## `ddtest instrument bazel`
 
@@ -96,10 +96,10 @@ A vendored package keeps its edits: Gazelle's `importmap` names it
 `<prefix>/vendor/<import path>`, and the compiler reads the part after the
 last `vendor` element.
 
-Edited files keep their names: each edited copy starts with a `//line`
-directive with the original's absolute name, which `-trimpath` rewrites as
-it rewrites the original. Test binaries stay reproducible and name no
-temporary file.
+Edited files keep their source positions through `//line` directives. The
+compiler also puts a `-trimpath` rewrite for its temporary directory before
+the caller's rewrites. This keeps random scratch paths out of Go's export
+data while preserving the caller's source names.
 
 **Hooks without Mini.** The edits only declare hooks that Mini sets when a
 binary links it; a hook that nobody set keeps Go's own behavior. Bazel builds

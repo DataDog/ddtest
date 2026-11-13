@@ -1,12 +1,20 @@
 package testdrive
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"testing"
+
+	"github.com/DataDog/ddtest/internal/onboard"
+	"github.com/DataDog/ddtest/internal/testutil"
 )
 
 func TestMain(m *testing.M) {
+	onboard.SetPythonInstalledReleaseResolver(func(context.Context) (string, error) { return "", nil })
+	onboard.SetPythonReleaseResolver(func(context.Context) (string, error) { return "4.16.1", nil })
+	// Java setups name a fixed latest dd-java-agent release, read offline.
+	onboard.SetJavaReleaseResolver(func(context.Context) (string, error) { return "1.68.1", nil })
 	if os.Getenv("DDTEST_ISOLATED_TEST_TMP") == "1" {
 		os.Exit(m.Run())
 	}
@@ -16,6 +24,7 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	_ = os.Setenv("DDTEST_ISOLATED_TEST_TMP", "1")
+	testutil.SetBinaryDirectory(root)
 	for _, key := range []string{"TMPDIR", "TMP", "TEMP"} {
 		_ = os.Setenv(key, root)
 	}

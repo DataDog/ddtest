@@ -56,3 +56,15 @@ func TestFinalResponseListsPrescribedRepositoryChangesWithRevert(t *testing.T) {
 	require.Empty(t, repositoryChangesHandoff(nil))
 	require.Nil(t, nonCIChanges(t.TempDir()), "outside Git there is nothing to list")
 }
+
+// The revert commands run from the repository root, where Git lists the
+// changes: a lockfile below the root reinstalls in its package's directory,
+// for every package manager, once per directory.
+func TestRevertReinstallsALockfileBelowTheRootInItsDirectory(t *testing.T) {
+	for lockfile, install := range lockfileInstall {
+		changes := []repositoryChange{{Path: "test/" + lockfile}, {Path: "test/package.json"}}
+		require.Equal(t, "Repository changes outside CI and ignore files (uncommitted): test/"+lockfile+", test/package.json. To revert them: git checkout -- test/"+lockfile+" test/package.json && (cd test && "+install+").\n", repositoryChangesHandoff(changes), lockfile)
+	}
+	changes := []repositoryChange{{Path: "package-lock.json"}, {Path: "packages/web app/package-lock.json"}, {Path: "packages/web app/npm-shrinkwrap.json"}, {Path: "test/package-lock.json"}}
+	require.Contains(t, repositoryChangesHandoff(changes), " && npm ci && (cd 'packages/web app' && npm ci) && (cd test && npm ci).\n")
+}

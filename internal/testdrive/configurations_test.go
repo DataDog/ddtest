@@ -52,9 +52,9 @@ func TestAggregationKeepsFailedAndPendingConfigurations(t *testing.T) {
 
 func TestConfigurationReportsRemainOnePairAndKeepCommandLabels(t *testing.T) {
 	root := t.TempDir()
-	models := []reportModel{{Tests: []reportTest{{Label: "suite › test", Name: "test"}}, Suites: []reportSuite{{Name: "suite"}}}, {Tests: []reportTest{{Label: "suite › test", Name: "test"}}, Suites: []reportSuite{{Name: "suite"}}}}
-	labelConfigurationModel(&models[0], "jest")
-	labelConfigurationModel(&models[1], "jest --config production.ts")
+	models := []reportModel{{Runtime: reportRuntime{Framework: "Jest"}, Tests: []reportTest{{Label: "suite › test", Name: "test"}}, Suites: []reportSuite{{Name: "suite"}}}, {Runtime: reportRuntime{Framework: "Jest"}, Tests: []reportTest{{Label: "suite › test", Name: "test"}}, Suites: []reportSuite{{Name: "suite"}}}}
+	models[0].Configuration = "jest"
+	models[1].Configuration = "jest --config production.ts"
 	var output bytes.Buffer
 	require.NoError(t, writeConfigurationHTML(&output, root, models))
 	require.Contains(t, output.String(), "Open report:")
@@ -70,6 +70,13 @@ func TestConfigurationReportsRemainOnePairAndKeepCommandLabels(t *testing.T) {
 	require.Contains(t, string(html), "jest --config production.ts")
 	require.NotContains(t, string(html), "intake/")
 	require.Contains(t, string(html), `href="testdrive.json"`)
+	require.NotContains(t, string(html), "Test results with Datadog enabled.")
+	require.NotContains(t, string(html), "Test runs with Datadog")
+	require.NotContains(t, string(html), `class="empty-findings"`)
+	_, subtitle, found := strings.Cut(string(html), `<p class="subtitle">`)
+	require.True(t, found)
+	subtitle, _, _ = strings.Cut(subtitle, "</p>")
+	require.Equal(t, "Jest", strings.TrimSpace(subtitle))
 	entries, err := os.ReadDir(filepath.Dir(htmlReportPath(root)))
 	require.NoError(t, err)
 	require.Len(t, entries, 2)
@@ -94,7 +101,7 @@ func TestCombinedHTMLPreservesCoverageLinksAndFullCommandOutput(t *testing.T) {
 			SlowSuites:     []intake.SlowSuite{{Module: "module", Suite: "shared", Duration: 6 * time.Second}},
 		}
 		model := buildReport(root, facts, false, reportRuntime{Framework: "Jest", Tracer: "dd-trace", Command: fmt.Sprintf("jest --config variant-%d.ts", i), Output: strings.Repeat(fmt.Sprintf("variant-%d output\n", i), 200)})
-		labelConfigurationModel(&model, model.Runtime.Command)
+		model.Configuration = model.Runtime.Command
 		models = append(models, model)
 	}
 	for range 2 {
@@ -109,6 +116,123 @@ func TestCombinedHTMLPreservesCoverageLinksAndFullCommandOutput(t *testing.T) {
 		}
 		require.Contains(t, string(page), "Suite coverage")
 		require.Contains(t, string(page), "source.js")
+	}
+}
+
+func TestConfigurationReportLabelsDisambiguatePreparation(t *testing.T) {
+	build := func(command string) []onboard.BuildCommand {
+		return []onboard.BuildCommand{{Directory: ".", Command: command}}
+	}
+	for _, tc := range []struct {
+		name     string
+		commands []onboard.TestCommand
+		want     []string
+	}{
+		{name: "one build stays plain", commands: []onboard.TestCommand{{Command: "npm test", Prerequisites: build("npm run build:cjs")}}, want: []string{"npm test"}},
+		{name: "different builds", commands: []onboard.TestCommand{
+			{Command: "npm test", Prerequisites: build("npm run build:cjs")},
+			{Command: "npm test", Prerequisites: build("npm run build:esm")},
+		}, want: []string{"npm test (after npm run build:cjs)", "npm test (after npm run build:esm)"}},
+		{name: "with and without preparation", commands: []onboard.TestCommand{
+			{Command: "npm test"},
+			{Command: "npm test", Prerequisites: build("npm run build:cjs")},
+		}, want: []string{"npm test (without preparation)", "npm test (after npm run build:cjs)"}},
+		{name: "different environments stay plain", commands: []onboard.TestCommand{
+			{Command: "npm test", Environment: map[string]string{"MODE": "cjs"}, Prerequisites: build("npm run build:cjs")},
+			{Command: "npm test", Environment: map[string]string{"MODE": "esm"}, Prerequisites: build("npm run build:esm")},
+		}, want: []string{"npm test (MODE=cjs)", "npm test (MODE=esm)"}},
+		{name: "different preparation environments", commands: []onboard.TestCommand{
+			{Command: "npm test", Prerequisites: []onboard.BuildCommand{{Command: "npm run build", Environment: map[string]string{"MODE": "cjs"}}}},
+			{Command: "npm test", Prerequisites: []onboard.BuildCommand{{Command: "npm run build", Environment: map[string]string{"MODE": "esm"}}}},
+		}, want: []string{"npm test (after npm run build (MODE=cjs))", "npm test (after npm run build (MODE=esm))"}},
+		{name: "fallback for identical display text", commands: []onboard.TestCommand{
+			{Command: "npm test", Prerequisites: []onboard.BuildCommand{{Command: "npm run build", Kind: onboard.PreparationPackageBuild}}},
+			{Command: "npm test", Prerequisites: []onboard.BuildCommand{{Command: "npm run build", Kind: onboard.PreparationDependencies}}},
+		}, want: []string{"npm test (after npm run build) [CI entry 1]", "npm test (after npm run build) [CI entry 2]"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for range 2 {
+				require.Equal(t, tc.want, configurationReportLabels(tc.commands, "jest"))
+			}
+		})
+	}
+}
+
+func TestConfigurationReportLabelsRedactPreparationSecrets(t *testing.T) {
+	commands := []onboard.TestCommand{
+		{Command: "cypress run --key first-recording-secret", Environment: map[string]string{"CYPRESS_RECORD_KEY": "first-environment-secret"}, Prerequisites: []onboard.BuildCommand{{Command: "cp cjs.json config.json", Environment: map[string]string{"CYPRESS_RECORD_KEY": "first-build-secret"}}}},
+		{Command: "cypress run --key second-recording-secret", Environment: map[string]string{"CYPRESS_RECORD_KEY": "second-environment-secret"}, Prerequisites: []onboard.BuildCommand{{Command: "cp esm.json config.json", Environment: map[string]string{"CYPRESS_RECORD_KEY": "second-build-secret"}}}},
+	}
+	labels := configurationReportLabels(commands, "cypress")
+	require.NotEqual(t, labels[0], labels[1])
+	require.Contains(t, labels[0], "cp cjs.json config.json")
+	require.Contains(t, labels[1], "cp esm.json config.json")
+	for _, secret := range []string{"first-recording-secret", "second-recording-secret", "first-environment-secret", "second-environment-secret", "first-build-secret", "second-build-secret"} {
+		require.NotContains(t, strings.Join(labels, "\n"), secret)
+	}
+	require.Equal(t, "first-environment-secret", commands[0].Environment["CYPRESS_RECORD_KEY"])
+	require.Equal(t, "first-build-secret", commands[0].Prerequisites[0].Environment["CYPRESS_RECORD_KEY"])
+}
+
+func TestCombinedHTMLLabelsOnlyResultsThatNeedDistinguishing(t *testing.T) {
+	primary := reportModel{
+		Configuration: "npm test", EvidenceRole: roleReporting, EvidenceName: "reporting-only",
+		Runtime: reportRuntime{Framework: "Jest", Command: "npm test", Output: "Test results written to: /tmp/reporting-only/jest-results.json", Error: "exit status 1"},
+		Tests:   []reportTest{{Label: "cart.test.js › rejects invalid coupons", Name: "rejects invalid coupons", Status: "Failed"}},
+		Suites:  []reportSuite{{Name: "cart.test.js"}},
+		Cards:   []reportCard{{Title: "Failed tests", Kind: "failed", Count: 1}},
+	}
+	other := primary
+	other.Configuration = "npm run test:integration"
+	other.Runtime.Command = other.Configuration
+	repeated := primary
+	repeated.EvidenceRole, repeated.EvidenceName = roleRepeat, "reporting-only-repeat"
+	repeated.Runtime.Output = "repeat output"
+	buildLabels := configurationReportLabels([]onboard.TestCommand{
+		{Command: "npm test", Prerequisites: []onboard.BuildCommand{{Command: "npm run build:cjs"}}},
+		{Command: "npm test", Prerequisites: []onboard.BuildCommand{{Command: "npm run build:esm"}}},
+	}, "jest")
+	cjs, esm, cjsRepeat := primary, primary, repeated
+	cjs.Configuration, esm.Configuration, cjsRepeat.Configuration = buildLabels[0], buildLabels[1], buildLabels[0]
+	for _, tc := range []struct {
+		name   string
+		models []reportModel
+		titles []string
+	}{
+		{name: "one command", models: []reportModel{primary}, titles: []string{"Failed tests"}},
+		{name: "two commands", models: []reportModel{primary, other}, titles: []string{"npm test — Failed tests", "npm run test:integration — Failed tests"}},
+		{name: "repeated command", models: []reportModel{primary, repeated}, titles: []string{"npm test — Failed tests", "npm test (repeat) — Failed tests"}},
+		{name: "different builds with a repeated comparison", models: []reportModel{cjs, cjsRepeat, esm}, titles: []string{"npm test (after npm run build:cjs) — Failed tests", "npm test (after npm run build:cjs) (repeat) — Failed tests", "npm test (after npm run build:esm) — Failed tests"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			for range 2 {
+				require.NoError(t, writeConfigurationHTML(&bytes.Buffer{}, root, tc.models))
+				data, err := os.ReadFile(htmlReportPath(root))
+				require.NoError(t, err)
+				report := string(data)
+				for _, title := range tc.titles {
+					require.Contains(t, report, `<h2 class="card-name">`+title+`</h2>`)
+				}
+				require.NotContains(t, report, "configuration 1")
+				_, commandLine, found := strings.Cut(report, `<p class="command-line">`)
+				require.True(t, found)
+				commandLine, _, _ = strings.Cut(commandLine, "</p>")
+				require.NotContains(t, commandLine, "reporting-only")
+				require.NotContains(t, report, "Test run 1")
+				if len(tc.models) == 1 {
+					require.Contains(t, report, `<code>npm test</code>`)
+					require.Contains(t, report, "Command failed: exit status 1")
+					require.NotContains(t, report, "npm test —")
+				}
+				for _, model := range tc.models {
+					require.Contains(t, report, model.Runtime.Output)
+					require.Equal(t, "Failed tests", model.Cards[0].Title)
+					require.Equal(t, "cart.test.js", model.Suites[0].Name)
+					require.Equal(t, "cart.test.js › rejects invalid coupons", model.Tests[0].Label)
+				}
+			}
+		})
 	}
 }
 

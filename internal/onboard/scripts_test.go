@@ -67,7 +67,8 @@ func TestStaticJestScriptResolution(t *testing.T) {
 		{"cd app && npm test", false, true, ""},
 		{"echo $(touch sentinel)", false, true, ""},
 		{"jest || true", false, true, ""},
-		{"jest | tee output", false, true, ""},
+		{"jest | tee output", true, false, "jest"},
+		{"jest | grep -v warning", false, true, ""},
 		{"jest &", false, true, ""},
 		{"jest --config 'unterminated", false, true, ""},
 	} {

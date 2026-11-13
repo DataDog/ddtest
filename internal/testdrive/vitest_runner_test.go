@@ -67,6 +67,7 @@ func TestVitestWorkerResultsRequireExactCompleteAssignments(t *testing.T) {
 					suites = nil
 				}
 				writeJSON(name+".results.json", map[string]any{"testResults": suites})
+				writeVitestIdentityFixture(t, filepath.Join(directory, name+".results.json"))
 			}
 			var run validationRun
 			readVitestWorkerResults(directory, root, &run)

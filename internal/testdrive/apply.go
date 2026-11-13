@@ -12,7 +12,6 @@ import (
 
 	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/DataDog/ddtest/internal/platform"
-	"github.com/DataDog/ddtest/internal/testdrive/workspace"
 	"github.com/kballard/go-shellquote"
 )
 
@@ -40,7 +39,7 @@ func (t *Testdrive) Apply(ctx context.Context, output io.Writer, options ApplyOp
 			removeEmptyDirectories(reports)
 		}
 	}()
-	lock, err := workspace.AcquireLock(t.repositoryRoot)
+	lock, err := lockReports(t.repositoryRoot)
 	if err != nil {
 		return err
 	}
@@ -140,7 +139,7 @@ func (t *Testdrive) Apply(ctx context.Context, output io.Writer, options ApplyOp
 	}
 	lock = nil
 	validating = true
-	fresh, err := Prepare(PrepareOptions{TracerVersion: selection.Version, All: true})
+	fresh, err := Prepare(PrepareOptions{TracerVersion: selection.Version, All: true, Site: options.Site})
 	if err != nil {
 		return err
 	}
@@ -205,7 +204,7 @@ func localOnlyUnsupported(framework string, check jestPreflight) string {
 // failing selection; an empty selection means none can be set up.
 func (t *Testdrive) selectSetupTracerReporting(ctx context.Context, scope onboard.ValidationScope, explicit bool) (platform.JSSelection, []string, error) {
 	var reportOnly []string
-	ci := onboard.CheckCIRuntimes(ctx, t.repositoryRoot, t.framework.Name())
+	ci := onboard.CheckCIRuntimes(ctx, t.repositoryRoot, t.framework.Name()).WithSiteCaveats(t.selectedSite)
 	if len(ci.Jobs) == 0 {
 		return platform.JSSelection{}, nil, fmt.Errorf("CI test runtime is unresolved: %s", ci.Reason)
 	}
@@ -249,7 +248,7 @@ func (t *Testdrive) selectSetupTracerReporting(ctx context.Context, scope onboar
 		probe.repositoryRoot = directory
 		probe.command, probe.args = probe.configurationExecutable(words[0]), words[1:]
 		probe.tracerVersion = version
-		probe.executor = configurationExecutor{commandExecutor: t.executor, environment: entry.Environment, without: entry.WithoutSecrets}
+		probe.executor = configurationExecutor{commandExecutor: t.executor, environment: entry.Environment, without: entry.WithoutCIValues}
 		probe.configurationEnvironment = entry.Environment
 		// Preflight loads the configuration; never execute one outside the checkout.
 		policy := frameworkFeaturePolicies[probe.framework.Name()]
@@ -469,11 +468,13 @@ func ciRowExclusions(framework string, ci onboard.RuntimeCheck, selection platfo
 }
 
 // repairableSetupFinding reports whether setup itself fixes the finding: it adds
-// the action and its preload, and wraps uninstrumented Mocha commands with NYC.
-// Only custom or conflicting initialization still needs review.
+// the action and its preload, wraps uninstrumented Mocha commands with NYC, and
+// wraps the selected Cucumber package scripts with NYC. Only custom or
+// conflicting initialization still needs review.
 func repairableSetupFinding(framework string, job onboard.RuntimeFinding) bool {
 	return job.Code == onboard.CodeMissingInstrumentation || job.Code == onboard.CodeMissingInitialization ||
-		framework == "mocha" && job.Code == onboard.CodeUnverifiedInitialization && strings.HasPrefix(job.Reason, onboard.MochaCoverageGap)
+		framework == "mocha" && job.Code == onboard.CodeUnverifiedInitialization && strings.HasPrefix(job.Reason, onboard.MochaCoverageGap) ||
+		framework == "cucumber" && job.Code == onboard.CodeUnverifiedInitialization && strings.HasPrefix(job.Reason, onboard.CucumberCoverageGap)
 }
 
 func (t *Testdrive) preflightInDirectory(ctx context.Context, directory string, result *validationResult) (runErr error) {

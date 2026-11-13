@@ -159,9 +159,7 @@ func (rubyLanguage) pairedFrameworks() map[string]pairedFramework {
 		features: func(t *Testdrive, ctx context.Context, output io.Writer, session *workspace.Session, _ string, baseline validationRun, result *validationResult) error {
 			return t.runRubyFeatures(ctx, output, session, baseline, result)
 		},
-		preflight: func(t *Testdrive) func(context.Context, io.Writer, *validationResult) error {
-			return t.checkRubyPreflight
-		},
+		preflight:             (*Testdrive).checkRubyPreflight,
 		telemetry:             verifyRubyTelemetry,
 		preflightAfterInstall: true,
 		missingCoverage:       "Ruby application coverage was not observed. Inspect the selected Gemfile/runtime and native suite output; setup failures before tests start cannot validate compatibility or features. Check datadog-ci coverage settings after the native suite runs.",
@@ -215,7 +213,7 @@ func (rubyLanguage) ciRuntimes(_ context.Context, root, framework string) onboar
 func (rubyLanguage) ciRuntimeName() string { return "Ruby" }
 
 func (rubyLanguage) configurationsCIRuntime(t *Testdrive, scope onboard.ValidationScope) *onboard.RuntimeCheck {
-	ci := onboard.RubyCIConfigurationForSite(t.checkoutRoot(), t.framework.Name(), t.selectedSite)
+	ci := onboard.RubyCIConfigurationFrom(t.checkoutRoot(), t.committedCheckout(), t.framework.Name(), t.selectedSite)
 	instrumented := false
 	for _, entry := range scope.Commands {
 		instrumented = instrumented || !ciInstrumentationDisabled(entry)
@@ -279,7 +277,10 @@ func (rubyLanguage) packageExclusions(t *Testdrive, ctx context.Context) (onboar
 	return t.rubyPackageExclusions(ctx), true
 }
 
-func (rubyLanguage) initialization(string, string) string {
+func (rubyLanguage) initialization(root, framework string) string {
+	if onboard.RubyCIHandWritten(root, framework) {
+		return "Keep the CI jobs' hand-written setup, which loads the datadog-ci release the bundle locks; preserve RUBYOPT and the original test command. Keep both reports excluded from Git and gem packaging."
+	}
 	setup := "the Ruby CI action"
 	if name := onboard.CIProviderSetupName(); name != "" {
 		setup = "the " + name

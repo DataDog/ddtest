@@ -154,7 +154,7 @@ func TestResumeAlwaysExecutesNewPairAndStopsIdenticalFailures(t *testing.T) {
 	t.Setenv("TMPDIR", t.TempDir())
 	root := t.TempDir()
 	t.Chdir(root)
-	requireWriteFile(t, filepath.Join(root, "package.json"), `{"name":"fixture"}`)
+	requireWriteFile(t, filepath.Join(root, "package.json"), `{"name":"fixture","version":"1.0.0"}`)
 	drive := &Testdrive{repositoryRoot: root, framework: &framework.Vitest{}, language: "javascript", tracerVersion: "latest", executor: workflowCheckExecutor{true}, command: "vitest", nodeVersion: func() string { return "v24.0.0" }}
 	calls := 0
 	drive.workflowRun = func(ctx context.Context, out io.Writer) error {
@@ -279,7 +279,8 @@ func TestCustomHookHandoffContainsResolvedTracerAndResumableScope(t *testing.T) 
 	require.ErrorContains(t, drive.Workflow(t.Context(), &output, WorkflowOptions{Apply: true, Format: "json"}), "ci_edit_unsupported")
 	var result onboard.AgentResult
 	require.NoError(t, json.Unmarshal(output.Bytes(), &result))
-	require.Equal(t, "apply_source_edit", result.NextAction)
+	require.Equal(t, "run_command", result.NextAction, "next_command prints the setup to apply")
+	require.Contains(t, result.NextCommand, "--instructions")
 	require.Equal(t, 1, selections)
 	require.Equal(t, "5.132.0", result.PlanSummary.Tracer)
 	require.Contains(t, result.ResumeCommand, "--tracer-version")

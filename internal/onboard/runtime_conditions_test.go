@@ -236,3 +236,34 @@ func TestConditionsFollowTheRunnersNumberRules(t *testing.T) {
 		require.Equal(t, test.want, got, test.condition)
 	}
 }
+
+// GitHub's status functions read on the passing path of a run: every earlier
+// step succeeded, so success() and always() hold and failure() and
+// cancelled() don't. A condition that holds only after a failure runs CI
+// local validation doesn't, so it stays inconclusive rather than skipped.
+func TestStatusFunctionsReadThePassingPath(t *testing.T) {
+	row := map[string]any{"node": "20"}
+	for _, tc := range []struct {
+		expression string
+		want       bool
+	}{
+		{"${{ !cancelled() }}", true}, {"success()", true}, {"always()", true}, {"cancelled()", false},
+		{"Always()", true}, {"!cancelled() && matrix.node == '20'", true}, {"always() && matrix.node == '18'", false},
+		{"success() || failure()", true}, {"failure() && matrix.node == '18'", false}, {"cancelled() || failure() && false", false},
+	} {
+		t.Run(tc.expression, func(t *testing.T) {
+			got, err := runtimeCondition(tc.expression, row)
+			require.NoError(t, err)
+			require.Equal(t, tc.want, got)
+		})
+	}
+	for _, expression := range []string{"failure()", "${{ failure() && matrix.node == '20' }}", "!success()", "always() && !success()"} {
+		_, err := runtimeCondition(expression, row)
+		require.ErrorContains(t, err, "holds only after an earlier step or job fails", expression)
+	}
+	_, err := runtimeCondition("success(1)", row)
+	require.Error(t, err)
+	// Outside if, a status function is an ordinary unknown operand.
+	_, err = (&conditionParser{rest: "always()"}).expression(0)
+	require.Error(t, err)
+}

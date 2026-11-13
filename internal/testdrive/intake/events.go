@@ -7,7 +7,9 @@ package intake
 
 import (
 	"fmt"
+	"maps"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -243,33 +245,95 @@ type Event struct {
 	Tags map[string]string `json:"tags"`
 }
 
-func (s *Server) events() ([]Event, error) {
-	var events []Event
+// collectEventFacts reads only effective version tags and known capability
+// states for ordinary runs. Only explicit probe collection copies full tags.
+func (s *Server) collectEventFacts(facts *Facts) error {
+	versions := []struct {
+		key    string
+		seen   map[string]struct{}
+		output *[]string
+	}{
+		{"runtime.version", make(map[string]struct{}), &facts.RuntimeVersions},
+		{"test.framework_version", make(map[string]struct{}), &facts.FrameworkVersions},
+		{"library_version", make(map[string]struct{}), &facts.TracerVersions},
+	}
 	for _, request := range s.Requests() {
 		if request.Method != http.MethodPost || request.Path != constants.TestCycleURLPath {
 			continue
 		}
 		body, err := uncompressRequestBody(request)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		payload, _, err := msgp.ReadMapStrIntfBytes(body, nil)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		values, _ := payload["events"].([]any)
+		shared, _ := payload["metadata"].(map[string]any)
 		for _, value := range values {
 			event, _ := value.(map[string]any)
 			content, _ := event["content"].(map[string]any)
 			metadata, _ := content["meta"].(map[string]any)
-			tags := make(map[string]string)
-			for key, value := range metadata {
-				if v, ok := value.(string); ok {
-					tags[key] = v
+			eventType := text(event["type"])
+			common, _ := shared["*"].(map[string]any)
+			typed, _ := shared[eventType].(map[string]any)
+			sources := []map[string]any{common, typed, metadata}
+			for _, field := range versions {
+				if version, _ := effectiveStringTag(field.key, sources); version != "" {
+					field.seen[version] = struct{}{}
 				}
 			}
-			events = append(events, Event{Type: text(event["type"]), Tags: tags})
+			if eventType == "test" {
+				for _, name := range []string{"auto_test_retries", "early_flake_detection", "test_impact_analysis", "test_management.quarantine", "test_management.disable", "test_management.attempt_to_fix"} {
+					value, advertised := effectiveStringTag("_dd.library_capabilities."+name, sources)
+					if !advertised {
+						continue
+					}
+					observed := "unknown"
+					if version, err := strconv.Atoi(value); err == nil && version >= 0 {
+						observed = "available"
+						if version == 0 {
+							observed = "unavailable"
+						}
+					}
+					if facts.LibraryCapabilities == nil {
+						facts.LibraryCapabilities = make(map[string]string)
+					}
+					state := facts.LibraryCapabilities[name]
+					if state == "" || state == "unknown" {
+						facts.LibraryCapabilities[name] = observed
+					} else if observed != "unknown" && state != observed {
+						facts.LibraryCapabilities[name] = "mixed"
+					}
+				}
+			}
+			if s.collectEvents {
+				tags := make(map[string]string)
+				for _, source := range sources {
+					for key, value := range source {
+						if v, ok := value.(string); ok {
+							tags[key] = v
+						}
+					}
+				}
+				facts.Events = append(facts.Events, Event{Type: eventType, Tags: tags})
+			}
 		}
 	}
-	return events, nil
+	for _, field := range versions {
+		*field.output = slices.Sorted(maps.Keys(field.seen))
+	}
+	return nil
+}
+
+// Match event-tag precedence without copying unrelated customer metadata.
+// A non-string value does not replace an inherited string tag.
+func effectiveStringTag(key string, sources []map[string]any) (string, bool) {
+	for i := len(sources) - 1; i >= 0; i-- {
+		if value, ok := sources[i][key].(string); ok {
+			return value, true
+		}
+	}
+	return "", false
 }

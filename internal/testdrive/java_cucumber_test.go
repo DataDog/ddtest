@@ -105,11 +105,11 @@ func TestJavaCucumberStepsMatchTheGlueBackendAndPackage(t *testing.T) {
 	java8 := "<dependency><groupId>io.cucumber</groupId><artifactId>cucumber-java8</artifactId></dependency>"
 	annotations := "<dependency><groupId>io.cucumber</groupId><artifactId>cucumber-java</artifactId></dependency>"
 	pom(java8)
-	require.True(t, javaCucumberLambda(root, "service", backendUse{}), "only the lambda backend")
+	require.True(t, javaCucumberLambda(backendUse{}, javaPOMDependencies(root, "service")), "only the lambda backend")
 	pom(java8 + annotations)
-	require.False(t, javaCucumberLambda(root, "service", backendUse{}), "annotations are available")
+	require.False(t, javaCucumberLambda(backendUse{}, javaPOMDependencies(root, "service")), "annotations are available")
 	pom(annotations)
-	require.False(t, javaCucumberLambda(root, "service", backendUse{}))
+	require.False(t, javaCucumberLambda(backendUse{}, javaPOMDependencies(root, "service")))
 }
 
 func TestJavaCucumberProbeHonorsTheCommandGlueAndInheritedBackends(t *testing.T) {
@@ -157,7 +157,7 @@ func TestJavaCucumberProbeGoesToTheModuleWithTheRunner(t *testing.T) {
 	tests := []nativeTest{{File: "api / example.ApiTest"}, {File: "features / Calculator"}}
 	module, ok := javaRunnerModule(newMavenBuild(root, projects), tests, "cucumber-java")
 	require.True(t, ok)
-	require.Equal(t, "features", module, "an earlier module without a runner is passed over")
+	require.Equal(t, javaProbeTarget{directory: "features", module: "features"}, module, "an earlier module without a runner is passed over")
 	_, ok = javaRunnerModule(newMavenBuild(root, projects), tests[:1], "cucumber-java")
 	require.False(t, ok, "only modules whose tests ran qualify")
 }

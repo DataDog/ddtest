@@ -167,7 +167,8 @@
       "TestTestifyRegularCallerDefaultCoverage",
       "TestTestifySupportedVersionsAndNativeSemantics",
       "TestTestifyUnsupportedEntryWarnsAndPreservesClientNames",
-      "TestTestifyUserOverlay"
+      "TestTestifyUserOverlay",
+      "TestMiniDeclarationExclusions"
     ],
     "fuzz": [
       "TestAlignMiniTestCommandsRequiresMiniForm",
@@ -261,7 +262,8 @@
       "TestMiniTemporaryDirectoryInsideModule",
       "TestMiniVendorSelectionMatchesGo",
       "TestMiniVendorTreeMatchesGo",
-      "TestMiniVendorWorkspaceLinksAndReusesBuildCache"
+      "TestMiniVendorWorkspaceLinksAndReusesBuildCache",
+      "TestMiniDeclarationExclusions"
     ],
     "fuzz": [
       "TestMiniFuzzExampleLifecycle",

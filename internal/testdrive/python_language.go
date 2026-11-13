@@ -3,7 +3,6 @@ package testdrive
 import (
 	"context"
 	"fmt"
-	"io"
 	"maps"
 	"os"
 	"path/filepath"
@@ -79,7 +78,7 @@ func (pythonLanguage) installTracer(*Testdrive, context.Context, platform.Tracer
 }
 
 func (pythonLanguage) inspectEnvironment(ctx context.Context, request environmentRequest) (string, []string, environmentInfo, *reportCard) {
-	command, args, source := pythonTestdriveCommand(request.root, request.command, request.args, request.explicit)
+	command, args, source := platform.PythonTestCommand(request.root, request.command, request.args, request.explicit)
 	info, finding := pythonEnvironmentInfo(ctx, command, args, source, request.environment, request.timeout)
 	return command, args, info, finding
 }
@@ -150,11 +149,9 @@ func (pythonLanguage) noResultsFinding(runtime reportRuntime, noEvents, commandF
 
 func (pythonLanguage) pairedFrameworks() map[string]pairedFramework {
 	return map[string]pairedFramework{"pytest": {
-		run:      (*Testdrive).runPytest,
-		features: (*Testdrive).runPytestFeatures,
-		preflight: func(t *Testdrive) func(context.Context, io.Writer, *validationResult) error {
-			return t.checkPytestPreflight
-		},
+		run:            (*Testdrive).runPytest,
+		features:       (*Testdrive).runPytestFeatures,
+		preflight:      (*Testdrive).checkPytestPreflight,
 		telemetry:      verifyPytestTelemetry,
 		probeTelemetry: verifyPytestTelemetry,
 		verifyInstallation: func(t *Testdrive, ctx context.Context, path string) error {
@@ -188,8 +185,20 @@ func (pythonLanguage) standaloneReport(root string, validation *validationResult
 }
 
 func (pythonLanguage) defaultsToCITracer() bool { return false }
-func (pythonLanguage) ciRuntimes(ctx context.Context, root, framework string) onboard.RuntimeCheck {
-	return onboard.CheckCIRuntimes(ctx, root, framework)
+
+// ciPinnedTracer is the exact ddtrace release one CI job's setup installs; a
+// setup that installs the latest release when each build runs pins none.
+func (pythonLanguage) ciPinnedTracer(job onboard.RuntimeFinding) string {
+	if job.TracerRequested == "" || job.TracerFloating {
+		return ""
+	}
+	return strings.TrimPrefix(job.Tracer, "ddtrace@")
+}
+
+// Until preflight knows the local release, the pytest CI check runs without
+// comparing it; preflight then replaces it with the full check.
+func (pythonLanguage) ciRuntimes(ctx context.Context, root, _ string) onboard.RuntimeCheck {
+	return onboard.CheckPythonCIRuntimes(ctx, root, "")
 }
 
 func (pythonLanguage) ciRuntimeName() string { return "Python" }

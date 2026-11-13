@@ -21,13 +21,13 @@ import (
 type configurationExecutor struct {
 	commandExecutor
 	environment map[string]string
-	// without names CI secrets the configuration's steps run without, which
-	// a value inherited from this host must not replace.
+	// without names CI secrets and variables the configuration's steps run
+	// without, which a value inherited from this host must not replace.
 	without []string
 }
 
 // commandEnvironment is a command's environment in the configuration. An
-// omitted secret is unset unless the command or configuration sets the
+// omitted secret or variable is unset unless the command or configuration sets the
 // variable itself, as a later CI step may.
 func (e configurationExecutor) commandEnvironment(env map[string]string) map[string]string {
 	merged := mergeConfigurationEnvironment(e.environment, env)
@@ -87,10 +87,9 @@ func (t *Testdrive) runPreparedConfiguration(ctx context.Context, output io.Writ
 	}
 	original, copyRoot := t.repositoryRoot, t.repositoryRoot
 	checkout := t.checkoutRoot()
-	sourceRoot := original
-	if t.lang().isolatesConfigurations() {
-		sourceRoot = checkout
-	}
+	// The copy is the whole checkout, as CI checks it out, with the package
+	// as the working directory: tests may read files outside their package.
+	sourceRoot := checkout
 	if t.lang().isolatesConfigurations() || !t.checkOnly && (len(item.Prerequisites) > 0 || len(item.Services) > 0 || t.usesVitestRunner() || t.framework.Name() == "mocha" || t.framework.Name() == "playwright" || t.framework.Name() == "cypress" || t.framework.Name() == "cucumber" || t.framework.Name() == "webdriverio") {
 		parent, err := os.MkdirTemp("", "ddtest-configuration-")
 		if err != nil {
@@ -153,7 +152,7 @@ func (t *Testdrive) runPreparedConfiguration(ctx context.Context, output io.Writ
 	t.isolated = copyRoot != original
 	executor := t.executor
 	// Earlier setup must not inherit variables declared only on the test step.
-	t.executor = configurationExecutor{commandExecutor: executor, environment: isolatedCIEnvironment(nil, sourceRoot, checkout), without: item.WithoutSecrets}
+	t.executor = configurationExecutor{commandExecutor: executor, environment: isolatedCIEnvironment(nil, sourceRoot, checkout), without: item.WithoutCIValues}
 	if err := t.runBuildPrerequisites(ctx, output, item); err != nil {
 		result.Compatibility = verdict{Status: "not exercised", Reason: "Configuration preparation failed; tests were not started."}
 		return result, err
@@ -182,7 +181,7 @@ func (t *Testdrive) runPreparedConfiguration(ctx context.Context, output io.Writ
 	if err := t.lang().prepareConfiguration(t, item, original, copyRoot); err != nil {
 		return result, err
 	}
-	t.executor = configurationExecutor{commandExecutor: executor, environment: t.configurationEnvironment, without: item.WithoutSecrets}
+	t.executor = configurationExecutor{commandExecutor: executor, environment: t.configurationEnvironment, without: item.WithoutCIValues}
 	directory, err := localSetupDirectory(copyRoot, item.Directory)
 	if err != nil {
 		return result, err
@@ -296,6 +295,15 @@ const fileDescriptorsExhaustedCode = "file_descriptors_exhausted"
 
 // A package command executes in its package directory while telemetry source
 // paths and cross-configuration native identities remain checkout-relative.
+// committedCheckout is the user's checkout a configuration copy was made
+// from (see configurationSourceRoot), or the checkout itself.
+func (t *Testdrive) committedCheckout() string {
+	if t.configurationSourceRoot != "" {
+		return t.configurationSourceRoot
+	}
+	return t.checkoutRoot()
+}
+
 func (t *Testdrive) checkoutRoot() string {
 	if t.configurationRoot != "" {
 		return t.configurationRoot
@@ -324,6 +332,7 @@ func (t *Testdrive) runPreparedChecksOrTests(ctx context.Context, output io.Writ
 	if t.workflowRoot != "" {
 		check = frameworkCIRuntimes(ctx, root, t.framework.Name())
 	}
+	check = check.WithSiteCaveats(t.selectedSite)
 	result.CIRuntime = &check
 	t.defaultToCITracer(check)
 	result.Tracer = t.tracerLabel

@@ -2,8 +2,9 @@
 
 This example uses a setup workflow: the first config runs `ddtest plan`, stores
 the generated `.testoptimization/` directory, and continues into a second config
-with the selected CI node count. Each CircleCI parallel container is one CI node,
-and `CIRCLE_NODE_INDEX` is passed to `ddtest run --ci-node`.
+with the selected CI node count and whether there are runnable tests. Each
+CircleCI parallel container is one CI node, and `CIRCLE_NODE_INDEX` is passed to
+`ddtest run --ci-node`.
 
 In `.circleci/config.yml`:
 
@@ -52,25 +53,9 @@ jobs:
           paths:
             - .testoptimization
             - bin/ddtest
-      - run:
-          name: Determine CI node count
-          command: |
-            set -euo pipefail
-            cat .testoptimization/runner/parallel-runners.txt
-            desired=$(cat .testoptimization/runner/parallel-runners.txt 2>/dev/null || echo 1)
-            if ! echo "${desired}" | grep -Eq '^[0-9]+$'; then
-              echo "Invalid parallelism value '${desired}', defaulting to 1"
-              desired=1
-            fi
-            if [ "${desired}" -lt 1 ]; then
-              echo "Parallelism must be at least 1, defaulting to 1"
-              desired=1
-            fi
-            printf '{"parallelism": %s}\n' "${desired}" > pipeline-parameters.json
-            cat pipeline-parameters.json
       - continuation/continue:
           configuration_path: .circleci/test.yml
-          parameters: pipeline-parameters.json
+          parameters: .testoptimization/circleci/parameters.json
 
 workflows:
   plan:
@@ -87,6 +72,9 @@ parameters:
   parallelism:
     type: integer
     default: 1
+  has_tests:
+    type: boolean
+    default: false
 
 orbs:
   node: circleci/node@7
@@ -127,9 +115,26 @@ jobs:
 
 workflows:
   test:
+    when: << pipeline.parameters.has_tests >>
     jobs:
       - test
 ```
+
+When CircleCI is detected, `ddtest plan` writes
+`.testoptimization/circleci/parameters.json`, ready for `continuation/continue`:
+
+```json
+{"parallelism": 2, "has_tests": true}
+```
+
+`has_tests=false` means no files remain runnable. The workflow-level `when`
+skips test containers before setup; the planning job still runs. Runner counts
+remain positive, so existing workflows must add this condition. See
+[CircleCI's continuation example](https://circleci.com/docs/guides/orchestrate/using-dynamic-configuration/).
+
+Declare both parameters in the continuation config and merge any existing
+parameters into the JSON object. Keep unrelated workflows outside the condition.
+Missing files and planning errors must fail setup, not become `has_tests=false`.
 
 ## Python / Pytest Variant
 

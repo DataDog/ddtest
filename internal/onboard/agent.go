@@ -7,182 +7,16 @@ package onboard
 
 import (
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
-	"path/filepath"
 	"slices"
 	"strings"
 
-	"errors"
 	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/kballard/go-shellquote"
 )
-
-// AgentResult is the shared, versioned onboarding/testdrive protocol. Commands
-// are argv, not shell programs. Failed checks never become agent decisions.
-type PrerequisiteFact struct {
-	ForCommand    string   `json:"for_command"`
-	Directory     string   `json:"directory,omitempty"`
-	Argv          []string `json:"argv"`
-	ExpectedFiles []string `json:"expected_files"`
-}
-type SetupFacts struct {
-	SchemaVersion  int                 `json:"schema_version"`
-	Fingerprint    string              `json:"input_fingerprint"`
-	Prerequisites  []PrerequisiteFact  `json:"prerequisites"`
-	Configurations []ConfigurationFact `json:"configurations,omitempty"`
-}
-
-type AgentResult struct {
-	RunID          string         `json:"run_id,omitempty"`
-	Plan           *ExecutionPlan `json:"plan,omitempty"`
-	PlanSummary    *PlanSummary   `json:"plan_summary,omitempty"`
-	DetailsCommand []string       `json:"details_command,omitempty"`
-	InputTemplate  *SetupFacts    `json:"input_template,omitempty"`
-	SchemaVersion  int            `json:"schema_version"`
-	Status         string         `json:"status"`
-	Phase          string         `json:"phase"`
-	Code           string         `json:"code,omitempty"`
-	Reason         string         `json:"reason,omitempty"`
-	Location       string         `json:"location,omitempty"`
-	Needs          string         `json:"needs,omitempty"`
-	Capabilities   []string       `json:"required_capabilities,omitempty"`
-	RequiredInput  []string       `json:"required_input,omitempty"`
-	NextAction     string         `json:"next_action,omitempty"`
-	NextCommand    []string       `json:"next_command,omitempty"`
-	// SetupCommands are the argv commands, run in order from the repository
-	// root, that prepare dependencies before resume_command; next_command is
-	// the first of them.
-	SetupCommands [][]string `json:"setup_commands,omitempty"`
-	ResumeCommand []string   `json:"resume_command,omitempty"`
-	// AcceptResumeCommand is resume_command plus a decision only the user may
-	// make, such as accepting a substitute runtime.
-	AcceptResumeCommand []string        `json:"accept_resume_command,omitempty"`
-	Instruction         string          `json:"agent_instruction,omitempty"`
-	Fingerprint         string          `json:"input_fingerprint,omitempty"`
-	Checks              []WorkflowCheck `json:"checks,omitempty"`
-	SetupDiff           string          `json:"setup_diff,omitempty"`
-	UndoInstructions    string          `json:"undo_instructions,omitempty"`
-	Changes             []SetupChange   `json:"changes,omitempty"`
-	FinalResponse       string          `json:"final_response,omitempty"`
-	JSONReport          string          `json:"json_report,omitempty"`
-	HTMLReport          string          `json:"html_report,omitempty"`
-}
-
-// PlanSummary keeps routine handoffs independent of CI matrix size.
-type PlanSummary struct {
-	UnsupportedFeatures map[string]string `json:"unsupported_features,omitempty"`
-	KnownLimitations    map[string]string `json:"known_limitations,omitempty"`
-	Features            []string          `json:"feature_scenarios,omitempty"`
-	Framework           string            `json:"framework"`
-	Tracer              string            `json:"tracer,omitempty"`
-	Site                string            `json:"site"`
-	Initialization      string            `json:"initialization"`
-	Configurations      int               `json:"configurations"`
-	Unresolved          int               `json:"unresolved"`
-}
-
-// WorkflowCheck records an owned check and its command, without unbounded logs.
-type WorkflowCheck struct {
-	Name    string   `json:"name"`
-	Status  string   `json:"status"`
-	Command []string `json:"command,omitempty"`
-	Reason  string   `json:"reason,omitempty"`
-}
-
-func WriteAgentResult(output io.Writer, result AgentResult) error {
-	result.SchemaVersion = 2
-	return json.NewEncoder(output).Encode(result)
-}
-
-// RenderAgentResult gives hosts a structured response or renders its facts
-// directly in the terminal. Rendering never asks a model to recompute a verdict.
-func RenderAgentResult(output io.Writer, result AgentResult, format string) error {
-	if result.Plan != nil {
-		plan := result.Plan
-		result.PlanSummary = &PlanSummary{Framework: plan.Framework, Tracer: plan.Tracer, Site: plan.Site, Initialization: plan.Initialization, Configurations: len(plan.Scope.Commands), Unresolved: len(plan.Scope.Unresolved), Features: plan.Features, UnsupportedFeatures: plan.UnsupportedFeatures, KnownLimitations: plan.KnownLimitations}
-		result.DetailsCommand = DDTestCommand("testdrive", "--report", "--detail", "plan")
-		if format == "json" && len(result.DetailsCommand) > 0 {
-			result.DetailsCommand = append(result.DetailsCommand, "--format", "json")
-		}
-		if len(result.DetailsCommand) > 0 && result.RunID != "" && result.Status != "complete_locally" && result.Status != "selected_passed" {
-			result.DetailsCommand = append(result.DetailsCommand, "--resume", result.RunID)
-		}
-		result.Plan = nil
-	}
-
-	if result.FinalResponse != "" && !strings.Contains(result.Instruction, FinalResponseInstruction) {
-		// First, so it is read before the rest of the instruction.
-		result.Instruction = strings.TrimSpace(FinalResponseInstruction + " " + result.Instruction)
-	}
-	if !strings.Contains(result.Instruction, ReadWholeInstruction) && !strings.Contains(result.Reason, ReadWholeInstruction) {
-		result.Instruction = strings.TrimSpace(result.Instruction + " " + ReadWholeInstruction)
-	}
-	if format == "verbose" {
-		return writeAgentText(output, result)
-	}
-	return WriteAgentResult(output, result)
-}
-
-// writeAgentText renders a result for a person reading the terminal. Hosts
-// select the agent or json format to receive the structured document.
-func writeAgentText(output io.Writer, result AgentResult) error {
-	var text strings.Builder
-	status := result.Status
-	if result.Code != "" {
-		status += " (" + result.Code + ")"
-	}
-	_, _ = fmt.Fprintf(&text, "\nResult: %s, phase %s\n", status, result.Phase)
-	for _, line := range []struct{ label, value string }{{"Reason", result.Reason}, {"Location", result.Location}, {"Needs", result.Needs}} {
-		if line.value != "" {
-			_, _ = fmt.Fprintf(&text, "%s: %s\n", line.label, line.value)
-		}
-	}
-	for _, input := range result.RequiredInput {
-		_, _ = fmt.Fprintf(&text, "Required input: %s\n", input)
-	}
-	for _, command := range result.SetupCommands {
-		_, _ = fmt.Fprintf(&text, "Setup: %s\n", shellquote.Join(command...))
-	}
-	for _, change := range result.Changes {
-		_, _ = fmt.Fprintf(&text, "Changed: %s\n", change.Path)
-	}
-	for _, check := range result.Checks {
-		line := check.Name + ": " + check.Status
-		if check.Reason != "" {
-			line += " — " + check.Reason
-		}
-		_, _ = fmt.Fprintf(&text, "Check %s\n", line)
-	}
-	if result.InputTemplate != nil {
-		data, err := json.MarshalIndent(result.InputTemplate, "", "  ")
-		if err != nil {
-			return err
-		}
-		_, _ = fmt.Fprintf(&text, "Facts template (complete it, save it outside the checkout, then pass --facts <path>):\n%s\n", data)
-	}
-	for _, line := range []struct {
-		label   string
-		command []string
-	}{{"Next", result.NextCommand}, {"Resume", result.ResumeCommand}, {"After user approval", result.AcceptResumeCommand}, {"Details", result.DetailsCommand}} {
-		if len(line.command) > 0 {
-			_, _ = fmt.Fprintf(&text, "%s: %s\n", line.label, shellquote.Join(line.command...))
-		}
-	}
-	for _, report := range []struct{ label, path string }{{"JSON report", result.JSONReport}, {"HTML report", result.HTMLReport}} {
-		if report.path != "" {
-			_, _ = fmt.Fprintf(&text, "%s: %s\n", report.label, report.path)
-		}
-	}
-	if result.FinalResponse != "" {
-		_, _ = fmt.Fprintf(&text, "\nSummary:\n%s\n", result.FinalResponse)
-	}
-	_, err := io.WriteString(output, text.String())
-	return err
-}
 
 type StartOptions struct {
 	Format              string
@@ -196,9 +30,19 @@ type StartOptions struct {
 	AllowReviewedBuilds bool
 	// AcceptSubstituteRuntime is forwarded to the onboarding handoff.
 	AcceptSubstituteRuntime bool
+	// SetupApplied reports that onboard --apply just wrote the CI
+	// provider's plugin setup: the rest of the language's setup comes first,
+	// and the facts to confirm then come with validation.
+	SetupApplied bool
 }
 
 func Start(output io.Writer) error { return StartWithOptions(output, StartOptions{}) }
+
+// literalSite reports a site the handoff accepts: empty, or a literal
+// Datadog hostname.
+func literalSite(site string) bool {
+	return strings.Trim(site, "abcdefghijklmnopqrstuvwxyz0123456789.-") == ""
+}
 
 func StartWithOptions(output io.Writer, options StartOptions) error {
 	fail := func(code string, err error) error {
@@ -221,6 +65,7 @@ func StartWithOptions(output io.Writer, options StartOptions) error {
 			case errors.As(err, &choice):
 				return errors.Join(err, WriteAgentResult(output, ProviderChoiceResult(choice)))
 			case errors.As(err, &unsupported) && options.Human:
+				observeAgentResult(output, ProviderUnsupportedResult(unsupported))
 				return err
 			case errors.As(err, &unsupported):
 				return errors.Join(err, WriteAgentResult(output, ProviderUnsupportedResult(unsupported)))
@@ -229,7 +74,7 @@ func StartWithOptions(output io.Writer, options StartOptions) error {
 			}
 		}
 	}
-	if !coordinatedLanguage(detected.Name()) {
+	if discoveryLanguageNamed(detected.Name()) == nil {
 		if options.Format != "" {
 			err := fmt.Errorf("controlled validation is not available for %s", detected.Name())
 			return errors.Join(err, WriteAgentResult(output, AgentResult{Status: "unsupported", Phase: "onboarding", Code: "framework_unsupported", Reason: err.Error(), NextAction: "report_result"}))
@@ -242,27 +87,46 @@ func StartWithOptions(output io.Writer, options StartOptions) error {
 		err := fmt.Errorf("--command selects one suite, but onboarding applies and validates every discovered CI configuration")
 		return errors.Join(err, WriteAgentResult(output, AgentResult{Status: "needs_input", Phase: "discovery", Code: "invalid_options", Reason: err.Error(), NextAction: "supply_input", RequiredInput: []string{"Omit --command to onboard every discovered configuration, or validate one suite with testdrive --framework " + frameworkName + " --command <command>."}}))
 	}
+	selected, err := SelectTracerRelease(detected.Name(), options.Tracer)
+	if err != nil {
+		return errors.Join(err, WriteAgentResult(output, AgentResult{Status: "needs_input", Phase: "discovery", Code: "invalid_options", Reason: err.Error(), NextAction: "supply_input"}))
+	}
+	options.Tracer = selected
 	if root, err := os.Getwd(); err == nil {
 		// Only the user can tell a CI job's runtime its configuration doesn't
 		// name; ask before any setup is prescribed for it.
 		if required := RequiredCIRuntimes(context.Background(), root, detected.Name(), frameworkName); required != nil {
 			if options.Human {
+				observeAgentResult(output, CIRuntimeRequiredResult(required))
 				return fmt.Errorf("%w Rerun with --ci-runtime %s=<version> (or <job>:%s=<version> per job) once you know it", required, required.Flag, required.Flag)
 			}
 			return errors.Join(required, WriteAgentResult(output, CIRuntimeRequiredResult(required)))
 		}
 		// Facts only the CI server shows come next, once the setup is there.
-		if required := RequiredCIConfirmations(root, detected.Name(), frameworkName); required != nil {
+		if required := RequiredCIConfirmations(root, detected.Name(), frameworkName); required != nil && (!options.SetupApplied || discoveryLanguageNamed(detected.Name()).ciSetupConfigured(root, frameworkName, options.Site)) {
 			if options.Human {
+				observeAgentResult(output, CIConfirmationRequiredResult(required))
 				return fmt.Errorf("%w Rerun with --ci-confirm <fact>[=<value>] for each fact once you know it", required)
 			}
 			return errors.Join(required, WriteAgentResult(output, CIConfirmationRequiredResult(required)))
 		}
 	}
 	automatic := discoveryLanguageAutomaticSetup(detected.Name())
+	// A hand-written setup onboard --apply would refuse as incomplete.
+	var handWritten *handWrittenGap
 	if root, err := os.Getwd(); err == nil && automatic {
 		if provider, err := currentCIProvider(root); err == nil && !provider.sharedSyntax() {
-			automatic = providerAutomaticSetup(provider, discoveryLanguageNamed(detected.Name()), frameworkName)
+			// onboard --apply checks the edit against the site it reports to,
+			// DD_SITE by default; one it would refuse is left to the
+			// instructions, which name the problem.
+			site := options.Site
+			if site == "" {
+				site = os.Getenv("DD_SITE")
+			}
+			automatic = providerAutomaticSetup(root, provider, discoveryLanguageNamed(detected.Name()), frameworkName, site)
+			if automatic && !options.Human {
+				handWritten = handWrittenSetupGap(root, frameworkName, site)
+			}
 		}
 	}
 	if !automatic && options.Site == "" {
@@ -270,11 +134,14 @@ func StartWithOptions(output io.Writer, options StartOptions) error {
 		// it into the action and the validation command records it.
 		options.Site = os.Getenv("DD_SITE")
 	}
-	if !automatic && strings.Trim(options.Site, "abcdefghijklmnopqrstuvwxyz0123456789.-") != "" {
+	if !automatic && !literalSite(options.Site) {
 		err := fmt.Errorf("site must be a literal Datadog hostname: %q", options.Site)
 		return errors.Join(err, WriteAgentResult(output, AgentResult{Status: "needs_input", Phase: "discovery", Code: "invalid_options", Reason: err.Error(), NextAction: "supply_input"}))
 	}
 	command := OnboardingCommand(frameworkName)
+	// The CI provider's plugin setup onboard --apply writes for a language
+	// whose own setup the agent applies.
+	apply := OnboardingCommand(frameworkName)
 	if !automatic {
 		// The agent applies CI setup by hand; validation runs through the coordinator.
 		command = DDTestCommand("testdrive", "--framework", frameworkName, "--all", "--agent", "--yes")
@@ -291,16 +158,23 @@ func StartWithOptions(output io.Writer, options StartOptions) error {
 		if flag.value != "" && (automatic || flag.name != "format" || flag.value != "agent") {
 			command = append(command, "--"+flag.name, flag.value)
 		}
+		if flag.value != "" {
+			apply = append(apply, "--"+flag.name, flag.value)
+		}
 	}
 	if options.AllowReviewedBuilds {
 		command = append(command, "--allow-reviewed-builds")
+		apply = append(apply, "--allow-reviewed-builds")
 	}
 	if options.AcceptSubstituteRuntime {
 		command = append(command, "--accept-substitute-runtime")
+		apply = append(apply, "--accept-substitute-runtime")
 	}
 	notice := ExecutableFallbackNotice()
-	if !automatic {
-		return manualSetupHandoff(output, options, detected.Name(), frameworkName, command, notice)
+	if !automatic || handWritten != nil {
+		// The job keeps its hand-written setup: the agent completes it, then
+		// resumes with command, which onboard --apply then accepts.
+		return manualSetupHandoff(output, options, detected.Name(), frameworkName, command, apply, notice, handWritten)
 	}
 	if options.Human {
 		text := humanOnboardingHandoff(frameworkName, command)
@@ -321,7 +195,11 @@ func StartWithOptions(output io.Writer, options StartOptions) error {
 // agent writes by hand. Once every discovered test step runs the Datadog
 // action, it hands off validation; until then it returns the setup
 // instructions with validation as resume_command. People get the guidance.
-func manualSetupHandoff(output io.Writer, options StartOptions, language, framework string, command []string, notice string) error {
+// handWrittenGap, when set, is what onboard --apply refuses in a CI job's
+// hand-written setup, where it writes the provider's setup itself: the
+// handoff asks for the edit that completes it, keeping it, with command
+// (onboard --apply) as resume_command.
+func manualSetupHandoff(output io.Writer, options StartOptions, language, framework string, command, apply []string, notice string, handWrittenGap *handWrittenGap) error {
 	if options.Human {
 		return Run(output)
 	}
@@ -331,13 +209,31 @@ func manualSetupHandoff(output io.Writer, options StartOptions, language, framew
 	}
 	setup := "Datadog setup action"
 	if provider, err := currentCIProvider(root); err == nil && !provider.sharedSyntax() {
-		setup = provider.setupName()
+		setup = setupProviderNames(testJobSetups(root, provider, language, framework))
 	}
-	if registered := discoveryLanguageNamed(language); registered != nil && registered.ciSetupConfigured(root, framework, options.Site) {
+	// Jobs that set up the tracer by hand keep that setup.
+	handWritten := handWrittenSetupNote(root, language, framework, options.Site) != ""
+	configured := "CI already runs the " + setup + " for every discovered " + framework + " test step. "
+	if handWritten {
+		configured = "CI already sets up Test Optimization for every discovered " + framework + " test step, with the " + setup + " or a complete hand-written setup. "
+	}
+	if registered := discoveryLanguageNamed(language); handWrittenGap == nil && registered != nil && registered.ciSetupConfigured(root, framework, options.Site) {
+		if required := RequiredCIEdits(context.Background(), root, language, framework, false); required != nil {
+			// The setup is there, but a test command drops what it sets.
+			result := CIEditRequiredResult(required, command)
+			result.Capabilities = validationCapabilities
+			result.Reason += " " + AgentScope + " " + notice
+			return errors.Join(required, WriteAgentResult(output, result))
+		}
+		owns := " ddtest owns testdrive, report-exclusion checks and cleanup, and returns exact blockers for unsupported setup."
+		if !registered.coordinated() {
+			// Standalone validation checks no report exclusions.
+			owns = " Before next_command, " + strings.ToLower(GitReportExclusion[:1]) + GitReportExclusion[1:] + " ddtest owns testdrive and cleanup, and returns exact blockers for unsupported setup. It returns one structured result: when it asks the user (next_action ask_user), stop and ask them; finish by rendering its final_response unchanged. " + StandaloneVerdictInstruction(framework)
+		}
 		return WriteAgentResult(output, AgentResult{
 			Status: "ready", Phase: "onboarding", NextAction: "run_command", NextCommand: command,
 			Capabilities: validationCapabilities,
-			Reason:       strings.TrimSpace("CI already runs the " + setup + " for every discovered " + framework + " test step. " + foregroundRunInstruction + " " + AgentScope + " " + validationWaitInstruction + " ddtest owns testdrive, report-exclusion checks and cleanup, and returns exact blockers for unsupported setup. No Datadog key is required locally. Do not launch a parallel preflight first. " + notice),
+			Reason:       strings.TrimSpace(configured + foregroundRunInstruction + " " + AgentScope + " " + validationWaitInstruction + owns + " No Datadog key is required locally. Do not launch a parallel preflight first. " + notice),
 		})
 	}
 	scope, err := DiscoverValidationScope(root, framework)
@@ -356,19 +252,51 @@ func manualSetupHandoff(output io.Writer, options StartOptions, language, framew
 			Status: "needs_input", Phase: "discovery", Code: "scope_decision_required", NextAction: "supply_input",
 			Location:      strings.Join(unresolved, "; "),
 			RequiredInput: []string{"User decision for the CI steps in location: approve an explicit " + framework + " entry point in CI (for example its own step that runs only " + framework + "), then rerun this onboard command; or stop and report these steps as not validated."},
-			Reason:        "ddtest cannot tell which " + framework + " tests these CI steps run, so it has no configuration to validate locally and will not prescribe CI setup for them. Ask the user and report their decision; do not edit CI before they approve it, and do not combine --command with --all: a single command cannot stand in for a CI step. " + AgentScope + " " + notice,
+			Reason:        "ddtest cannot tell which " + framework + " tests these CI steps run, so it has no configuration to validate locally and will not prescribe CI setup for them. Stop here: report these steps and the options in required_input to the user, and continue only with their decision. " + ScopeBlockerInstruction + " Also, do not combine --command with --all: a single command cannot stand in for a CI step. " + AgentScope + " " + notice,
+		}))
+	}
+	if !options.SetupApplied && pluginSetupWritable(root, language, framework, options.Site) {
+		// ddtest writes the provider's part of the setup itself.
+		err := fmt.Errorf("CI setup is required before validation")
+		return errors.Join(err, WriteAgentResult(output, AgentResult{
+			Status: "needs_input", Phase: "onboarding", Code: "ci_setup_required", NextAction: "run_command", NextCommand: apply,
+			Reason: strings.TrimSpace("CI does not yet run the " + setup + " before every discovered " + framework + " test step, and onboard --apply writes it: run next_command once in the foreground and wait for its exit. It edits only the CI configuration, lists the changes, and returns the rest of the setup to apply and the validation command; it runs no tests. Do not edit the CI configuration yourself first. " + AgentScope + " " + notice),
 		}))
 	}
 	var guidance strings.Builder
-	if err := run(&guidance, &agentHandoff{site: options.Site}); err != nil {
+	if err := run(&guidance, &agentHandoff{site: options.Site, handWritten: handWrittenGap != nil}); err != nil {
 		return errors.Join(err, WriteAgentResult(output, AgentResult{Status: "needs_input", Phase: "discovery", Code: "scope_unresolved", Reason: err.Error(), NextAction: "supply_input"}))
 	}
-	reason := "CI does not yet run the " + setup + " before every discovered " + framework + " test step. Apply only the CI setup in agent_instruction, then run resume_command once in the foreground with the listed capabilities and wait for its exit: it validates every discovered configuration and returns the next action. Do not run testdrive, a configuration check or the tests yourself first. Do not use nohup, shell background jobs, sleeps or process-name polling. If the host returns a task/session ID, wait with that host tool. "
-	if problems := existingSetupProblems(root, language, framework, options.Site); len(problems) > 0 {
+	missing := "CI does not yet run the " + setup + " before every discovered " + framework + " test step. "
+	if handWritten {
+		missing = "CI does not yet set up Test Optimization completely before every discovered " + framework + " test step. Jobs that set it up by hand keep their setup and need only the changes agent_instruction lists for them; do not add the " + setup + " to them. "
+	}
+	reason := missing + "Apply only the CI setup in agent_instruction, then run resume_command once in the foreground with the listed capabilities and wait for its exit: it validates every discovered configuration and returns the next action. Do not run testdrive, a configuration check or the tests yourself first. Do not use nohup, shell background jobs, sleeps or process-name polling. If the host returns a task/session ID, wait with that host tool. "
+	if options.SetupApplied {
+		reason = "onboard --apply wrote the " + setup + " (changes, setup_diff); do not edit it again. Apply only the rest of the CI setup in agent_instruction, then run resume_command once in the foreground with the listed capabilities and wait for its exit: it validates every discovered configuration and returns the next action. Do not run testdrive, a configuration check or the tests yourself first. Do not use nohup, shell background jobs, sleeps or process-name polling. If the host returns a task/session ID, wait with that host tool. "
+	}
+	problems := existingSetupProblems(root, language, framework, options.Site)
+	if handWrittenGap != nil && !slices.ContainsFunc(problems, func(problem string) bool {
+		_, text, _ := strings.Cut(problem, ": ")
+		return strings.HasPrefix(handWrittenGap.Reason, text)
+	}) {
+		// What onboard --apply refuses, word for word, when no other check
+		// names it.
+		problems = append(problems, handWrittenGap.Error())
+	}
+	if len(problems) > 0 {
 		reason += "The existing setup needs changes; fix it as the instructions show: " + strings.Join(problems, " ") + " "
 	}
+	if refusal := pluginSetupRefusal(root, framework); refusal != "" {
+		reason += "onboard --apply cannot write this setup (" + refusal + "), so apply it from the instructions. "
+	} else if edit := pluginSetupEditFirst(root, framework); edit != "" && !discoveryLanguageAutomaticSetup(language) {
+		reason += "onboard --apply writes the CI configuration's part of this setup once one edit is made (" + edit + "): make it as the instructions show, then rerun onboard --agent. "
+	}
+	if required := RequiredCIEdits(context.Background(), root, language, framework, true); required != nil {
+		reason += "With the setup, make exactly these edits to the test commands: " + strings.Join(ciEditList(required), " ") + " "
+	}
 	if len(unresolved) > 0 {
-		reason += fmt.Sprintf("%d CI step(s) listed as unresolved scope in agent_instruction cannot be validated and will remain blockers; tell the user now that they need a scope decision. ", len(unresolved))
+		reason += fmt.Sprintf("%d CI step(s) listed as unresolved scope in agent_instruction cannot be validated and will remain blockers. They do not hold up this setup: first apply the CI setup and run resume_command, then report each such step and its scope decision to the user with the validation result. %s ", len(unresolved), ScopeBlockerInstruction)
 	}
 	var notes []string
 	for _, entry := range scope.Commands {
@@ -399,7 +327,12 @@ const validationWaitInstruction = "Finish any edits a result asks for before lau
 // AgentScope bounds what a coding agent changes during onboarding. Trials
 // showed agents editing builds, manifests and test names to satisfy checks,
 // and stopping a whole run to ask before an install ddtest itself prescribed.
-const AgentScope = "Edit CI workflow and ignore files only where a result asks for it. " + PrescribedEditInstruction + " Any edit ddtest did not prescribe needs the user's approval first. Never rename tests, rewrite CI or package scripts so ddtest can parse them, disable an instrumentation ddtest did not prescribe disabling, or download a runtime; report the blocker instead. CI rows below Node 18, the oldest dd-trace major ddtest supports, are skipped by ddtest itself and reported as not tried; that needs no user approval. Do not inspect the ddtest binary. " + ReadWholeInstruction
+const AgentScope = "Edit CI workflow and ignore files only where a result asks for it. " + PrescribedEditInstruction + " Any edit ddtest did not prescribe needs the user's approval first. Never rename tests, rewrite CI or package scripts so ddtest can parse them, retry variants of a CI edit until ddtest accepts one, disable an instrumentation ddtest did not prescribe disabling, or download a runtime; report the blocker instead. CI rows below Node 18, the oldest dd-trace major ddtest supports, are skipped by ddtest itself and reported as not tried; that needs no user approval. Do not inspect the ddtest binary. " + ReadWholeInstruction
+
+// ScopeBlockerInstruction tells a coding agent what an unresolved CI scope
+// entry asks of it. Trials showed agents rewriting a workflow condition in a
+// loop, and editing whitespace or a variable, until ddtest accepted a step.
+const ScopeBlockerInstruction = "Unresolved CI scope is a limit of ddtest's static analysis, not a defect to fix: report each such step and its options to the user (run the tests in a CI step ddtest can read, once the user approves that change, or keep the step reported as not validated). Do not edit CI configuration (steps, conditions, variables, error handling such as continue-on-error, or whitespace) to make ddtest accept a step unless a result prescribes that exact edit, and do not try variants until one is accepted."
 
 // PrescribedEditInstruction lets the agent make the exact non-CI edits ddtest
 // needs for validation (dev dependencies, package scripts, coverage config)
@@ -419,68 +352,4 @@ const FinalResponseInstruction = "Begin your answer with final_response exactly,
 func humanOnboardingHandoff(framework string, command []string) string {
 	preview := slices.DeleteFunc(slices.Clone(command), func(arg string) bool { return arg == "--yes" })
 	return fmt.Sprintf("Detected %s. Preview the recognized CI setup first; this writes nothing:\n  %s\nThen apply it and validate it locally:\n  %s\n", framework, shellquote.Join(preview...), shellquote.Join(command...))
-}
-
-// A go-run executable disappears after the command exits. It cannot be used in
-// a protocol handoff; require a persistent build unless one is already on PATH.
-const TransientExecutableReason = "The temporary go run executable cannot be reused. Run make build in the ddtest source checkout, then invoke that persistent ddtest binary to continue."
-
-func persistentExecutable(path string) bool {
-	if filepath.Base(filepath.Dir(path)) != "exe" {
-		return true
-	}
-	for directory := filepath.Dir(path); filepath.Dir(directory) != directory; directory = filepath.Dir(directory) {
-		if strings.HasPrefix(filepath.Base(directory), "go-build") {
-			return false
-		}
-	}
-	return true
-}
-
-func DDTestCommand(args ...string) []string {
-	executable, _ := ddtestExecutable()
-	if executable == "" {
-		return nil
-	}
-	command := append([]string{executable}, args...)
-	// Follow-up commands keep the selected CI provider.
-	if provider := ActiveCIProvider(); provider != "" && len(args) > 0 && (args[0] == "onboard" || args[0] == "testdrive") && !slices.Contains(args, "--ci-provider") {
-		command = append(command, "--ci-provider", provider)
-	}
-	// And the user's statements about CI, which reports are bound to.
-	if len(args) > 0 && (args[0] == "onboard" || args[0] == "testdrive") && !slices.Contains(args, "--ci-runtime") && !slices.Contains(args, "--ci-confirm") {
-		command = append(command, CIStatementArguments()...)
-	}
-	return command
-}
-
-// ddtestExecutable prefers the running executable. Only a temporary go run
-// binary falls back to ddtest on PATH, which may be a different version.
-func ddtestExecutable() (path string, fromPATH bool) {
-	executable, err := os.Executable()
-	if err == nil && persistentExecutable(executable) {
-		return executable, false
-	}
-	executable, err = exec.LookPath("ddtest")
-	if err != nil || !persistentExecutable(executable) {
-		return "", false
-	}
-	return executable, true
-}
-
-// ExecutableFallbackNotice says when handoff commands use ddtest from PATH
-// instead of the running executable; empty otherwise.
-func ExecutableFallbackNotice() string {
-	if executable, fromPATH := ddtestExecutable(); fromPATH {
-		return "This executable is temporary (go run), so commands use ddtest from PATH (" + executable + "), which may be a different version."
-	}
-	return ""
-}
-
-func OnboardingCommand(frameworks ...string) []string {
-	framework := "vitest"
-	if len(frameworks) > 0 {
-		framework = frameworks[0]
-	}
-	return DDTestCommand("onboard", "--framework", framework, "--apply", "--yes")
 }

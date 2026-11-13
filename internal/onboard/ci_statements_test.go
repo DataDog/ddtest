@@ -48,7 +48,10 @@ func TestParseCIRuntime(t *testing.T) {
 		{value: ".buildkite/pipeline.yml / :jest: Jest Tests:node=22", job: ".buildkite/pipeline.yml / :jest: Jest Tests", runtime: "js", version: "22"},
 		{value: "node", err: "must be [<job>:]<runtime>=<version>"},
 		{value: "node=", err: "must be [<job>:]<runtime>=<version>"},
-		{value: "python=3.12", err: `names runtime "python"; supported runtimes: node, ruby`},
+		{value: "go=1.22", err: `names runtime "go"; supported runtimes: node, python, ruby`},
+		{value: "python=3.12", runtime: "python", version: "3.12"},
+		{value: "test:python=3.12.7", job: "test", runtime: "python", version: "3.12.7"},
+		{value: "python=3", err: "the Python version must be numeric, such as 3.12 or 3.12.7"},
 		{value: "node=lts", err: "the Node version must be numeric"},
 		{value: "node=22.x", err: "the Node version must be numeric"},
 		{value: "ruby=3", err: "the Ruby version must be numeric, such as 3.3 or 3.3.6"},
@@ -70,21 +73,25 @@ func TestParseCIRuntime(t *testing.T) {
 	require.Equal(t, "Unit Tests:node=22", statement.String())
 }
 
-// Fact keys come from the selected provider: none defines any yet, and a
-// registered fact enforces its value.
+// Fact keys come from the selected provider: GitHub Actions defines none,
+// Buildkite only the Datadog Agent of a hand-written setup, and a registered
+// fact enforces its value.
 func TestCIConfirmFactsAreDefinedByTheProvider(t *testing.T) {
-	useCIProvider(t, "buildkite")
+	useCIProvider(t, "github")
 	fact, err := ParseCIConfirm("plugin-installed")
 	require.NoError(t, err)
-	require.ErrorContains(t, UseCIStatements(nil, []CIFact{fact}), "--ci-confirm plugin-installed: Buildkite defines no facts to confirm")
+	require.ErrorContains(t, UseCIStatements(nil, []CIFact{fact}), "--ci-confirm plugin-installed: GitHub Actions defines no facts to confirm")
+	useCIProvider(t, "buildkite")
+	require.ErrorContains(t, UseCIStatements(nil, []CIFact{fact}), "--ci-confirm plugin-installed is not a Buildkite fact; facts: datadog-agent")
 	_, err = ParseCIConfirm("=x")
 	require.ErrorContains(t, err, "must be <fact>[=<value>]")
 
+	defined := ciProviderFacts["buildkite"]
+	t.Cleanup(func() { ciProviderFacts["buildkite"] = defined })
 	ciProviderFacts["buildkite"] = []ciFactDefinition{
 		{Key: "plugin-installed", Statement: func(string) string { return "The plugin is installed" }},
 		{Key: "plugin-mode", Values: "agentless|agent", valid: func(value string) bool { return value == "agentless" || value == "agent" }},
 	}
-	t.Cleanup(func() { delete(ciProviderFacts, "buildkite") })
 	for _, tc := range []struct {
 		facts []string
 		err   string

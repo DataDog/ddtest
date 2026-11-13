@@ -211,7 +211,7 @@ stays parked by the user's decision of 2026-10-14.
 Parsed sources are cached; a cached lookup takes 17 ns
 (`civisibility/integrations/manual_api_sourcecache.go`). With Early Flake
 Detection and impacted tests, however, `IsTestFuncModified`
-(`gotesting/instrumentation.go:710`) parses the file of every known test
+(`gotesting/instrumentation.go:714`) parses the file of every known test
 during `M.Run` setup, including tests excluded by `-run`, which CI test
 splitting relies on. Otherwise the first test of each file pays for its parse:
 1.08 ms for 2,300 lines and 4.5 ms for 8,300, measured on 2026-10-10. In Gin's

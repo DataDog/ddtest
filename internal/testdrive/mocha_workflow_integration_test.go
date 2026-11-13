@@ -3,6 +3,7 @@ package testdrive
 import (
 	"context"
 	"github.com/DataDog/ddtest/internal/testdrive/workspace"
+	"github.com/DataDog/ddtest/internal/testutil"
 	"github.com/stretchr/testify/require"
 	"os"
 	"os/exec"
@@ -21,7 +22,8 @@ func TestPublicMochaTestdrive(t *testing.T) {
 	require.NoError(t, err)
 	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Minute)
 	defer cancel()
-	binary := filepath.Join(t.TempDir(), "ddtest")
+	binary := testutil.DDTest(t)
+	var output []byte
 	command := func(root, name string, args ...string) ([]byte, error) {
 		cmd := exec.CommandContext(ctx, name, args...)
 		cmd.Dir = root
@@ -32,8 +34,6 @@ func TestPublicMochaTestdrive(t *testing.T) {
 		}
 		return cmd.CombinedOutput()
 	}
-	output, err := command("../..", "go", "build", "-o", binary, ".")
-	require.NoError(t, err, string(output))
 	for _, mode := range mochaWorkflowScenarios.selected(t) {
 		t.Run(mode, func(t *testing.T) {
 			root, err := filepath.EvalSymlinks(t.TempDir())
@@ -192,11 +192,15 @@ func TestPublicMochaTestdrive(t *testing.T) {
 				output, err = command(root, binary, "testdrive", "--framework", "mocha", "--yes")
 				require.Error(t, err)
 				require.NotContains(t, string(output), "Isolating configuration")
-				rejected := readValidationReport(t, root)
+				// A run of one command after the --all run is written beside it:
+				// the rejection leaves the --all report and its findings in place.
+				rejected := readFocusedValidationReport(t, root)
 				require.Contains(t, rejected.Error, "watch mode is not supported")
 				require.Empty(t, rejected.Runs)
 				require.False(t, rejected.HTMLReportCurrent)
-				require.NoFileExists(t, htmlReportPath(root))
+				require.NoFileExists(t, filepath.Join(root, ".testoptimization", focusedReportFilename))
+				require.Equal(t, report.Session, readValidationReport(t, root).Session)
+				require.FileExists(t, htmlReportPath(root))
 			}
 		})
 	}

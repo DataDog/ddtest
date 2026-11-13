@@ -21,9 +21,11 @@ manual CI guidance and [controlled local validation](running.md#pytest-testdrive
 Ruby supports plain and coordinated
 RSpec/Minitest validation as described below, and Java supports plain and
 coordinated Maven validation as described in [Java validation](#java-validation);
-automatic apply is JavaScript only. For Ruby and Java, `onboard --apply` returns
-the same handoff as `onboard --agent`: the CI setup for the agent to apply, then
-coordinated validation.
+automatic apply is JavaScript only. For Ruby, Java and Python, `onboard --apply`
+returns the same handoff as `onboard --agent`: the CI setup for the agent to
+apply, then coordinated validation (standalone validation for Python). On
+Jenkins, `onboard --apply` also writes Ruby's and Python's Jenkinsfile edit (see
+[Jenkins](#jenkins)).
 
 The editor preserves existing project and CI tracer selections, including tracers
 installed in workspace packages. It resolves one exact release for the actual
@@ -77,6 +79,12 @@ them. The output includes an executable `git apply -R` command for the exact
 setup diff. It reverses the setup edits while preserving pre-existing changes;
 review it before executing it if you have made further edits since apply.
 
+Eligible failures also send [structured troubleshooting telemetry](troubleshooting.md)
+automatically when this build has a public telemetry token and telemetry is
+enabled. It contains allowlisted technical diagnostics; raw reports, customer
+paths, test names and error messages remain local. There is no upload prompt or
+separate troubleshooting command. The existing telemetry opt-outs apply.
+
 ## CI provider
 
 `onboard` and `testdrive` read one CI provider's configuration: GitHub Actions
@@ -92,30 +100,100 @@ one to configure before discovery, edits or validation (agents receive
 `ci_provider_required` with `next_action: ask_user`), and follow-up commands
 keep the selected `--ci-provider`. A language without setup support on the
 selected provider gets `ci_provider_unsupported` instead of instructions:
-JavaScript and Ruby support every provider, Python and Java GitHub Actions only.
+JavaScript, Ruby, Python and Java support every provider.
 Other CI files (Travis CI, Azure Pipelines and others) are never parsed: when
 they mention the framework they are listed as outside this validation, and they
-never fail onboarding.
+never fail onboarding. `--ci-provider` is not `--platform`, which selects the
+language of the tests (`javascript`, `python`, `ruby`, `java`); a CI provider
+name given to `--platform` is rejected with a pointer to `--ci-provider`.
+
+On every provider, a test command whose output a step pipes only into output
+filters (`tee`, `cucumber-junit`, a TAP reporter such as `tap-xunit` or
+`faucet`, run directly, from `node_modules/.bin` or through `npx`, `yarn` or
+`pnpm exec`, with literal arguments and output redirected to files), as in
+`cucumber-js … --format json | cucumber-junit > report.xml` or `npx jest 2>&1
+| tee jest.log`, is validated as the test command alone. Without `set -o
+pipefail` the shell takes such a step's exit status from the pipeline's last
+command, so the configuration carries a caveat that failing tests may not fail
+the CI step; ddtest neither requires pipefail nor changes the step. Any other
+pipeline stays unresolved. Python interpreter options before `-m pytest` are
+read as Python reads them, clustered or not (`python -Im pytest`, `python -IBu
+-m pytest`, `python -X dev -W error -m pytest`).
+
+### JavaScript packages below the repository root
+
+CI checks out the whole repository and runs a package's steps in its directory
+(`cd test`, `npm --prefix test`, a GitHub `working-directory`, a Docker Compose
+`working_dir` or Dockerfile `WORKDIR`, a Jenkins `dir('test')`). Onboarding
+does the same, wherever it starts:
+
+- From the package directory, when the package has no CI configuration of
+  its own and the Git root has one, `onboard` and `testdrive --all`/`--report`
+  run from the Git root with that package selected for platform and framework
+  detection; ddtest says so on stderr. CI discovery maps each step's working
+  directory to its package, so the result is the same as starting at the root.
+- At a root without `package.json`, Python project configuration, `Gemfile`
+  or `pom.xml`, the one package below it that the CI configuration names as a
+  path or working directory is selected. Otherwise the `platform_unresolved`
+  reason lists the packages, those CI names first, and what to run
+  (`cd <package> && ddtest onboard`, or `--platform javascript --framework
+  <framework>` at the root). `--platform node` and similar spellings name
+  `--platform javascript`.
+- A focused `testdrive` (`--command`, `--check-only` or a plain run) started
+  in the package still runs its command there.
+- Validation copies the whole checkout, not only the package, so tests that
+  read files outside their package (`require('../schema.json')`) run as in CI.
+  The copy follows the existing rules: `.testoptimization` is skipped, Git
+  metadata and installed dependencies are kept, ignored outputs are skipped
+  only when preparation rebuilds them, and free space is checked first. It is
+  copy-on-write where the filesystem supports it (APFS, Btrfs, XFS); elsewhere
+  it costs the size of the checkout per configuration.
+- Reports are kept once, in the Git root's `.testoptimization`, for every run
+  above, so the root `.gitignore` entry `/.testoptimization/` covers them.
+  A focused run in the package after an `--all` run writes
+  `testdrive-command.json` and `report-command.html` there too, beside the
+  kept `--all` report, which its `kept_report` names relative to the package
+  (`../.testoptimization/testdrive.json`).
+  `package_report_exclusions` is `not applicable` when that root has no
+  `package.json`, when its `package.json` has no name or version (npm cannot
+  pack it), when it is private, and for a package below the root, whose
+  tarball cannot contain the root's reports.
+
+A package with CI configuration of its own (for example its own Jenkinsfile),
+or a repository without CI configuration at the Git root, is onboarded in the
+current directory as before. With `--ci-provider`, only that provider's
+configuration counts, in the package and at the root: a package's own
+Jenkinsfile does not keep `--ci-provider github` from the root's workflows.
+A focused run in the package and a run at the root share the root's reports,
+so they never run at the same time, and `testdrive --report` at the root
+checks a focused run's report against the package inputs it validated.
+A relative `--facts` path is read from where the command started. Ruby, Python and Java projects in a subdirectory
+are not moved to the root.
 
 ### Runtimes and facts only the user can state
 
 Some CI jobs select no runtime ddtest can read: Jenkins stages on a host
-agent, Buildkite steps on the agent host, GitLab jobs without an `image`, CircleCI `machine` and `macos`
+agent or in a container whose image ddtest does not read (a Kubernetes pod's,
+or `docker.build(…)`'s) or whose Node or Ruby image has a floating tag
+(`node:lts`, `ruby:latest`; see [Jenkins](#jenkins)), Buildkite steps on the agent host, GitLab jobs without an `image`, CircleCI `machine` and `macos`
 executors, GitHub self-hosted runners (a `self-hosted` label in any `runs-on`
 form, including `{group, labels}` and a runner a matrix row selects, such as
 `runs-on: ${{ matrix.os }}` with `os: [self-hosted, ubuntu-latest]`) without
 an `actions/setup-node` or `ruby/setup-ruby` step that runs before their
 tests and selects a version, and jobs whose image (such as
-`ubuntu:22.04`) names no Node or Ruby version. Finding these jobs reads only
+`ubuntu:22.04`) names no Node, Ruby, Python or Java version. Finding these jobs reads only
 the repository; a Cypress GitHub action job's Node is the action's, not a
-question for the user. For JavaScript and Ruby, `onboard` and `testdrive` then
-return `needs_input` with `code: ci_runtime_required`, `required_input:
-["ci_runtime:<workflow> / <job>", …]` and `next_action: ask_user` before any
-setup or test runs. The agent asks the user and never guesses the version.
+question for the user. For JavaScript, Ruby, Python and Java, `onboard` and
+`testdrive --agent` then return `needs_input` with `code: ci_runtime_required`,
+`required_input: ["ci_runtime:<workflow> / <job>", …]` and `next_action:
+ask_user` before any setup or test runs. The agent asks the user and never
+guesses the version. Plain `testdrive` runs anyway and reports such a job as
+inconclusive, with the same question in its reason (see
+[Python on GitLab CI, CircleCI, Buildkite and Jenkins](#python-on-gitlab-ci-circleci-buildkite-and-jenkins)).
 
 The answer comes back as `--ci-runtime [<job>:]<runtime>=<version>`,
-repeatable: `node` (or `js`) with `22`, `22.11` or `22.11.0`, or `ruby` with
-`3.3` or `3.3.6`. Without `<job>`, it applies to every job whose runtime is
+repeatable: `node` (or `js`) with `22`, `22.11` or `22.11.0`, `ruby` with
+`3.3` or `3.3.6`, `python` with `3.12` or `3.12.7`, or `java` with `21` or `17.0.12`. Without `<job>`, it applies to every job whose runtime is
 unknown; `<job>` is the printed key (`.buildkite/pipeline.yml / :jest: Tests`)
 or the job name alone, and wins over a statement without one. Two statements that name the same job (by
 either key) with different versions are `invalid_options`; the same
@@ -129,7 +207,8 @@ statement naming only that job is reported as unused. A statement only fills
 an unknown runtime:
 
 - A statement for a job whose configuration selects a different version (its
-  image, including a floating tag such as `node:lts`, a runtime installer step,
+  image, including a floating tag such as `node:lts` outside a Jenkins
+  container, a runtime installer step,
   `actions/setup-node` or nvm) stops with `ci_runtime_conflict`. A statement
   without a job never conflicts. An installer counts only when it runs on
   every matrix row the job runs, by the job's first test step: one whose
@@ -149,7 +228,9 @@ an unknown runtime:
   installer step, nvm) and Ruby installers are compared by their numeric
   components, as before.
 - GitHub-hosted runners and job containers, and images ddtest cannot resolve,
-  keep their own findings: their runtime is in the configuration.
+  keep their own findings: their runtime is in the configuration (except a
+  Jenkins container's, above, whose image is configured outside the
+  Jenkinsfile).
 - The stated version goes through every check an image tag's goes through:
   the tracer's Node range (a major such as `22` resolves to its latest release,
   as `node:22` does), the ESM loader's Node range, the Ruby tracer's RubyGems
@@ -180,6 +261,18 @@ local`, string includes and `*` patterns), with `extends`, `!reference`,
 `default` and top-level defaults, `inherit`, `variables`, `parallel: matrix`,
 hidden template jobs and `before_script`/`script`. Script entries share one
 shell, so literal `export`, assignments and `cd` carry into later entries.
+An `if` whose `[ … ]`, `test` or Bash `[[ … ]]` condition reads only known
+values is followed; under a condition ddtest cannot decide (`if [[
+"$CI_COMMIT_BRANCH" == main ]]; then export SIMPLECOV=0; fi`), a variable it
+exports or assigns may or may not be set. Only what reads it is unresolved:
+a test step whose command line expands it, a value computed from it, or a
+variable the shell, runtime, package tools, test runner or tracer read
+(`RUBYOPT`, `NODE_OPTIONS`, `SPEC_OPTS`, `PYTEST_ADDOPTS` and the like).
+Otherwise the configuration is validated without it, unset even when this
+machine sets it, and the report says so as a caveat. A `cd` inside such
+control flow still makes the later entries unresolved. The checkout, `$CI_PROJECT_DIR`, is a CI path too: a variable
+holding a path in it is left out of local runs in the same way, and findings
+write it as `$CI_PROJECT_DIR`.
 `parallel: matrix` entries that differ only by the variable selecting the
 job's `image:` (such as `RUBY_IMAGE`) share one local configuration, and each
 entry's runtime is still checked statically; an `if` on such a variable
@@ -197,7 +290,13 @@ under `gitlab.com/components/`, `danger-review` and `gem-release` under
 `gitlab.com/gitlab-org/components/`, and the `Jobs/` and `Security/` SAST,
 secret detection, dependency, container and license scanning, code quality
 and `Workflows/` pipeline templates (the list is `gitLabNonTestComponents`
-and `gitLabNonTestTemplates`). A JavaScript job without the setup that never
+and `gitLabNonTestTemplates`). An include input that hands one a command
+(an input named like a script, command, hook or `before`/`after`, such as
+`gem-release`'s `smoke_test_script`) is read as a step of the component's
+own job: a command that can't start the selected framework leaves that job
+a caveat, one that may (such as `bundle exec rspec` or `rake spec`) blocks
+and names the input, and a value ddtest can't read (not a literal string,
+or one that expands a variable) keeps the include unresolved. A JavaScript job without the setup that never
 runs the selected framework (nothing it runs, following package and
 repository scripts, names it, and every other executable is a known file,
 release, deploy, bundler or linter tool; package runners such as `npx`,
@@ -213,10 +312,15 @@ then lists the steps it ran ("Reviewed preparation run (opted in with
 source edit first (such as wrapping a Mocha command with NYC), its result
 asks for that edit and resumes with `onboard --apply`. Anything ddtest cannot read locally stays an
 unresolved blocker: remote, project, template and
-component includes, include inputs and `spec:` headers, includes whose rules
+component includes, inputs of a local include and `spec:` headers, includes whose rules
 depend on the pipeline, triggers and child
-pipelines, unknown `extends`/`!reference` targets, `rules:variables`, state
-changed inside shell control flow, and tests in `after_script`.
+pipelines, unknown `extends`/`!reference` targets, `rules:variables`, a
+directory change inside shell control flow, and tests in `after_script`.
+Each is named after what ddtest could not read, such as `(unresolved include
+gitlab.com/org/ci/test@1.0)` or `(unresolved configuration ci/suite.yml)`,
+and ddtest never asks which runtime such configuration runs: it has no
+readable job to state one for. Inputs of a component GitLab only uses to
+scan, review or release add nothing to resolve.
 
 CI setup uses Datadog's GitLab setup script
 ([test-optimization-gitlab-script](https://github.com/DataDog/test-optimization-gitlab-script)),
@@ -229,21 +333,46 @@ that runs the tests, the script runs before the first test command with
 (`"$DD_API_KEY"`), an exact `<LANGUAGE>_TRACER_VERSION` and a `SITE` matching
 the selected site. A person adds `DD_API_KEY` as a masked CI/CD variable; jobs
 without it (protected variables on other branches, forks) log that Test
-Optimization is disabled and run their tests untraced. The entry needs Bash and curl, so jobs on images known to lack them (Alpine
+Optimization is disabled and run their tests untraced. The entry needs Bash and curl. Jobs on images known to lack them (Alpine
 variants, BusyBox, distroless; Docker's official `-slim` images, which drop
-curl, unless an earlier entry runs `apt-get install -y curl`) or on images
-ddtest cannot resolve (`image: $NODE_IMAGE`) are refused with that reason;
-other images are assumed to have both. Runtimes come from the job's `image:`
+curl, unless an earlier entry runs `apt-get install -y curl`) get the
+[setup without Bash or curl](#images-without-bash-or-curl) instead, as its own
+script entry; the setup script in such a job is reported with that reason.
+Jobs on images ddtest cannot resolve (`image: $NODE_IMAGE`) are not
+validated, and ddtest asks the agent to tell the user; other images are
+assumed to have both. Runtimes come from the job's `image:`
 (`node:22`, `ruby:3.3-slim`); floating tags such as `latest` stay
-inconclusive.
+inconclusive. Cypress's images name their Node release in the tag:
+`cypress/base:24.19.0`, `cypress/browsers:24.19.0` and any full tag's
+`node-<version>` part (`cypress/browsers:node-22.15.0-chrome-…`,
+`cypress/included:cypress-14.4.0-node-22.15.0-…`). The short
+`cypress/included:<version>` tag names Cypress, and Playwright's
+`mcr.microsoft.com/playwright:v1.52.0-noble` names Playwright and the Ubuntu
+release, not the Node release the image bundles, so both stay inconclusive. An image behind a registry prefix that is only variables, such
+as the dependency proxy's `${GITLAB_DEPENDENCY_PROXY}ruby:3.3`,
+`$CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX/ruby:3.3` or
+`${REGISTRY}/library/node:22`, is read as the literal image after the prefix;
+CircleCI `docker` images (an unresolved `<< parameters.registry >>/` prefix),
+Buildkite step, `docker` plugin and Compose images and Jenkins `docker`
+agents read the same way. The registry is part of an image's name, so the
+prefix must be one dependency proxy variable (a name containing
+`DEPENDENCY_PROXY`), or end in its own `/` and either read a Docker Hub mirror
+variable (a name containing `MIRROR`, `DOCKER_HUB` or `DOCKERHUB`) or come before a
+namespaced name (`library/node`, `cimg/node`, `$CI_REGISTRY/group/project`).
+`${REGISTRY}/node:22` or `$CI_REGISTRY_IMAGE/ruby:3.3` may be any image stored
+at that path, and `${IMAGE_PREFIX}node:22` may name `custom-node:22`, so they
+are images ddtest cannot resolve. An image whose name or tag reads a variable
+(`${RUBY_IMAGE}:3.3`, `${REGISTRY}/ruby:${VERSION}`) is never guessed.
 
 `onboard --apply` inserts the script entry, as a block scalar, before the first
 JavaScript test command of each test job, plus the `--import` loader export for
 Vitest and other ESM tests. It keeps every other line, and refuses entries that
 a template, `!reference` or anchor shares with a job that does not run the same
 tests. An edited included file is listed in the preview, since other projects
-may include it. Ruby, Cucumber and WebdriverIO setup is applied by the coding
-agent from `onboard --agent` instructions: for Ruby the script adds datadog-ci
+may include it. Cucumber and WebdriverIO get the scoped setup described in
+[Scoped setup outside GitHub Actions](#scoped-setup-outside-github-actions).
+Ruby setup is applied by the coding
+agent from `onboard --agent` instructions: the script adds datadog-ci
 to the CI bundle (no Gemfile edit) and replaces `RUBYOPT`, so existing Ruby
 options are re-added after it. Jobs whose image runs an engine datadog-ci does
 not instrument (JRuby, TruffleRuby, Ruby head) stay excluded.
@@ -321,11 +450,17 @@ is, so a job without the key fails at that step (forked pull requests without
 passed secrets, jobs outside a restricted context), and the human action says
 so. A `DD_API_KEY` written into the configuration is refused. The orb needs
 Bash, because CircleCI runs steps with `/bin/sh` in images without it and only
-Bash reads `$BASH_ENV`, and curl or wget: jobs on images known to lack them
+Bash reads `$BASH_ENV`, and curl or wget. Jobs on images known to lack them
 (Alpine variants, BusyBox, distroless; Docker's official `-slim` images unless
-an earlier step installs curl), Windows machines, a non-Bash job `shell`, or
-executors ddtest cannot read (registry orb executors, unresolved parameters)
-are refused with that reason. Runtimes come from the job's image (`cimg/node:22.11`,
+an earlier step installs curl) get the
+[setup without Bash or curl](#images-without-bash-or-curl) instead, in the
+run step that runs the tests (a one-line `command:` becomes a block): each
+step starts a new shell, so its exports reach only the later commands of that
+step, and ddtest splits such a step into the commands before it, the setup and
+the commands after it, in one shell. An orb step in such a job is reported
+with that reason. Windows machines, a non-Bash job `shell`, and executors
+ddtest cannot read (registry orb executors, unresolved parameters) are
+refused with that reason. Runtimes come from the job's image (`cimg/node:22.11`,
 `cimg/ruby:3.3`, `ruby:3.3`).
 
 `onboard --apply` declares the orb when the configuration does not (a new
@@ -340,8 +475,10 @@ declaration of an unsupported orb release; a test in a modeled orb job (such
 as `node/test`) takes the Datadog orb step through that job's steps
 parameter (`post_install_steps`), which ddtest asks for instead of editing.
 The inserted step follows the configuration's indentation. Applying again changes nothing.
-Ruby, Cucumber and WebdriverIO setup is applied by the coding agent from
-`onboard --agent` instructions: for Ruby the orb adds datadog-ci to the CI
+Cucumber and WebdriverIO get the scoped setup described in
+[Scoped setup outside GitHub Actions](#scoped-setup-outside-github-actions).
+Ruby setup is applied by the coding agent from
+`onboard --agent` instructions: the orb adds datadog-ci to the CI
 bundle and replaces `RUBYOPT`, so existing Ruby options are re-added after it
 through `$BASH_ENV`, and a `rake RUBYOPT=…` argument that would replace the
 preload is reported with the form that keeps it; Ruby 2.7 and 3.0 images get a `gem update --system` step,
@@ -459,15 +596,16 @@ only a key set in the pipeline's environment, such as in the Buildkite UI,
 never one an agent hook or secrets plugin exports, which is noted), and an
 earlier command of the step that clears or writes `DD_API_KEY` are reported. A person provides `DD_API_KEY` from an agent
 environment hook, a secrets plugin or the pipeline's environment in the
-Buildkite UI. The installer needs Bash and curl or wget, so steps on images
+Buildkite UI. The installer needs Bash and curl or wget. Steps on images
 known to lack them (Alpine variants, BusyBox, distroless; official `-slim`
 images unless an earlier command installs curl; for an image built from a
 Dockerfile, unless one of its `RUN` instructions installs bash, or curl or
-wget, with `apt-get`, `apt`, `apk`, `yum`, `dnf`, `microdnf` or `zypper`) or
-on images ddtest cannot resolve are refused with that reason, which names
-the Dockerfile and the fix (install curl in it, or build from the full
-image); the setup instructions name those steps before the snippet is
-written, since changing an image needs the person's approval. The agent host
+wget, with `apt-get`, `apt`, `apk`, `yum`, `dnf`, `microdnf` or `zypper`) get
+the [setup without Bash or curl](#images-without-bash-or-curl) instead, as a
+commands entry with every `$` escaped as `$$`; a snippet in such a step is
+reported with that reason, naming the Dockerfile. Steps on images ddtest
+cannot resolve are not validated: the setup instructions name them, and the
+agent tells the user, without changing an image or Dockerfile. The agent host
 is assumed to have them, and `final_response` says so next to its stated
 runtime. A job whose Ruby or Node is unknown because its image
 cannot be resolved is reported with that cause, and the release of manual
@@ -483,8 +621,10 @@ key reaches the container, and keeps every other line. Commands shared through
 anchors (or a plugin configuration shared that way), folded commands, a test
 statement after another in one string, and commands a step that does not run
 the same tests also runs are refused; matrix combinations share one insertion.
-Applying again changes nothing. Ruby, Cucumber and WebdriverIO setup is applied
-by the coding agent from `onboard --agent` instructions; for Ruby the installer
+Applying again changes nothing. Cucumber and WebdriverIO get the scoped setup
+described in [Scoped setup outside GitHub Actions](#scoped-setup-outside-github-actions).
+Ruby setup is applied
+by the coding agent from `onboard --agent` instructions; the installer
 adds datadog-ci to the CI bundle and replaces `RUBYOPT`, so existing Ruby
 options are re-added after it, and Ruby 2.7 and 3.0 images get a `gem update
 --system` command, guarded on the image where a matrix shares the step.
@@ -518,7 +658,10 @@ but every `sh` starts a fresh shell. `sh 'x'`, `sh "x"`, triple-quoted scripts
 and `sh(script: …)` are read when the whole script is literal; a GString reads
 known values only: a literal `environment` value or `env.X =` assignment, a
 literal Groovy variable, a `parameters` default (`${params.X}`) and
-`${WORKSPACE}`. Top-level statements run in source order, so a literal `def`
+`${WORKSPACE}`, which findings write as `${WORKSPACE}`. An `environment` value
+holding a path in the workspace (`VENV_DIR = "${WORKSPACE}/venv"`) has no local
+equivalent: a step whose command line does not read it is validated without
+it, with a caveat. Top-level statements run in source order, so a literal `def`
 before `pipeline { … }` is visible inside it and one after it is not. An
 `env.X =` assignment (or `env['X'] =`, `env.setProperty('X', …)`) changes the
 build's value for the rest of the build, from
@@ -531,7 +674,14 @@ branch, a stage whose `when` ddtest cannot decide, a `switch` case) is unknown
 after them, and a step that reads it is unresolved. An environment variable
 whose name ddtest cannot tell (`env[name] =`) makes the build's environment
 unknown, so every `sh` after it is unresolved. `environment` (pipeline and stage, in any
-order; `credentials()` and computed values are unknown), `withEnv` with a literal
+order; `credentials()` and computed values are unknown; what a value runs,
+such as `X = sh(script: 'git show …', returnStdout: true).trim()` or an `sh`
+in its GString, is read like any expression's, at the point Jenkins runs it:
+before the scope's steps, in a job of its own, `environment` or
+`<stage> (environment)` (whose environment is the one around the directive);
+its shell starts with the environment around the directive, as Jenkins sets
+the directive's variables only after evaluating them, while the value's
+Groovy reads the directive's earlier values), `withEnv` with a literal
 list, `withCredentials` (its variables are unknown), `dir` with a literal path
 inside the checkout, `when { expression { false } }` or `return false` (the
 stage never runs; any other `when` is a possible path), `post` conditions that
@@ -574,10 +724,11 @@ inside `sh`, whose tests run in a container ddtest cannot validate.
 
 The setup is the [Datadog Jenkins
 plugin](https://github.com/jenkinsci/datadog-plugin#test-optimization-configuration),
-enabled for the whole pipeline in the Jenkinsfile: `datadog(testOptimization:
+enabled in the Jenkinsfile: `datadog(testOptimization:
 [enabled: true, serviceName: '<service>', languages: ['JAVASCRIPT']])` (or
 `'RUBY'`; `testVisibility:` is its legacy name) in the declarative top-level
-`options`, or wrapping a scripted pipeline's `node` blocks. The plugin installs
+`options`, in a stage's `options`, or wrapping a scripted pipeline's `node`
+blocks. The plugin installs
 the tracer on the build agent when each step runs, with the agent's own
 toolchain, and sets the tracer's variables, `DD_API_KEY` and the site from its
 global configuration; the Jenkinsfile only enables it, so ddtest models it as a
@@ -593,34 +744,157 @@ reported), so ddtest adds them to each test step's environment: local
 validation replays them like any step variable, and one that turns the tracer
 or the framework's integration off (`DD_TRACE_ENABLED`, or
 `DD_TRACE_<FRAMEWORK>_ENABLED` such as `DD_TRACE_RSPEC_ENABLED`, set to
-`false`) is reported, not certified. A `datadog(…)` in a
-stage's `options` is not certified (the plugin documents the top-level option
-only), and a literal `DD_API_KEY` in an `environment` directive is refused; a
+`false`) is reported, not certified. A literal `DD_API_KEY` in an
+`environment` directive is refused; a
 `DD_API_KEY` credential binding, and a `NODE_OPTIONS` or `RUBYOPT` in a stage's
 `environment`, `withEnv`, an `env.X =` assignment or `additionalVariables`, are
 reported as overwritten by the plugin. The plugin replaces `RUBYOPT`; on each
 agent it sets `NODE_OPTIONS` for every step to its preload followed by the
 `NODE_OPTIONS` of the first step it configures there, so a narrower value is
-lost, or, when its step is that first one, reaches every later step. ddtest
-composes the preload with the pipeline's `environment` value and reports the
-narrower one. When the setup that is there
+lost, or, when its step is that first one, reaches every later step (on a
+fresh workspace, and so on every build of an ephemeral agent, the first step
+it configures is the first one after the workspace exists, which can be in
+that narrower scope). ddtest composes the preload with the `environment` value
+where the option is (the pipeline's, or for a stage-level option the stage's)
+and reports the narrower one. When the setup that is there
 is incomplete, `ci_setup_required` names why.
 
-The plugin does not instrument tests inside containers. Stages that run in
-`agent { docker … }`, `dockerfile`, `kubernetes`, a `podTemplate`'s
-`node(POD_LABEL)` (or a `node` on its label), `docker.image(…).inside`, an
-image variable's `.inside` or `container(…)` are unsupported. A container
-block in a job on a host agent runs only its own steps in the container: they
-become a job of their own, named after the job and the container
-(`Test (docker.image('node:22').inside)`), and a test inside the container is
-reported, naming the job it splits from. When every job that runs the tests
-is unsupported, onboarding returns `status: unsupported` with
-`code: ci_setup_unsupported`, naming the jobs and the user's options (run the
-tests on a host agent, or set up Test Optimization in the container by hand,
-which ddtest cannot validate), with an instruction for the coding agent to
-report it and stop; otherwise the instructions name them and validation keeps
-them as blockers. An installer fallback for containers is not part of
-this provider.
+A stage-level `options { datadog(testOptimization: …) }` is certified: the
+plugin's README documents only the top-level option, but a real Jenkins run
+(plugin 10.0.0) showed that it sets the tracer up for that stage, its nested
+stages and, in a `parallel` section, only its branch; `final_response` states
+that as a caveat. The plugin caches its variables per build, build agent and
+set of languages, not per option, so on an agent where several options for the
+same languages run, the `serviceName` and `additionalVariables` of every one
+after the first it configures are ignored, and so is the `NODE_OPTIONS` where
+it is, since the cached preload composes with the first one's. ddtest cannot
+tell which stages share an agent, so every `datadog(…)` option of a
+Jenkinsfile with the same languages (top-level, stage-level or a scripted
+wrap) must have the same arguments and compose with the same `NODE_OPTIONS`
+(set it in the pipeline's `environment`, not a stage's); otherwise each is a
+setup problem naming the others. Each call
+counts on its own, even with another on the same line, and so does each
+reading of one with other arguments (such as a matrix cell's); an option with
+`enabled: false` configures no tracer and is left out. A stage's
+`datadog(…)` without `testOptimization` (such as `datadog(collectLogs: true)`)
+keeps the setup around it.
+
+`final_response` also notes that until a build's workspace directory exists
+(the first steps of a build on a fresh agent or workspace), the plugin cannot
+configure the tracer: it logs `ERROR: [datadog]` with a stack trace for each
+such step and tries again at the next one, which is harmless.
+
+The plugin does not support tests inside containers, so stages that run in
+`agent { docker … }`, `agent { dockerfile … }`, `agent { kubernetes … }`, a
+`podTemplate`'s `node(POD_LABEL)` (or a `node` on its label),
+`docker.image(…).inside`, an image variable's `.inside` or `container(…)` set
+Test Optimization up with Datadog's installer instead: the setup snippet
+Buildkite steps run (see [Buildkite](#buildkite)), in the `sh` script that runs
+the tests, before the test command, since each `sh` starts a fresh shell. A
+container block runs only its own steps in the container: they become a job
+of their own, named after the job and the container
+(`Test (docker.image('node:22').inside)`), also inside a job that already runs
+in another container, whose image they do not run. A `docker` agent or
+`docker.image(…)` image whose registry prefix only interpolates variables
+ddtest cannot resolve (`"${REGISTRY}/library/node:22"`) is read as the
+literal image after the prefix, under the GitLab rule above. The snippet's
+Jenkins form differs from Buildkite's where Jenkins needs it:
+
+- It exports `DD_TRACER_FOLDER="$(mktemp -d "$PWD/.datadog-ci-container.XXXXXX")"`,
+  a new folder of the workspace for each shell, where the installer installs
+  the tracers and the snippet keeps its download and output. So it never
+  replaces the tracer the plugin installs in the workspace's `.datadog` for the
+  host stages of the same build (a real Jenkins run showed the installer
+  otherwise overwrites it, and later host stages then run the snippet's
+  release), and shells that run at the same time in one workspace, such as the
+  parallel branches of a stage under a top-level Docker agent, never overwrite
+  each other's installer, tracers or output. `mktemp` names it uniquely even
+  across containers that share the workspace, which a PID (`$$`) would not, as
+  each container has its own PID namespace. It is not in the container's
+  `/tmp`, which hardened images may mount `noexec`, stopping the tracer's
+  native add-ons. When `mktemp` fails, the snippet logs that the installation
+  failed. The folders stay in the workspace, in each `sh` step's working
+  directory, which `dir(…)` or a `cd` may put below the checkout root: the
+  instructions ask for `.datadog-ci-container.*/`, without a leading `/`, in
+  the repository's `.gitignore`, which `onboard --apply` adds when it writes a
+  snippet (unless a pattern for any depth such as `.datadog-ci-container*`
+  already covers it; a root-only `/.datadog-ci-container*` does not), and a
+  workspace cleanup such as `cleanWs()` removes them.
+- It tests the key with `[ "${DD_API_KEY:+set}" = set ]`, which Jenkins' shell
+  trace (`sh -x`) prints without the key's value.
+- No `$` is escaped: the `sh` script is a single-quoted Groovy string.
+- `DD_CIVISIBILITY_AUTO_INSTRUMENTATION_PROVIDER` is `jenkins`.
+- It goes in the `sh` script that runs the tests, before the test command:
+  each `sh` step is a shell of its own, so its exports reach only the later
+  commands of that script, and every `sh` step that runs the tests needs one.
+
+The snippet is complete under Buildkite's rules: the pinned installer release
+and its SHA256, an exact tracer release, the selected site, and a runtime from
+the container's image. A container whose image lacks Bash, or curl and wget,
+gets the [setup without Bash or curl](#images-without-bash-or-curl) instead, in
+the same Jenkins form (the `mktemp` folder, the `${DD_API_KEY:+set}` test and,
+where an unread `datadog(…)` call may reach the stage, the resets first). `agent { dockerfile … }` reads the base image of the
+Dockerfile it builds (`filename`, `dir`; the stage `additionalBuildArgs`'
+`--target` selects, or else the last one; a build argument it overrides is
+unknown; `additionalBuildArgs` that are not literal, read the shell's
+environment, use shell quoting or escapes (which the shell removes before
+`docker build` reads the names) or select another Dockerfile leave the image
+unread), as
+Buildkite's Compose builds do. For an image ddtest
+does not read (a Kubernetes pod's, or `docker.build(…)`'s), the runtime is the
+user's to state with `--ci-runtime`, as a host agent's, and `final_response`
+says ddtest could not check that the image has Bash and curl or wget. So is the
+runtime of a Node or Ruby image with a floating tag (`node:lts`,
+`node:latest`, an untagged `node`, `ruby:latest`): the agent's Docker pulls an
+image only when it has none (unless `alwaysPull` is set), so the tag runs the
+release that agent keeps. A GitLab, Buildkite or CircleCI image's floating tag
+stays inconclusive. A
+stage whose image is known to lack Bash, or curl and wget (Alpine, such as
+`maven:3-alpine`, whose `sh` cannot parse Datadog's installer, or an official
+`-slim` image without an install before the snippet), runs the setup without
+Bash or curl in its place, in every language (see [Images without Bash or
+curl](#images-without-bash-or-curl)): `onboard --apply` writes it, with the
+same reset first where a `datadog(…)` call may reach the stage, and adds
+`.datadog-ci-container.*/` to `.gitignore`. `DD_API_KEY` must reach the
+`sh` step from a Jenkins credential, with
+`withCredentials([string(credentialsId: '…', variable: 'DD_API_KEY')]) { … }`
+around it or `DD_API_KEY = credentials('…')` in an `environment` directive: the
+plugin's own key reaches only the steps in its option's scope. A step the key
+does not reach, a literal key, a key an earlier command of the script clears,
+or a `withCredentials` binding that sets `DD_API_KEY` to something other than
+a credential's secret text (a `file(…)` or `sshUserPrivateKey(…)` binding's
+path, a user name, `usernameColonPassword(…)`'s `user:password`) is a setup
+problem; `string(…)` and `usernamePassword(…)`'s `passwordVariable` give the
+key. `credentials('…')` is taken as the Secret text the instructions ask for.
+
+The snippet must be the stage's only setup: a container stage within a
+`datadog(…)` option's scope is a setup problem (see below). When ddtest cannot
+prove the stage is outside every plugin scope, because a `datadog(…)` call it
+cannot read encloses it (one with computed `testOptimization` arguments, or
+arguments that are not named, such as a map variable), the snippet must start
+with the statements that remove the plugin's variables for its language (the
+preload the plugin prepends to `NODE_OPTIONS`, located by its `DD_TRACE_PATH`;
+the plugin's `RUBYOPT`), which the instructions then write. Otherwise
+`final_response` notes, as a caveat, that Test Optimization enabled in the
+job's configuration page instead of the Jenkinsfile would reach the container
+stages too. Ruby: when the Jenkinsfile also enables the plugin for Ruby, or
+has a `datadog(…)` call whose languages ddtest cannot read (which the reset
+does not help with: it removes the plugin's variables in the snippet's shell,
+not what the plugin changed in the workspace), the plugin's
+`bundle add datadog-ci` on the agent would put the latest release in the
+shared Gemfile, which the installer then uses, so Gemfile.lock must pin
+`datadog-ci` at the snippet's `DD_SET_TRACER_VERSION_RUBY` (a setup problem
+otherwise, and the instructions say so).
+
+A pipeline with stages of both kinds gets the instructions of each mechanism,
+each naming its stages. The confirmations below are asked only for stages the
+plugin sets up, and `final_response`'s human action asks for the plugin's
+configuration, the credential the container stages bind (`datadog-api-key`,
+or the one the plugin already uses), or both. Tests that `docker run` starts
+in an `sh` script stay unresolved.
+A container stage that already sets Test Optimization up by hand keeps that
+setup instead of the snippet (see [Hand-written setups outside GitHub
+Actions](#hand-written-setups-outside-github-actions)).
 
 The plugin's tracer variables still reach container steps: its step
 environment contributor configures every step in the option's scope for the
@@ -629,13 +903,28 @@ variables (`NODE_OPTIONS` with `-r` and the dd-trace it installed in the
 agent's workspace, `DD_TRACE_PATH`, `RUBYOPT=-rbundler/setup
 -rdatadog/ci/auto_instrument`) to its environment, while it installs the tracer
 (for Ruby, `bundle add` on the workspace Gemfile) only with the agent's own
-toolchain. In a container without that tracer or gem, any Node or Ruby process
-then fails to load it, tests or not. So a setup whose scope includes a job that
-runs steps in a container (an `agent { docker … }` stage, a container block,
-a `podTemplate` node) is a setup problem for every job in that scope, naming
-those jobs: run them on a host agent, or keep them out of the option's scope
-(in a scripted pipeline, wrap only the `node` blocks on host agents). A
-container stage that runs no steps does not count.
+toolchain. A real Jenkins run showed what that does, per language, and the
+setup problem says it for the languages the option enables:
+
+- JavaScript: Node processes in the container load the dd-trace the plugin
+  installed with the agent's npm only by accident, because Jenkins mounts the
+  workspace in the container at the same path (with another path, every Node
+  process fails to start); on an agent without npm the plugin sets nothing and
+  the tests run untraced without any error.
+- Ruby: `RUBYOPT` makes every Ruby process in the container fail to start,
+  `bundle install` and `bundle exec` included, which fails the build, because
+  `datadog-ci` was added to the agent's gems, not the container's; with
+  `datadog-ci` pinned in Gemfile.lock, the plugin's check on the agent never
+  passes, so the container gets no variables and the tests run untraced.
+
+So a setup whose scope includes a job that runs steps in a container (an
+`agent { docker … }` stage, a container block, a `podTemplate` node) is a
+setup problem for every job in that scope, naming those jobs: run them on a
+host agent, or keep them out of the option's scope (in a declarative pipeline,
+an `options { datadog(…) }` in each host-agent stage that runs the tests
+instead of the top-level one, every one with the same arguments; in a scripted
+pipeline, wrap only the `node` blocks on host agents). A container stage that
+runs no steps does not count.
 
 A host agent's runtime is never in the Jenkinsfile, so ddtest asks for it
 (`ci_runtime_required`, answered with `--ci-runtime`, naming the agent label
@@ -677,14 +966,22 @@ JavaScript: the plugin runs `npm install -g dd-trace` on every build and
 nothing can pin the release, so the JavaScript setup floats at the latest
 release, the one exception to the exact-release rule: ddtest checks the stated
 Node against the latest release, validates locally with it, and
-`final_response` names that release as a caveat. The plugin prepends its
+`final_response` names that release as a caveat. The plugin installs the
+latest release whatever Node the agent runs, so a stated Node outside the
+`engines` range of the latest release on the npm registry (Node 22 or newer
+since dd-trace 6) is a setup problem (`incomplete_ci_setup`, naming the release
+and its range), and `onboard --apply` refuses to enable the plugin for that
+job: no other release can be selected. The plugin prepends its
 preload to `NODE_OPTIONS` and exports `DD_TRACE_PATH`; for Vitest, Cucumber and
 ESM Mocha, the test's `sh` script registers the loader before the test command
 with `if [ -n "${DD_TRACE_PATH:-}" ]; then export NODE_OPTIONS="${NODE_OPTIONS:-}
 --import $DD_TRACE_PATH/register.js"; fi`. `DD_TRACE_PATH` is a trusted loader
 path only in jobs the plugin sets up: the other providers' setups do not export
 it, so a `--import ${{ env.DD_TRACE_PATH }}/register.js` there is not the
-setup's loader.
+setup's loader. Each `sh` step is a shell of its own, so every one that runs
+those tests needs the line before its test command; a test whose shell has
+the plugin's preload but not the loader is `missing_initialization`, which
+`onboard --apply` completes.
 
 Ruby: the plugin uses a `datadog-ci` already in the bundle and otherwise runs
 `bundle config set frozen false` and `bundle add datadog-ci` on the agent, so
@@ -694,16 +991,544 @@ the setup is complete only when the Gemfile.lock at the checkout root pins
 plugin configures it from the checkout root, so a test step inside `dir(…)`,
 one with `BUNDLE_GEMFILE`, or a repository without a root Gemfile is a setup
 problem. The plugin replaces `RUBYOPT`, and refuses Ruby before 2.7 and
-RubyGems before 3.3.22.
+RubyGems before 3.3.22. With the pin, the plugin finds `datadog-ci` only once
+`bundle install` has run in the build: the steps before it get no Datadog
+variables (the plugin logs `ERROR: [datadog]` with a stack trace for each and
+tries again at the next step), and each attempt still runs `bundle config set
+frozen false`. `final_response` states both as a caveat, and the instructions
+tell the user these errors are expected.
 
-`onboard --apply` does not edit Jenkinsfiles: for every language,
-`onboard --agent` and `onboard --apply` return `ci_setup_required` with the
-instructions, and the coding agent applies them before the coordinated
-validation.
+`onboard --apply` enables the plugin in every Jenkinsfile whose host-agent
+jobs run the tests; the only language input is the plugin's language token
+(`'JAVASCRIPT'`, `'RUBY'`). `serviceName` is the project's name (the
+`package.json` `name`, or the name the only root gemspec sets), otherwise the
+repository's (its `origin` remote's name, or the checkout directory's). In a declarative pipeline it adds
+`datadog(testOptimization: [enabled: true, serviceName: '<service>', languages: [...]])`
+to the top-level `options` directive, creating the directive on its own lines
+after `agent` or `environment` (whichever comes last); an `options` written on
+one line takes it after a `;`. When the pipeline also runs steps in a
+container (any stage or container block), the top-level option would include
+them, so it adds the same option, with the same arguments, to the `options`
+of each stage that runs the tests on a host agent instead (created after the
+stage's `agent` or `environment` the same way), or merges into a stage's
+existing `datadog(…)`. In a scripted pipeline it wraps each outermost
+`node` block that runs the tests in `datadog(testOptimization: […]) { … }`,
+indenting the block one step; lines inside multi-line strings keep their
+bytes. An existing `datadog(…)` call, in `options` or around the `node`, is
+merged instead: `testOptimization` is added, or in it (or in a legacy
+`testVisibility:`) `enabled` becomes `true` and the language joins
+`languages`, keeping `serviceName`, `additionalVariables`, `collectLogs`,
+`tags` and every other argument. Each `sh` step runs a shell of its own, so
+for Vitest and ESM Mocha it also adds the `DD_TRACE_PATH` loader line at the
+start of every `sh` script that runs the tests (for Mocha, every one that runs
+ESM test files), unless the shell parser reads that line as a statement of
+the script before each of its test commands; one that only follows the test,
+sits in a comment or runs inside another statement does not count. That
+script must be a single-quoted literal; otherwise the result asks for that line
+(`ci_edit_required`) and resumes with `onboard --apply`. A target `sh` step is
+the call its test command was read from, by its position in the file, so other
+`sh` calls on the same line are left alone. Edits use the parser's
+byte spans and keep the file's indentation (tabs or spaces, and their width)
+and line endings; every other byte is unchanged. The edited Jenkinsfile is read
+again and must read as the same jobs, each with a complete setup before every
+test command (for ESM, the loader in effect in every test `sh` script), or
+nothing is written. Applying again changes nothing (`… CI setup is already configured; no
+edits.`).
+
+In each container stage that runs the tests, `onboard --apply` adds the setup
+snippet to every `sh` step that runs them, before its first test statement
+(each `sh` step is a shell of its own, and the snippet's exports reach only
+the later commands of its own): a
+multi-line single-quoted script (`sh '''…'''`) gets the snippet's lines before
+the test's line, with its indentation, and a one-line `sh '…'` becomes a
+multi-line one, its statements before the test on a line of their own. The
+script must be a literal without escapes or a shebang, and the test statement
+must start a line of its own. When `DD_API_KEY` does not reach the step yet,
+it encloses the `sh` step in
+`withCredentials([string(credentialsId: 'datadog-api-key', variable: 'DD_API_KEY')]) { … }`
+when the step is a statement on lines of its own; otherwise, as for a script
+it cannot edit, the result asks for the setup or the binding
+(`ci_edit_required`) and resumes with `onboard --apply`. The snippet installs
+the dd-trace release JavaScript's `onboard --apply` selects for the stage's
+Node, or the `datadog-ci` release Gemfile.lock pins for Ruby: without a pin,
+with host stages beside them, the result asks for the pin first
+(`ci_edit_required`); with container stages alone, the snippet stays the
+instructions'. An `sh` step that runs the snippet already is checked, not
+edited again, and the edited Jenkinsfile is read again like the plugin's edit:
+a container test command whose own `sh` step does not run the snippet before
+it is not set up, whatever another `sh` step of the stage runs, so a stage
+whose snippet sets up only some of its test shells gets one in the others, and
+a snippet without the ESM loader line its tests need is refused, naming that
+line. The cells of a matrix that run the same `sh` step share one snippet, and
+a `withCredentials` that already binds `DD_API_KEY` around the step is not
+added again. Validation reads the snippet's Ruby setup the same way: it ends
+with its `sh` step.
+
+It refuses, and onboarding gives the instructions instead with the
+reason: a Jenkinsfile that loads a shared library (`@Library`, `library …` or a
+`libraries` directive), a job that runs steps in a container within the
+option's scope (a container block in a stage that runs the tests, or in a
+wrapped `node`), a top-level `datadog(testOptimization: …)` in a pipeline
+that runs steps in a container (move it to the host-agent stages), a stage
+written on one line, a JavaScript job whose stated Node the latest dd-trace
+does not support, a computed `options` or `testOptimization` argument (or a
+computed `enabled` or `languages` it would change), a `datadog(…)` call with
+a positional or computed argument (such as `datadog([collectLogs: true])`,
+which Jenkins rejects once a named `testOptimization` joins it; ddtest never
+certifies a `datadog(…)` call that mixes the two), a `node` block with shell
+steps inside a `def`
+function of a scripted pipeline, several `datadog(…)` calls that differ in one
+`options` or that enclose the same tests, and a result that is still incomplete,
+such as one with `DD_API_KEY` in `additionalVariables` or options for the same
+languages with different arguments.
+
+JavaScript gets the automatic setup: `onboard --agent` hands off
+`onboard --apply --yes`, which previews nothing, writes the edit, and asks the
+user to confirm the plugin (`ci_setup_confirmation_required`) before anything
+runs; the same command with `--ci-confirm` then validates. Ruby's own setup
+stays the agent's (pinning `datadog-ci` needs Bundler), so on Jenkins only, its
+`onboard --agent` returns `ci_setup_required` with `next_action: run_command`
+and `onboard --apply --yes` as `next_command`. That command writes the
+Jenkinsfile edit, lists it in `changes` and `setup_diff` with an undo command,
+and returns the rest of the setup (the `datadog-ci` pin, the report exclusion)
+with the validation command as `resume_command`; validation then asks for the
+confirmations. Plain `onboard --apply` previews the Jenkinsfile diff and writes
+nothing; `--yes` writes it and prints the remaining instructions. Options the
+handoff rejects, such as `--command`, are rejected before anything is
+written.
+
+### Images without Bash or curl
+
+ddtest never recommends changing a CI image, and the agent never changes one.
+Datadog's official installer (`install_test_visibility_v15.sh`, which the
+GitLab setup script, the CircleCI orb and the setup snippet run) is a Bash
+script downloaded with curl or wget, and the orb also exports through
+`$BASH_ENV`, which only Bash reads. So a job whose image is known to lack
+Bash, or both curl and wget (see each provider above), gets the setup without
+Bash or curl: POSIX `sh` that installs the same tracer release with the job's
+own tools and exports what the installer prints, in the shell that runs the
+tests. It mirrors `install_test_visibility_v15.sh` (SHA256
+`e64a4a45…8b956a58`, the release ddtest pins):
+
+- Every language: `DD_CIVISIBILITY_ENABLED=true`,
+  `DD_CIVISIBILITY_AGENTLESS_ENABLED=true`, `DD_ENV` (`ci` unless set),
+  `DD_SITE`, `DD_CIVISIBILITY_AUTO_INSTRUMENTATION_PROVIDER` (`gitlab`,
+  `circleci`, `buildkite` or `jenkins`, as the wrappers set it) and
+  `DD_TRACER_VERSION_<LANGUAGE>`, the exact release, which the setup also
+  installs. It installs into `DD_TRACER_FOLDER`, the installer's folder
+  variable: `.datadog`, its default, or the Jenkins form's `mktemp` folder, in
+  the working directory, or in `${TMPDIR:-/tmp}` when the working directory's
+  path has whitespace: `MAVEN_OPTS`, `NODE_OPTIONS` and `RUBYOPT` split on
+  whitespace, so the tracer's path in them has none.
+- JavaScript: `NPM_CONFIG_PREFIX="$DD_TRACER_FOLDER" npm install -g
+  dd-trace@<release>`, then `NODE_OPTIONS` with
+  `-r $DD_TRACER_FOLDER/lib/node_modules/dd-trace/ci/init` and
+  `DD_TRACE_ESM_IMPORT`, as the installer does.
+- Python: `python -m pip install --upgrade --target "$DD_TRACER_FOLDER/python"
+  ddtrace==<release> coverage==7.13.5` (the installer's coverage default; it
+  uses a virtual environment instead), then `PYTHONPATH` with that folder
+  before the job's and `PYTEST_ADDOPTS=--ddtrace` before the job's options.
+- Ruby: the installer downloads nothing for Ruby: `bundle add datadog-ci -v
+  <release>` (after `bundle config set frozen false`) unless the bundle has
+  datadog-ci, then `RUBYOPT=-rbundler/setup -rdatadog/ci/auto_instrument`.
+- Java: curl or wget downloads `dd-java-agent-<release>.jar` and its
+  `.sha256` from Maven Central, and `sha256sum` checks it, as the installer
+  does; Alpine and BusyBox images have them on any JDK. Where that fails, as
+  in an official `-slim` image without curl or wget, a Java source file run
+  with the job's JDK (`java File.java`, JDK 11 and later) downloads and checks
+  them instead. The agent is kept only when the checksum matches; then
+  `-javaagent` is added to `GRADLE_OPTS`, `MAVEN_OPTS`, `SBT_OPTS` and
+  `ANT_OPTS` (the installer's default), or to `JAVA_TOOL_OPTIONS` on CircleCI,
+  whose orb ddtest reads as instrumenting every Java process. `onboard
+  --apply` on a Jenkins container stage writes it with dd-java-agent 1.67.1,
+  the release ddtest recommends. An image without curl or wget that has a
+  JRE, a JDK older than 11 or a JDK ddtest cannot read gets no setup: the
+  instructions say ddtest cannot set those jobs up. So does an image without
+  any shell (distroless).
+
+Like the setup snippet, it is guarded by the key test, and every command that
+may fail is a condition, so a job without the key, or whose install fails,
+logs that and runs its tests untraced. The variables it extends are read as
+`${NAME:-}` (or `${PYTHONPATH:+:$PYTHONPATH}`), so a job whose shell has
+`set -u` runs it where they are unset. It holds no backslash, so it reads the
+same in a Groovy string. Two comment lines stand right above it in the CI file:
+
+```sh
+# Datadog Test Optimization: this image has no bash/curl, so Datadog's official installer can't run here.
+# This is an equivalent setup without them. Recommended: add bash and curl to this image and use the official installer.
+```
+
+ddtest validates it as its own prescription, never as a hand-written setup:
+the setup is complete when it runs before the tests in exactly ddtest's shape
+(with any language, release and site), with the comment right above it, an
+exact release and the selected site; one that differs otherwise is an
+unresolved command, and one without the comment is reported. The
+instructions, a caveat in `final_response` and a human action tell the user
+that the official installation script cannot run in the image because it
+lacks Bash or curl, and recommend that the user add them to the image and
+switch to the official installer, which is simpler and more reliable; the
+agent never does it. The `final_response` caveat says so for every language. `onboard --apply`
+writes it on GitLab, Buildkite and Jenkins container stages; on CircleCI the
+agent adds it as the instructions show.
+
+### Scoped setup outside GitHub Actions
+
+On GitLab CI, CircleCI and Buildkite, `onboard --apply` sets up Cucumber and
+WebdriverIO the way it does on GitHub Actions: it edits the selected
+package-script leaves (see [Coverage and local developer
+commands](#coverage-and-local-developer-commands)) to start with
+`NODE_OPTIONS="${NODE_OPTIONS:-} ${DD_CUCUMBER_NODE_OPTIONS:-}"` (WebdriverIO:
+`DD_WDIO_NODE_OPTIONS`), and writes the provider's setup followed by one
+command that moves the preload the setup appended to `NODE_OPTIONS` into that
+variable, with the ESM loader and, for native ESM Cucumber, the Istanbul ESM
+loader:
+
+```sh
+if [ -n "${DD_TRACE_ESM_IMPORT:-}" ]; then export DD_CUCUMBER_NODE_OPTIONS="-r ${NODE_OPTIONS##*-r } --import $DD_TRACE_ESM_IMPORT" NODE_OPTIONS="${NODE_OPTIONS%-r *}"; fi
+```
+
+Outside GitHub Actions the installer exports `NODE_OPTIONS`, ending with its
+`-r` preload, and `DD_TRACE_ESM_IMPORT`, but not `DD_TRACE_PACKAGE`, so the
+command reads the preload's path after the last `-r ` and then removes it;
+ddtest's CI model evaluates these `${NAME%pattern}`/`${NAME##pattern}` forms.
+
+Only the scoped scripts then load the tracer: the job's other Node commands,
+such as builds or standalone WebDriver automation in the same script, keep
+their own `NODE_OPTIONS`. Without the API key or after a failed install the
+command changes nothing. GitLab and Buildkite run it inside the setup's key
+guard (Buildkite with `$$` escapes); CircleCI appends it to `$BASH_ENV` in a
+step after the orb. A job whose setup already leaves the preload in
+`NODE_OPTIONS` keeps it, since the scoped scripts still receive it; only the
+package scripts are edited. For native ESM Cucumber, which needs the Istanbul
+loader in the scoped variable, `onboard --apply` names the command to add after
+that setup instead, unless the selected scripts' scoped prefix or the step's
+`NODE_OPTIONS` already loads it. A setup whose preload a later command moved
+out of `NODE_OPTIONS`, such as Cucumber's scoped command in a job that also
+runs WebdriverIO, no longer reaches the other framework, so `onboard --apply`
+stops and leaves that job for review. A job that sets `DD_CUCUMBER_NODE_OPTIONS` or
+`DD_WDIO_NODE_OPTIONS` itself is left for review. Jenkins jobs keep the
+manual setup until `onboard --apply` edits Jenkinsfiles.
+
+A CI command that runs the framework directly, without a package script
+(`./node_modules/.bin/cucumber-js features --format json`,
+`npx wdio run wdio.conf.js`), has no script to edit, so `onboard --apply`
+returns `ci_edit_required` with the exact command to write instead: the same
+prefix, and for Cucumber `DD_CIVISIBILITY_IMPACTED_TESTS_DETECTION_ENABLED=false`
+and `npx --no-install nyc --` before `cucumber-js`. On Buildkite the command
+writes each `$` as `$$`:
+
+```sh
+NODE_OPTIONS="${NODE_OPTIONS:-} ${DD_CUCUMBER_NODE_OPTIONS:-}" DD_CIVISIBILITY_IMPACTED_TESTS_DETECTION_ENABLED=false npx --no-install nyc -- ./node_modules/.bin/cucumber-js features --format json
+```
+
+Once the command has that form, rerunning `onboard --apply` adds the setup
+before it, and validation reads the command as consuming the scoped
+variable. When the job already has a setup that exports the variable, the
+result names only the command. A direct Cucumber command is accepted only
+with NYC and the impacted-tests workaround (after the prefix or among the
+command's own assignments). A direct command that assigns other variables
+inline (`DD_ENV=ci cucumber-js …`) gets no exact command, since rebuilding it
+would drop them: `onboard --apply` returns a setup gap asking to move them out
+of the command first, into the variables of the commands after the job's
+dependency install. When the job's existing setup leaves the preload in
+`NODE_OPTIONS`, a direct Cucumber command without NYC still gets the
+NYC-wrapped command to write, and the setup stays.
+
+### Hand-written setups outside GitHub Actions
+
+On GitLab CI, CircleCI, Buildkite and Jenkins, a JavaScript or Ruby job that
+already sets up Test Optimization by hand, without the provider's setup
+mechanism, keeps that setup. Where no provider setup precedes a test command,
+ddtest reads the command's environment (the job's variables, a CircleCI
+`environment`, a Buildkite `env` or a Jenkins `environment` directive, and
+what earlier commands export) and recognizes the setups the tracers document:
+
+- JavaScript: `NODE_OPTIONS` preloads `-r dd-trace/ci/init` (also
+  `--require=…` or `-rdd-trace/ci/init`), with `--import dd-trace/register.js`
+  for Vitest and Cucumber, and dd-trace comes from the project: an exact release
+  in the `package.json` that resolves it from the test's directory, the single
+  release its lockfile (`package-lock.json`, `npm-shrinkwrap.json`,
+  `yarn.lock` or `pnpm-lock.yaml`) locks, or an exact `npm install
+  dd-trace@<release>` earlier in the job, in the test's directory (an
+  install elsewhere, or with `--prefix` and the like, stays unresolved). A
+  later `npm ci`, install or prune removes an earlier `npm install --no-save`
+  that `package.json` does not declare, so it no longer counts; an `npm
+  uninstall dd-trace` removes it whichever install added it (a later
+  reinstall stays unresolved). A dd-trace in `optionalDependencies` installs
+  with production-only installs too; a production-only install is read with
+  its own step's `NODE_ENV` and options (`--omit dev`, `--only production`
+  and their `=` forms). Only the documented preload spellings count: a path
+  such as `-r ./node_modules/dd-trace/ci/init` stays unresolved. Cypress,
+  which loads dd-trace through its configuration, is not read this way.
+- Ruby: `RUBYOPT` preloads `-rdatadog/ci/auto_instrument` after
+  `-rbundler/setup` (Ruby reads `RUBYOPT` when it starts `bundle exec` or a
+  binstub such as `bin/rspec` too, before either sets up the bundle) with
+  `DD_CIVISIBILITY_ENABLED=true`; or an RSpec helper that the options file
+  loads (`.rspec`, or the file `--options` selects instead; `--require
+  spec_helper` from `spec/` or `lib/`, `--require ./spec/spec_helper.rb`
+  from the working directory) requires `datadog/ci` at top level and
+  configures it in a `Datadog.configure do |c|` block with `c.ci.enabled =
+  true` (or `DD_CIVISIBILITY_ENABLED=true`) and `c.ci.instrument :rspec`
+  (with no options or trailing condition, which stay unresolved; so does a
+  setting outside `c.ci` other than `service`, `env`, `version` and `tags`,
+  such as `c.site`). The datadog-ci release is the one the selected bundle's
+  `Gemfile.lock` locks.
+
+The preload must not reach the job's dependency install (`npm ci`, `yarn`,
+`bundle install` and the like): the tracer is not installed yet there, so on
+a fresh checkout the install fails to start. A preload in the job's
+variables, or exported before the install, is reported; set it on the test
+commands or for the commands after the install.
+
+Such a setup is certified with the same rules as the provider's own: an exact
+tracer release; `DD_API_KEY` from the provider's secret store (a GitLab CI/CD
+variable, CircleCI project settings or a context, a Buildkite agent hook,
+secrets plugin or UI environment, a Jenkins credential the stage binds with
+`credentials()` or `withCredentials`, without which no key reaches it), never
+a literal in the configuration, and reaching a container that runs the tests; `DD_SITE` (or the
+default `datadoghq.com`) matching the selected site; a preload that reaches the
+test process; and agentless reporting (`DD_CIVISIBILITY_AGENTLESS_ENABLED=true`
+or `c.ci.agentless_mode_enabled = true`) or a Datadog Agent the user confirms;
+and no `DD_TRACE_<FRAMEWORK>_ENABLED=false` (such as `DD_TRACE_RSPEC_ENABLED`)
+turning the framework's integration off. `DD_TRACE_ENABLED`,
+`DD_CIVISIBILITY_ENABLED` and the framework switches read from a value only
+CI knows (`$TRACE_TESTS`) stay unresolved. A setup one test step writes for
+itself, inline or in its own variables, reaches no other step: a job is
+certified only when every test step loads the tracer, with the same release.
+No CI configuration shows an Agent (whether it runs where the tests do, at
+`DD_TRACE_AGENT_URL`, `DD_AGENT_HOST` or `localhost:8126`, with a key and the
+selected site), so a setup that reports through one returns
+`ci_setup_confirmation_required` for `--ci-confirm datadog-agent` on GitLab
+CI, CircleCI, Buildkite and Jenkins; ddtest never asks to switch it to
+agentless, and reports the confirmation in `final_response` as stated by the
+user. A complete setup counts as configured:
+`onboard --apply` writes no second setup, the agent handoff goes straight to
+validation, and validation checks the CI runtime against the release it pins,
+validates locally with that release, and names storing `DD_API_KEY` in the
+provider's secret store as the human action (on Jenkins, next to configuring the
+Datadog plugin when other stages use it). A setup missing a piece is reported
+with that piece (`incomplete_ci_setup`) and kept: `onboard --apply` returns a
+setup gap naming the change, and the instructions list each such job with its
+changes instead of prescribing the provider's setup for it. What ddtest cannot
+read statically stays unresolved (`unverified_initialization`) and is never
+certified: an Agent the user has not confirmed, a value only CI knows, a test helper inside other code or with
+settings ddtest does not evaluate, and a Minitest helper, which no
+configuration shows every test file loads. Assignments of tracer variables
+(`NODE_OPTIONS`, `RUBYOPT`, `DD_*`) that prefix a test command, as in
+dd-trace's documented `NODE_OPTIONS="-r dd-trace/ci/init" DD_ENV=ci yarn
+test`, are that command's environment, also after the provider's setup
+(`NODE_OPTIONS="$NODE_OPTIONS …" npx jest`).
+
+For Cucumber, `onboard --apply` wraps the selected package scripts with NYC
+and keeps the hand-written setup. A Cucumber command that CI runs directly,
+without a package script, and without NYC gets the exact NYC-wrapped command
+to write instead (an edit-then-apply gap); native ESM Cucumber needs
+`--experimental-loader @istanbuljs/esm-loader-hook` in the hand-written
+`NODE_OPTIONS` (or in every selected script), and `onboard --apply` stops with
+a setup gap before any edit until it is there.
+
+Java hand-written setups are validated as above; the pytest CI check also
+validates simple Python hand-written setups.
+Where no provider setup precedes the test command, ddtest recognizes:
+
+- Python: pytest runs with the ddtrace plugin enabled, through `--ddtrace` in
+  the command, `PYTEST_ADDOPTS` (also as a prefix of the command) or the
+  pytest configuration's `addopts`. ddtrace comes from an exact `pip install
+  ddtrace==<release>` in the job, a requirements file the job installs (`-r`,
+  following its `-r`/`-c` includes), or dependencies selected by an observed
+  project installation. Constraints alone and uninstalled declarations do not
+  prove that ddtrace is installed. Environment activation or deactivation
+  invalidates an earlier installation's evidence, as do `pyenv global` and
+  `pyenv local` selections (including `local --unset`); install the exact release
+  in the environment that runs pytest. `uv run --no-sync` and `poetry run` select
+  their own test environment, so an earlier default-environment installation
+  cannot certify their tracer, even when uv skips syncing. uv sync and
+  automatically syncing uv run remain inconclusive because a lockfile can
+  include unselected extras and groups. Conda and Mamba package mutations also
+  invalidate prior pins; an exact pip reinstall before pytest can establish fresh
+  evidence. Clearing a virtual environment with `--clear` also invalidates its
+  earlier installation; install an exact release again after clearing it. Pip
+  configuration writes that can redirect later installations, select other
+  dependencies or enable dry runs keep those installs unresolved, including
+  isolated pip, which still reads global and site files.
+  `PIP_CONFIG_FILE=/dev/null` disables those files for an explicit reinstall.
+  Read-only configuration queries and unrelated settings preserve evidence.
+  `uv pip sync` also invalidates prior installation evidence because it
+  can remove distributions absent from its input. `pip install` dry runs,
+  including `PIP_DRY_RUN`, do not install a tracer, and alternate installation
+  destinations remain unresolved. Explicit pip interpreter selectors, executable
+  paths and destination variables such as `PIP_TARGET` cannot certify the
+  default pytest environment. Pip's `--isolated` flag before or after `install`
+  ignores destination environment variables; a value named `--isolated` does
+  not act as that flag. A later flag does not undo `PIP_PYTHON` interpreter
+  selection, explicit destinations or configuration files. Explicit `PYENV_VERSION`, `PYTHONHOME`, or `PATH`
+  selection on pytest also remains unresolved: an earlier installation does not
+  establish that interpreter's packages. Supported `cross-env` and simple
+  `cross-env-shell` wrappers retain their environment settings when tracking
+  installs, uninstalls and dry runs; unreadable wrappers invalidate earlier
+  evidence. An install under an unresolved CircleCI `when` or `unless` cannot
+  establish a pin for later unconditional pytest; an unconditional exact install
+  can establish it again. A later install without a tracer requirement
+  invalidates the earlier pin because transitive dependencies may replace it;
+  `--no-deps` or `PIP_NO_DEPS` excludes project dependencies and preserves earlier
+  evidence only when every direct requirement has a resolved package identity.
+  Unidentified wheels, archives and URLs invalidate an earlier pin even without
+  dependencies. Unquoted extras use the same Python command parser as discovery;
+  an unreadable setup command invalidates prior installation evidence. Installs
+  and uninstalls with `PIP_REQUIREMENT` remain unresolved, except when pip's
+  isolated mode ignores it; installation dry runs preserve the prior pin.
+  Each pytest invocation must also have valid reporting settings, including
+  command-local API key, site and agentless overrides.
+- Java: `-javaagent:` with a `dd-java-agent` JAR in `JAVA_TOOL_OPTIONS`,
+  `MAVEN_OPTS` or `GRADLE_OPTS`, `-Dorg.gradle.jvmargs` or
+  `gradle.properties`, with `DD_CIVISIBILITY_ENABLED=true` (or the matching
+  `-Ddd.*` system properties). ddtest certifies the release only in the
+  setup's simple form: one `-javaagent:<path>` across the build's JVM option
+  lists and, before the tests, one unconditional `curl -o <path>` or
+  `wget -O <path>` (the path a separate word, identical to the attached one)
+  of an exact release from Maven Central or the DataDog/dd-trace-java GitHub
+  releases, in the test step's working directory, with no `cd` and no other
+  command naming the agent JAR. Any other form is recognized but not validated
+  (`unverified_initialization`), and the latest-release link is reported as
+  floating. `-DargLine` and `.mvn/jvm.config` stay unresolved. On Jenkins,
+  `onboard --apply` leaves a stage with such a setup alone and refuses a plugin
+  option that would reach it.
+
+For Python, ddtest checks the runtime, installed tracer release and reporting
+configuration on providers without the shared workflow syntax. It preserves
+hand-written setups and reports missing or unresolved evidence for each job;
+CI execution and dependency provisioning remain untested.
+
+The GitLab setup script, the CircleCI orb and the Buildkite snippet run the
+installer outside GitHub Actions, where it appends its preload to
+`NODE_OPTIONS` and exports `DD_TRACE_ESM_IMPORT` but never `DD_TRACE_PACKAGE`.
+ddtest models those exports, so a test command whose `NODE_OPTIONS` reads
+`$DD_TRACE_PACKAGE` (as GitHub Actions setups do) is reported as a preload
+Node cannot start with, never certified; the same applies to a hand-written
+`NODE_OPTIONS` that preloads it.
+
+### Python on GitLab CI, CircleCI, Buildkite and Jenkins
+
+pytest onboarding prints the selected provider's setup with Python's values,
+and `testdrive --framework pytest` checks it, as for GitHub Actions. Its
+validation is standalone, without the coordinator's checkpoint, `--resume`,
+`--facts` or automatic CI edits. A person's instructions end with
+`testdrive --framework pytest --all --check-only --yes`, then
+`testdrive --framework pytest --all --yes --tracer-version <release>`.
+
+A coding agent gets the structured handoff, on every provider including
+GitHub Actions: `onboard` (piped, `--agent` or `--apply`) asks the user for
+the CI facts below with `next_action: ask_user`, as for JavaScript and Ruby,
+then returns `ci_setup_required` with the setup instructions and
+`resume_command: testdrive --framework pytest --all --agent --yes`, or `ready`
+with it as `next_command` once every pytest step has a complete setup.
+`testdrive --agent` asks the same questions before anything runs, validates
+the ddtrace release the CI setup pins (when every job pins the same one and
+no `--tracer-version` is given), and returns the verdict with
+`final_response`: `passed` (`standalone_validation`) when the report is
+PASSED, otherwise `validation_failed` (`validation_incomplete`) with the
+blockers and `resume_command`. PASSED is pytest's passing verdict, never
+COMPLETE LOCALLY, which only the coordinator certifies: the result tells
+the agent to begin with `final_response` unchanged and not to call onboarding
+done or complete. Plain `testdrive` output for pytest ends with the same
+instruction and `final_response`, and an incomplete verdict prints
+`Local validation: PASSED (local checks only; they do not complete
+onboarding)` rather than a bare PASSED.
+
+The GitLab setup script, the CircleCI orb and the Buildkite installer run
+`install_test_visibility` (v13 for the orb, v15 for the others; their Python
+installer is the same). It creates a virtual environment, `.dd_civis_env`, in
+the working directory with the `python` on PATH, installs ddtrace
+(`PYTHON_TRACER_VERSION`, `python_tracer_version`,
+`DD_SET_TRACER_VERSION_PYTHON`) and coverage there with pip, and exports
+`PYTHONPATH` (its site-packages before the job's `PYTHONPATH`) and
+`PYTEST_ADDOPTS=--ddtrace` (before the job's options) into the job's shell. The
+tests keep their own environment: `PYTHONPATH` adds the tracer to it. The
+pytest CI check certifies a job when the setup runs before every pytest
+command with `python` selected, an exact ddtrace release (the one local
+validation runs; `latest` or no version is refused), the API key from the
+provider's secrets and the selected site (`DD_SITE`), on a Python the job's
+image names: `python:3.12`, `python:3.12-slim`, `cimg/python:3.12`,
+`circleci/python:3.9` or `ghcr.io/astral-sh/uv:python3.12-bookworm`. A job on
+the runner's or agent's own Python, or in an image whose name selects no
+minor version (`python:latest`, `python:3`, an image by digest), stays
+inconclusive until the user states its Python with `--ci-runtime
+python=<version>`. A later command that replaces `PYTHONPATH` or
+`PYTEST_ADDOPTS` instead of extending it (`export
+PYTHONPATH="${PYTHONPATH:+$PYTHONPATH:}src"`, which adds the separator only
+after a set `PYTHONPATH`, since a setup skipped for a missing key or a failed
+install exports none and a leading empty entry would put the working directory
+on the import path) is incompatible. An inline `PYTHONPATH=src
+pytest` is that command's environment, validated locally with `src`; it drops
+the tracer path every setup puts on `PYTHONPATH`, so the check and the agent
+handoffs prescribe the exact rewrite (`ci_edit_required`: the export above
+before the unchanged command, written with `$$` on Buildkite, appended to
+`$BASH_ENV` on CircleCI, or the step's `env` on GitHub Actions), then the same
+validation command. When other commands of the same shell (on CircleCI, of the
+same job) set another path, the export first saves the path
+(`datadog_saved_pythonpath="${PYTHONPATH:-}"`) and is undone after its command
+(`export PYTHONPATH="$datadog_saved_pythonpath"`), which restores it even when
+it was empty or unset, so every command keeps its own path; commands
+of one GitHub Actions step or CircleCI run step that set different paths are
+first moved into steps of their own. A job without the setup whose
+Python ddtrace does not support (such as 3.15, or a PyPy image) is excluded,
+not missing; at least one job must be instrumented. Matrix entries keep their
+place, since pytest validation refuses a matrix whose entries changed after its
+first check: on CircleCI a `when`/`unless` on the matrix parameter skips the orb
+for such an entry, and elsewhere an unsupported entry that shares the setup
+stays incompatible, for the user to decide.
+
+ddtrace's compiled modules load only on the Python version that installed
+them. A virtual environment the job creates with its own Python (`python -m
+venv venv`, `python3 -m venv venv` or `virtualenv venv`, then `source
+venv/bin/activate`) runs that version, so its tests are certified while the
+job still selects that version when they run; one ddtest cannot trace to the
+job's Python (`uv venv`, `python3.11 -m venv`, one restored from a cache, one
+created before setup-python selects another version) is inconclusive, as is
+an activation ddtest cannot resolve (an absolute path, an unknown variable,
+one inside a condition) and commands that select their own interpreter, `uv
+run` and `poetry run` among them, as on GitHub Actions. Each pytest command is
+checked in the environment active when it runs, after the step's variables
+resolve; an activation lasts until `deactivate` or the end of its shell: one
+step on GitHub Actions and CircleCI, `before_script` and `script` together on
+GitLab CI, a step's commands on Buildkite, one `sh` on Jenkins. An
+activation, a `python --version`, and linters, uploaders and coverage reports
+(`flake8`, `mypy`, `codecov`, `coverage xml`, …) are not test entry points.
+These rules apply on GitHub Actions too, where a step can activate an
+environment an earlier step created. For tox, the instructions extend
+`pass_env` with `DD_*`, `PYTHONPATH` and `PYTEST_ADDOPTS`.
+
+On Jenkins the Datadog plugin (`languages: ['PYTHON']`) runs `pip install -U
+ddtrace` with the build agent's default pip, from the workspace and with the
+agent's own environment, on every build: the latest release, which nothing
+pins, so the Python setup floats like JavaScript's and `final_response` names
+the release local validation used as a caveat. It sets `PYTHONPATH` to that
+pip's site-packages followed by `:` and a space before the existing
+`PYTHONPATH`, and `PYTEST_ADDOPTS=--ddtrace` before the existing options, once
+per agent: a `PYTHONPATH` or `PYTEST_ADDOPTS` in an `environment` directive or
+`withEnv` is incompatible (extend them in the test's `sh` instead). The
+plugin's facts, the agents' Python (`--ci-runtime`) and, for a stage that
+activates a virtual environment or another Python (`source venv/bin/activate`,
+`pyenv`, `conda activate`), `jenkins-agent-runtime-matches` are the user's
+answers: `onboard` and `testdrive --agent` ask for them with `next_action:
+ask_user` (`ci_runtime_required` first, then
+`ci_setup_confirmation_required` once the Jenkinsfile enables the plugin, for
+the stages that run pytest only), and the answers go on the next command. The agent's pip must belong to the tests'
+Python version and be able to install packages (Debian 12 and Ubuntu 24.04
+system Pythons refuse, PEP 668); otherwise the plugin fails and the tests run
+untraced.
 
 ## Coverage and local developer commands
 
-Mocha CI commands without Istanbul coverage are wrapped with the project's NYC.
+Mocha CI commands without Istanbul coverage are wrapped with the project's NYC,
+unless their package has no file NYC would instrument: with no NYC
+configuration in the package or above it, nothing below it with a `.js`,
+`.cjs`, `.mjs`, `.ts`, `.tsx` or `.jsx` extension outside `node_modules/` and
+NYC's default exclusions (test files such as `*.test.js`, `test/`,
+`__tests__/`, tool configuration). A suite that only validates data, such as
+one that loads `../schema.json`, gets no wrapper, and its real-suite coverage
+is reported as not applicable instead of blocking, as Jest and Vitest have no
+such check.
 Cucumber and WebdriverIO initialization is applied only to the selected literal
 package-script leaves, including lifecycle hooks. Forwarding aliases and other
 frameworks remain unchanged.
@@ -716,7 +1541,9 @@ Manual setup (`onboard --instructions`) may set the variable on the CI test step
 instead; either place disables impacted-test detection in CI.
 Other feature controls and testdrive's isolated probes remain separate.
 
-Cucumber ESM coverage also needs `@istanbuljs/esm-loader-hook`. Missing coverage
+Cucumber ESM coverage (a `"type": "module"` package, or selected native ESM
+inputs such as `--import features/steps.mjs`) also needs
+`@istanbuljs/esm-loader-hook`. Missing coverage
 dependencies produce an exact install command for npm, pnpm or Yarn. Review and
 run that command separately, then rerun onboarding. For example:
 
@@ -734,7 +1561,13 @@ developers using `cmd.exe` need portable hooks before using these edited scripts
 
 Keep `.testoptimization/testdrive.json` and `report.html`. They distinguish local
 validation from actual CI execution and Datadog processing, which are not proven
-by these local checks. `--site` selects the site for a new action (default
+by these local checks. Coordinated validation checks that Git ignores them
+before any configuration runs: without `/.testoptimization/` in `.gitignore` it
+stops with `needs_input` (`report_exclusions_required`, `next_action:
+apply_source_edit`) and the message the report's `git_report_exclusions` check
+gives, so the edit comes before the run rather than after it. Every exclusion
+is checked again after the run, as packages include reports only once they
+exist. `--site` selects the site for a new action (default
 `DD_SITE`, then `datadoghq.com`); `--tracer-version` is a fallback when no project
 or CI version is selected. Without either, when the latest release can't run
 on every instrumented CI row's Node, setup selects the newest release that
@@ -756,8 +1589,10 @@ For existing setup, use `testdrive --framework vitest --all --agent --yes`.
 Plain testdrive keeps its earlier execution behavior; explicit `--agent` or
 `--format json` selects coordination. Supplying `--facts` also selects the coordinator. Structured execution requires `--yes` and never opens an interactive prompt. RSpec and Minitest use the shared
 coordinator after the agent applies the Ruby CI setup (see [Ruby validation](#ruby-validation)).
-Python instructions and plain execution remain unchanged; structured validation is
-unsupported for Python and returns no next command.
+pytest uses the same handoff, with standalone validation instead of the
+coordinator (see
+[Python on GitLab CI, CircleCI, Buildkite and Jenkins](#python-on-gitlab-ci-circleci-buildkite-and-jenkins));
+a person's `onboard` in a terminal and plain `testdrive` keep their text output.
 
 The coordinator owns one resolved execution plan: actual commands, directories,
 environments, builds, runtime/tracer selection, initialization and feature policy.
@@ -769,17 +1604,131 @@ Checks and source-edit hashes stay in the bounded JSON; full output stays in HTM
 
 `onboard --apply` selects a tracer every CI row it instruments can run: when the default release needs a newer Node than a CI job provides, it picks the verified release that supports all of them, or stops and names the rows that need different majors; every configuration it validates uses that one release, and a stop names the recommended release in its resume command. Configurations that can never run locally, such as WebdriverIO cloud grids and multiremote, don't constrain the tracer: a cloud grid whose credentials are CI secrets is instrumented and reported as a caveat, and other such configurations stay unedited and are reported as blockers. When a CI path, such as the Cypress action API, runs on a Node major the local host lacks, ddtest validates on the local Node if both the framework and the tracer support it, and records the substitution in `runtime_substitution`. That evidence completes only with `--accept-substitute-runtime`, a decision for the user; otherwise the result is `needs_input` (`substitute_runtime_unaccepted`) with the accepting resume command. When the local Node is unsupported, the result is `blocked_environment` (`local_runtime_mismatch`) naming the CI runtime. Either way, an existing installation of the CI runtime first on PATH validates without substitution; ddtest never downloads a runtime.
 
-Only CI that can reach a selected test is in scope. Jobs whose steps can't start
-one (system packages, coverage merging, linting, publishing, another framework)
-are listed as not a test consumer, and unresolved steps after a job's last
-possible test are listed as outside the test path. Before the test, a
-check-only step (it only reads or prints, or upgrades the package manager
-itself with `npm install -g npm@latest`) is listed rather than blocking, since
-each step's shell ends with it. Unknown executables, actions, repository files
-and package scripts whose body could start a test still block, and so do
-`source`/`eval`, interpreter invocations (`bash -c`, a script file, `node -e`
-code that spawns processes or loads a repository module) and npm settings that
-change how scripts execute (`ignore-scripts`, `script-shell`). A Cucumber alias
+Only CI that can reach a selected test is in scope: a step blocks validation
+only when it may start the selected framework's tests or may change what they
+run. A step may start them when it runs the framework's runner, directly or
+through a package script, alias, wrapper or repository script that resolves to
+it, or when ddtest can't tell. Jobs whose steps can't start one are reported as
+a caveat ("CI job ... that never runs …; it is outside this validation"), and
+so are jobs that run no test ddtest can find but use published packages
+ddtest doesn't read: packages their Node scripts import (an upload script's
+`njwt`) or a package merely named `publish`, `release` or `deploy`
+(`npx @manuscripts/publish`); the caveat names them, and their earlier steps
+are not preparation of a test. In a job that also runs tests, the same
+packages block. Other unknown package runners (`npx company-runner`), the
+repository's own workspace or `file:` packages and names that suggest tests
+(`@acme/test-runner`) keep the job in scope. Caveats too are unresolved
+steps after a job's last possible test ("… runs after the
+job's last … test and can't start …") and unresolved commands after the tests
+in the same step (`npm run test && node scripts/report.js`), which the handoff
+names as work the step runs outside this validation. Such a command stays
+unresolved when a later test follows it, in the same step, the script calling
+it or a later step of the job that runs on the same matrix row, since it may
+prepare that test. A GitHub `if` that calls a status function is read on the
+passing path validation follows, where every earlier step succeeded:
+`success()` and `always()` hold, `failure()` and `cancelled()` don't, so a
+report step under `if: ${{ !cancelled() }}` is classified like an
+unconditioned one. A condition that holds only after a failure (`if:
+failure()`) stays unresolved where its step may start a test. What ddtest
+recognizes as unable to start a test:
+
+- system packages, file, archive, coverage-report, test-report (`allure`) and
+  version-control tools, linters, formatters, type checkers and code-quality scanners
+  (`sonar-scanner`), Git hook installers (`husky`), and each language's own
+  lint, audit and packaging tools (`twine`, `ruff`, `rubocop`, `brakeman`,
+  `gem build`/`push`, `bundle install`), all invoked by name: a repository path
+  such as `./ci/ruff` is followed as a script whatever its name. Documentation
+  builders are not among them: Sphinx executes the project's `conf.py` and
+  MkDocs its hooks, so `sphinx-build`, `python -m sphinx` and `python -m mkdocs`
+  may start a test;
+- `pip` installing published packages or wheels, and `pip install .`,
+  `python -m build` or `check-manifest` when the project's build backend runs
+  none of its code: setuptools without `setup.py`, command classes or `attr`
+  versions, Hatchling without build hooks, Flit without dynamic metadata,
+  Poetry without a build script, PDM without a build hook. A `setup.py`, an
+  in-tree or unknown backend, a source archive or a requirements file ddtest
+  can't read may start a test;
+- another framework's runner, including `./node_modules/.bin/<runner>`;
+- a repository Node or TypeScript script, followed through its local imports
+  (with Node's and TypeScript's extensions, `./util.js` for `util.ts`, folder
+  indexes and JSON data), that neither names the framework (outside comments
+  and local import paths) nor starts a process whose literal command and
+  arguments (`spawnSync('npm', ['test'])`), read in the folder the script was
+  invoked from, may run it, whose command or arguments are computed (a
+  template value in the executable, a subcommand, a script name or a whole
+  argument, as in `` execSync(`npm ${task}`) ``; a value inside a literal path,
+  `` `src/locales/${name}` ``, only names a file), whose options select
+  another directory or after a directory change (`process.chdir`), nor imports
+  a path alias, a worker, a local module ddtest can't find, or a package other
+  than Node's built-in modules and a short list of libraries that start no
+  runner or process: the bundlers, compilers and linters above, file, path and
+  glob helpers (`fs-extra`, `glob`), archivers (`archiver`, `adm-zip`, `tar`),
+  HTTP clients and URL parsers (`node-fetch`, `axios`, `got`, `undici`,
+  `urijs`), terminal output and argument parsers (`chalk`, `commander`,
+  `yargs`, except Commander's executable subcommands and yargs's
+  `commandDir`), and version, environment and data helpers (`semver`,
+  `dotenv`, `yaml`). Process launchers such as `execa`, `shelljs` and `zx`, and
+  any other package (an internal `@acme/ci` may start the runner), may; and a
+  repository shell script whose commands can't start one;
+- `docker push`, `tag`, `login`, `pull` and other image commands, and
+  `docker build` when no `RUN` of the Dockerfile it builds (separated by spaces
+  or tabs) can start a test
+  (a remote context, a stdin or variable Dockerfile, a custom frontend or a
+  `RUN` heredoc may);
+- `ng <target>` when the target's builder in `angular.json` is one Angular
+  ships and its configuration doesn't name the framework (`@angular-devkit/build-angular:karma`
+  runs Karma, not Jest; the `unit-test` builder runs Vitest unless it selects
+  Karma);
+- `vue-cli-service build`, `serve`, `inspect`, `help` and `lint`; `test:unit`,
+  `test:e2e` and other plugins' commands may. A third-party plugin's command,
+  such as `vue-cli-plugin-styleguidist`'s `styleguidist:build`, is a package
+  ddtest doesn't read: a job that runs no test is a caveat naming it, and a job
+  that also runs tests blocks on it;
+- `print-env` (`@bahmutov/print-env`), which prints environment variables;
+- in a Cypress job, a step that only starts a server in the background with
+  npm, Yarn, pnpm or Node (`npm run start &`, a GitLab or CircleCI script entry
+  of its own) before the Cypress CLI step, with nothing between them but the
+  Datadog setup ddtest prescribes immediately before the test command or steps
+  that only read or print: validation starts it before Cypress, as for both in
+  one step, and the CI runtime check (and the CI tracer agreement it feeds)
+  treats it as that test's startup, neither a test nor an unresolved command;
+- a publishing CLI: `npm publish`/`pack` or a known publish-only tool
+  (`gh-pages`, `vsce`, `ovsx`, `surge`, `jsr`, `pkg-pr-new`; a package merely
+  named `publish`, `release` or `deploy`, such as `npx @acme/deploy`, may run
+  anything and stays unresolved in a job that runs tests), when none of the
+  publish and version lifecycle scripts (`prepublishOnly`, `prepack`,
+  `prepare`, `postpack`, `publish`, `postpublish`, `vscode:prepublish`,
+  `preversion`, `version`, `postversion`) of the package it publishes can start
+  a test: the current one, or the repository folder it names
+  (`npm publish ./build`). A workspace selection, a tarball or a generated
+  folder may. `semantic-release` can't when its JSON or YAML configuration
+  (or `release` in `package.json`) loads only official plugins that run no
+  project command (commit analyzer, release notes, changelog, GitHub, GitLab,
+  Git) and `@semantic-release/npm`, whose `pkgRoot` package is checked like a
+  publication; the exec plugin, any other or local plugin, `extends`, a
+  JavaScript configuration and command-line options that select plugins or
+  configuration (`--extends`, `--plugins`) may. Tools that run tests or hooks
+  of their own (`np`, `release-it`) stay possible test paths.
+
+Before the test, a step that can't start one may still change what it runs: it
+blocks, and its reason says so ("Runs before the job's … tests and may change
+what they run, which ddtest can't replay"), unless it is a check-only step (it
+only reads or prints, or upgrades the package manager itself with
+`npm install -g npm@latest`), which is listed rather than blocking since each
+step's shell ends with it, or setup ddtest knows how to treat: dependency
+installs, replayed preparation, and Rails database tasks
+(`bin/rails db:reset`, `rake db:setup`), which prepare the test database and
+are listed for the user to prepare locally, unless a repository Rakefile or
+task file both extends database tasks and names the framework. A Ruby test
+step may also run lint, audit or gem release tools before or after the test
+(`bundle exec rubocop && bundle exec rspec`); without autocorrection they are
+named as work outside this validation. Unknown executables, actions,
+repository files and package scripts whose body could start a test still
+block, and so do `source`/`eval`, interpreter invocations (`bash -c`, `node -e`
+code that spawns processes or loads a repository module, a script ddtest can't
+read) and npm settings that change how scripts execute (`ignore-scripts`,
+`script-shell`). A missing package script blocks too: the package manager
+exits with an error there, so the CI step fails. A Cucumber alias
 chain such as `pnpm test:unit && pnpm test:bdd` resolves to its Cucumber leaf
 when that leaf is the chain's only and last link. An unquoted pathname pattern
 in a JavaScript test command, such as `"test": "mocha *.test.js"`, is expanded
@@ -815,15 +1764,36 @@ configuration whose CI step reads a remote browser grid's credentials from CI
 secrets (Sauce Labs, BrowserStack, LambdaTest, TestingBot): setup instruments it
 like any other step, and it is reported as running only in CI once a local
 configuration of the same suite passed its paired comparison; without one, it
-blocks. A GitHub Actions variable that carries only a credential secret, such
-as `GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}` or a `SONAR_TOKEN` set on the test
-step, its job or an earlier setup step, is a caveat as well: local validation
-runs without it (a value the host exports is unset too) and names it. A
-credential is a variable whose name ends with TOKEN, SECRET, PASSWORD,
-PASSPHRASE, API_KEY, ACCESS_KEY, SECRET_KEY, PRIVATE_KEY, CREDENTIALS or AUTH.
-A command that reads such a variable, a secret used as a setting (such as
-`AUTH_MODE` or a URL) and a remote grid's key outside WebdriverIO still
-require review. Caveats never prevent COMPLETE LOCALLY. The handoff also names CI step
+blocks. A CI variable whose value only CI provides, set on the test step, its
+job or an earlier setup step, is a caveat as well: a secret, whatever its name,
+as `GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}` or `API_URL: ${{ secrets.API_URL }}`,
+a CI context such as `${{ github.ref }}`, a step output, or a value that reads
+only the provider's predefined variables, as GitLab's `$CI_COMMIT_TAG`,
+Buildkite's `$BUILDKITE_*` or CircleCI's `$CIRCLE_*`. Local validation runs
+without it (a value the host exports is unset too) and names it; both paired
+runs miss it alike. A command line that expands such a variable, a value the
+job's own commands or build logic compute (`export SUITE=$(cat ci/suite)`, a
+Jenkins `sh(returnStdout: true, …)`, a project variable), and a variable that
+controls the runtime, the tools or the tracer still require review: `PATH`,
+`HOME`, `BASH_ENV`, `ENV`, the dynamic linker's, the `DD_*` settings
+validation keeps, and each language's runtime, cache and tool variables, such
+as `NODE_OPTIONS`, `CYPRESS_*`, `PYTHONPATH`, `PYTEST_ADDOPTS`, `RUBYOPT`,
+`BUNDLE_*`, `SPEC_OPTS`, `JAVA_TOOL_OPTIONS`, `JDK_JAVA_OPTIONS`,
+`MAVEN_ARGS` or `GRADLE_OPTS`. A variable the CI configuration defines
+literally expands into the words the shell splits it into, as
+`mvn $MAVEN_CLI_OPTS test` with `MAVEN_CLI_OPTS: "--batch-mode --errors"`; a
+value with a pattern character or a newline still requires review. Two
+command-line values are exceptions. A JVM option of a plugin that runs no
+tests, GPG signing (`gpg.*`), Gradle's signing plugin (`signing.*`) or the
+Sonar scanner (`sonar.*`), as `-Dgpg.passphrase=$GPG_PASSPHRASE` or
+`-Dsonar.token=${{ secrets.SONAR_TOKEN }}`, is validated empty and named. A
+Maven settings file only CI provides, as `mvn test -s $MAVEN_SETTINGS` with a
+GitLab file variable (`-s`, `--settings`, `-gs` or `--global-settings`), holds
+repositories, mirrors and credentials rather than tests, so the step is
+validated without that option, with the local Maven settings, and the
+configuration notes it for the user; a settings value a command computes stays
+unresolved. Any other property, a test's credential as `-Ddb.password=…`
+included, still requires review. Caveats never prevent COMPLETE LOCALLY. The handoff also names CI step
 settings that disable a tracer integration (such as
 `DD_TRACE_DISABLED_INSTRUMENTATIONS=router`) and lists earlier attempts of the
 same workflow that stopped before the final run. Re-running `--apply` on its own
@@ -850,8 +1820,17 @@ get instrumentation guidance, which needs the user's approval like any edit ddte
 did not prescribe. The final response lists every uncommitted change outside CI and
 ignore files in `repository_changes`, with the commands that revert it, including
 the reinstall a reverted lockfile needs. Agents never rename tests, rewrite CI or
-package scripts so ddtest can parse them, disable an instrumentation ddtest did not
-prescribe disabling, or download a runtime; they report the blocker.
+package scripts so ddtest can parse them, retry variants of a CI edit until ddtest
+accepts one, disable an instrumentation ddtest did not prescribe disabling, or
+download a runtime; they report the blocker. Unresolved CI scope
+(`scope_unresolved`, `scope_decision_required` and `unresolved CI scope`
+blockers) is a limit of ddtest's static analysis: every such result tells the
+agent to report each step and its options to the user (run the tests in a CI
+step ddtest can read, once the user approves that change, or keep the step
+reported as not validated) and not to edit CI configuration (steps, conditions,
+variables or whitespace) to make ddtest accept it unless a result prescribes
+that exact edit. An incomplete `final_response` with such blockers says the
+same to the user.
 A final result tells the agent to relay `final_response` verbatim. An incomplete or
 failed verdict starts with `NOT COMPLETE:`, so a paraphrase cannot turn it into a
 completion claim.
@@ -868,10 +1847,16 @@ the result is `blocked_environment` (`file_descriptors_exhausted`) with
 `next_action: run_command`: free descriptors and rerun the same command.
 
 Results distinguish ready, needs_input, blocked_environment, unsupported,
-validation_failed, selected_passed and complete_locally. Follow the returned argv
+validation_failed, selected_passed and complete_locally, plus passed for
+standalone pytest validation. Follow the returned argv
 without guessing a different framework, tracer or suite. Missing capability and
 setup facts are distinct from failed test assertions. Registry transport may retry
 once; authentication, permissions and feature failures are not silently retried.
+
+Returned commands start with the running ddtest's own path. A host that runs
+ddtest through a wrapper can set `DDTEST_SELF_PATH` to the wrapper's absolute
+path so returned commands name the wrapper instead. ddtest ignores a value that
+is not an absolute path to an executable file.
 
 A checkpoint caches successful preparation only. `--resume <run_id>` always runs
 fresh tests and invalidates preparation after source, runtime, tracer, facts or
@@ -907,13 +1892,49 @@ Datadog backend processing remain untested.
 ## Java validation
 
 Java projects build with Maven or Gradle. `ddtest onboard --framework junit5`
-lists the Maven and Gradle CI test commands of the GitHub Actions workflows and
-prints their setup; select the framework the project uses (`junit4`, `junit5`,
+lists the Maven and Gradle CI test commands of the selected CI provider's
+configuration (GitHub Actions, GitLab CI, CircleCI, Buildkite or Jenkins) and prints
+their setup; select the framework the project uses (`junit4`, `junit5`,
 `testng`, `spock`, `cucumber-java`, `karate`, `scalatest` or `munit`). A
 repository with a `pom.xml` or Gradle settings or build files at its root is a
 Java repository; one that also contains a JavaScript, Python or Ruby project
 keeps that platform by default; select Java with `--platform java` or a JVM
 `--framework`.
+
+On GitLab CI, CircleCI and Buildkite the setup is the provider's Datadog
+mechanism (the GitLab setup script, the CircleCI orb, or on Buildkite the
+installer in the test step's commands), which runs the same installer as the
+GitHub action: it adds `-javaagent` to `MAVEN_OPTS` and `GRADLE_OPTS` in the
+job's shell, before the job's own options (the orb, to `JAVA_TOOL_OPTIONS` for
+every Java process, unless `java_instrumented_build_system` names Maven or
+Gradle). A later command that replaces that variable instead of extending it
+(`export MAVEN_OPTS="$MAVEN_OPTS …"`) leaves the tests uninstrumented. The JDK a
+row is certified on is the one its job image names, such as
+`maven:3.9-eclipse-temurin-21`, `gradle:8.10-jdk17`, `eclipse-temurin:17-jdk` or
+`cimg/openjdk:17.0`; a job in an image whose name selects no JDK version stays
+inconclusive, and for a job on the build agent's own JDK, the user states it
+(`--ci-runtime java=21`, see [Runtimes and facts only the user can
+state](#runtimes-and-facts-only-the-user-can-state)).
+
+On Jenkins, host-agent stages use the Datadog Jenkins plugin
+(`datadog(testOptimization: [enabled: true, serviceName: …, languages:
+['JAVA']])`). Its JavaConfigurator downloads dd-java-agent into the workspace
+(`.datadog/dd-java-agent.jar`, reused for 12 hours) and puts `-javaagent` before
+the `MAVEN_OPTS` and `GRADLE_OPTS` of every step, joined with a space, computed
+once per agent. It downloads the latest release unless
+`DATADOG_JENKINS_PLUGIN_TRACER_DISTRIBUTION_URL` in `additionalVariables`
+names one, such as Maven Central's `…/dd-java-agent/1.67.1/dd-java-agent-1.67.1.jar`,
+whose signature it then verifies: ddtest validates that release, or the
+latest one, reported as floating. ddtest asks the user for the plugin's facts
+(`--ci-confirm`) and the agents' JDK. Container stages use the setup snippet,
+as for the other languages (see [Jenkins](#jenkins)).
+
+Where no provider setup precedes the tests, the Java CI check reads a
+hand-written dd-java-agent setup (see [Hand-written setups outside GitHub
+Actions](#hand-written-setups-outside-github-actions)): a complete one is
+certified with the release it attaches, which local validation runs. Local
+replay drops the setup's `-javaagent` and its `-Ddd.*` system properties, as it
+drops the DD_* variables CI's agent reads, keeping tracer plugin settings.
 
 For Gradle, ddtest reads the build's settings (and the scripts they apply),
 build files and default version catalog without running Gradle, including the
@@ -921,11 +1942,53 @@ test tasks and suites build files declare; a project list or test task that
 build logic computes, such as in buildSrc, leaves the step unresolved rather
 than guessed, except for tasks the build files declare with another type, such
 as a `JapicmpTask`, which never run tests. It resolves each CI step to its test
-tasks, reports the other tasks and the projects of other frameworks, and
+tasks, reports the other tasks and the projects of other frameworks, resolves
+a step that chains Gradle commands, as `./gradlew assemble && ./gradlew
+check`, to its one test command when the others run no tests, reads the
+`arguments` input of `gradle/gradle-build-action` (and of
+`gradle/actions/setup-gradle` before v4, which ignores it) as a Gradle command
+line run with the build's wrapper in `build-root-directory`, so `with:
+arguments: build` is a test step like `./gradlew build` (a `gradle-version` or
+`gradle-executable` other than the wrapper stays unresolved), and
 treats a job without the Datadog action whose commands only sign, download and
 publish, with Maven outside the test lifecycle or Gradle tasks that by
 convention run no tests, as outside validation, reported as a caveat even
-where secrets fill its commands. It checks that the Datadog action
+where secrets fill its commands. System package installs (`apk`, `apt-get`,
+`yum` and the like) run no tests, and Docker commands are read by the shared
+rules: moving, tagging, pushing or loading images runs nothing, and an image
+build whose Dockerfile may run tests, as `RUN mvn clean package`, runs them
+inside the image, where no CI setup instruments them; that step is reported,
+not a blocker. A step whose literal Maven goals or Gradle tasks run no tests
+(conventional non-test tasks such as `publish`, `assemble`, `jar`, `javadoc`
+or `sign…`; `build` and `check` run tests) is outside test scope whatever a CI
+expression or variable fills in for an option value, as `./gradlew publish
+-Psigning.keyId=${{ secrets.GPG_KEY_ID }}
+-Psigning.secretKeyRingFile=$HOME/.gnupg/secring.gpg`. PIT mutation testing,
+the Gradle plugin's `pitest` tasks and the Maven plugin's goals
+(`pitest:mutationCoverage`, `org.pitest:pitest-maven:mutationCoverage`), runs
+the tests in PIT's own processes and writes no test reports: it is never a test
+configuration or a blocker, and a caveat says ddtest neither validates nor
+instruments its tests. An unquoted variable of
+the job's own in such a value may split into more words, so it stays
+unresolved; the runner's paths, such as `$HOME`, and CI expressions are read as
+one value. A repository shell script a Java step runs, by a relative path or
+by the checkout's (`$GITHUB_WORKSPACE`, `$CI_PROJECT_DIR`,
+`$BUILDKITE_BUILD_CHECKOUT_PATH`, Jenkins' `$WORKSPACE`, or CircleCI's working
+directory: `~/project`, which is `/root/project` in an image that runs as root
+and `/home/circleci/project` in a `cimg/` image), is read with the functions it
+defines and dispatches to (`"$@"`), the scripts it sources or runs and the
+Dockerfiles its `docker build` builds: it may start tests only through Maven or
+Gradle, a JVM, build, task or package runner (`java`, `sbt`, `make`, `npm`),
+an interpreter running code (`python3 ci/run_tests.py`, `node`, `perl`,
+`bundle exec`; not a version query or `python -m pip`), a container run, or
+something ddtest can't read
+(an expansion as the command, `eval`, a shell reading stdin, a directory change
+before another script). A docker build, scan, deploy or health-check script
+(`hadolint`, `trivy`, `helm`, `curl`) runs none: in a job without the Datadog
+action, it is listed for review with the job's other commands, as an
+uninstrumented job's commands are, instead of blocking. Such a job of tools
+that launch no build, as a `k6` load test or a ZAP scan, never runs Java tests
+and is a caveat. It checks that the Datadog action
 instruments Gradle: by default the action adds the agent to `GRADLE_OPTS`, so
 `java-instrumented-build-system: maven` or a step that replaces `GRADLE_OPTS`
 without `${{ env.GRADLE_OPTS }}` leaves it uninstrumented.
@@ -934,7 +1997,10 @@ Gradle builds are validated like Maven builds, with these differences. Every run
 adds `--rerun-tasks --no-build-cache --continue --no-daemon` and disables the
 configuration cache, so no test task is up to date or cached, a failing test task
 does not stop the others, and no daemon carries the agent from one run into
-another. The agent rides on `GRADLE_OPTS`, as the Datadog action attaches it,
+another. Without a Gradle user home of their own, runs use `~/.gradle`, the home
+whose `gradle.properties` validation reads, rather than the JVM's `user.home`,
+which a container user without a passwd entry resolves to a directory inside
+the build. The agent rides on `GRADLE_OPTS`, as the Datadog action attaches it,
 and an agent already in `JAVA_OPTS`, which the Gradle launcher also reads, is
 removed; native results come from each project's `build/test-results/<task>`
 JUnit XML, matched to the test task path dd-java-agent reports, such as
@@ -942,10 +2008,26 @@ JUnit XML, matched to the test task path dd-java-agent reports, such as
 the build files declare: `--command` refuses other tasks, and an
 `org.gradle.jvmargs` that attaches dd-java-agent, on the command line or in the
 build's or the user home's `gradle.properties` (`-g` included), is refused like
-`.mvn/jvm.config`. The feature probe runs alone through its project's `test`
-task with `--tests`, for JUnit 4, JUnit 5, TestNG and Spock; for Cucumber JVM,
-Karate, ScalaTest and MUnit, Gradle builds report the features as not available
-yet.
+`.mvn/jvm.config`. The feature probe runs alone, with `--tests`, through a test
+task that ran in the baseline, preferring a project's `test` task: the probe is
+written among the sources of that task's source set, the test source set, a JVM
+test suite's own (`integrationTest(JvmTestSuite)`) or the one a `Test` task's
+`testClassesDirs = sourceSets.<name>.output.classesDirs` names, under
+`src/<set>/java` or a literal `srcDirs` that replaces it. Source sets build
+logic computes leave the features inconclusive. A Cucumber or Karate probe
+goes through the task's runner, its feature among the source set's resources
+(`src/<set>/resources`); a ScalaTest or MUnit probe goes under `src/<set>/scala`.
+Gradle passes its own system properties to no test JVM, so a probe's own, as
+`cucumber.features` or `karate.options`, reaches the test JVMs through
+`JAVA_TOOL_OPTIONS`. A JUnit Platform suite of the cucumber engine runs the
+probe feature next to its own features, selected by its `@ddtest` tag: with
+`cucumber.features`, Gradle would also run it through the root cucumber
+engine. Gradle names a suite's scenarios after the suite class and a Karate
+runner's after the runner, where dd-java-agent reports each feature; in a test
+task, native classes and reported classes that match no other account for each
+other when their tests, by name and status, are the same. Maven runs set
+`-Duser.home` to `~` in `MAVEN_OPTS` unless the command or its options set
+`user.home` or `maven.repo.local`, for the same reason as Gradle's user home.
 
 Every framework supports plain `ddtest testdrive --all --check-only --yes`
 and full `ddtest testdrive --all --yes` validation, or a focused
@@ -956,8 +2038,9 @@ dd-java-agent. Native results (Surefire/Failsafe reports, the
 scalatest-maven-plugin's `target/scalatest-reports` and Karate's
 `target/karate-reports` feature reports) must match (identities, outcomes,
 failure types and messages, exit code), each must match one reported test
-execution, the reporting run must cover repository application sources, and all
-six feature controls run with a probe test in a module of the selected framework
+execution, the reporting run must cover repository application sources, and
+supported feature controls run with a probe test in a module of the selected
+framework
 (a Groovy specification for Spock, compiled by the project's GMavenPlus setup,
 and a Scala suite for ScalaTest and MUnit, compiled by its scala-maven-plugin).
 For Cucumber JVM the probe is a feature with a step in the glue package of the
@@ -968,13 +2051,38 @@ module without such a runner, or a suite that pins its own features or tags,
 leaves the features inconclusive. For Karate the probe is a feature that the
 module's runner class (`@Karate.Test`, `@RunWith(Karate.class)` or a JUnit test
 calling `Runner.path`) runs through `karate.options`, so `karate-config.js` and
-`karate.env` still apply; the runner's own JUnit result is left out. MUnit's
-runner is not one dd-java-agent can skip tests in, so its skipping and disabled
+`karate.env` still apply; the runner's own JUnit result is left out.
+
+The passing and failing probe controls also read the tracer's advertised
+`_dd.library_capabilities.*` tags, including tags in shared payload metadata.
+When both controls advertise capabilities but omit a feature, that feature is
+reported as **not supported**, with the framework version the tracer reported.
+It is not exercised or counted as a passed check, and does not block
+**COMPLETE LOCALLY**. For example, dd-java-agent advertises skipping and disabled
+tests on TestNG 7.4.0, but requires TestNG 7.5 or later for early flake detection,
+auto retries, quarantine and attempt-to-fix. An advertised feature must still
+pass its probe; a quarantine failure with an older Surefire provider remains a
+failure. Tracers that send no capability tags still run every applicable probe.
+The same capability rule applies to JavaScript, Python and Ruby. Vitest skipping
+on the `ddtest run` path is exercised through ddtest's planner independently of
+the tracer's skipping capability.
+
+MUnit's runner is not one dd-java-agent can skip tests in, so its skipping and disabled
 features are reported as not supported. A ScalaTest suite that Surefire runs
 through ScalaTest's `JUnitRunner` gets a probe with the same runner; dd-java-agent
 1.67.1 and 1.68.0 fail every test of such a suite, which validation reports as a
-suspected regression. Probe builds stop at the `test` phase, so
-checks after the tests, such as license headers, do not judge the probe.
+suspected regression. Maven probe builds stop at the `test` phase, so checks
+bound after the tests, such as coverage gates, do not judge the probe, and
+they skip the well-known source checks a build may bind earlier, which would
+judge the synthetic probe file rather than the project: license headers
+(`-Dlicense.skip=true`, `-Dlicense.skipCheckLicense=true`), Apache RAT
+(`-Drat.skip=true`), Checkstyle (`-Dcheckstyle.skip=true`) and Spotless
+(`-Dspotless.check.skip=true`). The customer's own runs keep every check, and
+analyses of compiled main classes (SpotBugs, PMD) and the enforcer still run in
+probes. A probe that runs only its project's test task, as on Gradle, runs no
+such check. A build that fails before any test writes native results reports
+that failure (Maven's `Failed to execute goal …` or Gradle's `What went wrong`)
+instead of advice on XML reporting.
 Matching pre-existing failures are permitted; a build that stops for anything
 other than native test failures stays inconclusive.
 
@@ -982,8 +2090,11 @@ Validation runs only the Maven test lifecycle up to `verify`: a CI step such as
 `mvn clean install` is validated as `mvn clean verify`, other goals are reported
 and left out, and `--command` refuses `install`, `deploy` and other goals, as
 validation does for goals in `MAVEN_ARGS` or `.mvn/maven.config`, so `~/.m2`
-artifacts are never overwritten and nothing is published. A dd-java-agent that
-`MAVEN_OPTS` or `JAVA_TOOL_OPTIONS` already attaches, as after the GitHub action,
+artifacts are never overwritten and nothing is published. Every run passes
+`-Dgpg.skip=true`, since signing in `verify` needs CI's key, and
+`-D<property>=false` for a property that only turns Surefire's XML reports off,
+which validation reads. A dd-java-agent that
+`MAVEN_OPTS` or `JAVA_TOOL_OPTIONS` already attaches, as after the Datadog setup,
 is removed from both runs; the reporting run attaches only the selected agent.
 Validation refuses a dd-java-agent in `.mvn/jvm.config`, which no run could
 remove. One Maven
@@ -1095,8 +2206,11 @@ lists are stored once in the standalone HTML and materialized when expanded.
 Search and coverage pagination retain access to this evidence.
 
 For Minitest's `ActiveSupport::Testing::Isolation`, keep fork/`exit!` isolation and
-all existing tests. `onboard --framework minitest` supplies a CI initializer using
-Datadog's public synchronous writer with the configured CI transport. Append it
+all existing tests. When a Ruby file in the repository uses that isolation,
+`onboard --framework minitest` supplies a CI initializer using Datadog's public
+synchronous writer with the configured CI transport. Minitest threads
+(`parallelize_me!`) and Rails parallel workers exit normally and get no
+initializer. Append it
 after the Datadog action's preload on the existing test step. Testdrive preserves
 that preload order and validates the same initializer; it does not silently add
 a local-only delivery workaround. Synchronous delivery adds network overhead but

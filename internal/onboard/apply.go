@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"maps"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -35,6 +36,14 @@ type SetupGap struct{ Location, Reason string }
 type EditThenApplyGap struct{ SetupGap }
 
 func (g *EditThenApplyGap) Unwrap() error { return &g.SetupGap }
+
+// handWrittenGap is a SetupGap in a CI job's hand-written setup, which
+// onboarding keeps: it lacks a piece only the user's edit to that setup
+// adds, so onboard --apply writes nothing until then. onboard --agent asks
+// for the same edit first (see handWrittenSetupGap).
+type handWrittenGap struct{ SetupGap }
+
+func (g *handWrittenGap) Unwrap() error { return &g.SetupGap }
 
 func (g *SetupGap) Error() string { return g.Location + ": " + g.Reason }
 
@@ -122,21 +131,11 @@ func PlanJavaScriptSetup(root, framework, version, site, nodeRequirement string)
 	if !provider.sharedSyntax() {
 		return planProviderJavaScriptSetup(root, provider, workflows, framework, version, site, nodeRequirement)
 	}
-	edits, scopedOptions, err := scopedSetupEdits(root, framework)
+	edits, scopedOptions, err := scopedSetupEdits(root, framework, false)
 	if err != nil {
 		return nil, err
 	}
-	var impact []string
-	coverageAdded := false
-	for _, edit := range edits {
-		coverageAdded = coverageAdded || bytes.Count(edit.after, []byte("nyc -- ")) > bytes.Count(edit.before, []byte("nyc -- "))
-	}
-	if len(edits) > 0 {
-		if framework == "cucumber" {
-			impact = append(impact, "Selected package scripts now use NYC coverage and set DD_CIVISIBILITY_IMPACTED_TESTS_DETECTION_ENABLED=false, including local npm test. Existing commands and unselected scripts are preserved.")
-		}
-		impact = append(impact, "The scripts' new NODE_OPTIONS=\"${NODE_OPTIONS:-} …\" prefix needs a POSIX shell, so these scripts no longer run locally from Windows cmd.")
-	}
+	impact, coverageAdded := scopedSetupImpact(edits, framework)
 	targets := 0
 	for _, workflow := range workflows {
 		edit, err := readSetupEdit(root, workflow.Path)
@@ -436,37 +435,66 @@ func PlanJavaScriptSetup(root, framework, version, site, nodeRequirement string)
 	}
 	edits = append(edits, ignored...)
 	if coverageAdded {
-		impact = append(impact, "NYC coverage writes an untracked .nyc_output/ folder wherever the covered command runs, including local validation; it is added to .gitignore.")
+		impact = append(impact, nycOutputImpact)
 	}
 	return &SetupPlan{root: root, edits: edits, impact: impact}, nil
 }
 
-// ignoreSetupEdits excludes ddtest's report directory, and NYC's output when
-// coverage was added, from Git and npm packaging.
-func ignoreSetupEdits(root string, coverageAdded bool) ([]setupEdit, error) {
+// nycOutputImpact explains the .gitignore entry added with NYC coverage.
+const nycOutputImpact = "NYC coverage writes an untracked .nyc_output/ folder wherever the covered command runs, including local validation; it is added to .gitignore."
+
+// scopedSetupImpact describes the package-script edits scopedSetupEdits
+// planned, and whether they add NYC coverage.
+func scopedSetupImpact(edits []setupEdit, framework string) (impact []string, coverageAdded bool) {
+	for _, edit := range edits {
+		coverageAdded = coverageAdded || bytes.Count(edit.after, []byte("nyc -- ")) > bytes.Count(edit.before, []byte("nyc -- "))
+	}
+	if len(edits) > 0 {
+		if framework == "cucumber" {
+			impact = append(impact, "Selected package scripts now use NYC coverage and set DD_CIVISIBILITY_IMPACTED_TESTS_DETECTION_ENABLED=false, including local npm test. Existing commands and unselected scripts are preserved.")
+		}
+		impact = append(impact, "The scripts' new NODE_OPTIONS=\"${NODE_OPTIONS:-} …\" prefix needs a POSIX shell, so these scripts no longer run locally from Windows cmd.")
+	}
+	return impact, coverageAdded
+}
+
+// ignoreSetupEdits excludes ddtest's report directory, NYC's output when
+// coverage was added, and extra (patterns of what the CI setup leaves
+// in the workspace), from Git and npm packaging.
+func ignoreSetupEdits(root string, coverageAdded bool, extra ...string) ([]setupEdit, error) {
+	// ddtest writes .testoptimization/ at the root only. NYC writes
+	// .nyc_output/ in each covered command's directory, so its entry is
+	// unanchored and a root-only pattern doesn't cover it.
+	entries := []string{"/.testoptimization/"}
+	if coverageAdded {
+		entries = append(entries, ".nyc_output/")
+	}
+	return ignoreEdits(root, append(entries, extra...))
+}
+
+// ignoreEdits adds the entries that .gitignore, and an existing .npmignore,
+// do not cover yet.
+func ignoreEdits(root string, wanted []string) ([]setupEdit, error) {
 	var edits []setupEdit
-	for _, path := range []string{".gitignore", ".npmignore"} {
-		edit, err := readSetupEdit(root, path)
+	for _, file := range []string{".gitignore", ".npmignore"} {
+		edit, err := readSetupEdit(root, file)
 		if err != nil {
 			return nil, err
 		}
-		if path == ".npmignore" && edit.before == nil {
+		if file == ".npmignore" && edit.before == nil {
 			continue
 		} // Creating it would disable npm's .gitignore fallback.
-		// ddtest writes .testoptimization/ at the root only. NYC writes
-		// .nyc_output/ in each covered command's directory, so its entry is
-		// unanchored and a root-only pattern doesn't cover it.
-		entries := []string{"/.testoptimization/"}
-		if coverageAdded {
-			entries = append(entries, ".nyc_output/")
-		}
+		entries := slices.Clone(wanted)
 		for _, line := range strings.Split(strings.ReplaceAll(string(edit.before), "\r\n", "\n"), "\n") {
 			line = strings.TrimSpace(line)
 			entries = slices.DeleteFunc(entries, func(entry string) bool {
-				if entry == ".nyc_output/" {
+				switch entry {
+				case ".nyc_output/":
 					return strings.TrimSuffix(strings.TrimPrefix(line, "**/"), "/") == ".nyc_output"
+				case "/.testoptimization/":
+					return strings.Trim(line, "/") == ".testoptimization"
 				}
-				return strings.Trim(line, "/") == ".testoptimization"
+				return ignoreCovers(line, entry)
 			})
 		}
 		if len(entries) == 0 {
@@ -486,6 +514,32 @@ func ignoreSetupEdits(root string, coverageAdded bool) ([]setupEdit, error) {
 		edits = append(edits, edit)
 	}
 	return edits, nil
+}
+
+// ignoreCovers reports a .gitignore line whose pattern matches every folder
+// a single-name entry does: an entry anchored at the root (/name/) is
+// covered by a pattern for that name at the root or at any depth, and an
+// unanchored one (name/), which Git matches at any depth, only by a pattern
+// at any depth, such as .datadog-ci-container* or
+// **/.datadog-ci-container.*/ for .datadog-ci-container.*/.
+func ignoreCovers(line, entry string) bool {
+	if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "!") {
+		return false
+	}
+	pattern := strings.TrimSuffix(line, "/")
+	anchored := false
+	if rest, ok := strings.CutPrefix(pattern, "**/"); ok {
+		pattern = rest
+	} else if rest, ok := strings.CutPrefix(pattern, "/"); ok {
+		pattern, anchored = rest, true
+	}
+	// Git anchors a pattern with a slash in its middle at the root too, and
+	// it then names a path below a folder, not a single name.
+	if pattern == "" || strings.Contains(pattern, "/") || anchored && !strings.HasPrefix(entry, "/") {
+		return false
+	}
+	covered, err := path.Match(pattern, strings.Trim(entry, "/"))
+	return err == nil && covered
 }
 
 func setupMember(node *yaml.Node, key string) *yaml.Node {
@@ -581,8 +635,8 @@ func SupportsAutomaticSetup(framework string) bool {
 // existingActionDifference names the first way an existing Datadog action
 // differs from the setup this applier would write.
 func existingActionDifference(step runtimeStep, duplicate, afterTests bool, condition, guard, version string) string {
-	// Its optional site input defaults to datadoghq.com; --site only applies to
-	// a new action, so an existing one keeps its own.
+	// Existing actions keep their site; runtime validation reports a mismatch
+	// with --site as a caveat.
 	switch {
 	case duplicate:
 		return "more than one Datadog action runs in this job"

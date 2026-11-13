@@ -649,12 +649,17 @@ THE SOFTWARE.
       }
       .problem-card details.result > summary {
         display: flex;
+        align-items: center;
         justify-content: space-between;
         gap: 20px;
         padding: 13px 0;
       }
       .result-meta {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
         color: var(--muted);
+        font-size: 13px;
         white-space: nowrap;
       }
       .run-details {
@@ -1236,9 +1241,11 @@ THE SOFTWARE.
           ><span class="slash" aria-hidden="true">/</span>
           <h1>Test report</h1>
         </div>
-        <p class="subtitle">
-          {{ .Runtime.Framework }} · {{ .Summary }}
-        </p>
+        {{ if or .Runtime.Framework .Summary }}
+          <p class="subtitle">
+            {{ .Runtime.Framework }}{{ if and .Runtime.Framework .Summary }} · {{ end }}{{ .Summary }}
+          </p>
+        {{ end }}
       </div>
       <div class="header-actions">
         <div class="artifacts">
@@ -1323,7 +1330,7 @@ THE SOFTWARE.
             </article>
           {{ end }}
         </section>
-      {{ else }}
+      {{ else if .Summary }}
         <div class="empty-findings">
           {{ if eq .Summary "No findings." }}
             {{ template "icon-check-circle-fill" }}No findings in this run.
@@ -1339,9 +1346,9 @@ THE SOFTWARE.
         aria-label="Run details"
       >
         <h2>Run details</h2>
-        <p class="run-totals">{{ if .ExecutionCounts }}{{ .ExecutionCounts.TestExecutions }} reported test executions{{ if .ExecutionCounts.SourceTestIdentities }} · {{ .ExecutionCounts.SourceTestIdentities }} source-test identities{{ end }}{{ else }}{{ len .Tests }} {{ if .Aggregated }}reported test executions{{ else }}{{ plural (len .Tests) "test" "tests" }}{{ end }}{{ end }} · {{ len .Suites }} {{ plural (len .Suites) "suite" "suites" }}</p>
+        <p class="run-totals">{{ if .ExecutionCounts }}{{ testCountSummary .ExecutionCounts }}{{ else }}{{ len .Tests }} {{ if .Aggregated }}test {{ plural (len .Tests) "result" "results" }}{{ else }}{{ plural (len .Tests) "test" "tests" }}{{ end }}{{ end }} · {{ len .Suites }} {{ plural (len .Suites) "suite" "suites" }}</p>
         {{ if .NoTestEvents }}<p class="no-test-events">No test events received.</p>{{ end }}
-        <dl class="facts">
+        {{ if .Facts }}<dl class="facts">
           {{ range $index, $fact := .Facts }}
             <div class="fact {{ .Tone }}">
               <dt>{{ .Label }}{{ if .Tooltip }}<span class="fact-help">
@@ -1351,7 +1358,7 @@ THE SOFTWARE.
               <dd>{{ .Value }}</dd>
             </div>
           {{ end }}
-        </dl>
+        </dl>{{ end }}
         <details class="command-output"{{ if or .NoTestEvents .Runtime.Error }} open{{ end }}>
           <summary>{{ if .Runtime.SetupFailure }}Environment check{{ else }}{{ .Runtime.Framework }} command output{{ end }}</summary>
           {{ if .Runtime.Command }}<p class="command-line"><code>{{ .Runtime.Command }}</code></p>{{ end }}
@@ -1373,7 +1380,7 @@ THE SOFTWARE.
           aria-controls="tests"
           data-tab="tests"
         >
-          {{ if .Aggregated }}Test executions{{ else }}Tests{{ end }} <span class="tab-count">{{ len .Tests }}</span></button
+          {{ if .Aggregated }}Test results{{ else }}Tests{{ end }} <span class="tab-count">{{ len .Tests }}</span></button
         ><button
           id="tab-suites"
           class="tab"

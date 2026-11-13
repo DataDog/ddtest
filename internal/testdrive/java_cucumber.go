@@ -64,20 +64,12 @@ func javaCucumberSteps(glue string, lambda bool) string {
 `
 }
 
-// javaCucumberLambda reports a module whose glue uses only the lambda backend of
-// cucumber-java8, which has no step annotations: as its test sources show, or
-// without glue sources, as its POM declares.
-func javaCucumberLambda(checkout, module string, sources backendUse) bool {
+// javaCucumberLambda reports glue that uses only the lambda backend of
+// cucumber-java8, which has no step annotations: as the test sources show, or
+// without glue sources, as the declared dependencies say.
+func javaCucumberLambda(sources backendUse, dependencies []maven.Dependency) bool {
 	if sources.lambda || sources.annotations {
 		return sources.lambda && !sources.annotations
-	}
-	projects, err := maven.ProjectsFrom(checkout, filepath.Join(module, "pom.xml"))
-	if err != nil || len(projects) == 0 {
-		return false
-	}
-	dependencies := slices.Clone(projects[0].Dependencies)
-	for _, profile := range projects[0].Profiles {
-		dependencies = append(dependencies, profile.Dependencies...)
 	}
 	declares := func(artifact string) bool {
 		return slices.ContainsFunc(dependencies, func(dependency maven.Dependency) bool {
@@ -85,6 +77,20 @@ func javaCucumberLambda(checkout, module string, sources backendUse) bool {
 		})
 	}
 	return declares("cucumber-java8") && !declares("cucumber-java")
+}
+
+// javaPOMDependencies are the dependencies a module's POM and its profiles
+// declare.
+func javaPOMDependencies(checkout, module string) []maven.Dependency {
+	projects, err := maven.ProjectsFrom(checkout, filepath.Join(module, "pom.xml"))
+	if err != nil || len(projects) == 0 {
+		return nil
+	}
+	dependencies := slices.Clone(projects[0].Dependencies)
+	for _, profile := range projects[0].Profiles {
+		dependencies = append(dependencies, profile.Dependencies...)
+	}
+	return dependencies
 }
 
 var (
@@ -107,7 +113,7 @@ var (
 // so the project's own glue, hooks and object factory still load. The runner
 // alone is selected, with the probe feature in place of the project's.
 func javaCucumberProbe(checkout, module string, args []string) (javaProbe, string, error) {
-	runner, glue, suite, pinned, lambdaGlue, err := javaCucumberRunnerClass(filepath.Join(checkout, module))
+	runner, glue, suite, pinned, lambdaGlue, err := javaCucumberRunnerClass(filepath.Join(checkout, module, "src", "test", "java"), filepath.Join(checkout, module, "src", "test", "resources"))
 	if err != nil {
 		return javaProbe{}, "", err
 	}
@@ -140,19 +146,19 @@ func javaCucumberProbe(checkout, module string, args []string) (javaProbe, strin
 	return javaProbe{
 		files: []javaProbeFile{
 			{filepath.Join(module, "src", "test", "resources", "ddtest", "DdtestValidation.feature"), javaCucumberFeature},
-			{filepath.Join(module, "src", "test", "java", filepath.FromSlash(strings.ReplaceAll(glue, ".", "/")), "DdtestValidationSteps.java"), javaCucumberSteps(glue, javaCucumberLambda(checkout, module, lambdaGlue))},
+			{filepath.Join(module, "src", "test", "java", filepath.FromSlash(strings.ReplaceAll(glue, ".", "/")), "DdtestValidationSteps.java"), javaCucumberSteps(glue, javaCucumberLambda(lambdaGlue, javaPOMDependencies(checkout, module)))},
 		},
 		args: selection,
 	}, "", nil
 }
 
-// javaCucumberRunnerClass finds the first Cucumber runner class in a module's
-// test sources, by path, and its glue package: the runner's glue option or
-// configuration parameter, the module's junit-platform.properties, or the
-// runner's own package. suite reports a JUnit Platform suite, and pinned a
-// suite glue parameter, which outranks the command's system properties.
-func javaCucumberRunnerClass(module string) (runner, glue string, suite, pinned bool, lambda backendUse, err error) {
-	sources := filepath.Join(module, "src", "test", "java")
+// javaCucumberRunnerClass finds the first Cucumber runner class in a test
+// source directory, by path, and its glue package: the runner's glue option or
+// configuration parameter, the junit-platform.properties of the test
+// resources, or the runner's own package. suite reports a JUnit Platform
+// suite, and pinned a suite glue parameter, which outranks the command's
+// system properties.
+func javaCucumberRunnerClass(sources, resources string) (runner, glue string, suite, pinned bool, lambda backendUse, err error) {
 	err = filepath.WalkDir(sources, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -180,7 +186,7 @@ func javaCucumberRunnerClass(module string) (runner, glue string, suite, pinned 
 			glue = cmp.Or(match[1], match[2], match[3])
 			pinned = match[2] != "" || match[3] != ""
 		}
-		glue = cmp.Or(glue, javaPlatformGlue(module), pkg)
+		glue = cmp.Or(glue, javaPlatformGlue(resources), pkg)
 		return nil
 	})
 	if errors.Is(err, fs.ErrNotExist) {
@@ -198,9 +204,10 @@ func javaGluePackage(glue string) string {
 // backendUse records which Cucumber glue backends a module's test sources use.
 type backendUse struct{ lambda, annotations bool }
 
-// javaPlatformGlue is the cucumber.glue of a module's junit-platform.properties.
-func javaPlatformGlue(module string) string {
-	file, err := os.Open(filepath.Join(module, "src", "test", "resources", "junit-platform.properties"))
+// javaPlatformGlue is the cucumber.glue of the junit-platform.properties in a
+// test resource directory.
+func javaPlatformGlue(resources string) string {
+	file, err := os.Open(filepath.Join(resources, "junit-platform.properties"))
 	if err != nil {
 		return ""
 	}

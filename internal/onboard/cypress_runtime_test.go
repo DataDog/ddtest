@@ -184,8 +184,9 @@ func TestCypressResolvesConditionalApplicationFlagsWithoutForwardingActionPaths(
 		{"installed action flag", "${{ env.DD_TRACE_PACKAGE != '' && 'true' || '' }}", "cypress", "true", true},
 		{"import presence flag", "${{ env.DD_TRACE_ESM_IMPORT != '' && '1' || '0' }}", "cypress", "1", true},
 		{"path is not a local flag", "${{ env.DD_TRACE_PACKAGE }}", "cypress", "", false},
-		{"unknown CI state", "${{ secrets.DD_API_KEY != '' && 'true' || '' }}", "cypress", "", false},
-		{"other frameworks unchanged", "${{ env.DD_TRACE_PACKAGE != '' && 'true' || '' }}", "jest", "", false},
+		// A flag that only CI's state decides is left out and reported.
+		{"unknown CI state", "${{ secrets.DD_API_KEY != '' && 'true' || '' }}", "cypress", "", true},
+		{"other frameworks unchanged", "${{ env.DD_TRACE_PACKAGE != '' && 'true' || '' }}", "jest", "", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			step := runtimeStep{Run: "npx cypress run", Env: map[string]string{"COVERAGE": tc.value}}
@@ -196,6 +197,9 @@ func TestCypressResolvesConditionalApplicationFlagsWithoutForwardingActionPaths(
 			}
 			require.NoError(t, err)
 			require.Equal(t, tc.want, env["COVERAGE"])
+			if tc.want == "" {
+				require.NotContains(t, env, "COVERAGE")
+			}
 		})
 	}
 }
@@ -303,5 +307,43 @@ func TestCypressGuardResolvesOnlyConsumedNodeOptionsLayers(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, tc.want, env["NODE_OPTIONS"])
 		})
+	}
+}
+
+// Cypress's images name their Node release in the tag: cypress/base:<node>,
+// cypress/browsers:<node> and every full tag's node-<version> part.
+// cypress/included:<cypress version> names Cypress, not its Node.
+func TestCypressImageTagsNameTheirNode(t *testing.T) {
+	for image, node := range map[string]string{
+		"cypress/base:24.19.0": "24.19.0", "cypress/base:16.14.2-slim": "16.14.2", "cypress/base:18": "18",
+		"docker.io/cypress/base:22.15.0": "22.15.0", "$CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX/cypress/base:22.15.0": "22.15.0",
+		"cypress/browsers:24.21.0": "24.21.0", "cypress/browsers:node-22.15.0-chrome-136.0.7103.113-1-ff-138.0.4-edge-136.0.3240.76-1": "22.15.0",
+		"cypress/browsers:node16.14.2-slim-chrome100-ff99-edge":                                                "16.14.2",
+		"cypress/included:cypress-14.4.0-node-22.15.0-chrome-136.0.7103.113-1-ff-138.0.4-edge-136.0.3240.76-1": "22.15.0",
+		"cypress/included:14.4.0": "", "cypress/included:latest": "", "cypress/base:latest": "", "cypress/browsers:latest": "",
+		"cypress/factory:5.10.0": "", "some/base:24.19.0": "", "cypress/base:24.19.0@sha256:abc": "24.19.0",
+	} {
+		require.Equal(t, node, imageNode(image), image)
+	}
+	// kitchensink's GitLab jobs run cypress/base:24.19.0: no question to ask.
+	useCIProvider(t, "gitlab")
+	root := t.TempDir()
+	writeFile(t, root, "package.json", `{"scripts":{"start":"node ./scripts/start.js","e2e:record":"cypress run --record"},"devDependencies":{"cypress":"15.21.1"}}`)
+	writeFile(t, root, ".gitlab-ci.yml", `stages: [test]
+.job_template:
+  image: cypress/base:24.19.0
+  stage: test
+  script:
+    - npm run e2e:record -- --parallel --group "electrons on GitLab CI"
+electrons-1:
+  extends: .job_template
+`)
+	check := checkCIRuntimes(t.Context(), root, nil, func(context.Context, string, string) (tracerRequirement, error) {
+		return tracerRequirement{Version: "5.133.0", Node: ">=18"}, nil
+	}, "cypress")
+	require.NotEmpty(t, check.Jobs)
+	for _, job := range check.Jobs {
+		require.Equal(t, "24.19.0", job.Node, job)
+		require.Empty(t, job.RuntimeHost, job)
 	}
 }

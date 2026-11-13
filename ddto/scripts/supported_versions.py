@@ -3,11 +3,12 @@
 
 supported_versions.json records the window that pull requests test: every
 dd-trace-go release from its minimum version, the releases of Orchestrion's
-last minors, and each main branch at a fixed pseudo-version. resolve prints
-the window that the module proxy has now, as one line of JSON for the
-workflow's DDTO_SUPPORTED_VERSIONS: the nightly run and the check before a
-release test it. check fails when the recorded releases differ from it; main
-moves every day, so check does not compare it.
+last minors, and each main branch at a fixed pseudo-version, or at a release
+while its tip is the tagged commit. resolve prints the window that the module
+proxy has now, as one line of JSON for the workflow's DDTO_SUPPORTED_VERSIONS:
+the nightly run and the check before a release test it. check fails when the
+recorded releases differ from it; main moves every day, so check does not
+compare it.
 """
 
 import argparse

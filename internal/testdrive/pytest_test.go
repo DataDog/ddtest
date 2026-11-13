@@ -143,6 +143,14 @@ func TestPytestObserverHandlesDisabledAutoload(t *testing.T) {
 		}
 		t.Skip("pytest >=8.4 and ddtrace required")
 	}
+	// Internal plugin module paths can change between tracer versions. Exercise
+	// the installed tracer's advertised module as well as its stable entry point.
+	plugin := exec.CommandContext(t.Context(), python, "-c", `from importlib.metadata import distribution
+print(next(ep.module for ep in distribution("ddtrace").entry_points if ep.group == "pytest11" and ep.name == "ddtrace"))`)
+	output, err := plugin.CombinedOutput()
+	require.NoError(t, err, "%s", output)
+	pluginModule := strings.TrimSpace(string(output))
+	require.NotEmpty(t, pluginModule)
 	for _, tc := range []struct {
 		name, environment, config string
 		args                      []string
@@ -150,8 +158,8 @@ func TestPytestObserverHandlesDisabledAutoload(t *testing.T) {
 		{name: "environment", environment: "1"},
 		{name: "command", args: []string{"--disable-plugin-autoload"}},
 		{name: "config", config: "[pytest]\naddopts=--disable-plugin-autoload\n"},
-		{name: "explicit plugin", environment: "1", args: []string{"-p", "ddtrace.contrib.internal.pytest.plugin"}},
-		{name: "explicit entry point", environment: "1", args: []string{"-p", "ddtrace.testing.internal.pytest.entry_point"}},
+		{name: "explicit entry point", environment: "1", args: []string{"-p", "ddtrace"}},
+		{name: "explicit module", environment: "1", args: []string{"-p", pluginModule}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -263,12 +271,13 @@ func TestPytestWorkflowPreservesStandaloneValidation(t *testing.T) {
 		name       string
 		options    WorkflowOptions
 		standalone bool
+		code       string
 	}{
-		{"standalone", WorkflowOptions{Format: "verbose"}, true},
-		{"agent coordinator", WorkflowOptions{Format: "agent"}, false},
-		{"automatic CI edits", WorkflowOptions{Format: "json", Apply: true}, false},
-		{"resume coordinator", WorkflowOptions{Format: "verbose", Resume: "previous-run"}, false},
-		{"setup facts", WorkflowOptions{Format: "verbose", FactsFile: "facts.json"}, false},
+		{"standalone", WorkflowOptions{Format: "verbose"}, true, ""},
+		{"structured standalone", WorkflowOptions{Format: "agent"}, true, "validation_incomplete"},
+		{"automatic CI edits", WorkflowOptions{Format: "json", Apply: true}, false, "framework_unsupported"},
+		{"resume coordinator", WorkflowOptions{Format: "verbose", Resume: "previous-run"}, false, "invalid_options"},
+		{"setup facts", WorkflowOptions{Format: "verbose", FactsFile: "facts.json"}, false, "invalid_options"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -279,8 +288,10 @@ func TestPytestWorkflowPreservesStandaloneValidation(t *testing.T) {
 				require.ErrorContains(t, err, "Python environment")
 				require.FileExists(t, validationPath(root))
 			} else {
-				require.ErrorContains(t, err, "framework_unsupported")
 				require.NoFileExists(t, validationPath(root))
+			}
+			if tc.code != "" {
+				require.ErrorContains(t, err, tc.code)
 			}
 		})
 	}

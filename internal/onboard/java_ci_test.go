@@ -8,6 +8,7 @@ package onboard
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -79,15 +80,15 @@ func TestJavaReportsModulesOfOtherFrameworks(t *testing.T) {
 func TestJavaKeepsUnresolvedStepsInScope(t *testing.T) {
 	root := javaWorkflowFixture(t, "", nil)
 	for run, reason := range map[string]string{
-		"mvn -B verify | tee build.log":       "could not be resolved statically",
 		"mvn verify || true":                  "could not be resolved statically",
+		"mvn -B verify | grep -v WARN":        "could not be resolved statically",
 		"(cd service && mvn test)":            "could not be resolved statically",
 		"cd service && mvn test":              "single explicit command",
 		"mvn ${{ matrix.goals }}":             "expression was not resolved",
 		"./ci/test.sh":                        "Repository script",
 		"bash scripts/run-tests":              "Repository script",
 		"make test":                           "Test wrapper was not resolved",
-		"./gradlew test | tee build.log":      "Gradle command could not be resolved statically",
+		"./gradlew test | grep -v WARN":       "Gradle command could not be resolved statically",
 		"cd app && ./gradlew test":            "Gradle test step requires a single explicit command",
 		"mvn -f ../other/pom.xml verify":      "POM selection needs review",
 		"mvn compile && ./ci/integration.sh":  "Repository script",
@@ -150,6 +151,192 @@ func TestJavaScopeFollowsTheMatrix(t *testing.T) {
 	require.Len(t, scope.Commands, 1)
 	require.Equal(t, "./mvnw -B verify", scope.Commands[0].Command)
 	require.Len(t, scope.Commands[0].Locations, 2, "one location per matrix row")
+}
+
+func TestJavaReadsUnreadValuesAsPossibleTests(t *testing.T) {
+	// Goals a matrix row fills in may run tests, though the job is read
+	// before its rows.
+	root := javaWorkflowFixture(t, `jobs:
+  tests:
+    strategy:
+      matrix:
+        goals: [verify]
+    steps:
+      - run: ./mvnw -B ${{ matrix.goals }}
+`, nil)
+	scope, err := DiscoverValidationScope(root, "junit5")
+	require.NoError(t, err)
+	require.Len(t, scope.Commands, 1)
+	require.Equal(t, "./mvnw -B verify", scope.Commands[0].Command)
+
+	for text, runs := range map[string]bool{
+		"mvn $GOALS":       true,
+		"./gradlew $TASKS": true,
+		"$BUILD_COMMAND":   true,
+		"MAVEN_ARGS=test mvn help:evaluate -Dexpression=project.version -q -DforceStdout":         true,
+		"export MAVEN_ARGS=test\nmvn help:evaluate -Dexpression=project.version -q -DforceStdout": true,
+		"mvn help:evaluate -Dexpression=project.version -q -DforceStdout":                         false,
+		"mvn versions:set -DnewVersion=\"${TAG/v}\"":                                              false,
+		"mvn versions:set -DnewVersion=$VERSION_ARGS":                                             true,
+		"mvn surefire:${GOAL}":                         true,
+		"mvn -B surefire:$GOAL -Dtest=${TESTS}":        true,
+		"git tag $VERSION && git push origin $VERSION": false,
+	} {
+		require.Equal(t, runs, javaMayRunTests(text, false), text)
+	}
+	require.True(t, javaConfigGoals(t.TempDir(), "/tmp"), "a directory outside the checkout may hold any configuration, and the search ends")
+}
+
+func TestJavaResolvesMatrixExpressionsInsideValues(t *testing.T) {
+	root := javaWorkflowFixture(t, `jobs:
+  tests:
+    strategy:
+      matrix:
+        suite: [unit, it]
+    env:
+      TEST_MODE: suite-${{ matrix.suite }}
+    steps:
+      - run: mvn -B verify
+`, nil)
+	scope, err := DiscoverValidationScope(root, "junit5")
+	require.NoError(t, err)
+	var modes []string
+	for _, command := range scope.Commands {
+		modes = append(modes, command.Environment["TEST_MODE"])
+		require.Empty(t, command.WithoutCIValues, "the row holds the value")
+	}
+	slices.Sort(modes)
+	require.Equal(t, []string{"suite-it", "suite-unit"}, modes, "each row runs with its own value")
+}
+
+func TestJavaValidatesWithoutCIOnlyOptions(t *testing.T) {
+	root := javaWorkflowFixture(t, "jobs:\n  tests:\n    steps:\n      - run: mvn -B verify -Dsonar.token=${{ secrets.SONAR_TOKEN }} -Dsigning.password=\"${{ secrets.SIGNING }}\"\n", nil)
+	scope, err := DiscoverValidationScope(root, "junit5")
+	require.NoError(t, err)
+	require.Empty(t, scope.Unresolved)
+	require.Len(t, scope.Commands, 1)
+	require.Equal(t, "mvn -B verify -Dsonar.token= -Dsigning.password=", scope.Commands[0].Command)
+	require.Equal(t, []string{"-Dsigning.password", "-Dsonar.token"}, scope.Commands[0].WithoutCIValues)
+
+	// A value that may select tests still requires review, whatever the
+	// secret's name.
+	for _, option := range []string{"-Dgroups=${{ secrets.GROUPS }}", "-Dgroups=${{ secrets.TEST_TOKEN }}", "-Ddb.password=${{ secrets.TEST_DB_PASSWORD }}"} {
+		root = javaWorkflowFixture(t, "jobs:\n  tests:\n    steps:\n      - run: mvn -B verify "+option+"\n", nil)
+		scope, err = DiscoverValidationScope(root, "junit5")
+		require.NoError(t, err)
+		require.NotEmpty(t, scope.Unresolved, option)
+	}
+}
+
+// One rule leaves out every CI-only option, whichever way CI writes its
+// value: a Maven settings file and a signing or Sonar option, from a CI
+// expression or from a variable validation cannot read.
+func TestJavaCIOnlyOptionsAreOneRule(t *testing.T) {
+	for run, expected := range map[string]struct {
+		command, without, note string
+	}{
+		"mvn -B verify -Dgpg.passphrase=${{ secrets.GPG }} -s ${{ secrets.SETTINGS }}": {"mvn -B verify -Dgpg.passphrase=", "-Dgpg.passphrase", "-s ${{ secrets.SETTINGS }}"},
+		"mvn -B verify -Dgpg.passphrase=$GPG_PASSPHRASE -s $MAVEN_SETTINGS":            {"mvn -B verify -Dgpg.passphrase=", "-Dgpg.passphrase", "-s $MAVEN_SETTINGS"},
+		`mvn -B verify "-Dsonar.token=$SONAR_TOKEN" --settings=$MAVEN_SETTINGS`:        {"mvn -B verify -Dsonar.token=", "-Dsonar.token", "--settings=$MAVEN_SETTINGS"},
+	} {
+		root := javaWorkflowFixture(t, "jobs:\n  tests:\n    steps:\n      - run: '"+strings.ReplaceAll(run, "'", "''")+"'\n", nil)
+		scope, err := DiscoverValidationScope(root, "junit5")
+		require.NoError(t, err)
+		require.Empty(t, scope.Unresolved, run)
+		require.Len(t, scope.Commands, 1, run)
+		require.Equal(t, expected.command, scope.Commands[0].Command, run)
+		require.Contains(t, scope.Commands[0].WithoutCIValues, expected.without, run)
+		require.Contains(t, strings.Join(scope.Commands[0].StepScopeNotes, "\n"), "This CI step passes Maven "+expected.note+", a settings file only CI provides", run)
+	}
+	// Another option's unread value still requires review.
+	for _, run := range []string{"mvn -B verify -Ddb.password=$DB_PASSWORD", "mvn -B verify -Dgroups=$GROUPS -s $MAVEN_SETTINGS"} {
+		root := javaWorkflowFixture(t, "jobs:\n  tests:\n    steps:\n      - run: "+run+"\n", nil)
+		scope, err := DiscoverValidationScope(root, "junit5")
+		require.NoError(t, err)
+		require.NotEmpty(t, scope.Unresolved, run)
+	}
+}
+
+func TestJavaReplayKeepsTheJobsJVMOptions(t *testing.T) {
+	java := javaDiscovery{}
+	for key, tc := range map[string]struct{ value, replay string }{
+		"JAVA_TOOL_OPTIONS": {`-Dname="a b" -Ddd.service="my service" -Xmx256m`, `-Dname="a b" -Xmx256m`},
+		"JAVA_OPTS":         {"-javaagent:dd-java-agent.jar -Ddd.civisibility.agentless.url=https://ci.example -Xmx1g", "-javaagent:dd-java-agent.jar -Xmx1g"},
+	} {
+		replay, replaced, err := java.variantValue(ciWorkflow{}, runtimeJob{}, runtimeStep{}, nil, key, tc.value)
+		require.NoError(t, err, key)
+		require.True(t, replaced, key)
+		require.Equal(t, tc.replay, replay, "the quoted option stays one option and CI's agent settings are dropped: %s", key)
+	}
+	// A matrix value is resolved before the options are split.
+	replay, _, err := java.variantValue(ciWorkflow{}, runtimeJob{}, runtimeStep{}, map[string]any{"service": "checkout"}, "JAVA_TOOL_OPTIONS", "-Ddd.service=${{ matrix.service }} -Xmx1g")
+	require.NoError(t, err)
+	require.Equal(t, "-Xmx1g", replay)
+	_, _, err = java.variantValue(ciWorkflow{}, runtimeJob{}, runtimeStep{}, nil, "MAVEN_OPTS", "-Xmx1g -Ddd.civisibility.enabled=false")
+	require.ErrorContains(t, err, "explicitly disabled by -Ddd.civisibility.enabled=false in MAVEN_OPTS", "a disabled CI job is never certified")
+	// Maven's launcher expands MAVEN_OPTS unquoted: an apostrophe is a character.
+	require.Equal(t, "-Dtest.mode=strict -Xmx256m", javaWithoutAgentProperties("MAVEN_OPTS", "-Ddd.service=team's-tests -Dtest.mode=strict -Xmx256m"))
+	require.Equal(t, `-Dname="a b"`, javaWithoutAgentProperties("JAVA_TOOL_OPTIONS", `-Ddd.service="my service" -Dname="a b"`), "the JVM honors quotes")
+	// A value only CI knows may disable it.
+	_, _, err = java.variantValue(ciWorkflow{}, runtimeJob{}, runtimeStep{}, nil, "MAVEN_OPTS", "-Ddd.civisibility.enabled=${{ env.CI_TRACING }}")
+	require.ErrorContains(t, err, "in MAVEN_OPTS requires review")
+	// Maven passes MAVEN_OPTS quotes to the JVM, which reads "true" as not true.
+	_, _, err = java.variantValue(ciWorkflow{}, runtimeJob{}, runtimeStep{}, nil, "MAVEN_OPTS", `-Ddd.civisibility.enabled="true" -Xmx1g`)
+	require.ErrorContains(t, err, "is not enabled by -Ddd.civisibility.enabled=\"true\" in MAVEN_OPTS")
+	_, _, err = java.variantValue(ciWorkflow{}, runtimeJob{}, runtimeStep{}, nil, "JAVA_TOOL_OPTIONS", `-Ddd.civisibility.enabled="true" -Xmx1g`)
+	require.NoError(t, err, "the JVM removes JAVA_TOOL_OPTIONS quotes")
+	// Maven reads MAVEN_OPTS after JAVA_TOOL_OPTIONS, so its value decides.
+	job := runtimeJob{Env: map[string]string{"JAVA_TOOL_OPTIONS": "-Ddd.civisibility.enabled=false", "MAVEN_OPTS": "-Ddd.civisibility.enabled=true"}}
+	step := runtimeStep{Run: "mvn -B verify"}
+	_, _, err = java.variantValue(ciWorkflow{}, job, step, nil, "JAVA_TOOL_OPTIONS", job.Env["JAVA_TOOL_OPTIONS"])
+	require.NoError(t, err, "MAVEN_OPTS enables it after JAVA_TOOL_OPTIONS")
+	job.Env["MAVEN_OPTS"] = "-Xmx1g"
+	_, _, err = java.variantValue(ciWorkflow{}, job, step, nil, "JAVA_TOOL_OPTIONS", job.Env["JAVA_TOOL_OPTIONS"])
+	require.ErrorContains(t, err, "explicitly disabled by -Ddd.civisibility.enabled=false in JAVA_TOOL_OPTIONS")
+}
+
+func TestJavaDownloadedScriptsAShellRunsStayInScope(t *testing.T) {
+	// A downloaded script a shell runs may be a test runner, so a URL that
+	// names one keeps the step unresolved; a passive download names none.
+	for run, unresolved := range map[string]bool{
+		"curl -s https://example.org/run-tests.sh | bash":               true,
+		"curl -s https://example.org/run-tests.sh|bash":                 true,
+		"curl -s https://example.org/run-tests.sh | /bin/bash":          true,
+		"curl -s https://example.org/run-tests.sh | sudo env X=1 sh":    true,
+		"bash <(curl -s https://example.org/run-tests.sh)":              true,
+		`sh -c "$(wget -qO- https://example.org/run-tests.sh)"`:         true,
+		"curl -Lo dd-java-agent.jar https://dtdg.co/latest-java-tracer": false,
+		"wget -O tools/report.zip https://example.org/test-report.zip":  false,
+	} {
+		root := javaWorkflowFixture(t, "jobs:\n  tests:\n    steps:\n      - run: '"+strings.ReplaceAll(run, "'", "''")+"'\n      - run: mvn -B verify\n", nil)
+		scope, err := DiscoverValidationScope(root, "junit5")
+		require.NoError(t, err)
+		require.Equal(t, unresolved, len(scope.Unresolved) > 0, "%s: %v", run, scope.Unresolved)
+	}
+}
+
+func TestJavaReleaseGoalsWithUnreadValuesRunNoTests(t *testing.T) {
+	// As WriteThemFirst/approvals-java's release job does before its deploy,
+	// with the value quoted so it can't split into goals.
+	root := javaWorkflowFixture(t, `jobs:
+  release:
+    steps:
+      - run: mvn versions:set -DnewVersion="${GITHUB_REF_NAME/v}"
+      - run: mvn -B verify
+`, nil)
+	scope, err := DiscoverValidationScope(root, "junit5")
+	require.NoError(t, err)
+	require.Empty(t, scope.Unresolved, "versions:set runs no tests whatever its version")
+	require.Contains(t, strings.Join(scope.Review, "\n"), "release / step 1 (mvn versions:set -DnewVersion=\"${GITHUB_REF_NAME/v}\"): Maven goals outside the test lifecycle")
+	require.Len(t, scope.Commands, 1)
+
+	// Goals the shell fills in may still run tests.
+	for _, run := range []string{"mvn ${GOALS/x/y}", "mvn surefire:${GOAL/x/y}"} {
+		root = javaWorkflowFixture(t, "jobs:\n  release:\n    steps:\n      - run: "+run+"\n      - run: mvn -B verify\n", nil)
+		scope, err = DiscoverValidationScope(root, "junit5")
+		require.NoError(t, err)
+		require.NotEmpty(t, scope.Unresolved, run)
+	}
 }
 
 func TestJavaCIConfigurationInventoriesJDKAndTracer(t *testing.T) {
@@ -381,10 +568,12 @@ func TestJavaDeployCredentialsDoNotBlockValidation(t *testing.T) {
 	require.Equal(t, "mvn --batch-mode verify --file pom.xml", scope.Commands[0].Command)
 	require.Empty(t, scope.Commands[0].Environment["MAVEN_PASSWORD"], "no secret reaches validation")
 
-	// Without a server-id, setup-java writes no credentials: a secret may feed the tests.
+	// Without a server-id, setup-java writes no credentials: the secrets may
+	// feed the tests, which are validated without them and reported.
 	scope, err = DiscoverValidationScope(javaWorkflowFixture(t, strings.Replace(workflow, "server-id: central, ", "", 1), nil), "junit5")
 	require.NoError(t, err)
-	require.NotEmpty(t, scope.Unresolved)
+	require.Empty(t, scope.Unresolved)
+	require.Equal(t, []string{"MAVEN_PASSWORD", "MAVEN_USERNAME"}, scope.Commands[0].WithoutCIValues)
 	// A token under the action's default names, such as GITHUB_TOKEN, is a
 	// credential: the tests are validated without it and the report says so.
 	defaults := strings.NewReplacer("server-username: MAVEN_USERNAME, server-password: MAVEN_PASSWORD", "gpg-private-key: '${{ secrets.GPG_KEY }}'", "MAVEN_USERNAME: ${{ secrets.MAVEN_USERNAME }}\n          ", "", "MAVEN_PASSWORD: ${{ secrets.MAVEN_PASSWORD }}", "GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}").Replace(workflow)
@@ -392,8 +581,8 @@ func TestJavaDeployCredentialsDoNotBlockValidation(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, scope.Unresolved)
 	require.Len(t, scope.Commands, 1)
-	require.Equal(t, []string{"GITHUB_TOKEN"}, scope.Commands[0].WithoutSecrets)
-	require.Contains(t, strings.Join(scope.Caveats, "\n"), "validated without the CI secrets GITHUB_TOKEN")
+	require.Equal(t, []string{"GITHUB_TOKEN"}, scope.Commands[0].WithoutCIValues)
+	require.Contains(t, strings.Join(scope.Caveats, "\n"), "validated without the CI values of GITHUB_TOKEN")
 }
 
 func TestJavaCIConfigurationKeepsJavaSetupAcrossOtherDatadogActions(t *testing.T) {
@@ -557,4 +746,25 @@ func TestJavaCIConfigurationRequiresCallersToPassTheAPIKey(t *testing.T) {
 			require.Contains(t, jobs[0].Reason, "api_key reads secrets.DD_API_KEY, which not every caller in this repository passes")
 		})
 	}
+}
+
+func TestMavenDaemonReplaysWithMavenAndACaveat(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "pom.xml", javaJUnit5POM)
+	for _, executable := range mavenDaemonExecutables {
+		resolution := javaStep(t, root, executable+" -B test")
+		require.True(t, resolution.Matched, resolution.Reason)
+		require.Len(t, resolution.Tests, 1)
+		require.Equal(t, "mvn -B test", resolution.Tests[0].Command)
+		require.Contains(t, strings.Join(resolution.Tests[0].StepScopeNotes, " "), "Daemon-specific behavior is not validated")
+	}
+}
+
+func TestJavaRepositoryScriptMayLaunchRuby(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "pom.xml", javaJUnit5POM)
+	writeFile(t, root, "ci.sh", "#!/bin/sh\nruby ci/launch.rb\n")
+	require.True(t, javaStepScriptsMayRunTests(root, ciWorkflow{}, runtimeJob{}, runtimeStep{Run: "sh ci.sh"}))
+	require.Contains(t, javaStep(t, root, "sh ci.sh").Reason, "Repository script may run junit5 tests")
+	require.False(t, javaStepScriptsMayRunTests(root, ciWorkflow{}, runtimeJob{}, runtimeStep{Run: "ruby --version"}))
 }

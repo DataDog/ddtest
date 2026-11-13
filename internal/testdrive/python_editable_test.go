@@ -16,11 +16,12 @@ import (
 	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/testdrive/intake"
+	"github.com/DataDog/ddtest/internal/testutil"
 	"github.com/stretchr/testify/require"
 )
 
 func TestPytestRejectsEditableImportsFromOriginalCheckout(t *testing.T) {
-	python := feedbackPython(t)
+	python := testutil.PytestPython(t)
 	dependencies, err := exec.CommandContext(t.Context(), python, "-c", "import sysconfig; print(sysconfig.get_paths()['purelib'])").Output()
 	require.NoError(t, err)
 	for _, mode := range []string{"pth", "legacy", "finder", "external editable", "noneditable"} {
@@ -34,7 +35,7 @@ func TestPytestRejectsEditableImportsFromOriginalCheckout(t *testing.T) {
 			environment := filepath.Join(t.TempDir(), "venv")
 			output, err := exec.CommandContext(t.Context(), python, "-m", "venv", "--without-pip", environment).CombinedOutput()
 			require.NoError(t, err, string(output))
-			selected := environmentPython(environment)
+			selected := platform.PythonEnvironmentExecutable(environment)
 			site, err := exec.CommandContext(t.Context(), selected, "-c", "import sysconfig; print(sysconfig.get_paths()['purelib'])").Output()
 			require.NoError(t, err)
 			packages := strings.TrimSpace(string(site))

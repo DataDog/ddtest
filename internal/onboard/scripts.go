@@ -16,7 +16,7 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/DataDog/ddtest/internal/environment"
+	"github.com/DataDog/ddtest/internal/testcommand"
 	"github.com/kballard/go-shellquote"
 )
 
@@ -42,6 +42,36 @@ type commandResolution struct {
 	ReviewReason      string
 	// Code classifies a Review outcome for reports, such as CodeUninstrumentedJob.
 	Code string
+	// Caveat is a note for the scope's caveats on what the step runs outside
+	// the framework's test configurations, such as mutation testing.
+	Caveat string
+	// trailing holds the commands after the tests that were accepted as
+	// outside this validation (see resolveJestSequence).
+	trailing []trailingCommand
+	// piped holds the test commands, with their filters, whose output is
+	// piped into output filters that validation leaves out.
+	piped []string
+}
+
+// trailingCommand is a command after a step's tests that ddtest can't resolve
+// but that can't start the framework: its reason, and the note and review
+// text that report it as outside this validation.
+type trailingCommand struct{ reason, note, review string }
+
+// reopenTrailing puts the commands accepted after the tests back in scope
+// when a later test follows them, which they may prepare: their reasons, with
+// prefix, are unresolved again, and the notes calling them outside this
+// validation are dropped.
+func (r *commandResolution) reopenTrailing(prefix string) {
+	for _, command := range r.trailing {
+		r.Reason = joinDiagnostic(r.Reason, prefix+command.reason)
+		r.UnknownExecutable = false
+		r.ReviewReason = strings.TrimPrefix(strings.ReplaceAll(strings.ReplaceAll(r.ReviewReason, "; "+command.review, ""), command.review, ""), "; ")
+		for i := range r.Tests {
+			r.Tests[i].StepScopeNotes = slices.DeleteFunc(slices.Clone(r.Tests[i].StepScopeNotes), func(note string) bool { return note == command.note })
+		}
+	}
+	r.trailing = nil
 }
 
 func unresolvedCommand(reason string) commandResolution {
@@ -49,6 +79,44 @@ func unresolvedCommand(reason string) commandResolution {
 }
 
 func resolveTestStep(root string, workflow ciWorkflow, job runtimeJob, step runtimeStep, language, framework string) commandResolution {
+	if len(step.afterTests) > 0 {
+		// The commands a status-preserving subshell runs after its tests are
+		// outside them only when they can't start the tests themselves.
+		plain := step
+		plain.afterTests = nil
+		for _, command := range step.afterTests {
+			after := plain
+			after.Run, after.scopedVariable, after.impactedWorkaround = command, "", false
+			after.Env = maps.Clone(step.Env)
+			for _, name := range step.inline {
+				delete(after.Env, name) // The tests' own inline variables.
+			}
+			if stepMayStartTests(root, workflow, job, after, framework) {
+				return unresolvedCommand("CI runs " + command + " after the tests in the same command, and it may start " + framework + " itself; ddtest reads only commands that can't start tests there")
+			}
+		}
+		// They are read as the same commands after the tests in a plain
+		// sequence are: file changes stay setup for later tests, and those
+		// ddtest can't resolve are outside the tests unless a later test
+		// follows them.
+		sequence := plain
+		sequence.Run = strings.Join(append([]string{plain.Run}, step.afterTests...), "\n")
+		result := resolveTestStep(root, workflow, job, sequence, language, framework)
+		note := "This CI step runs " + strings.Join(step.afterTests, "; ") + " after its " + framework + " tests, whether they pass or fail, then exits with the tests' status, or with the status of a command after them that fails when they pass."
+		for i := range result.Tests {
+			if !slices.Contains(result.Tests[i].StepScopeNotes, note) {
+				result.Tests[i].StepScopeNotes = append(result.Tests[i].StepScopeNotes, note)
+			}
+		}
+		return result
+	}
+	if step.scopedVariable != "" {
+		plain := step
+		plain.scopedVariable = ""
+		result := resolveTestStep(root, workflow, job, plain, language, framework)
+		markScopedLeaf(&result, step.scopedVariable, framework)
+		return result
+	}
 	uses, _, _ := strings.Cut(strings.ToLower(step.Uses), "@")
 	// These actions only upload or expose results in every language, however
 	// their condition reads.
@@ -84,7 +152,7 @@ func resolveTestStep(root string, workflow ciWorkflow, job runtimeJob, step runt
 		return commandResolution{}
 	}
 	if !resolvesTestSteps(language, framework) {
-		return commandResolution{Matched: environment.LooksLikeTestCommand(root, step.Run, language, framework)}
+		return commandResolution{Matched: testcommand.Matches(root, step.Run, language, framework)}
 	}
 	// GitHub expands these before the shell runs; they are not shell syntax.
 	if expression := workflowExpression.FindString(step.Run); expression != "" {
@@ -247,6 +315,36 @@ func resolveJestSequence(root, directory, command string, stack []string, remain
 	}
 	var result commandResolution
 	var setup []string
+	framework := "jest"
+	if len(frameworks) > 0 {
+		framework = frameworks[0]
+	}
+	// Commands after the sequence's last test that ddtest can't resolve but
+	// that can't start the framework either run after its tests: they are
+	// outside the test path, unless a later test follows them.
+	type pendingCommand struct{ text, reason string }
+	var trailing []pendingCommand
+	afterTests := func(fragment commandFragment, reason string) bool {
+		text := fragment.Text
+		if text == "" {
+			text = shellquote.Join(fragment.Words...)
+		}
+		// A file or dependency change stays setup: later steps' tests may
+		// read it.
+		if !result.Matched || len(stack) >= 16 || mutatesCIFiles(text) || mayStartTestsIn(root, directory, runtimeStep{Run: text}, framework, len(stack)) {
+			return false
+		}
+		trailing = append(trailing, pendingCommand{text, reason})
+		return true
+	}
+	reopen := func() {
+		for _, command := range trailing {
+			result.Reason = joinDiagnostic(result.Reason, command.reason)
+			result.UnknownExecutable = false
+		}
+		trailing = nil
+		result.reopenTrailing("") // Those after an earlier script's tests too.
+	}
 	previousChain := 0
 	for _, fragment := range commands {
 		if previousChain != 0 && previousChain != fragment.Chain && len(result.Builds) > 0 {
@@ -274,6 +372,9 @@ func resolveJestSequence(root, directory, command string, stack []string, remain
 			fragment.Reason = "Unvalidated setup or command with dynamic shell syntax: " + fragment.Text + " (" + repositoryError(root, err) + ")"
 		}
 		if fragment.Reason != "" {
+			if afterTests(fragment, fragment.Reason) {
+				continue
+			}
 			result.Reason = joinDiagnostic(result.Reason, fragment.Reason)
 			result.UnknownExecutable = false
 			continue
@@ -303,6 +404,23 @@ func resolveJestSequence(root, directory, command string, stack []string, remain
 			setup = append(setup, "CI file or dependency changes require separate validation: "+shellCommand(words))
 		}
 		part := resolveJestWords(root, directory, words, stack, remaining, frameworks...)
+		if part.Matched || len(part.Tests) > 0 || len(part.Builds) > 0 || len(part.Setup) > 0 {
+			reopen() // A later test or preparation: earlier commands may prepare it.
+		} else if part.Reason != "" && !part.OtherFramework && !part.MochaAuxiliary && afterTests(fragment, part.Reason) {
+			result.ReviewReason = joinDiagnostic(result.ReviewReason, part.ReviewReason)
+			continue
+		}
+		if fragment.Pipe != "" {
+			// Package managers would append forwarded options to the last
+			// filter, not the tests.
+			part.SingleJest = false
+			for i := range part.Tests {
+				part.Tests[i].StepScopeNotes = append(part.Tests[i].StepScopeNotes, outputPipeNote(shellCommand(words), fragment.Pipe))
+			}
+			if len(part.Tests) > 0 {
+				part.piped = append(part.piped, shellCommand(words)+" | "+fragment.Pipe)
+			}
+		}
 		for i := range part.Tests {
 			part.Tests[i].Prerequisites = append(slices.Clone(result.Builds), part.Tests[i].Prerequisites...)
 			part.Tests[i].UnvalidatedSetup = append(slices.Clone(setup), part.Tests[i].UnvalidatedSetup...)
@@ -311,6 +429,8 @@ func resolveJestSequence(root, directory, command string, stack []string, remain
 			}
 		}
 		result.Tests = append(result.Tests, part.Tests...)
+		result.trailing = append(result.trailing, part.trailing...)
+		result.piped = append(result.piped, part.piped...)
 		result.MochaAuxiliary = result.MochaAuxiliary || part.MochaAuxiliary
 		result.MochaReferenced = result.MochaReferenced || part.MochaReferenced
 		setup = append(setup, part.Setup...)
@@ -340,6 +460,17 @@ func resolveJestSequence(root, directory, command string, stack []string, remain
 		}
 	}
 
+	for _, command := range trailing {
+		note := "This CI step also runs " + command.text + " after its " + framework + " tests; ddtest can't resolve it (" + command.reason + "), but it can't start " + framework + ", so it is outside this validation."
+		review := "After the step's " + framework + " tests and cannot start " + framework + "; outside the test path: " + command.reason
+		result.ReviewReason = joinDiagnostic(result.ReviewReason, review)
+		result.trailing = append(result.trailing, trailingCommand{command.reason, note, review})
+		for i := range result.Tests {
+			if !slices.Contains(result.Tests[i].StepScopeNotes, note) {
+				result.Tests[i].StepScopeNotes = append(result.Tests[i].StepScopeNotes, note)
+			}
+		}
+	}
 	result.Setup = append(result.Setup, setup...)
 	return result
 }
@@ -488,6 +619,7 @@ func resolveJestWords(root, directory string, words, stack []string, remaining *
 		}
 		if framework == "mocha" {
 			entry.mochaIstanbul = MochaBabelIstanbulConfigured(directory)
+			entry.mochaNoSource = !entry.mochaIstanbul && !mochaInstrumentableSource(root, directory)
 			entry.mochaRunnerArgs = slices.Clone(words[1:])
 			entry.mochaProbeCommand = shellquote.Join(words...)
 			entry.mochaLookupDirectory = filepath.ToSlash(relative)
@@ -728,7 +860,7 @@ func resolvePackageScript(root, directory, name string, args, stack []string, co
 			}
 			return unresolvedCommand("Cannot establish Yarn binary jest from repository dependencies in " + repositoryPath(root, directory))
 		}
-		return unresolvedCommand("No package.json script named " + name + " in " + repositoryPath(root, directory))
+		return unresolvedCommand("No package.json script named " + name + " in " + repositoryPath(root, directory) + ": the package manager exits with an error here, so this CI step fails")
 	}
 	var lifecycle string
 	for _, hook := range []string{"pre" + name, "post" + name} {
@@ -816,6 +948,8 @@ func resolvePackageScript(root, directory, name string, args, stack []string, co
 				resolved.Tests[i].Prerequisites = append(slices.Clone(result.Builds), resolved.Tests[i].Prerequisites...)
 			}
 			result.Tests = append(result.Tests, resolved.Tests...)
+			result.trailing = append(result.trailing, resolved.trailing...)
+			result.piped = append(result.piped, resolved.piped...)
 			result.Builds = append(result.Builds, resolved.Builds...)
 			result.Setup = append(result.Setup, resolved.Setup...)
 			result.Matched = result.Matched || resolved.Matched
@@ -876,6 +1010,20 @@ func resolvePackageScript(root, directory, name string, args, stack []string, co
 		return unresolvedCommand("Multiple " + label + " invocations in one package alias require ordered execution review; preserve the original alias: " + command)
 	}
 	if (mocha || cucumber || (len(frameworks) > 0 && (frameworks[0] == "cypress" || frameworks[0] == "webdriverio"))) && lifecycle == "" && result.Reason == "" && !result.OtherFramework && len(result.Tests) == 1 {
+		if len(result.trailing) > 0 {
+			// Validation runs the whole alias, so commands after its tests
+			// would run locally with them: they are not outside the test path.
+			var reasons []string
+			for _, trailing := range result.trailing {
+				reasons = append(reasons, trailing.reason)
+			}
+			return unresolvedCommand(strings.Join(reasons, "; ") + " (runs after the tests inside " + command + ", which validation executes whole)")
+		}
+		if len(result.piped) > 0 {
+			// The filters would run locally too, take the alias's exit
+			// status and receive the options validation appends.
+			return unresolvedCommand(strings.Join(result.piped, "; ") + " (pipes the tests' output inside " + command + ", which validation executes whole: the filters would run locally, set its exit status and receive the options validation appends)")
+		}
 		if !result.SingleJest && result.Tests[0].mochaProbeCommand == "" {
 			result.Tests[0].mochaProbeCommand = result.Tests[0].Command
 		}
@@ -943,11 +1091,21 @@ func resolvePackageScript(root, directory, name string, args, stack []string, co
 
 // Reuse AST discovery for callers that require every command to be literal.
 func staticCommands(command string) ([][]string, error) {
+	fragments, err := staticFragments(command)
+	var commands [][]string
+	for _, fragment := range fragments {
+		commands = append(commands, fragment.Words)
+	}
+	return commands, err
+}
+
+// staticFragments are the literal commands of staticCommands, with the
+// output filters each is piped into.
+func staticFragments(command string) ([]commandFragment, error) {
 	fragments, err := discoverCommands(command)
 	if err != nil {
 		return nil, err
 	}
-	var commands [][]string
 	for _, fragment := range fragments {
 		if fragment.Reason != "" {
 			return nil, fmt.Errorf("%s", fragment.Reason)
@@ -956,9 +1114,8 @@ func staticCommands(command string) ([][]string, error) {
 		if len(fragment.Patterns) > 0 {
 			return nil, fmt.Errorf("%s", "Unvalidated setup or command with dynamic shell syntax: "+fragment.Text)
 		}
-		commands = append(commands, fragment.Words)
 	}
-	return commands, nil
+	return fragments, nil
 }
 
 // Help, version and configuration output exit before running a suite,

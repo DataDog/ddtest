@@ -1,0 +1,92 @@
+{
+ "schema_version": 1,
+ "framework": "cucumber-java",
+ "compatibility": {
+  "status": "suspected regression"
+ },
+ "features": [
+  {
+   "project": "configuration 1: ./gradlew test -P e2e (GRADLE_OPTS=-Dorg.gradle.daemon=false -Dorg.gradle.workers.max=2) (JAVA_TOOL_OPTIONS cleared) (MAVEN_OPTS cleared) (_JAVA_OPTIONS=-Xmx3g)",
+   "name": "auto-retries",
+   "status": "inconclusive"
+  },
+  {
+   "project": "configuration 1: ./gradlew test -P e2e (GRADLE_OPTS=-Dorg.gradle.daemon=false -Dorg.gradle.workers.max=2) (JAVA_TOOL_OPTIONS cleared) (MAVEN_OPTS cleared) (_JAVA_OPTIONS=-Xmx3g)",
+   "name": "early-flake-detection",
+   "status": "inconclusive"
+  },
+  {
+   "project": "configuration 1: ./gradlew test -P e2e (GRADLE_OPTS=-Dorg.gradle.daemon=false -Dorg.gradle.workers.max=2) (JAVA_TOOL_OPTIONS cleared) (MAVEN_OPTS cleared) (_JAVA_OPTIONS=-Xmx3g)",
+   "name": "skipping",
+   "status": "inconclusive"
+  },
+  {
+   "project": "configuration 1: ./gradlew test -P e2e (GRADLE_OPTS=-Dorg.gradle.daemon=false -Dorg.gradle.workers.max=2) (JAVA_TOOL_OPTIONS cleared) (MAVEN_OPTS cleared) (_JAVA_OPTIONS=-Xmx3g)",
+   "name": "quarantine",
+   "status": "inconclusive"
+  },
+  {
+   "project": "configuration 1: ./gradlew test -P e2e (GRADLE_OPTS=-Dorg.gradle.daemon=false -Dorg.gradle.workers.max=2) (JAVA_TOOL_OPTIONS cleared) (MAVEN_OPTS cleared) (_JAVA_OPTIONS=-Xmx3g)",
+   "name": "disabled",
+   "status": "inconclusive"
+  },
+  {
+   "project": "configuration 1: ./gradlew test -P e2e (GRADLE_OPTS=-Dorg.gradle.daemon=false -Dorg.gradle.workers.max=2) (JAVA_TOOL_OPTIONS cleared) (MAVEN_OPTS cleared) (_JAVA_OPTIONS=-Xmx3g)",
+   "name": "attempt-to-fix",
+   "status": "inconclusive"
+  },
+  {
+   "project": "configuration 2: ./gradlew test (GRADLE_OPTS=-Dorg.gradle.daemon=false -Dorg.gradle.workers.max=2) (JAVA_TOOL_OPTIONS cleared) (MAVEN_OPTS cleared) (_JAVA_OPTIONS=-Xmx3g)",
+   "name": "auto-retries",
+   "status": "inconclusive"
+  },
+  {
+   "project": "configuration 2: ./gradlew test (GRADLE_OPTS=-Dorg.gradle.daemon=false -Dorg.gradle.workers.max=2) (JAVA_TOOL_OPTIONS cleared) (MAVEN_OPTS cleared) (_JAVA_OPTIONS=-Xmx3g)",
+   "name": "early-flake-detection",
+   "status": "inconclusive"
+  },
+  {
+   "project": "configuration 2: ./gradlew test (GRADLE_OPTS=-Dorg.gradle.daemon=false -Dorg.gradle.workers.max=2) (JAVA_TOOL_OPTIONS cleared) (MAVEN_OPTS cleared) (_JAVA_OPTIONS=-Xmx3g)",
+   "name": "skipping",
+   "status": "inconclusive"
+  },
+  {
+   "project": "configuration 2: ./gradlew test (GRADLE_OPTS=-Dorg.gradle.daemon=false -Dorg.gradle.workers.max=2) (JAVA_TOOL_OPTIONS cleared) (MAVEN_OPTS cleared) (_JAVA_OPTIONS=-Xmx3g)",
+   "name": "quarantine",
+   "status": "inconclusive"
+  },
+  {
+   "project": "configuration 2: ./gradlew test (GRADLE_OPTS=-Dorg.gradle.daemon=false -Dorg.gradle.workers.max=2) (JAVA_TOOL_OPTIONS cleared) (MAVEN_OPTS cleared) (_JAVA_OPTIONS=-Xmx3g)",
+   "name": "disabled",
+   "status": "inconclusive"
+  },
+  {
+   "project": "configuration 2: ./gradlew test (GRADLE_OPTS=-Dorg.gradle.daemon=false -Dorg.gradle.workers.max=2) (JAVA_TOOL_OPTIONS cleared) (MAVEN_OPTS cleared) (_JAVA_OPTIONS=-Xmx3g)",
+   "name": "attempt-to-fix",
+   "status": "inconclusive"
+  }
+ ],
+ "summary": {
+  "status": "FAILED",
+  "local_validation": "FAILED",
+  "blocking_checks": [
+   "compatibility: suspected regression",
+   "configuration 1: ./gradlew test -P e2e (GRADLE_OPTS=-Dorg.gradle.daemon=false -Dorg.gradle.workers.max=2) (JAVA_TOOL_OPTIONS cleared) (MAVEN_OPTS cleared) (_JAVA_OPTIONS=-Xmx3g)/auto-retries: inconclusive",
+   "configuration 1: ./gradlew test -P e2e (GRADLE_OPTS=-Dorg.gradle.daemon=false -Dorg.gradle.workers.max=2) (JAVA_TOOL_OPTIONS cleared) (MAVEN_OPTS cleared) (_JAVA_OPTIONS=-Xmx3g)/early-flake-detection: inconclusive",
+   "configuration 1: ./gradlew test -P e2e (GRADLE_OPTS=-Dorg.gradle.daemon=false -Dorg.gradle.workers.max=2) (JAVA_TOOL_OPTIONS cleared) (MAVEN_OPTS cleared) (_JAVA_OPTIONS=-Xmx3g)/skipping: inconclusive",
+   "configuration 1: ./gradlew test -P e2e (GRADLE_OPTS=-Dorg.gradle.daemon=false -Dorg.gradle.workers.max=2) (JAVA_TOOL_OPTIONS cleared) (MAVEN_OPTS cleared) (_JAVA_OPTIONS=-Xmx3g)/quarantine: inconclusive",
+   "configuration 1: ./gradlew test -P e2e (GRADLE_OPTS=-Dorg.gradle.daemon=false -Dorg.gradle.workers.max=2) (JAVA_TOOL_OPTIONS cleared) (MAVEN_OPTS cleared) (_JAVA_OPTIONS=-Xmx3g)/disabled: inconclusive",
+   "configuration 1: ./gradlew test -P e2e (GRADLE_OPTS=-Dorg.gradle.daemon=false -Dorg.gradle.workers.max=2) (JAVA_TOOL_OPTIONS cleared) (MAVEN_OPTS cleared) (_JAVA_OPTIONS=-Xmx3g)/attempt-to-fix: inconclusive",
+   "configuration 2: ./gradlew test (GRADLE_OPTS=-Dorg.gradle.daemon=false -Dorg.gradle.workers.max=2) (JAVA_TOOL_OPTIONS cleared) (MAVEN_OPTS cleared) (_JAVA_OPTIONS=-Xmx3g)/auto-retries: inconclusive",
+   "configuration 2: ./gradlew test (GRADLE_OPTS=-Dorg.gradle.daemon=false -Dorg.gradle.workers.max=2) (JAVA_TOOL_OPTIONS cleared) (MAVEN_OPTS cleared) (_JAVA_OPTIONS=-Xmx3g)/early-flake-detection: inconclusive",
+   "configuration 2: ./gradlew test (GRADLE_OPTS=-Dorg.gradle.daemon=false -Dorg.gradle.workers.max=2) (JAVA_TOOL_OPTIONS cleared) (MAVEN_OPTS cleared) (_JAVA_OPTIONS=-Xmx3g)/skipping: inconclusive",
+   "configuration 2: ./gradlew test (GRADLE_OPTS=-Dorg.gradle.daemon=false -Dorg.gradle.workers.max=2) (JAVA_TOOL_OPTIONS cleared) (MAVEN_OPTS cleared) (_JAVA_OPTIONS=-Xmx3g)/quarantine: inconclusive",
+   "configuration 2: ./gradlew test (GRADLE_OPTS=-Dorg.gradle.daemon=false -Dorg.gradle.workers.max=2) (JAVA_TOOL_OPTIONS cleared) (MAVEN_OPTS cleared) (_JAVA_OPTIONS=-Xmx3g)/disabled: inconclusive",
+   "configuration 2: ./gradlew test (GRADLE_OPTS=-Dorg.gradle.daemon=false -Dorg.gradle.workers.max=2) (JAVA_TOOL_OPTIONS cleared) (MAVEN_OPTS cleared) (_JAVA_OPTIONS=-Xmx3g)/attempt-to-fix: inconclusive",
+   "not every project has every required feature result",
+   "configuration ./gradlew test -P e2e: incomplete",
+   "configuration ./gradlew test: incomplete"
+  ],
+  "final_response": "NOT COMPLETE: onboarding validation is FAILED. Report the blockers below; do not describe onboarding as complete or successful.\nOnboarding validation: FAILED.\nLocal results so far (they do not complete onboarding): executed Cucumber JVM validations incomplete (0/2); local validation failed.\nConfigurations: 0/2 validated; 2 executed with paired comparison; 0 blocked, 0 not exercised, 2 incomplete.\nReporting: 21 test executions; 18 source-test identities.\nCompatibility: suspected regression. Features: 0/12 supported checks passed.\nReal-suite coverage: observed in 0/4 reporting runs; 0/30 results linked to source.\nCI configuration: compatible (static analysis). CI execution and Datadog backend processing: not exercised.\nHuman action: Provide DD_API_KEY to the CI jobs that run the tests from the CircleCI project settings (Project Settings > Environment Variables) or a context every test job uses. Never write the key into the CI configuration. Until it is available, the Datadog setup without Bash or curl in those jobs logs that Test Optimization is disabled and their tests run untraced.\nHuman action: Recommended: add Bash and curl to the image of .circleci/config.yml / workflow-all-jobs/Acceptance Tests, .circleci/config.yml / workflow-all-jobs/Unit & E2E Tests, then switch those jobs to Datadog's official installer; Datadog's official installation script cannot run in that image today, so they use ddtest's equivalent Datadog setup without Bash or curl. Only the user changes the image: ddtest and the agent never do.\nCI runtime scope (static): Java versions 1 instrumented, 0 excluded, 0 unverified (each version counted once; per-job findings in Results JSON).\nCaveat (not a blocker): .circleci/config.yml: CircleCI orbs that only notify, scan or upload coverage run no tests and are outside this validation: snyk/snyk@2.0.2.\nCaveat (not a blocker): .circleci/config.yml / workflow-all-jobs/Acceptance Tests: Datadog's official installation script cannot run in image openjdk:21-slim, which has neither curl nor wget, so ddtest prescribes its equivalent Datadog setup without Bash or curl there. ddtest does not change CI images, and the agent must not either: tell the user that it's recommended that they add Bash and curl to the image themselves and then switch these jobs to Datadog's official installer.\nCaveat (not a blocker): .circleci/config.yml / workflow-all-jobs/Load Performance Test: CI job without the Datadog setup that never runs cucumber-java; it is outside this validation, and any tests it runs are not reported to Datadog.\nCaveat (not a blocker): .circleci/config.yml / workflow-all-jobs/Mutation Tests / step 2 (./gradlew pitest\n): PIT mutation testing (pitest) runs the tests in its own processes and writes no test reports: it is not a cucumber-java test configuration, and ddtest neither validates nor instruments its tests.\nCaveat (not a blocker): .circleci/config.yml / workflow-all-jobs/Penetration Test: CI job without the Datadog setup that never runs cucumber-java; it is outside this validation, and any tests it runs are not reported to Datadog.\nCaveat (not a blocker): .circleci/config.yml / workflow-all-jobs/Unit & E2E Tests: Datadog's official installation script cannot run in image openjdk:21-slim, which has neither curl nor wget, so ddtest prescribes its equivalent Datadog setup without Bash or curl there. ddtest does not change CI images, and the agent must not either: tell the user that it's recommended that they add Bash and curl to the image themselves and then switch these jobs to Datadog's official installer.\nBlockers: 16 \u2014 compatibility: suspected regression; not every project has every required feature result; and 14 more. Full blockers and commands are in Results JSON.\n\n[Open report](</trial/repo/.testoptimization/report.html>)\n[Results JSON](</trial/repo/.testoptimization/testdrive.json>)\nCleanup: passed (ddtest sessions only).\nWorkflow checks: 4 recorded; Git/package exclusions and owned cleanup: passed. Preserve both reports. No further cache or package audit is required for unchanged inputs."
+ }
+}

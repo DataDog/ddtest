@@ -95,9 +95,9 @@ func checkTestBootstrap(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 	if len(frameworks) > 0 && frameworks[0] == "mocha" {
 		for _, command := range commands {
 			if command.mochaESM && checkJestBootstrap(workflow, job, step, row, true) != "" {
-				return "Mocha ESM inputs require the action's --import ${{ env.DD_TRACE_ESM_IMPORT }} alongside its require preload"
+				return mochaESMImportReason
 			}
-			if !command.usesNYC && !command.mochaIstanbul {
+			if !command.mochaCoverageSettled() {
 				reason := MochaCoverageGap + command.Command + ". Wrap the original command with npx --no-install nyc --, adding nyc as a dev dependency if the project does not declare it; real source coverage is checked separately."
 				if words, err := shellquote.Split(command.Command); err == nil && len(words) > 0 && filepath.Base(words[0]) == "c8" {
 					reason = "Mocha CI command uses c8: " + command.Command + ". c8's V8 coverage is not reported per test; wrap the Mocha command with npx --no-install nyc -- instead."
@@ -164,6 +164,10 @@ func checkJestBootstrap(workflow ciWorkflow, job runtimeJob, step runtimeStep, r
 	}
 	return unverifiedPreloadReason
 }
+
+// mochaESMImportReason explains a Mocha ESM test step without the setup's
+// ESM loader.
+const mochaESMImportReason = "Mocha ESM inputs require the action's --import ${{ env.DD_TRACE_ESM_IMPORT }} alongside its require preload"
 
 const unverifiedPreloadReason = "Cannot verify the action's JavaScript preload in this test step's effective NODE_OPTIONS. Preserve custom initialization and report it for review."
 

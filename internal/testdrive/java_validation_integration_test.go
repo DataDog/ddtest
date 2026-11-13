@@ -19,6 +19,7 @@ import (
 	"time"
 
 	shard "github.com/DataDog/ddtest/internal/testdrive"
+	"github.com/DataDog/ddtest/internal/testutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -29,11 +30,12 @@ func TestJavaValidationIntegration(t *testing.T) {
 	if os.Getenv("DDTEST_RUN_JAVA_INTEGRATION_TEST") == "" {
 		t.Skip("set DDTEST_RUN_JAVA_INTEGRATION_TEST=1 with a JDK, mvn and gradle on PATH")
 	}
+	// The outer Go reporter's service must not rename the fixture's ScalaTest modules.
+	t.Setenv("DD_SERVICE", "ddtest-integration")
 	tracer := cmp.Or(os.Getenv("DDTEST_JAVA_TRACER_VERSION"), "1.67.1")
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Minute)
 	defer cancel()
-	binary := filepath.Join(t.TempDir(), "ddtest")
-	integrationCommand(t, ctx, "../..", nil, "go", "build", "-o", binary, ".")
+	binary := testutil.DDTest(t)
 
 	type javaReport struct {
 		Success       bool
@@ -99,6 +101,7 @@ public class StepDefinitions {
 	testdrive := func(root string, args ...string) (string, error) {
 		command := exec.CommandContext(ctx, binary, append([]string{"testdrive", "--tracer-version", tracer, "--yes"}, args...)...)
 		command.Dir = root
+		command.Env = integrationEnvironment(nil)
 		output, err := command.CombinedOutput()
 		return string(output), err
 	}
@@ -107,7 +110,28 @@ public class StepDefinitions {
 	// relative durations.
 	scenarios := []string{"junit5", "junit4", "testng", "spock", "cucumber junit4 runner", "cucumber java8 lambdas", "cucumber platform suite", "karate parallel runner", "karate junit5 runner", "scalatest", "scalatest junit runner", "munit", "gradle junit5", "gradle junit4",
 		"no application coverage", "instrumentation-only failure", "incomplete reactor", "publishing goal", "agent workflow"}
-	weights := map[string]int{"junit5": 20, "gradle junit5": 20, "gradle junit4": 8, "scalatest": 6, "scalatest junit runner": 2, "munit": 6, "agent workflow": 16, "no application coverage": 6, "instrumentation-only failure": 6, "incomplete reactor": 2, "publishing goal": 1}
+	// Relative seconds from the slower of the pinned/latest CI measurements.
+	weights := map[string]int{
+		"junit5":                       123,
+		"junit4":                       57,
+		"testng":                       61,
+		"spock":                        69,
+		"cucumber junit4 runner":       62,
+		"cucumber java8 lambdas":       63,
+		"cucumber platform suite":      57,
+		"karate parallel runner":       94,
+		"karate junit5 runner":         92,
+		"scalatest":                    134,
+		"scalatest junit runner":       52,
+		"munit":                        76,
+		"gradle junit5":                224,
+		"gradle junit4":                105,
+		"no application coverage":      60,
+		"instrumentation-only failure": 68,
+		"incomplete reactor":           10,
+		"publishing goal":              1,
+		"agent workflow":               120,
+	}
 	selected := shard.SelectedIntegrationScenarios(t, scenarios, weights)
 	run := func(name string, test func(t *testing.T)) {
 		t.Helper()
@@ -228,12 +252,14 @@ class ExampleTest extends spock.lang.Specification {
 			require.Contains(t, onboard, "languages: java")
 			all := exec.CommandContext(ctx, binary, "testdrive", "--framework", tc.framework, "--all", "--yes")
 			all.Dir = root
+			all.Env = integrationEnvironment(nil)
 			data, err := all.CombinedOutput()
 			require.NoError(t, err, string(data))
 			require.Contains(t, string(data), "Validation verdict: PASSED")
 			require.Contains(t, string(data), "dd-java-agent "+pin+" is validated on this host's Java")
 			check := exec.CommandContext(ctx, binary, "testdrive", "--framework", tc.framework, "--all", "--check-only", "--yes")
 			check.Dir = root
+			check.Env = integrationEnvironment(nil)
 			data, err = check.CombinedOutput()
 			require.Error(t, err, string(data))
 			require.Contains(t, string(data), "configuration-only checks validate no JDK")
@@ -317,6 +343,7 @@ public class AppTest {
 		require.Contains(t, onboard, "also runs jacocoTestReport")
 		all := exec.CommandContext(ctx, binary, "testdrive", "--framework", "junit5", "--all", "--yes")
 		all.Dir = root
+		all.Env = integrationEnvironment(nil)
 		data, err := all.CombinedOutput()
 		require.NoError(t, err, string(data))
 		require.Contains(t, string(data), "Validation verdict: PASSED")
@@ -412,6 +439,7 @@ public class ExampleTest {
 			t.Helper()
 			process := exec.CommandContext(ctx, command[0], command[1:]...)
 			process.Dir = root
+			process.Env = integrationEnvironment(nil)
 			data, _ := process.Output()
 			var result agentResult
 			require.NoError(t, json.Unmarshal(data, &result), string(data))

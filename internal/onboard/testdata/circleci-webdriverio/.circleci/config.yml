@@ -1,0 +1,16 @@
+version: 2.1
+
+jobs:
+  e2e:
+    docker:
+      - image: cimg/node:22.11-browsers
+    steps:
+      - checkout
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run test:e2e
+
+workflows:
+  main:
+    jobs:
+      - e2e

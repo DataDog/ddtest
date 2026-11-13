@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/DataDog/ddtest/internal/onboard"
+	"github.com/DataDog/ddtest/internal/testutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -44,8 +45,7 @@ func TestRubyMinitestForkValidationIntegration(t *testing.T) {
 	integrationFile(t, root, ".github/workflows/test.yml", "jobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: ruby/setup-ruby@v1\n        with: {ruby-version: '"+installed.Ruby+"'}\n      - uses: datadog/test-visibility-github-action@v3\n        with: {languages: ruby, api_key: '${{ secrets.DD_API_KEY }}', ruby-tracer-version: '"+installed.Gems["datadog-ci"]+"'}\n      - run: bundle exec rake test\n        env:\n          RUBYOPT: '${{ env.RUBYOPT }} -r./ci/datadog_test_optimization.rb'\n")
 	integrationCommand(t, ctx, root, nil, "bundle", "lock", "--local")
 	integrationCommand(t, ctx, root, nil, "git", "add", ".")
-	binary := filepath.Join(t.TempDir(), "ddtest")
-	integrationCommand(t, ctx, "../..", nil, "go", "build", "-o", binary, ".")
+	binary := testutil.DDTest(t)
 	env := []string{"DD_GIT_REPOSITORY_URL=https://example.com/ddtest-isolation-fixture.git", "DD_GIT_COMMIT_SHA=" + strings.Repeat("1", 40), "RUBYOPT=-W0"}
 	protocol := rubyProtocolCommand(t, ctx, root, env, binary, "testdrive", "--framework", "minitest", "--all", "--agent", "--yes", "--tracer-version", installed.Gems["datadog-ci"])
 	var state struct{ Status string }
