@@ -134,6 +134,13 @@ rule's opt-in `stage_sources` puts the sources there. Without them,
 
 Coverage is not reported in this first version.
 
+EFD uses the original Go test deadline to avoid starting a repetition that
+cannot fit its observed duration plus a finalization reserve. It keeps the
+existing test order. This does not reserve time for later tests in the same
+target or guarantee that a slower repetition will finish before Bazel's outer
+timeout. Disable EFD on an affected target if its additional work must be
+removed; the deadline check is a partial mitigation.
+
 With Bzlmod, rules_go 0.65.0 raises `golang.org/x/mod` and `golang.org/x/sys`
 in `go_deps` to releases that need Go 1.26, so a workspace whose Go SDK is
 1.25 cannot fetch them once a target depends on them, as dd-trace-go does.
@@ -178,6 +185,8 @@ Bzlmod and WORKSPACE modes. It checks:
   tool and as data;
 - a `go_binary` that keeps the default SDK and has none of ddtest's symbols;
 - the race detector's configuration;
+- EFD repetitions under a five-second Bazel timeout, retaining completed
+  samples and one terminal session, including a failed sample with `-failfast`;
 - that no test binary names the compiler's temporary files;
 - the same test and span events as `ddtest instrument go test` outside Bazel;
 - in Bzlmod, Mini's Go API from `go_deps` with the override.

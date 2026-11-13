@@ -19,6 +19,7 @@ import (
 	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/constants"
 	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/integrations"
 	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/locking"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/log"
 )
 
 // retryAttemptObservation is the immutable policy input produced when one
@@ -1004,6 +1005,14 @@ func (g *deferredProcessRetryGroup) prepareAttempt(allowEFDTransition bool) (def
 	allowed, stopped := g.admitEarlyFlakeDetectionContinuationWithTransition(allowEFDTransition)
 	if !allowed {
 		return deferredProcessRetryPreparedAttempt{}, false, stopped
+	}
+	if usesEfdRetrySemanticsSnapshot(&g.metadata) && !retryFitsDeadline(g.parentDeadline, g.parentDeadlineOK, time.Now(), max(g.initialDuration, g.latest.duration), processRetryParentDeadlineReserve()) {
+		g.retryCount = -1
+		g.truncated = true
+		log.Debug("gotesting: stopping queued EFD retries because the parent test deadline cannot fit another observed attempt and finalization")
+		// A parallel group can still own running children. Let the coordinator
+		// drain them before closing the group's events and lease.
+		return deferredProcessRetryPreparedAttempt{}, false, true
 	}
 	execMeta := &testExecutionMetadata{}
 	if !applyProcessRetryMetadataSnapshot(execMeta, &g.metadata) {

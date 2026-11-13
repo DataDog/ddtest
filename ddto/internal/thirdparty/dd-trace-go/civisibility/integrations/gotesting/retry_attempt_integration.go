@@ -7,9 +7,40 @@ package gotesting
 
 import (
 	"testing"
+	"time"
 
 	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/log"
 )
+
+// Leave time to publish completed attempts before testing's alarm or Bazel's
+// outer timeout ends the process. An observed duration is an estimate, not a
+// guarantee: a slower future attempt or a hard kill can still prevent flushing.
+const retryFinalizationReserve = 100 * time.Millisecond
+
+func retryFitsDeadline(deadline time.Time, present bool, now time.Time, estimate, reserve time.Duration) bool {
+	if !present {
+		return true
+	}
+	remaining := deadline.Sub(now)
+	return remaining > reserve && max(estimate, 0) < remaining-reserve
+}
+
+func retryEFDDeadlineStopped(execOpts *executionOptions) bool {
+	if execOpts.options.t == nil || !usesEfdRetrySemantics(execOpts.executionMetadata) {
+		return false
+	}
+	deadline, present := execOpts.options.t.Deadline()
+	reserve := retryFinalizationReserve
+	if execOpts.options.processRetryCoordinator != nil {
+		reserve = max(reserve, processRetryParentDeadlineReserve())
+	}
+	if retryFitsDeadline(deadline, present, time.Now(), max(execOpts.initialDuration, execOpts.lastObservation.duration), reserve) {
+		return false
+	}
+	execOpts.retryCount = 0
+	log.Debug("gotesting: stopping EFD retries because the remaining test deadline cannot fit another observed attempt and finalization")
+	return true
+}
 
 func retryContinuationStopped(execOpts *executionOptions) bool {
 	return retryContinuationStoppedWithDeferredAdmission(execOpts, nil, nil, false)

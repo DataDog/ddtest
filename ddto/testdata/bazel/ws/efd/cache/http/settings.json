@@ -1,0 +1,1 @@
+{"data":{"attributes":{"known_tests_enabled":true,"early_flake_detection":{"enabled":true,"faulty_session_threshold":100,"slow_test_retries":{"5s":10}},"flaky_test_retries_enabled":false,"test_management":{"enabled":false}}}}
