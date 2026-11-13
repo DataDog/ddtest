@@ -22,6 +22,11 @@ var TestFilesOutputPath = filepath.Join(RunnerDirectory, "test-files.txt")
 var SkippablePercentageOutputPath = filepath.Join(RunnerDirectory, "skippable-percentage.txt")
 var ParallelRunnersOutputPath = filepath.Join(RunnerDirectory, "parallel-runners.txt")
 var TestsSplitDir = filepath.Join(RunnerDirectory, "tests-split")
+
+// SplitFileTestsPath maps each pytest file split by test to the test IDs of
+// all its parts but the last, which runs the rest of the file. It sits outside
+// TestsSplitDir, whose every file is a runner's list.
+var SplitFileTestsPath = filepath.Join(RunnerDirectory, "split-file-tests.json")
 var RunnerCacheDir = filepath.Join(RunnerDirectory, "cache")
 
 const TestOptimizationPlanCacheFile = "test_suite_durations.json"

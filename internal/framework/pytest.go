@@ -3,6 +3,7 @@ package framework
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -190,22 +191,58 @@ func (p *PyTest) RunTests(ctx context.Context, testFiles []string, envMap map[st
 		// some of each snapshot directory, so every worker would fail.
 		args = append(args, "--snapshot-warn-unused")
 	}
+	selection, err := selectSplitFileTests(testFiles)
+	if err != nil {
+		return err
+	}
+	filter := ""
+	if len(selection.filters) > 0 {
+		var cleanup func()
+		filter, cleanup, err = writeSplitFilter(selection.filters, mergedEnv)
+		if err != nil {
+			return err
+		}
+		defer cleanup()
+		testFiles = selection.args
+	}
 	slog.Info("Running tests with command", "command", command, "args", args)
 	args = withFrameworkFiles(command, args, "pytest", testFiles)
 
 	err = p.executor.Run(ctx, command, args, mergedEnv)
+	if filter != "" && ctx.Err() == nil && (err == nil || exitCode(err) == 1 || exitCode(err) == 5) {
+		// pytest collected the tests, so the plugin had its turn. Without
+		// it, the last part of a split file runs the tests of its other parts
+		// again: a wrapper that clears the environment drops the plugin.
+		if _, statErr := os.Stat(filter + ".applied"); statErr != nil {
+			return errors.Join(err, fmt.Errorf("pytest ran without ddtest's split filter plugin; is %s or PYTHONPATH cleared by a wrapper?", splitFilterEnvVar))
+		}
+	}
+	if exitCode(err) == 5 && ctx.Err() == nil && selection.onlySplitFiles {
+		// The batch only runs parts of split files, and every test the plan
+		// gave them is gone, with no new test in the last part of a file.
+		slog.Info("No tests collected in a batch of split test files", "testFilesCount", len(testFiles))
+		return nil
+	}
 	skippingPlatform, ok := p.platform.(interface {
 		TestSkippingLevel() settings.TestSkippingLevel
 	})
-	var exitErr *exec.ExitError
 	if ok && skippingPlatform.TestSkippingLevel() == settings.TestSkippingLevelSuite &&
-		ctx.Err() == nil && errors.As(err, &exitErr) && exitErr.ExitCode() == 5 {
+		ctx.Err() == nil && exitCode(err) == 5 {
 		// File-only planning cannot apply pytest's item selectors. A worker
 		// may legitimately receive only files whose tests are all deselected.
 		slog.Info("No tests collected in pytest suite-mode batch", "testFilesCount", len(testFiles))
 		return nil
 	}
 	return err
+}
+
+// exitCode is the exit code of a command that exited with one, or -1.
+func exitCode(err error) int {
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		return exitErr.ExitCode()
+	}
+	return -1
 }
 
 // syrupyFailsOnUnused reports whether pytest's arguments leave syrupy failing

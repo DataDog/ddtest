@@ -8,8 +8,10 @@ import (
 	"math"
 	"os"
 	"slices"
+	"strings"
 	"time"
 
+	"github.com/DataDog/ddtest/internal/constants"
 	"github.com/DataDog/ddtest/internal/errcode"
 	"github.com/DataDog/ddtest/internal/settings"
 )
@@ -36,23 +38,88 @@ func readTestDurationsFile(path string) (testDurationsFile, error) {
 	return durations, nil
 }
 
+// checkOneGranularity refuses pytest durations in which a file lists a test
+// together with a class or function it lies under, such as "test_f" and
+// "test_f[1]", or "TestC" and "TestC::test_m": the two could land in
+// different parts, and pytest would run the test in both.
+func checkOneGranularity(durations testDurationsFile) error {
+	files := make([]string, 0, len(durations.Files))
+	for file := range durations.Files {
+		files = append(files, file)
+	}
+	slices.Sort(files)
+	for _, file := range files {
+		tests := durations.Files[file]
+		names := make([]string, 0, len(tests))
+		for name := range tests {
+			names = append(names, name)
+		}
+		slices.Sort(names)
+		for _, name := range names {
+			for _, ancestor := range testAncestors(name) {
+				if _, ok := tests[ancestor]; ok {
+					return fmt.Errorf("test durations file lists %s both as %q and as %q, which lies under it; list each file's tests at one level", file, ancestor, name)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// testAncestors lists the classes and the function a pytest test name lies
+// under, outermost first: "TestC::test_m[1]" lies under "TestC" and
+// "TestC::test_m". Parameters end the name and may hold "::" themselves.
+func testAncestors(name string) []string {
+	var ancestors []string
+	for i := 0; i < len(name); i++ {
+		if name[i] == '[' {
+			if i > 0 {
+				ancestors = append(ancestors, name[:i])
+			}
+			break
+		}
+		if strings.HasPrefix(name[i:], "::") {
+			ancestors = append(ancestors, name[:i])
+			i++
+		}
+	}
+	return ancestors
+}
+
+// lastPart says what the last part of a split file runs.
+type lastPart int
+
+const (
+	// lastPartListed runs the tests durations lists for it, like the others.
+	lastPartListed lastPart = iota
+	// lastPartComplement runs the file minus the tests of its other parts, so
+	// tests durations leaves out, such as new ones, still run once. The
+	// runner needs the other parts' tests to exclude them: see
+	// writeSplitFileTests.
+	lastPartComplement
+)
+
 // splitLongFiles replaces each file expected to take longer than threshold,
 // and whose tests durations lists, with parts of its tests: as many as it
 // takes to bring each under threshold, at most one per test, balanced by the
 // tests' durations. A part is a unit of the split with the file's name and
 // its number, such as "tests/test_a.py[2/3]", weighted with its share of the
 // file's weight, and lines maps it to the test IDs a runner passes the
-// framework instead of the file. Splitting relies on durations listing every
-// test of the file: a test it leaves out runs nowhere, so the caller lists
-// only files whose tests it knows, such as files unchanged since it
-// discovered them.
-func splitLongFiles(weights map[string]int, durations testDurationsFile, threshold time.Duration) (map[string]int, map[string][]string) {
+// framework instead of the file.
+//
+// With lastPartListed, splitting relies on durations listing every test of
+// the file: a test it leaves out runs nowhere, so the caller lists only files
+// whose tests it knows. With lastPartComplement, the last part's line is the
+// file itself, and listed maps the file to the test IDs of its other parts,
+// which the runner of the last part excludes.
+func splitLongFiles(weights map[string]int, durations testDurationsFile, threshold time.Duration, last lastPart) (split map[string]int, lines map[string][]string, listed map[string][]string) {
 	thresholdMillis := int(threshold.Milliseconds())
 	if thresholdMillis <= 0 {
-		return weights, nil
+		return weights, nil, nil
 	}
-	split := make(map[string]int, len(weights))
-	lines := make(map[string][]string)
+	split = make(map[string]int, len(weights))
+	lines = make(map[string][]string)
+	listed = make(map[string][]string)
 	for file, weight := range weights {
 		tests := durations.Files[file]
 		parts := min((weight+thresholdMillis-1)/thresholdMillis, len(tests))
@@ -63,12 +130,19 @@ func splitLongFiles(weights map[string]int, durations testDurationsFile, thresho
 		for i, part := range partitionTests(tests, parts) {
 			unit := fmt.Sprintf("%s[%d/%d]", file, i+1, parts)
 			split[unit] = part.weight(weight)
+			if last == lastPartComplement && i == parts-1 {
+				lines[unit] = []string{file}
+				continue
+			}
 			for _, name := range part.names {
 				lines[unit] = append(lines[unit], file+"::"+name)
 			}
+			if last == lastPartComplement {
+				listed[file] = append(listed[file], lines[unit]...)
+			}
 		}
 	}
-	return split, lines
+	return split, lines, listed
 }
 
 type testPart struct {
@@ -130,7 +204,14 @@ func (tp *TestPlanner) splitLongTestFiles() error {
 	if err != nil {
 		return errcode.WithCode(errcode.PlanTestDurationsFileInvalid, err)
 	}
-	tp.testFileWeights, tp.splitLines = splitLongFiles(tp.testFileWeights, durations, threshold)
+	last := lastPartListed
+	if tp.framework != nil && tp.framework.Name() == "pytest" {
+		last = lastPartComplement
+		if err := checkOneGranularity(durations); err != nil {
+			return errcode.WithCode(errcode.PlanTestDurationsFileInvalid, err)
+		}
+	}
+	tp.testFileWeights, tp.splitLines, tp.splitListed = splitLongFiles(tp.testFileWeights, durations, threshold, last)
 	for unit, ids := range tp.splitLines {
 		slog.Info("Split a long test file by test", "part", unit, "tests", len(ids), "estimatedRuntime", time.Duration(tp.testFileWeights[unit])*time.Millisecond)
 	}
@@ -154,4 +235,26 @@ func expandSplitUnits(distribution [][]string, lines map[string][]string) [][]st
 		}
 	}
 	return expanded
+}
+
+// writeSplitFileTests writes, for the runners of the last parts of split
+// files, the test IDs of each file's other parts (see lastPartComplement),
+// and removes the file a previous plan wrote when there are none. Runners
+// read every split file's path among their lines as its last part, so the
+// caller passes nil when it gives runners whole files instead of parts.
+func writeSplitFileTests(listed map[string][]string) error {
+	if len(listed) == 0 {
+		if err := os.Remove(constants.SplitFileTestsPath); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove split file tests: %w", err)
+		}
+		return nil
+	}
+	for _, ids := range listed {
+		slices.Sort(ids)
+	}
+	data, err := json.Marshal(listed)
+	if err != nil {
+		return fmt.Errorf("encode split file tests: %w", err)
+	}
+	return writePlanFile(constants.SplitFileTestsPath, data)
 }

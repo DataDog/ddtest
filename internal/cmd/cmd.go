@@ -170,7 +170,7 @@ func init() {
 	rootCmd.PersistentFlags().String("tests-exclude-pattern", "", "Glob pattern used to exclude test files from discovery")
 	rootCmd.PersistentFlags().String("test-discovery-cache", "", "Path to a restored test discovery cache file to import before planning")
 	rootCmd.PersistentFlags().String("durations-file", "", "Plan with the suite durations in this JSON file, in the shape Datadog's durations endpoint returns, instead of fetching them")
-	rootCmd.PersistentFlags().String("test-durations-file", "", `JSON file of per-test durations, {"files": {path: {test name: nanoseconds}}}, listing every test of each file it names, so planning can split those files (see --split-files-over)`)
+	rootCmd.PersistentFlags().String("test-durations-file", "", `JSON file of per-test durations, {"files": {path: {test name: nanoseconds}}}, so planning can split those files (see --split-files-over); except for pytest, whose last part of a split file runs the rest of the file, it must list every test of each file it names`)
 	rootCmd.PersistentFlags().String("split-files-over", "0s", "Split each test file expected to take longer than this, and whose tests --test-durations-file lists, into parts of its tests for different CI nodes (for example, 30s; 0s disables it)")
 	rootCmd.PersistentFlags().String("test-skipping-mode", "test", `TIA skipping granularity for Ruby and Python ("test" or "suite"; invalid values fall back to "test")`)
 	rootCmd.PersistentFlags().Bool("force-full-test-discovery", false, "Force full test discovery when the framework supports it")

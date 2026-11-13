@@ -198,7 +198,14 @@ func (tp *TestPlanner) CreateTestSplits(testFiles map[string]int, parallelRunner
 		if err := writeDistributedTestSplits(distribution, constants.TestsSplitDir); err != nil {
 			return err
 		}
+		if err := writeSplitFileTests(tp.splitListed); err != nil {
+			return err
+		}
 	} else {
+		// The single runner gets test-files.txt, whose files are whole.
+		if err := writeSplitFileTests(nil); err != nil {
+			return err
+		}
 		// For single runner, copy test-files.txt to runner-0
 		testFilesData, err := os.ReadFile(testFilesOutputPath)
 		if err != nil {
