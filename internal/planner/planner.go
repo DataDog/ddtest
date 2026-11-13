@@ -96,6 +96,9 @@ type TestPlanner struct {
 	// splitLines maps the parts of long files split by test
 	// (--split-files-over) to the test IDs their runner gets.
 	splitLines map[string][]string
+	// splitListed maps each split pytest file to the test IDs of its parts
+	// but the last (see lastPartComplement).
+	splitListed map[string][]string
 }
 
 const (

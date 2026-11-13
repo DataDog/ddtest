@@ -384,7 +384,7 @@ jobs:
           DD_API_KEY: ${{ secrets.DATADOG_API_KEY }}
         run: |
           DDTEST_PYTHON_BINARY="$(command -v python)" \
-            ddtest instrument go test -v ./internal/compatibility -run '^TestPyTest(AdapterIntegration|SuiteModeSelectorBatches)$'
+            ddtest instrument go test -v ./internal/compatibility -run '^TestPyTest(AdapterIntegration|SuiteModeSelectorBatches|SplitFilesRunEachTestOnce|SplitFilterRefusesFilesOutsideItsArguments)$'
           DDTEST_PYTHON_PLATFORM_INTEGRATION=1 \
             ddtest instrument go test -v ./internal/compatibility -run '^TestPythonPlatformIntegration$'
           DDTEST_PYTEST_PYTHON="$(command -v python)" \
