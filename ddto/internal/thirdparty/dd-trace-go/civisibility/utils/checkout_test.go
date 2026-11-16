@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/bazel"
 	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/constants"
 )
 
@@ -257,5 +258,46 @@ func TestNestedCheckoutSourceAndOwnership(t *testing.T) {
 	}
 	if GetCITags()[constants.CIWorkspacePath] != workspace {
 		t.Fatal("CI workspace changed")
+	}
+}
+
+func TestUnreadableCheckoutPreservesProviderFields(t *testing.T) {
+	clearGitOverrides(t)
+	provider := map[string]string{
+		constants.CIWorkspacePath:  "",
+		constants.CIJobName:        "",
+		constants.GitBranch:        "",
+		constants.GitTag:           "",
+		constants.GitCommitSHA:     strings.Repeat("a", 40),
+		constants.GitRepositoryURL: "https://example.com/repository.git",
+	}
+	tags := maps.Clone(provider)
+	applyCheckoutMetadata(tags, localGitData{}, provider)
+	if !maps.Equal(tags, provider) {
+		t.Fatalf("provider fallback changed: got %v, want %v", tags, provider)
+	}
+}
+
+func TestUnreadableCheckoutKeepsUnknownFieldTags(t *testing.T) {
+	clearGitOverrides(t)
+	ResetCITags()
+	t.Cleanup(ResetCITags)
+	t.Setenv(bazel.PayloadsInFilesEnv, "false")
+	bazel.ResetForTesting()
+	t.Cleanup(bazel.ResetForTesting)
+	ResetHandedCLIGitStateForTesting()
+	t.Cleanup(ResetHandedCLIGitStateForTesting)
+	oldFile := applyEnvironmentalDataIfRequiredFunc
+	applyEnvironmentalDataIfRequiredFunc = func(map[string]string) {}
+	t.Cleanup(func() { applyEnvironmentalDataIfRequiredFunc = oldFile })
+	oldProvider, oldGit := getProviderTagsFunc, getLocalGitDataFunc
+	t.Cleanup(func() { getProviderTagsFunc, getLocalGitDataFunc = oldProvider, oldGit })
+	getProviderTagsFunc = func() map[string]string { return map[string]string{} }
+	getLocalGitDataFunc = func() (localGitData, error) { return localGitData{}, nil }
+	tags := GetCITags()
+	for _, key := range []string{constants.CIWorkspacePath, constants.GitRepositoryURL, constants.GitCommitSHA, constants.GitBranch} {
+		if value, ok := tags[key]; !ok || value != "" {
+			t.Errorf("unknown %s=%q, present=%t", key, value, ok)
+		}
 	}
 }

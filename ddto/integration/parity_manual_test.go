@@ -124,6 +124,6 @@ func main() {
 		wallNS = append(wallNS, result.wall.Nanoseconds())
 	}
 	assertMiniCIAttributes(t, captures[0].events, captures[1].events)
-	assertSidePayloadParity(t, captures[0], captures[1])
+	assertSidePayloadParity(t, captures[0], captures[1], "")
 	writeParityEvidence(t, "manual", map[string]any{"timing": parityTiming{binaryTimingScope, wallNS[0], wallNS[1]}, "status": "passed", "sdk": eventCounts{1, 2, 4, 12, 1}, "mini": eventCounts{1, 2, 4, 12, 1}, "scope": "internal hierarchy API: repeated lookup/close, statuses, custom tags/metrics, errors, logs and child span"})
 }

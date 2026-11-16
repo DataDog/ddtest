@@ -166,6 +166,12 @@ func createCITagsMap() map[string]string {
 	gitData, _ := getLocalGitDataFunc()
 
 	applyCheckoutMetadata(localTags, gitData, localTags)
+	// Preserve the existing unknown-field tags when local Git is unreadable.
+	for _, key := range []string{constants.CIWorkspacePath, constants.GitRepositoryURL, constants.GitCommitSHA, constants.GitBranch} {
+		if _, ok := localTags[key]; !ok {
+			localTags[key] = ""
+		}
+	}
 
 	// If the head commit SHA is available, populate additional Git head metadata
 	if headCommitSha := checkoutOperationTags(localTags)[constants.GitHeadCommit]; headCommitSha != "" {

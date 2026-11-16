@@ -3139,3 +3139,12 @@ and configured remotes; source/ownership tests keep outer workspace rules out.
 Synthetic source-path and LCOV fixtures select their own checkout root explicitly;
 the repository-relative LCOV case also retains a distinct outer CI workspace.
 Their existing source-parsing, coverage and trimpath assertions stay intact.
+
+Unreadable-checkout fallback retains provider fields, including empty values;
+checkout selection does not erase the CI workspace or unrelated CI attributes.
+`TestUnreadableCheckoutPreservesProviderFields` and the full clock/coverage
+comparison retain this behavior without normalizing changed CI values away.
+The feature matrices expect the known fixture checkout root on every CI event;
+missing and incorrect values still fail the strict comparison. Telemetry also
+expects the single added remote-discovery command and its no-repository error,
+with all other counters unchanged against the pinned SDK.

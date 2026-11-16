@@ -166,11 +166,6 @@ func applyCheckoutMetadata(tags map[string]string, data localGitData, provider m
 		}
 	}
 	maps.Copy(tags, user)
-	for key, value := range tags {
-		if value == "" {
-			delete(tags, key)
-		}
-	}
 }
 
 // checkoutOperationTags keeps outer workflow relationships out of another checkout's Git operations.
