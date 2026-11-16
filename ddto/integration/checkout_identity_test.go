@@ -44,7 +44,7 @@ func TestMiniCheckoutIdentity(t *testing.T) {
 				}
 				seen[kind] = true
 				for key, want := range map[string]string{"git.commit.sha": head, "git.repository_url": tc.repository, "git.branch": tc.branch,
-					"ci.workspace_path": tc.workspace, "git.checkout.root": dir, "git.checkout.is_custom": tc.custom, "ci.git.merge_commit_sha": tc.providerSHA} {
+					"ci.workspace_path": tc.workspace, "git.checkout.root": filepath.ToSlash(dir), "git.checkout.is_custom": tc.custom, "ci.git.merge_commit_sha": tc.providerSHA} {
 					got, _ := meta[key].(string)
 					if got != want {
 						t.Errorf("%s %s=%q, want %q", kind, key, got, want)

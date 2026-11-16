@@ -553,7 +553,7 @@ func runCIVisibilityParityMatrix(t *testing.T, deferred bool) {
 		cases = kept
 	}
 	for i := range cases {
-		cases[i].CheckoutRoot = fixture.dir
+		cases[i].CheckoutRoot = filepath.ToSlash(fixture.dir)
 		if cases[i].Git {
 			cases[i].Env = append(cases[i].Env, "DD_GIT_COMMIT_SHA="+fixture.head, "DD_GIT_PULL_REQUEST_BASE_BRANCH_SHA="+fixture.base)
 		}
