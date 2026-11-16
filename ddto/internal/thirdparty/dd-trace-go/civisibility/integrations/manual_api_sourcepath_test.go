@@ -42,6 +42,7 @@ func configureSourcePathTestState(t *testing.T, workspacePath string) {
 	initializeSourceMetadataTestRuntime()
 	utils.AddCITagsMap(map[string]string{
 		constants.CIWorkspacePath:  workspacePath,
+		constants.GitCheckoutRoot:  workspacePath,
 		constants.GitRepositoryURL: "https://github.com/DataDog/ddtest.git",
 	})
 	t.Cleanup(resetCIVisibilityStateForTesting)

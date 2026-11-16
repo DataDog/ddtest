@@ -207,6 +207,7 @@
   },
   "mini": {
     "native": [
+      "TestMiniCheckoutIdentity",
       "TestGoleakCacheAndAPIGuard",
       "TestMiniChdirSymlinkWithUserTool",
       "TestMiniConsumerAddsOnlyOwnModule",

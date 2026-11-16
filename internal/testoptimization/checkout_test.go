@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/DataDog/ddtest/internal/constants"
 	"github.com/DataDog/ddtest/internal/environment"
 	"github.com/DataDog/ddtest/internal/git/gittest"
 )
@@ -49,5 +50,20 @@ func TestUploadUsesSelectedRevisionInsteadOfHEAD(t *testing.T) {
 	}
 	if !strings.Contains(transport.objects, selected+" commit") || strings.Contains(transport.objects, head+" commit") {
 		t.Fatalf("pack does not match selected identity: %s", transport.objects)
+	}
+}
+
+func TestUploadDoesNotInventMissingSelectedSHA(t *testing.T) {
+	repo := gittest.NewRepository(t)
+	t.Chdir(repo.Path)
+	withoutCIProviderEnvironment(t)
+	environment.AddCITagsMap(map[string]string{constants.GitCommitSHA: ""})
+	transport := &MockAPIClient{}
+	client := newTestOptimizationClient(transport, nil, nil)
+	if _, err := client.uploadRepositoryChangesFromGit(); err != nil {
+		t.Fatal(err)
+	}
+	if transport.GetCommitsCalls != 0 || transport.SendPackFilesCalls != 0 {
+		t.Fatalf("missing identity triggered search=%d upload=%d", transport.GetCommitsCalls, transport.SendPackFilesCalls)
 	}
 }

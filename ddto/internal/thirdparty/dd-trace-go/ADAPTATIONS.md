@@ -3125,7 +3125,9 @@ worker carries detached tags without doing fetch work before its state is used.
 Metadata uses NUL-delimited no-walk reads, and history/search/upload all use the
 selected canonical SHA, with the existing 1,000-commit cap, negative revisions
 and an old selected commit/tree fallback. No branch name is invented for a
-detached checkout.
+detached checkout. Upload search stops without a selected SHA, even when Git
+could otherwise enumerate HEAD. The root uploader and `gitupload_test.go`
+exercise this boundary with a readable checkout and zero backend calls.
 
 Checks: `checkout_test.go` and `checkout_native_test.go` in `utils`, the request
 constructor regression in `utils/net/checkout_test.go`, and
@@ -3133,3 +3135,7 @@ constructor regression in `utils/net/checkout_test.go`, and
 checkouts, explicit overrides, file fallback, all event levels and worker state.
 The native pack tests inspect objects, caps, exclusions, missing parents, tags
 and configured remotes; source/ownership tests keep outer workspace rules out.
+
+Synthetic source-path and LCOV fixtures select their own checkout root explicitly;
+the repository-relative LCOV case also retains a distinct outer CI workspace.
+Their existing source-parsing, coverage and trimpath assertions stay intact.
