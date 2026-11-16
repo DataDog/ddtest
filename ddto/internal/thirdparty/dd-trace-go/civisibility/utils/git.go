@@ -899,7 +899,11 @@ func gitObjectsDir() string {
 	if err != nil || out == "" || strings.HasPrefix(out, "-") {
 		return ""
 	}
-	dir, err := filepath.Abs(filepath.FromSlash(out))
+	objectsPath := filepath.FromSlash(out)
+	if !filepath.IsAbs(objectsPath) {
+		objectsPath = filepath.Join(gitWorkingDirectory, objectsPath)
+	}
+	dir, err := filepath.Abs(objectsPath)
 	if err != nil {
 		return ""
 	}
@@ -1097,9 +1101,12 @@ func getRemoteName() (string, error) {
 			return configured, nil
 		}
 	}
-	snapshot, err := execGitString(telemetry.GetRemoteCommandsType, "config", "--local", "--includes", "--null", "--list")
+	snapshot, err := execGitString(telemetry.GetRemoteCommandsType, "config", "--local", "--includes", "--null", "--get-regexp", `^(branch\..*\.remote|clone\.defaultremotename)$`)
 	if err != nil {
-		return "", err
+		// Git exits with 1 when none of the remote-selection keys is configured.
+		if exitErr, ok := compat.AsType[*exec.ExitError](err); !ok || exitErr.ExitCode() != 1 {
+			return "", err
+		}
 	}
 	configuration := map[string]string{}
 	for _, entry := range strings.Split(snapshot, "\x00") {

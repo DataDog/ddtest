@@ -3163,3 +3163,13 @@ fallbacks remain for unavailable or foreign module contexts. Mirror regressions
 exercise source parsing, CODEOWNERS services and modified-test classification;
 the ported source-path fixture uses the actual ddtest repository root and keeps
 all upstream assertions.
+
+Remote selection queries only branch-remote and clone-default keys from local
+configuration and its evaluated includes, keeping authentication headers and
+credential helpers out of Git command debug output. No matching selection keys
+retain the normal remote fallback. Relative objects-directory paths are resolved
+against the pinned Git working directory, including a relative
+`GIT_OBJECT_DIRECTORY`, so pack creation can still fall back to the objects
+directory after the process changes directories. Native regressions capture
+debug logs with synthetic credentials and force the pack fallback, verifying
+the selected commit and cleanup.
