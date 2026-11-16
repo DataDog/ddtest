@@ -120,7 +120,8 @@ func applyCheckoutMetadata(tags map[string]string, data localGitData, provider m
 		normalizeCommitSHAs(identity)
 		matched := provider[constants.CIWorkspacePath] != "" && data.SourceRoot != "" && !custom && data.Branch == "HEAD" &&
 			canonicalCheckoutPath(data.SourceRoot) == canonicalCheckoutPath(provider[constants.CIWorkspacePath]) &&
-			(identity[constants.GitCommitSHA] == providerSHA || identity[constants.GitCommitSHA] == provider[constants.CIGitMergeCommitSHA])
+			(identity[constants.GitCommitSHA] == providerSHA || identity[constants.GitCommitSHA] == provider[constants.CIGitMergeCommitSHA] ||
+				identity[constants.GitCommitSHA] == provider[constants.GitHeadCommit])
 		if matched {
 			for _, key := range []string{constants.GitBranch, constants.GitTag, constants.GitRepositoryURL} {
 				if provider[key] != "" {
@@ -169,9 +170,14 @@ func applyCheckoutMetadata(tags map[string]string, data localGitData, provider m
 }
 
 // checkoutOperationTags keeps outer workflow relationships out of another checkout's Git operations.
-func checkoutOperationTags(tags map[string]string) map[string]string {
+func checkoutOperationTags(tags, provider map[string]string) map[string]string {
 	if tags[constants.GitCheckoutIsCustom] != "true" {
-		return tags
+		sha := tags[constants.GitCommitSHA]
+		if tags[constants.GitCheckoutRoot] == "" || sha == "" ||
+			sha == provider[constants.GitCommitSHA] || sha == provider[constants.GitHeadCommit] || sha == provider[constants.CIGitMergeCommitSHA] ||
+			(len(provider) == 0 && tags[constants.GitHeadCommit] == "") {
+			return tags
+		}
 	}
 	user := userGitTags()
 	selected := maps.Clone(tags)
@@ -186,7 +192,11 @@ func checkoutOperationTags(tags map[string]string) map[string]string {
 
 // GetGitCheckoutTags returns the selected revisions for requests and local Git operations.
 func GetGitCheckoutTags() map[string]string {
-	return checkoutOperationTags(GetCITagsReadOnly())
+	tags := GetCITagsReadOnly()
+	ciTagsMutex.Lock()
+	provider := originalProviderTags
+	ciTagsMutex.Unlock()
+	return checkoutOperationTags(tags, provider)
 }
 
 // GetCITagsSourceRoot returns the selected checkout root, or the CI workspace without local Git.

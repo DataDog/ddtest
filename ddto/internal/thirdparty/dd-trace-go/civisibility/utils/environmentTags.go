@@ -39,6 +39,9 @@ var (
 	addedMetrics      map[string]float64 // addedMetrics holds the metrics added by the user
 	ciMetricsMutex    sync.Mutex
 
+	// Preserve provider evidence before explicit overrides change reported tags.
+	originalProviderTags map[string]string
+
 	getProviderTagsFunc = getCIProviderTags
 	getLocalGitDataFunc = getLocalGitData
 	fetchCommitDataFunc = fetchCommitData
@@ -149,6 +152,7 @@ func ResetCITags() {
 	defer ciTagsMutex.Unlock()
 
 	originalCiTags = nil
+	originalProviderTags = nil
 	currentCiTags = nil
 	addedTags = nil
 }
@@ -255,6 +259,8 @@ func GetRelativePathFromCITagsSourceRoot(path string) string {
 func createCITagsMap() map[string]string {
 	localTags := getProviderTagsFunc()
 	providerTags := maps.Clone(localTags)
+	originalProviderTags = providerTags
+	normalizeCommitSHAs(originalProviderTags)
 
 	// Populate runtime values
 	localTags[constants.OSPlatform] = runtime.GOOS
@@ -324,7 +330,7 @@ func createCITagsMap() map[string]string {
 		}
 
 		// If the head commit SHA is available, populate additional Git head metadata
-		if headCommitSha := checkoutOperationTags(localTags)[constants.GitHeadCommit]; headCommitSha != "" {
+		if headCommitSha := checkoutOperationTags(localTags, providerTags)[constants.GitHeadCommit]; headCommitSha != "" {
 			headCommitData, handed, err := localCommitData{}, false, error(nil)
 			if cliRecord != nil {
 				headCommitData, handed, err = cliRecord.headCommitData(headCommitSha)

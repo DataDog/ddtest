@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"sync"
@@ -124,8 +125,10 @@ func CollectCLIGitRecord() CLIGitRecord {
 	record.Tag = gitData.Tag
 	record.Commit = newCLIGitCommit(gitData.localCommitData)
 	tags := getProviderTagsFunc()
-	applyCheckoutMetadata(tags, gitData, tags)
-	if headCommitSha := checkoutOperationTags(tags)[constants.GitHeadCommit]; headCommitSha != "" {
+	provider := maps.Clone(tags)
+	normalizeCommitSHAs(provider)
+	applyCheckoutMetadata(tags, gitData, provider)
+	if headCommitSha := checkoutOperationTags(tags, provider)[constants.GitHeadCommit]; headCommitSha != "" {
 		headCommitData, err := localCommitDataFunc(headCommitSha)
 		switch {
 		case errors.Is(err, errCommitNotFetched):
@@ -294,8 +297,10 @@ func FetchCLIHeadCommit() {
 		return
 	}
 	tags := getProviderTagsFunc()
-	applyCheckoutMetadata(tags, cliGitRecord.localGitData(), tags)
-	headCommitSha, ok := checkoutOperationTags(tags)[constants.GitHeadCommit]
+	provider := maps.Clone(tags)
+	normalizeCommitSHAs(provider)
+	applyCheckoutMetadata(tags, cliGitRecord.localGitData(), provider)
+	headCommitSha, ok := checkoutOperationTags(tags, provider)[constants.GitHeadCommit]
 	if !ok || cliGitRecord.HeadCommit == headCommitSha {
 		return
 	}

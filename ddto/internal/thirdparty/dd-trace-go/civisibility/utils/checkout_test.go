@@ -3,6 +3,8 @@
 package utils
 
 import (
+	"go/parser"
+	"go/token"
 	"maps"
 	"os"
 	"path/filepath"
@@ -112,7 +114,7 @@ func TestCheckoutIdentitySelection(t *testing.T) {
 				t.Fatal("unexpected custom-checkout flag")
 			}
 			if test.nested {
-				selected := checkoutOperationTags(tags)
+				selected := checkoutOperationTags(tags, nil)
 				if selected[constants.GitHeadCommit] != "" || selected[constants.GitPrBaseCommit] != "" {
 					t.Fatal("foreign workflow revisions reached Git operations")
 				}
@@ -157,14 +159,14 @@ func TestCustomCheckoutExplicitRelationships(t *testing.T) {
 	original := maps.Clone(tags)
 	t.Setenv("DD_GIT_COMMIT_HEAD_SHA", "")
 	t.Setenv("DD_GIT_PULL_REQUEST_BASE_BRANCH_SHA", " ")
-	if selected := checkoutOperationTags(tags); selected[constants.GitHeadCommit] != "" || selected[constants.GitPrBaseCommit] != "" {
+	if selected := checkoutOperationTags(tags, nil); selected[constants.GitHeadCommit] != "" || selected[constants.GitPrBaseCommit] != "" {
 		t.Fatal("empty overrides retained foreign relationships")
 	}
 	t.Setenv("DD_GIT_COMMIT_HEAD_SHA", "user-head")
 	t.Setenv("DD_GIT_PULL_REQUEST_BASE_BRANCH_SHA", "user-base")
 	tags[constants.GitHeadCommit] = "user-head"
 	tags[constants.GitPrBaseCommit] = "user-base"
-	selected := checkoutOperationTags(tags)
+	selected := checkoutOperationTags(tags, nil)
 	if selected[constants.GitHeadCommit] != "user-head" || selected[constants.GitPrBaseCommit] != "user-base" || selected[constants.GitPrBaseBranch] != "" {
 		t.Fatal("explicit relationships not isolated")
 	}
@@ -276,6 +278,12 @@ func TestUnreadableCheckoutPreservesProviderFields(t *testing.T) {
 	if !maps.Equal(tags, provider) {
 		t.Fatalf("provider fallback changed: got %v, want %v", tags, provider)
 	}
+	tags[constants.GitHeadCommit] = "provider-head"
+	tags[constants.GitPrBaseCommit] = "provider-base"
+	if !maps.Equal(checkoutOperationTags(tags, nil), tags) {
+		t.Fatal("unreadable checkout lost provider relationships")
+	}
+
 }
 
 func TestUnreadableCheckoutKeepsUnknownFieldTags(t *testing.T) {
@@ -299,5 +307,87 @@ func TestUnreadableCheckoutKeepsUnknownFieldTags(t *testing.T) {
 		if value, ok := tags[key]; !ok || value != "" {
 			t.Errorf("unknown %s=%q, present=%t", key, value, ok)
 		}
+	}
+}
+
+func TestCheckoutRelationshipSelection(t *testing.T) {
+	selected, merge, head := strings.Repeat("a", 40), strings.Repeat("b", 40), strings.Repeat("c", 40)
+	for _, tc := range []struct {
+		name                                 string
+		selected                             string
+		detached, explicitHead, matchingHead bool
+		keep                                 bool
+	}{
+		{name: "same root replacement", selected: selected},
+		{name: "identified merge", selected: merge, keep: true},
+		{name: "matching PR head", selected: head, detached: true, matchingHead: true, keep: true},
+		{name: "explicit head cannot validate inherited base", selected: selected, explicitHead: true},
+		{name: "redundant explicit known head", selected: head, explicitHead: true, keep: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			clearGitOverrides(t)
+			root := t.TempDir()
+			provider := map[string]string{constants.CIWorkspacePath: root, constants.GitCommitSHA: merge, constants.CIGitMergeCommitSHA: merge,
+				constants.GitHeadCommit: head, constants.GitHeadMessage: "workflow message", constants.GitPrBaseCommit: "workflow-base", constants.GitPrBaseBranch: "workflow-branch",
+				constants.GitRepositoryURL: "https://example.com/workflow.git", constants.GitBranch: "workflow-branch"}
+			tags := maps.Clone(provider)
+			if tc.explicitHead {
+				t.Setenv("DD_GIT_COMMIT_HEAD_SHA", tc.selected)
+			}
+			branch := "local-branch"
+			if tc.detached {
+				branch = "HEAD"
+			}
+			applyCheckoutMetadata(tags, localGitData{localCommitData: localCommitData{CommitSha: tc.selected}, SourceRoot: root, Branch: branch, RepositoryURL: "https://mirror.example.com/checkout.git"}, provider)
+			if tags[constants.GitCheckoutIsCustom] != "" || tags[constants.CIWorkspacePath] != root {
+				t.Fatal("changed workspace or custom-root meaning")
+			}
+			operations := checkoutOperationTags(tags, provider)
+			if tc.keep {
+				if operations[constants.GitHeadCommit] != head || operations[constants.GitPrBaseCommit] != "workflow-base" {
+					t.Fatalf("matching relationships lost: %v", operations)
+				}
+			} else {
+				wantHead := ""
+				if tc.explicitHead {
+					wantHead = tc.selected
+				}
+				if operations[constants.GitHeadCommit] != wantHead || operations[constants.GitPrBaseCommit] != "" || operations[constants.GitPrBaseBranch] != "" {
+					t.Fatalf("foreign relationships retained: %v", operations)
+				}
+			}
+			if tc.matchingHead && (tags[constants.GitBranch] != "workflow-branch" || tags[constants.GitRepositoryURL] != "https://example.com/workflow.git") {
+				t.Fatalf("matching PR-head identity lost: %v", tags)
+			}
+			if !tc.explicitHead && tags[constants.GitHeadCommit] != head {
+				t.Fatal("operation filtering changed reported workflow tags")
+			}
+		})
+	}
+}
+
+func TestAttachedMirrorTrimpathResolvesModuleSource(t *testing.T) {
+	clearGitOverrides(t)
+	ResetCITags()
+	t.Cleanup(ResetCITags)
+	directory, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	moduleDir := filepath.Clean(filepath.Join(directory, "../../../../.."))
+	root := filepath.Dir(moduleDir)
+	const mirror = "https://mirror.example.com/transport/repository.git"
+	AddCITagsMap(map[string]string{constants.GitCheckoutRoot: root, constants.CIWorkspacePath: root, constants.GitRepositoryURL: mirror, constants.GitBranch: "feature"})
+	runtimePath := "github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/utils/checkout_test.go"
+	source := ResolveSourceFilePathFromCITags(runtimePath)
+	relative := "ddto/internal/thirdparty/dd-trace-go/civisibility/utils/checkout_test.go"
+	if source.RuntimePath != runtimePath || source.RelativePath != relative || source.FilesystemPath != filepath.Join(directory, "checkout_test.go") || !source.FilesystemKnown {
+		t.Fatalf("mirror source=%+v", source)
+	}
+	if _, err := parser.ParseFile(token.NewFileSet(), source.FilesystemPath, nil, parser.ParseComments); err != nil {
+		t.Fatal(err)
+	}
+	if GetCITags()[constants.GitRepositoryURL] != mirror {
+		t.Fatal("source resolution changed reported repository")
 	}
 }

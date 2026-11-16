@@ -3112,14 +3112,19 @@ tag, commit and commit details as one source. Explicit `DD_GIT_*` settings stay
 authoritative; CI and environmental-file Git identity is used when the checkout
 is unreadable. A detached checkout keeps the CI branch/tag and canonical URL only
 when its canonical root and commit match the actual CI workspace and revision
-(or a positively identified provider merge revision). File fallback values do
+(or a positively identified provider head or merge revision). File fallback values do
 not establish this match. `ci.workspace_path` is retained, while
 `git.checkout.root`, `git.checkout.is_custom` and `ci.git.merge_commit_sha`
 describe the checkout and workflow separately.
 
 Source paths, coverage, CODEOWNERS and its optional service use the checkout root.
 A custom checkout reports workflow PR relationships but excludes them from Git
-operations and requests unless explicitly overridden. Git commands retain their
+operations and requests unless explicitly overridden. A same-root replacement
+also excludes foreign relationships when its selected revision does not match
+the original provider commit, head or merge revision. Provider evidence is
+snapshotted before checkout selection and user overrides; a new explicit head
+cannot validate an inherited base, while a repeated known provider head can.
+Git commands retain their
 initial working directory, transport environment and cancellation context. The
 worker carries detached tags without doing fetch work before its state is used.
 Metadata uses NUL-delimited no-walk reads, and history/search/upload all use the
@@ -3148,3 +3153,13 @@ The feature matrices expect the known fixture checkout root on every CI event;
 missing and incorrect values still fail the strict comparison. Telemetry also
 expects the single added remote-discovery command and its no-repository error,
 with all other counters unchanged against the pinned SDK.
+
+Trimpath source resolution uses the package module's declared import path and
+physical directory independently of the reported remote URL. The CLI's package
+handoff takes precedence; otherwise a cached nearest-go.mod lookup handles
+nested modules, semantic import versions and symlinked directories without
+per-function filesystem reads. The existing repository-URL and runfiles
+fallbacks remain for unavailable or foreign module contexts. Mirror regressions
+exercise source parsing, CODEOWNERS services and modified-test classification;
+the ported source-path fixture uses the actual ddtest repository root and keeps
+all upstream assertions.

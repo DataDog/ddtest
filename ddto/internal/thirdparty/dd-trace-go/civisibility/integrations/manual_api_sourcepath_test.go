@@ -31,7 +31,7 @@ func sourcePathRepositoryRoot(t *testing.T) string {
 
 	workingDirectory, err := os.Getwd()
 	require.NoError(t, err)
-	return filepath.Clean(filepath.Join(workingDirectory, "..", "..", ".."))
+	return filepath.Clean(filepath.Join(workingDirectory, "..", "..", "..", "..", "..", ".."))
 }
 
 // configureSourcePathTestState resets process-global CI Visibility state and installs source tags.

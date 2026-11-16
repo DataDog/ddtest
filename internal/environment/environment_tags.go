@@ -45,6 +45,9 @@ var (
 	addedTags      map[string]string // addedTags holds the tags added by the user
 	ciTagsMutex    sync.Mutex
 
+	// The provider snapshot proves relationships before explicit overrides change tags.
+	originalProviderTags map[string]string
+
 	getProviderTagsFunc = getCIProviderTags
 	getLocalGitDataFunc = git.GetLocalGitData
 	fetchCommitDataFunc = git.FetchCommitData
@@ -106,6 +109,7 @@ func ResetCITags() {
 	defer ciTagsMutex.Unlock()
 
 	originalCiTags = nil
+	originalProviderTags = nil
 	currentCiTags = nil
 	addedTags = nil
 }
@@ -118,6 +122,8 @@ func ResetCITags() {
 //	A map[string]string containing the extracted CI/CD tags.
 func createCITagsMap() map[string]string {
 	localTags := getProviderTagsFunc()
+	originalProviderTags = maps.Clone(localTags)
+	normalizeCommitSHAs(originalProviderTags)
 
 	// Populate runtime values
 	localTags[constants.OSPlatform] = runtime.GOOS
@@ -174,7 +180,7 @@ func createCITagsMap() map[string]string {
 	}
 
 	// If the head commit SHA is available, populate additional Git head metadata
-	if headCommitSha := checkoutOperationTags(localTags)[constants.GitHeadCommit]; headCommitSha != "" {
+	if headCommitSha := checkoutOperationTags(localTags, originalProviderTags)[constants.GitHeadCommit]; headCommitSha != "" {
 		if headCommitData, err := fetchCommitDataFunc(headCommitSha); err != nil {
 			slog.Warn("testoptimization: failed to fetch head commit data", "headCommitSha", headCommitSha, "error", err.Error())
 		} else if headCommitSha == headCommitData.CommitSha {

@@ -124,7 +124,8 @@ func codeOwnersPackageDirectory(workspace string, tags map[string]string, locati
 		return filepath.ToSlash(relative), ok
 	}
 	if location != nil {
-		source := resolveSourceFilePath(location.source, tags, buildInfoMainModulePath())
+		modulePath, moduleDir := sourceModuleInfo()
+		source := resolveSourceFilePathForModule(location.source, tags, modulePath, moduleDir)
 		// A resolved compiler path identifies the package even when a -c
 		// binary runs from another package's directory. Unknown import paths
 		// retain the registered working directory as their fallback.
