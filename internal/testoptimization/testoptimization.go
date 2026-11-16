@@ -480,7 +480,7 @@ func (c *TestOptimizationClient) uploadRepositoryChangesFromGit() (bytes int64, 
 }
 
 func (c *TestOptimizationClient) getSearchCommits() (*searchCommitsResponse, error) {
-	localCommits := c.gitCommands.GetLastLocalGitCommitShas()
+	localCommits := c.gitCommands.GetLocalGitCommitShas(environment.GetCITags()[constants.GitCommitSHA])
 	if len(localCommits) == 0 {
 		slog.Debug("testoptimization: no local commits found")
 		return newSearchCommitsResponse(nil, nil, false), nil

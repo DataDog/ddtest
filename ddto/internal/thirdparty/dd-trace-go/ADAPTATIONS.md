@@ -3104,3 +3104,32 @@ group or closing its final event. `TestMiniBazelRetryDeadline` covers
 actual Go alarms, PASS-to-FAIL failfast status and payload finalization; the
 manual `//efd:deadline_test` in the Bazel fixture is run by
 `scripts/bazel_basic.py` under Bazel's five-second outer timeout.
+
+## Tested checkout identity
+
+A readable checkout supplies the repository URL, branch or unambiguous detached
+tag, commit and commit details as one source. Explicit `DD_GIT_*` settings stay
+authoritative; CI and environmental-file Git identity is used when the checkout
+is unreadable. A detached checkout keeps the CI branch/tag and canonical URL only
+when its canonical root and commit match the actual CI workspace and revision
+(or a positively identified provider merge revision). File fallback values do
+not establish this match. `ci.workspace_path` is retained, while
+`git.checkout.root`, `git.checkout.is_custom` and `ci.git.merge_commit_sha`
+describe the checkout and workflow separately.
+
+Source paths, coverage, CODEOWNERS and its optional service use the checkout root.
+A custom checkout reports workflow PR relationships but excludes them from Git
+operations and requests unless explicitly overridden. Git commands retain their
+initial working directory, transport environment and cancellation context. The
+worker carries detached tags without doing fetch work before its state is used.
+Metadata uses NUL-delimited no-walk reads, and history/search/upload all use the
+selected canonical SHA, with the existing 1,000-commit cap, negative revisions
+and an old selected commit/tree fallback. No branch name is invented for a
+detached checkout.
+
+Checks: `checkout_test.go` and `checkout_native_test.go` in `utils`, the request
+constructor regression in `utils/net/checkout_test.go`, and
+`TestMiniCheckoutIdentity` cover detached CI mirrors, different revisions, custom
+checkouts, explicit overrides, file fallback, all event levels and worker state.
+The native pack tests inspect objects, caps, exclusions, missing parents, tags
+and configured remotes; source/ownership tests keep outer workspace rules out.

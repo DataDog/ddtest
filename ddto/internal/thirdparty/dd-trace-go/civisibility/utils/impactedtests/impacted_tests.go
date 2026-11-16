@@ -111,7 +111,7 @@ func NewImpactedTestAnalyzer() (*ImpactedTestAnalyzer, error) {
 
 // computeAnalyzer computes the base commit and the modified files with Git.
 func computeAnalyzer() (*ImpactedTestAnalyzer, error) {
-	ciTags := utils.GetCITagsReadOnly()
+	ciTags := utils.GetGitCheckoutTags()
 
 	// Get the current commit SHA
 	currentCommitSha := ciTags[constants.GitHeadCommit]

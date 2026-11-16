@@ -123,7 +123,7 @@ func NewClientWithConcurrentTelemetry(serviceName string) (Client, func()) {
 }
 
 func newClientWithServiceNameAndSubdomain(serviceName, subdomain string) (Client, func(*cliTelemetryOwner)) {
-	ciTags := utils.GetCITagsReadOnly()
+	ciTags := utils.GetGitCheckoutTags()
 
 	// get the environment
 	environment := env.Get("DD_ENV")
@@ -268,9 +268,10 @@ func newClientWithServiceNameAndSubdomain(serviceName, subdomain string) (Client
 		// if not we try to use the tag (checkout over a tag)
 		bName = ciTags[constants.GitTag]
 	}
-	if bName == "" {
-		// if is still empty we assume the customer just used a detached HEAD
-		bName = "auto:git-detached-head"
+
+	workingDirectory := ciTags[constants.GitCheckoutRoot]
+	if workingDirectory == "" {
+		workingDirectory = ciTags[constants.CIWorkspacePath]
 	}
 
 	return &client{
@@ -279,7 +280,7 @@ func newClientWithServiceNameAndSubdomain(serviceName, subdomain string) (Client
 		baseURL:           baseURL,
 		environment:       environment,
 		serviceName:       serviceName,
-		workingDirectory:  ciTags[constants.CIWorkspacePath],
+		workingDirectory:  workingDirectory,
 		repositoryURL:     ciTags[constants.GitRepositoryURL],
 		commitSha:         ciTags[constants.GitCommitSHA],
 		commitMessage:     ciTags[constants.GitCommitMessage],

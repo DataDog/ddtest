@@ -44,6 +44,7 @@
       "TestMiniGitStateCacheWithTemporaryDirectoryInModule",
       "TestMiniGitStateDeferredWaitsForUpload",
       "TestMiniGitStateHandoff",
+      "TestMiniCheckoutIdentity",
       "TestMiniGitStateImpactedTests",
       "TestMiniGitStateStopsUploadCleanly",
       "TestMiniGitStateUploadsOnce",

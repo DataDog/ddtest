@@ -74,6 +74,8 @@ func usedState(t *testing.T) string {
 // gitRepository makes the current directory a one-commit repository.
 func gitRepository(t *testing.T) {
 	t.Helper()
+	utils.ResetCITags()
+	t.Cleanup(utils.ResetCITags)
 	dir := t.TempDir()
 	t.Chdir(dir)
 	for _, args := range [][]string{{"init", "--initial-branch=main"}, {"-c", "user.name=Worker", "-c", "user.email=worker@example.invalid", "commit", "--allow-empty", "-m", "Worker"}} {

@@ -39,7 +39,7 @@ var (
 	addedMetrics      map[string]float64 // addedMetrics holds the metrics added by the user
 	ciMetricsMutex    sync.Mutex
 
-	getProviderTagsFunc = getProviderTags
+	getProviderTagsFunc = getCIProviderTags
 	getLocalGitDataFunc = getLocalGitData
 	fetchCommitDataFunc = fetchCommitData
 	// applyEnvironmentalDataIfRequiredFunc is a must-not-call test seam used to prove payload-file mode skips git enrichment.
@@ -142,7 +142,9 @@ func AddCITagsMap(tags map[string]string) {
 }
 
 // ResetCITags resets the CI/CD tags to their original values.
+// Callers must finish the previous checkout's Git operations before resetting.
 func ResetCITags() {
+	resetCheckout()
 	ciTagsMutex.Lock()
 	defer ciTagsMutex.Unlock()
 
@@ -225,8 +227,8 @@ func ResetCIMetrics() {
 	addedMetrics = nil
 }
 
-// GetRelativePathFromCITagsSourceRoot calculates the relative path from the CI workspace root to the specified path.
-// If the CI workspace root is not available in the tags, it returns the original path.
+// GetRelativePathFromCITagsSourceRoot calculates the relative path from the selected checkout root to the specified path.
+// If no checkout root or CI workspace is available in the tags, it returns the original path.
 //
 // Parameters:
 //
@@ -236,14 +238,11 @@ func ResetCIMetrics() {
 //
 //	The relative path from the CI workspace root to the specified path, or the original path if an error occurs.
 func GetRelativePathFromCITagsSourceRoot(path string) string {
-	tags := GetCITagsReadOnly()
-	if v, ok := tags[constants.CIWorkspacePath]; ok {
-		relPath, err := filepath.Rel(v, path)
-		if err == nil {
-			return filepath.ToSlash(relPath)
+	if root := GetCITagsSourceRoot(); root != "" {
+		if relative, err := filepath.Rel(root, path); err == nil {
+			return filepath.ToSlash(relative)
 		}
 	}
-
 	return path
 }
 
@@ -255,6 +254,7 @@ func GetRelativePathFromCITagsSourceRoot(path string) string {
 //	A map[string]string containing the extracted CI/CD tags.
 func createCITagsMap() map[string]string {
 	localTags := getProviderTagsFunc()
+	providerTags := maps.Clone(localTags)
 
 	// Populate runtime values
 	localTags[constants.OSPlatform] = runtime.GOOS
@@ -301,6 +301,7 @@ func createCITagsMap() map[string]string {
 	if bazel.IsPayloadFilesModeEnabled() {
 		// Payload-file mode relies on the environmental data file instead of invoking the Git CLI.
 		applyEnvironmentalDataIfRequiredFunc(localTags)
+		applyCheckoutMetadata(localTags, localGitData{}, providerTags)
 		log.Debug("civisibility: skipping local git enrichment in payload-file mode")
 	} else {
 		// Populate missing git data. ddto's CLI may have read it once for every
@@ -313,47 +314,11 @@ func createCITagsMap() map[string]string {
 			gitData, _ = getLocalGitDataFunc()
 		}
 
-		// Populate Git metadata from the local Git repository if not already present in localTags
-		if _, ok := localTags[constants.CIWorkspacePath]; !ok {
-			localTags[constants.CIWorkspacePath] = gitData.SourceRoot
-		}
-		if _, ok := localTags[constants.GitRepositoryURL]; !ok {
-			localTags[constants.GitRepositoryURL] = gitData.RepositoryURL
-		}
-		if _, ok := localTags[constants.GitCommitSHA]; !ok {
-			localTags[constants.GitCommitSHA] = gitData.CommitSha
-		}
-		if _, ok := localTags[constants.GitBranch]; !ok {
-			localTags[constants.GitBranch] = gitData.Branch
-		}
-
-		// If the commit SHA matches, populate additional Git metadata
-		if localTags[constants.GitCommitSHA] == gitData.CommitSha {
-			if _, ok := localTags[constants.GitCommitAuthorDate]; !ok {
-				localTags[constants.GitCommitAuthorDate] = gitData.AuthorDate.String()
-			}
-			if _, ok := localTags[constants.GitCommitAuthorName]; !ok {
-				localTags[constants.GitCommitAuthorName] = gitData.AuthorName
-			}
-			if _, ok := localTags[constants.GitCommitAuthorEmail]; !ok {
-				localTags[constants.GitCommitAuthorEmail] = gitData.AuthorEmail
-			}
-			if _, ok := localTags[constants.GitCommitCommitterDate]; !ok {
-				localTags[constants.GitCommitCommitterDate] = gitData.CommitterDate.String()
-			}
-			if _, ok := localTags[constants.GitCommitCommitterName]; !ok {
-				localTags[constants.GitCommitCommitterName] = gitData.CommitterName
-			}
-			if _, ok := localTags[constants.GitCommitCommitterEmail]; !ok {
-				localTags[constants.GitCommitCommitterEmail] = gitData.CommitterEmail
-			}
-			if _, ok := localTags[constants.GitCommitMessage]; !ok {
-				localTags[constants.GitCommitMessage] = gitData.CommitMessage
-			}
-		}
+		applyEnvironmentalDataIfRequiredFunc(localTags)
+		applyCheckoutMetadata(localTags, gitData, providerTags)
 
 		// If the head commit SHA is available, populate additional Git head metadata
-		if headCommitSha, ok := localTags[constants.GitHeadCommit]; ok {
+		if headCommitSha := checkoutOperationTags(localTags)[constants.GitHeadCommit]; headCommitSha != "" {
 			headCommitData, handed, err := localCommitData{}, false, error(nil)
 			if cliRecord != nil {
 				headCommitData, handed, err = cliRecord.headCommitData(headCommitSha)
@@ -385,8 +350,6 @@ func createCITagsMap() map[string]string {
 			}
 		}
 
-		// Apply environmental data if is available
-		applyEnvironmentalDataIfRequiredFunc(localTags)
 	}
 
 	// Apply the Bazel provider fallback only after all other CI provider sources had a chance to populate the tag.

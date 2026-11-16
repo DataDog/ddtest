@@ -6,6 +6,7 @@
 package git
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -13,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -66,6 +68,7 @@ type LocalGitData struct {
 	SourceRoot    string
 	RepositoryURL string
 	Branch        string
+	Tag           string
 }
 
 // gitVersionData holds the major, minor, and patch version numbers of the Git executable.
@@ -107,7 +110,8 @@ var (
 	safeDirectoryOnce sync.Once
 
 	// safeDirectoryValue holds the cached repository root path for safe.directory config.
-	safeDirectoryValue string
+	safeDirectoryValue  string
+	gitWorkingDirectory string
 )
 
 // CommandRunner runs the Git operations used during Test Optimization and
@@ -180,18 +184,8 @@ func getSafeDirectoryConfig() string {
 			return
 		}
 
-		gitDir, err := getParentGitFolder(currentDir)
-		if err != nil || gitDir == "" {
-			slog.Debug("testoptimization.git: could not find git folder for safe.directory")
-			return
-		}
-
-		// Use the repo root (parent of .git) for safe.directory
-		if strings.HasSuffix(gitDir, string(filepath.Separator)+".git") {
-			safeDirectoryValue = strings.TrimSuffix(gitDir, string(filepath.Separator)+".git")
-		} else {
-			safeDirectoryValue = gitDir
-		}
+		gitWorkingDirectory = currentDir
+		safeDirectoryValue = safeDirectoryFor(currentDir)
 		slog.Debug("testoptimization.git: using safe.directory config", "path", safeDirectoryValue)
 	})
 	return safeDirectoryValue
@@ -212,7 +206,9 @@ func execGit(args ...string) (val []byte, err error) {
 		args = append([]string{"-c", "safe.directory=" + safeDir}, args...)
 	}
 
-	return exec.Command("git", args...).CombinedOutput()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = gitWorkingDirectory
+	return gitOutput(cmd)
 }
 
 // execGitString executes a Git command with the given arguments and returns the output as a string.
@@ -235,8 +231,9 @@ func execGitStringWithInput(input string, args ...string) (val string, err error
 	}
 
 	cmd := exec.Command("git", args...)
+	cmd.Dir = gitWorkingDirectory
 	cmd.Stdin = strings.NewReader(input)
-	out, err := cmd.CombinedOutput()
+	out, err := gitOutput(cmd)
 	strOut := strings.TrimSpace(strings.Trim(string(out), "\n"))
 	return strOut, err
 }
@@ -273,11 +270,34 @@ func getGitVersion() (major int, minor int, patch int, err error) {
 // (the result of `git rev-parse --show-toplevel`).
 // Returns empty string if git is not available or the current directory is not in a git repo.
 func GetSourceRoot() string {
-	out, err := execGitString("rev-parse", "--show-toplevel")
+	// Discovery can inspect a different candidate before metadata is selected.
+	// It must not reuse the upload worker's pinned command directory.
+	if _, err := LookPathFunc("git"); err != nil {
+		return ""
+	}
+	directory, err := os.Getwd()
 	if err != nil {
 		return ""
 	}
-	return out
+	args := []string{"rev-parse", "--show-toplevel"}
+	if safeDir := safeDirectoryFor(directory); safeDir != "" {
+		args = append([]string{"-c", "safe.directory=" + safeDir}, args...)
+	}
+	command := exec.Command("git", args...)
+	command.Dir = directory
+	out, err := gitOutput(command)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func safeDirectoryFor(directory string) string {
+	gitDir, err := getParentGitFolder(directory)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSuffix(gitDir, string(filepath.Separator)+".git")
 }
 
 // GetLocalGitData retrieves information about the local Git repository from the current HEAD.
@@ -299,7 +319,12 @@ func GetLocalGitData() (LocalGitData, error) {
 
 	// Extract the repository URL
 	slog.Debug("testoptimization.git: getting the repository URL")
-	out, err = execGitString("ls-remote", "--get-url")
+	remote, remoteErr := getRemoteName()
+	if remoteErr == nil {
+		out, err = execGitString("remote", "get-url", remote)
+	} else {
+		err = remoteErr
+	}
 	if err == nil {
 		gitData.RepositoryURL = FilterSensitiveInfo(out)
 	}
@@ -311,15 +336,21 @@ func GetLocalGitData() (LocalGitData, error) {
 		gitData.Branch = out
 	}
 
-	// Get commit details from the latest commit using git log (git log -1 --pretty='%H","%aI","%an","%ae","%cI","%cn","%ce","%B')
+	if gitData.Branch == "HEAD" {
+		if tags, tagErr := execGitString("tag", "--no-column", "--points-at", "HEAD"); tagErr == nil && tags != "" && !strings.Contains(tags, "\n") {
+			gitData.Tag = tags
+		}
+	}
+
+	// Read only the selected commit; its parents may be missing locally.
 	slog.Debug("testoptimization.git: getting the latest commit details")
-	out, err = execGitString("log", "-1", "--pretty=%H\",\"%at\",\"%an\",\"%ae\",\"%ct\",\"%cn\",\"%ce\",\"%B")
+	out, err = execGitString("log", "--no-walk=unsorted", "--no-show-signature", "--format=%H%x00%at%x00%an%x00%ae%x00%ct%x00%cn%x00%ce%x00%B", "HEAD", "--")
 	if err != nil {
 		return gitData, err
 	}
 
 	// Split the output into individual components
-	outArray := strings.Split(out, "\",\"")
+	outArray := strings.SplitN(out, "\x00", 8)
 	if len(outArray) < 8 {
 		return gitData, errors.New("git log failed")
 	}
@@ -385,15 +416,15 @@ func FetchCommitData(commitSha string) (LocalCommitData, error) {
 		}
 	}
 
-	// Get commit details from the latest commit using git log (git show <commitSha> -s --format='%H","%aI","%an","%ae","%cI","%cn","%ce","%B')
+	// Read only the selected commit; its parents may be missing locally.
 	slog.Debug("testoptimization.git: getting the latest commit details")
-	out, err := execGitString("show", commitSha, "-s", "--format=%H\",\"%at\",\"%an\",\"%ae\",\"%ct\",\"%cn\",\"%ce\",\"%B")
+	out, err := execGitString("log", "--no-walk=unsorted", "--no-show-signature", "--format=%H%x00%at%x00%an%x00%ae%x00%ct%x00%cn%x00%ce%x00%B", commitSha, "--")
 	if err != nil {
 		return commitData, err
 	}
 
 	// Split the output into individual components
-	outArray := strings.Split(out, "\",\"")
+	outArray := strings.SplitN(out, "\x00", 8)
 	if len(outArray) < 8 {
 		return commitData, errors.New("git log failed")
 	}
@@ -422,14 +453,36 @@ func GetLastLocalGitCommitShas() []string {
 }
 
 // GetLastLocalGitCommitShas retrieves recent commit SHAs and records the Git command telemetry.
-func (r *CommandRunner) GetLastLocalGitCommitShas() []string {
-	// git log --format=%H -n 1000 --since=\"1 month ago\"
-	slog.Debug("testoptimization.git: getting the commit SHAs of the last 1000 commits in the local Git repository")
-	out, err := r.execGitString(CommandGetLocalCommits, "log", "--format=%H", "-n", "1000", "--since=\"1 month ago\"")
-	if err != nil || out == "" {
-		return []string{}
+func (r *CommandRunner) GetLastLocalGitCommitShas() []string { return r.GetLocalGitCommitShas("") }
+
+// GetLocalGitCommitShas enumerates the selected revision, retaining an old selected root.
+func (r *CommandRunner) GetLocalGitCommitShas(commitSHA string) []string {
+	commitSHA = strings.ToLower(commitSHA)
+	if commitSHA != "" && !validUploadCommitSHA(commitSHA) {
+		return nil
 	}
-	return strings.Split(out, "\n")
+	args := []string{"log", "--no-show-signature", "--format=%H", "-n", "1000", "--since=1 month ago"}
+	if commitSHA != "" {
+		args = append(args, commitSHA, "--")
+	}
+	out, err := r.execGitString(CommandGetLocalCommits, args...)
+	if err != nil {
+		return nil
+	}
+	commits := strings.Fields(out)
+	if commitSHA != "" {
+		if len(commits) == 0 {
+			selected, readErr := execGitString("rev-parse", "--verify", commitSHA+"^{commit}")
+			if readErr != nil || selected != commitSHA {
+				return nil
+			}
+		}
+		commits = append([]string{commitSHA}, slices.DeleteFunc(commits, func(sha string) bool { return sha == commitSHA })...)
+	}
+	if len(commits) > 1000 {
+		commits = commits[:1000]
+	}
+	return commits
 }
 
 // UnshallowGitRepository converts a shallow clone into a complete clone by fetching all missing commits without git content (only commits and tree objects).
@@ -512,7 +565,7 @@ func (r *CommandRunner) UnshallowGitRepository() (bool, error) {
 	fetchOutput, err := r.execGitString(CommandUnshallow, "fetch", "--shallow-since=\"1 month ago\"", "--update-shallow", "--filter=blob:none", "--recurse-submodules=no", remoteName, headSha)
 
 	// let's check if the last command was unsuccessful
-	if err != nil || fetchOutput == "" {
+	if err != nil {
 		slog.Debug("testoptimization.unshallow: error fetching the missing commits and trees from the last month", "error", err.Error())
 		// ***
 		// The previous command has a drawback: if the local HEAD is a commit that has not been pushed to the remote, it will fail.
@@ -532,7 +585,7 @@ func (r *CommandRunner) UnshallowGitRepository() (bool, error) {
 	}
 
 	// let's check if the last command was unsuccessful
-	if err != nil || fetchOutput == "" {
+	if err != nil {
 		slog.Debug("testoptimization.unshallow: error fetching the missing commits and trees from the last month", "error", err.Error())
 		// ***
 		// It could be that the CI is working on a detached HEAD or maybe branch tracking hasn't been set up.
@@ -619,17 +672,32 @@ func getObjectsSha(commitsToInclude []string, commitsToExclude []string) []strin
 }
 
 func (r *CommandRunner) getObjectsSha(commitsToInclude []string, commitsToExclude []string) []string {
-	// git rev-list --objects --no-object-names --filter=blob:none --since="1 month ago" HEAD " + string.Join(" ", commitsToExclude.Select(c => "^" + c)) + " " + string.Join(" ", commitsToInclude);
+	// Enumerate only the selected positive revisions, with known history excluded.
 	commitsToExcludeArgs := make([]string, len(commitsToExclude))
 	for i, c := range commitsToExclude {
 		commitsToExcludeArgs[i] = "^" + c
 	}
-	args := append([]string{"rev-list", "--objects", "--no-object-names", "--filter=blob:none", "--since=\"1 month ago\"", "HEAD"}, append(commitsToExcludeArgs, commitsToInclude...)...)
+	args := append([]string{"rev-list", "--objects", "--no-object-names", "--filter=blob:none", "--since=\"1 month ago\"", "--max-count=1000"}, append(commitsToExcludeArgs, commitsToInclude...)...)
 	out, err := r.execGitString(CommandGetObjects, args...)
 	if err != nil {
 		return []string{}
 	}
-	return strings.Split(out, "\n")
+
+	objects := strings.Fields(out)
+	if len(commitsToInclude) > 0 && !slices.Contains(objects, commitsToInclude[0]) && !slices.Contains(commitsToExclude, commitsToInclude[0]) {
+		extraArgs := append([]string{"rev-list", "--objects", "--no-object-names", "--filter=blob:none", "--max-count=1"}, commitsToExcludeArgs...)
+		extraArgs = append(extraArgs, commitsToInclude[0])
+		extra, extraErr := r.execGitString(CommandGetObjects, extraArgs...)
+		if extraErr != nil {
+			return nil
+		}
+		for _, object := range strings.Fields(extra) {
+			if !slices.Contains(objects, object) {
+				objects = append(objects, object)
+			}
+		}
+	}
+	return objects
 }
 
 // CreatePackFiles creates pack files from the given commits to include and exclude.
@@ -742,25 +810,79 @@ func getRemoteName() (string, error) {
 }
 
 func (r *CommandRunner) getRemoteName() (string, error) {
-	// Try to find remote from upstream tracking
-	upstream, err := r.execGitString(CommandGetRemoteUpstreamTracking, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}")
-	if err == nil && upstream != "" {
-		parts := strings.Split(upstream, "/")
-		if len(parts) > 0 {
-			return parts[0], nil
-		}
-	}
-
-	// Fallback to first remote if no upstream
 	remotes, err := r.execGitString(CommandGetRemote, "remote")
 	if err != nil {
-		return "origin", nil // ultimate fallback
+		return "origin", nil
 	}
-
-	lines := strings.Split(strings.TrimSpace(remotes), "\n")
-	if len(lines) > 0 && lines[0] != "" {
-		return lines[0], nil
+	names := strings.Fields(remotes)
+	if len(names) <= 1 {
+		if len(names) == 1 {
+			return names[0], nil
+		}
+		return "origin", nil
 	}
+	branch, _ := r.execGitString(CommandGetRemoteUpstreamTracking, "rev-parse", "--abbrev-ref", "HEAD")
+	if branch != "" && branch != "HEAD" {
+		configured, _ := r.execGitString(CommandGetRemoteUpstreamTracking, "config", "--default", "", "--get", "branch."+branch+".remote")
+		if configured != "." && slices.Contains(names, configured) {
+			return configured, nil
+		}
+	}
+	snapshot, err := r.execGitString(CommandGetRemote, "config", "--local", "--includes", "--null", "--list")
+	if err != nil {
+		return "", err
+	}
+	configuration := map[string]string{}
+	for _, entry := range strings.Split(snapshot, "\x00") {
+		key, value, _ := strings.Cut(entry, "\n")
+		configuration[key] = value
+	}
+	if configured := configuration["clone.defaultremotename"]; slices.Contains(names, configured) {
+		return configured, nil
+	}
+	tracking := map[string]bool{}
+	for key, value := range configuration {
+		if strings.HasPrefix(key, "branch.") && strings.HasSuffix(key, ".remote") && slices.Contains(names, value) {
+			tracking[value] = true
+		}
+	}
+	if len(tracking) == 1 {
+		for remote := range tracking {
+			return remote, nil
+		}
+	}
+	if slices.Contains(names, "origin") {
+		return "origin", nil
+	}
+	return names[0], nil
+}
 
-	return "origin", nil
+// gitOutput keeps successful stderr diagnostics out of paths and commit identities.
+func gitOutput(cmd *exec.Cmd) ([]byte, error) {
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		return append(out, stderr.Bytes()...), err
+	}
+	return out, nil
+}
+
+// ResetCheckout forgets the command context for the next metadata snapshot.
+// Callers must finish the previous checkout's Git operations before resetting it.
+func ResetCheckout() {
+	gitCommandMutex.Lock()
+	defer gitCommandMutex.Unlock()
+	safeDirectoryOnce = sync.Once{}
+	safeDirectoryValue = ""
+	gitWorkingDirectory = ""
+	isAShallowCloneRepositoryOnce.Store(nil)
+	isAShallowCloneRepositoryValue = false
+}
+
+func validUploadCommitSHA(sha string) bool {
+	if len(sha) != 40 && len(sha) != 64 {
+		return false
+	}
+	return strings.Trim(sha, "0123456789abcdef") == ""
 }

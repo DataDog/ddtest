@@ -50,7 +50,10 @@ func resolveSourceFilePath(sourcePath string, tags map[string]string, mainModule
 		FilesystemKnown: false,
 	}
 
-	workspacePath := tags[constants.CIWorkspacePath]
+	workspacePath := tags[constants.GitCheckoutRoot]
+	if workspacePath == "" {
+		workspacePath = tags[constants.CIWorkspacePath]
+	}
 	if filepath.IsAbs(sourcePath) {
 		cleanedPath := filepath.Clean(sourcePath)
 		result.FilesystemPath = cleanedPath
@@ -264,7 +267,7 @@ func cleanRepositoryHostPath(host, repositoryPath string) string {
 	return host + "/" + repositoryPath
 }
 
-// isWorkspaceRelativeLogicalPath reports whether logicalPath is safe to resolve from ci.workspace_path.
+// isWorkspaceRelativeLogicalPath reports whether logicalPath is safe to resolve from the selected source root.
 func isWorkspaceRelativeLogicalPath(logicalPath string) bool {
 	if logicalPath == "" || strings.HasPrefix(logicalPath, "../") || logicalPath == ".." {
 		return false

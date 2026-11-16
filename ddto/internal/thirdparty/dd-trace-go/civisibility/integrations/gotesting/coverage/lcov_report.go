@@ -13,7 +13,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/constants"
 	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/utils"
 	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/log"
 )
@@ -168,7 +167,7 @@ func lcovModuleSourceFilePath(profileFile string) string {
 // a nested module such as services/api does, or else what the module path's
 // major version suffix implies.
 func lcovModuleRepositoryPrefix() string {
-	if workspace := utils.GetCITagsReadOnly()[constants.CIWorkspacePath]; workspace != "" && moduleDir != "" {
+	if workspace := utils.GetCITagsSourceRoot(); workspace != "" && moduleDir != "" {
 		if rel, err := filepath.Rel(workspace, moduleDir); err == nil && !filepath.IsAbs(rel) && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 			return cleanLCOVSourcePath(filepath.ToSlash(rel))
 		}
@@ -183,7 +182,7 @@ func lcovModuleRepositoryPrefix() string {
 // directory, or for another module's file, ok is false.
 func moduleRepositoryFile(file string) (string, bool) {
 	resolveModuleInfo()
-	workspace := utils.GetCITagsReadOnly()[constants.CIWorkspacePath]
+	workspace := utils.GetCITagsSourceRoot()
 	if workspace == "" || moduleDir == "" || modulePath == "" {
 		return "", false
 	}

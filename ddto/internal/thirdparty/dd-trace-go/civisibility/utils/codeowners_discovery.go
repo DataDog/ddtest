@@ -35,7 +35,7 @@ func GetCodeOwnersWithStatus() (*codeownership.Resolver, bool) {
 	}
 	tags := GetCITagsReadOnly()
 	locations := codeownership.Locations{
-		Workspace:  tags[constants.CIWorkspacePath],
+		Workspace:  GetCITagsSourceRoot(),
 		Repository: tags[constants.GitRepositoryURL],
 		Provider:   tags[constants.CIProviderName],
 	}
@@ -52,7 +52,7 @@ func GetCodeOwnersWithStatus() (*codeownership.Resolver, bool) {
 	case err != nil:
 		// An unreadable workspace is retried, like an unreadable file.
 	case info != nil && info.IsDir():
-		// Source paths are relative to the workspace, the repository root, so
+		// Source paths are relative to the selected repository root, so
 		// its CODEOWNERS file is read without looking for an enclosing Git root.
 		// Without one, there are no rules: ddto's Git worker and every test
 		// process must reach the same decision, whatever their directories.
