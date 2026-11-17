@@ -905,6 +905,7 @@ type processRetryLaunchBaseline struct {
 	maxConcurrencySet bool
 	timeout           time.Duration
 	timeoutSet        bool
+	startupDuration   time.Duration
 	err               error
 }
 
@@ -1184,6 +1185,9 @@ func captureProcessRetryLaunchTemplateFromStartup(startup processRetryStartupSna
 	baseline.argsSnapshot = captureProcessRetryArgsSnapshot(baseline.args)
 	baseline.timeout, baseline.timeoutSet = processRetryTimeoutFromEnv()
 	baseline.maxConcurrency, baseline.maxConcurrencySet = processRetryConfiguredMaxConcurrencyFromEnv()
+	if !bazelRetryDeadline.IsZero() {
+		baseline.startupDuration = max(hooks.now().Sub(retryBinaryStarted), 0)
+	}
 	return baseline
 }
 

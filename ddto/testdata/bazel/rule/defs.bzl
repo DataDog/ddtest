@@ -56,7 +56,7 @@ name=$${external:-$$(printf '%s\n' "$$packages" | head -1)}
 printf 'package %s\nimport __dd_ci_runtime "github.com/DataDog/ddtest/ddto/testopt"\nfunc init() { __dd_ci_runtime.RegisterTestPackage() }\n' "$$name" > $@
 """
 
-def ddtest_go_test(name, srcs, deps = [], data = [], instrumented_data = [], tags = [], **kwargs):
+def ddtest_go_test(name, srcs, deps = [], data = [], instrumented_data = [], tags = [], manifest = "//testdata:manifest", manifest_file = "//testdata:manifest.txt", **kwargs):
     """A go_test with Mini, built with the instrumented SDK.
 
     Args:
@@ -66,6 +66,8 @@ def ddtest_go_test(name, srcs, deps = [], data = [], instrumented_data = [], tag
       data: data in the caller's configuration.
       instrumented_data: data built with the instrumented SDK.
       tags: tags.
+      manifest: offline metadata files.
+      manifest_file: entry point for those files.
       **kwargs: other go_test attributes.
     """
 
@@ -94,7 +96,7 @@ def ddtest_go_test(name, srcs, deps = [], data = [], instrumented_data = [], tag
         name = name,
         test = ":" + name + "_go",
         data = data,
-        manifest = "//testdata:manifest",
-        manifest_file = "//testdata:manifest.txt",
+        manifest = manifest,
+        manifest_file = manifest_file,
         tags = tags,
     )

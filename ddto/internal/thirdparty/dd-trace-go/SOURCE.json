@@ -11,7 +11,7 @@
   "files": [
     {
       "path": "ADAPTATIONS.md",
-      "sha256": "11931b3d5c4e083d7b74389e05641daba2e3b492ebaf5caa5b853063d3ed2eaa",
+      "sha256": "76e8452d8c97ae4ddd6a9bbc8b730350a3e85f0492f3bb7488fc42f1f9cf6fbf",
       "role": "local"
     },
     {
@@ -530,7 +530,7 @@
     },
     {
       "path": "civisibility/integrations/gotesting/instrumentation.go",
-      "sha256": "fb9c43efd4d322f1f16700a381582a439405aaaf12516efc3620140843319ade",
+      "sha256": "75f841856030a60328502f702b12becad4cae58e7e731d4cf026827a644a409c",
       "role": "adapted",
       "source_path": "internal/civisibility/integrations/gotesting/instrumentation.go",
       "source_sha256": "19d482de88ae510e34db412273a5cf940eacc1192da0b26947622df76b52cdc6"
@@ -624,7 +624,7 @@
     },
     {
       "path": "civisibility/integrations/gotesting/retry_attempt_integration.go",
-      "sha256": "097d56a6705ae89a78a3ada8ed989af501ee350bfd598401358f6576c555cce2",
+      "sha256": "95625fafad648087c581381e887c39b4db2df42e1138048c507c6475bcebfb8a",
       "role": "adapted",
       "source_path": "internal/civisibility/integrations/gotesting/retry_attempt_integration.go",
       "source_sha256": "1bd6b3bda3bee19f6615784d506a15d47d5d0f981b7f71bc1cca4ae235cdd25a"
@@ -715,8 +715,13 @@
       "source_sha256": "3c9c89c60ee86158e192cbdf68079a1f0d21584b8ac3dd5e44c0e3a63d0d4315"
     },
     {
+      "path": "civisibility/integrations/gotesting/retry_deadline_test.go",
+      "sha256": "e928f6e2a730e0f02da1c89d1442d7ad57f2ee933fbe6419f65bc45983f6e5d2",
+      "role": "local"
+    },
+    {
       "path": "civisibility/integrations/gotesting/retry_process.go",
-      "sha256": "f1e2264cb1b8df6c951eeb8feedcfb48dc43284c2c103de6f0c9711969715cf1",
+      "sha256": "6f0b90bb807d1dec5757a87ee17f1fb47db1aeec5319ca42d539b64da3ace026",
       "role": "adapted",
       "source_path": "internal/civisibility/integrations/gotesting/retry_process.go",
       "source_sha256": "e1bdfd9174b86b856a05dbeb4278d386e8126cbb272248b9f7ab00bf8ee8feca"
@@ -730,7 +735,7 @@
     },
     {
       "path": "civisibility/integrations/gotesting/retry_process_deferred.go",
-      "sha256": "bdec3ffa9e6653cb0e6c670fe113e74cb2be78e2fda8ebbddcdfbeb908a09d41",
+      "sha256": "5f884e4d2baa2736f4c66c475a71180fcde505f944cd05da273da48a07921ba3",
       "role": "adapted",
       "source_path": "internal/civisibility/integrations/gotesting/retry_process_deferred.go",
       "source_sha256": "f5efa31791a06e6b2481092015eb5346a4ac4e91302c605cf9b976a5e5cc404e"
