@@ -224,6 +224,8 @@ func execGitStringWithInput(input string, args ...string) (val string, err error
 	if _, err := LookPathFunc("git"); err != nil {
 		return "", errGitExecutableNotFound
 	}
+	gitCommandMutex.Lock()
+	defer gitCommandMutex.Unlock()
 
 	// Prepend safe.directory config if we have a known repo root
 	if safeDir := getSafeDirectoryConfig(); safeDir != "" {
@@ -672,22 +674,29 @@ func getObjectsSha(commitsToInclude []string, commitsToExclude []string) []strin
 }
 
 func (r *CommandRunner) getObjectsSha(commitsToInclude []string, commitsToExclude []string) []string {
-	// Enumerate only the selected positive revisions, with known history excluded.
-	commitsToExcludeArgs := make([]string, len(commitsToExclude))
-	for i, c := range commitsToExclude {
-		commitsToExcludeArgs[i] = "^" + c
+	// Stream revisions so capped histories also fit Windows' process limits.
+	var revisions strings.Builder
+	for _, commit := range commitsToExclude {
+		if strings.ContainsAny(commit, "\r\n") {
+			return nil
+		}
+		revisions.WriteString("^" + commit + "\n")
 	}
-	args := append([]string{"rev-list", "--objects", "--no-object-names", "--filter=blob:none", "--since=\"1 month ago\"", "--max-count=1000"}, append(commitsToExcludeArgs, commitsToInclude...)...)
-	out, err := r.execGitString(CommandGetObjects, args...)
+	exclusions := revisions.String()
+	for _, commit := range commitsToInclude {
+		if strings.ContainsAny(commit, "\r\n") {
+			return nil
+		}
+		revisions.WriteString(commit + "\n")
+	}
+	out, err := r.execGitStringWithInput(CommandGetObjects, revisions.String(), "rev-list", "--stdin", "--objects", "--no-object-names", "--filter=blob:none", "--since=\"1 month ago\"", "--max-count=1000")
 	if err != nil {
 		return []string{}
 	}
 
 	objects := strings.Fields(out)
 	if len(commitsToInclude) > 0 && !slices.Contains(objects, commitsToInclude[0]) && !slices.Contains(commitsToExclude, commitsToInclude[0]) {
-		extraArgs := append([]string{"rev-list", "--objects", "--no-object-names", "--filter=blob:none", "--max-count=1"}, commitsToExcludeArgs...)
-		extraArgs = append(extraArgs, commitsToInclude[0])
-		extra, extraErr := r.execGitString(CommandGetObjects, extraArgs...)
+		extra, extraErr := r.execGitStringWithInput(CommandGetObjects, exclusions+commitsToInclude[0]+"\n", "rev-list", "--stdin", "--objects", "--no-object-names", "--filter=blob:none", "--max-count=1")
 		if extraErr != nil {
 			return nil
 		}

@@ -763,22 +763,29 @@ func hasTheGitLogHaveMoreThanOneCommits() (bool, error) {
 
 // getObjectsSha get the objects shas from the git repository based on the commits to include and exclude
 func getObjectsSha(commitsToInclude []string, commitsToExclude []string) []string {
-	// Enumerate only the selected positive revisions, with known history excluded.
-	commitsToExcludeArgs := make([]string, 0, len(commitsToExclude)+len(commitsToInclude))
-	for _, c := range commitsToExclude {
-		commitsToExcludeArgs = append(commitsToExcludeArgs, "^"+c)
+	// Stream revisions so capped histories also fit Windows' process limits.
+	var revisions strings.Builder
+	for _, commit := range commitsToExclude {
+		if strings.ContainsAny(commit, "\r\n") {
+			return nil
+		}
+		revisions.WriteString("^" + commit + "\n")
 	}
-	args := append([]string{"rev-list", "--objects", "--no-object-names", "--filter=blob:none", "--since=\"1 month ago\"", "--max-count=1000"}, append(commitsToExcludeArgs, commitsToInclude...)...)
-	out, err := execGitString(telemetry.GetObjectsCommandsType, args...)
+	exclusions := revisions.String()
+	for _, commit := range commitsToInclude {
+		if strings.ContainsAny(commit, "\r\n") {
+			return nil
+		}
+		revisions.WriteString(commit + "\n")
+	}
+	out, err := execGitStringWithInput(telemetry.GetObjectsCommandsType, revisions.String(), "rev-list", "--stdin", "--objects", "--no-object-names", "--filter=blob:none", "--since=\"1 month ago\"", "--max-count=1000")
 	if err != nil {
 		return []string{}
 	}
 
 	objects := strings.Fields(out)
 	if len(commitsToInclude) > 0 && !slices.Contains(objects, commitsToInclude[0]) && !slices.Contains(commitsToExclude, commitsToInclude[0]) {
-		extraArgs := append([]string{"rev-list", "--objects", "--no-object-names", "--filter=blob:none", "--max-count=1"}, commitsToExcludeArgs...)
-		extraArgs = append(extraArgs, commitsToInclude[0])
-		extra, extraErr := execGitString(telemetry.GetObjectsCommandsType, extraArgs...)
+		extra, extraErr := execGitStringWithInput(telemetry.GetObjectsCommandsType, exclusions+commitsToInclude[0]+"\n", "rev-list", "--stdin", "--objects", "--no-object-names", "--filter=blob:none", "--max-count=1")
 		if extraErr != nil {
 			return nil
 		}

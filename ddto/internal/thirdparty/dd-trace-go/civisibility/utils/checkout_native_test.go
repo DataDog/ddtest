@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -149,6 +150,8 @@ func TestSelectedHistoryRemainsCapped(t *testing.T) {
 	if len(commits) != 1000 || commits[0] != selected {
 		t.Fatalf("selected history count=%d, selected=%v", len(commits), len(commits) > 0 && commits[0] == selected)
 	}
+	tracePath := filepath.Join(t.TempDir(), "git.trace")
+	t.Setenv("GIT_TRACE", filepath.ToSlash(tracePath))
 	paths := selectedPacks(commits, nil)
 	if len(paths) == 0 {
 		t.Fatal("capped history produced no pack")
@@ -169,6 +172,30 @@ func TestSelectedHistoryRemainsCapped(t *testing.T) {
 	}
 	if count != 1000 {
 		t.Fatalf("pack contains %d commits, want 1000", count)
+	}
+
+	// Exercise the old-selected fallback with a full list of known revisions too.
+	tree := checkoutGit(t, directory, "", "mktree")
+	old := checkoutCommit(t, directory, tree, "", 1, "old selected root")
+	objects := getObjectsSha([]string{old}, commits)
+	if len(objects) != 2 || !slices.Contains(objects, old) || !slices.Contains(objects, tree) {
+		t.Fatalf("old selected objects with capped exclusions=%v", objects)
+	}
+	trace, err := os.ReadFile(tracePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	commands := 0
+	for line := range strings.SplitSeq(string(trace), "\n") {
+		if strings.Contains(line, "built-in: git rev-list ") {
+			commands++
+			if len(line) >= 32767 {
+				t.Errorf("revision command is %d bytes, exceeding the Windows process limit", len(line))
+			}
+		}
+	}
+	if commands != 3 {
+		t.Fatalf("revision commands=%d, want one capped query and two old-selected queries", commands)
 	}
 }
 
@@ -218,5 +245,19 @@ func TestDetachedTagInferenceAndCloneRemote(t *testing.T) {
 	data, err = getLocalGitData()
 	if err != nil || data.RepositoryURL != "" {
 		t.Fatalf("invented remote=%q, %v", data.RepositoryURL, err)
+	}
+}
+
+func TestObjectEnumerationRejectsRevisionLineBreaks(t *testing.T) {
+	directory, head := checkoutRepository(t)
+	tree := checkoutGit(t, directory, "", "mktree")
+	selected := checkoutCommit(t, directory, tree, "", 1, "independent selected root")
+	for _, broken := range []string{head + "\n" + head, head + "\r"} {
+		if objects := getObjectsSha([]string{broken}, nil); len(objects) != 0 {
+			t.Errorf("malformed included revision produced %d objects", len(objects))
+		}
+		if objects := getObjectsSha([]string{selected}, []string{broken}); len(objects) != 0 {
+			t.Errorf("malformed excluded revision produced %d objects", len(objects))
+		}
 	}
 }

@@ -3129,8 +3129,12 @@ initial working directory, transport environment and cancellation context. The
 worker carries detached tags without doing fetch work before its state is used.
 Metadata uses NUL-delimited no-walk reads, and history/search/upload all use the
 selected canonical SHA, with the existing 1,000-commit cap, negative revisions
-and an old selected commit/tree fallback. No branch name is invented for a
-detached checkout. Upload search stops without a selected SHA, even when Git
+and an old selected commit/tree fallback. Both revision walks stream positive
+and negative revisions through stdin, keeping a full capped history below
+Windows process command-line limits. Revisions containing CR/LF are rejected
+before framing the input. The native cap test also exercises a full exclusion
+list through the old-commit fallback and checks the actual Git command sizes.
+No branch name is invented for a detached checkout. Upload search stops without a selected SHA, even when Git
 could otherwise enumerate HEAD. The root uploader and `gitupload_test.go`
 exercise this boundary with a readable checkout and zero backend calls.
 
