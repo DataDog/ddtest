@@ -939,6 +939,7 @@ func enqueueDeferredProcessRetryGroup(execOpts *executionOptions) bool {
 		return false
 	}
 	parentDeadline, parentDeadlineOK := options.t.Deadline()
+	parentDeadline, parentDeadlineOK = boundedRetryDeadline(parentDeadline, parentDeadlineOK, bazelRetryDeadline)
 	nativeMaxParallel := 0
 	if execOpts.lastObservation.rootParallel {
 		nativeMaxParallel, _ = retryAttemptNativeMaxParallel(options.t)
@@ -1006,7 +1007,7 @@ func (g *deferredProcessRetryGroup) prepareAttempt(allowEFDTransition bool) (def
 	if !allowed {
 		return deferredProcessRetryPreparedAttempt{}, false, stopped
 	}
-	if usesEfdRetrySemanticsSnapshot(&g.metadata) && !retryFitsDeadline(g.parentDeadline, g.parentDeadlineOK, time.Now(), max(g.initialDuration, g.latest.duration), processRetryParentDeadlineReserve()) {
+	if usesEfdRetrySemanticsSnapshot(&g.metadata) && !retryFitsDeadline(g.parentDeadline, g.parentDeadlineOK, time.Now(), max(g.initialDuration, g.latest.duration), processRetryEFDReserve(g.launchBaseline)) {
 		g.retryCount = -1
 		g.truncated = true
 		log.Debug("gotesting: stopping queued EFD retries because the parent test deadline cannot fit another observed attempt and finalization")

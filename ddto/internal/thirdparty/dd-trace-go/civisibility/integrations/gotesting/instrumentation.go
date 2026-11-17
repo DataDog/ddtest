@@ -1205,7 +1205,7 @@ func reserveRetryBudgetIfNeeded(execOpts *executionOptions, t *testing.T, execMe
 		return false
 	}
 	// Resolve EFD suppression and its ATR fallback before an EFD-only veto.
-	if retryEFDDeadlineStopped(execOpts) {
+	if retryEFDDeadlineStoppedAt(execOpts, time.Now(), bazelRetryDeadline) {
 		return false
 	}
 	if !usesFlakyRetryBudget(execMeta) {

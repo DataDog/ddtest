@@ -6,6 +6,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 	"unsafe"
 
@@ -231,7 +232,7 @@ func TestEFDDeadlineWithoutFailfast(t *testing.T) {
 		{isEarlyFlakeDetectionEnabled: true, isANewTest: true, isAttemptToFix: true},
 	} {
 		opts.executionMetadata = metadata
-		if retryEFDDeadlineStopped(opts) {
+		if retryEFDDeadlineStoppedAt(opts, time.Unix(123, 0), time.Time{}) {
 			t.Fatal("EFD admission changed another retry policy")
 		}
 	}
@@ -270,6 +271,104 @@ func TestProcessRetryAdmissionIncludesExistingTeardownReserve(t *testing.T) {
 	if !retryFitsDeadline(now.Add(2*time.Second+reserve), true, now, time.Second, reserve) {
 		t.Fatal("rejected a child with enough time for execution and teardown")
 	}
+}
+
+func TestCaptureBazelRetryDeadline(t *testing.T) {
+	start := time.Unix(123, 0)
+	if got := captureBazelRetryDeadline(start, "12", "/outputs"); !got.Equal(start.Add(12 * time.Second)) {
+		t.Fatalf("deadline=%s, want twelve seconds from initialization", got)
+	}
+	for _, timeout := range []string{"", "0", "-1", "12s", "NaN", "9223372037", "9223372036854775808"} {
+		if got := captureBazelRetryDeadline(start, timeout, "/outputs"); !got.IsZero() {
+			t.Fatalf("invalid TEST_TIMEOUT %q selected a deadline: %s", timeout, got)
+		}
+	}
+	if got := captureBazelRetryDeadline(start, "12", ""); !got.IsZero() {
+		t.Fatal("selected a Bazel deadline outside its test environment")
+	}
+}
+
+func TestBoundedRetryDeadline(t *testing.T) {
+	start := time.Unix(123, 0)
+	early, late := start.Add(time.Second), start.Add(2*time.Second)
+	for _, tc := range []struct {
+		name          string
+		goTime, bazel time.Time
+		present, want bool
+		deadline      time.Time
+	}{
+		{"no_deadline", time.Time{}, time.Time{}, false, false, time.Time{}},
+		{"go_only", early, time.Time{}, true, true, early},
+		{"bazel_only", time.Time{}, early, false, true, early},
+		{"go_is_shorter", early, late, true, true, early},
+		{"bazel_is_shorter", late, early, true, true, early},
+		{"same_deadline", early, early, true, true, early},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			deadline, present := boundedRetryDeadline(tc.goTime, tc.present, tc.bazel)
+			if present != tc.want || !deadline.Equal(tc.deadline) {
+				t.Fatalf("deadline=(%s, %t), want (%s, %t)", deadline, present, tc.deadline, tc.want)
+			}
+		})
+	}
+}
+
+func TestEFDDeadlineIncludesTestMainSetup(t *testing.T) {
+	start := time.Unix(123, 0)
+	// Eight seconds of TestMain preparation leave four of Bazel's twelve
+	// seconds. Go's alarm starts later and instead points twenty seconds out.
+	bazelDeadline := captureBazelRetryDeadline(start, "12", "/outputs")
+	for _, process := range []bool{false, true} {
+		t.Run(map[bool]string{false: "in_process", true: "process"}[process], func(t *testing.T) {
+			now := start.Add(12*time.Second - retryFinalizationReserve)
+			opts := &executionOptions{
+				options:           &runTestWithRetryOptions{t: testWithRetryDeadline(t, start.Add(20*time.Second))},
+				executionMetadata: &testExecutionMetadata{isEarlyFlakeDetectionEnabled: true, isANewTest: true},
+				initialDuration:   20 * time.Millisecond, retryCount: 2,
+			}
+			if process {
+				opts.options.processRetryCoordinator = &processRetryCoordinator{}
+				now = start.Add(8 * time.Second)
+			}
+			if !retryEFDDeadlineStoppedAt(opts, now, bazelDeadline) || opts.retryCount != 0 {
+				t.Fatal("admitted EFD using the later Go deadline instead of Bazel's remaining budget")
+			}
+		})
+	}
+}
+
+func TestProcessRetryEFDReserveIncludesStartup(t *testing.T) {
+	base := processRetryParentDeadlineReserve()
+	for _, startup := range []time.Duration{-time.Second, 0, 3 * time.Second, 1<<63 - 1} {
+		got := processRetryEFDReserve(&processRetryLaunchBaseline{startupDuration: startup})
+		want := time.Duration(1<<63 - 1)
+		if startup != 1<<63-1 {
+			want = base + max(startup, 0)
+		}
+		if got != want {
+			t.Fatalf("reserve for startup %s = %s, want %s", startup, got, want)
+		}
+	}
+}
+
+func TestDeferredEFDDeadlineIncludesChildStartup(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		for _, index := range []int{0, 1} {
+			g := &deferredProcessRetryGroup{
+				parentDeadline: time.Now().Add(8 * time.Second), parentDeadlineOK: true,
+				executionIndex: index, retryCount: 2, initialDuration: time.Second,
+				launchBaseline: &processRetryLaunchBaseline{startupDuration: 10 * time.Second},
+				latest:         retryAttemptObservation{duration: time.Second},
+				metadata: processRetryMetadataSnapshot{
+					isEarlyFlakeDetectionEnabled: true, isANewTest: true,
+				},
+			}
+			_, prepared, stopped := g.prepareAttempt(true)
+			if prepared || !stopped || !g.truncated || g.executionIndex != index || g.terminalFailure {
+				t.Fatalf("attempt %d prepared a child whose repeated TestMain setup cannot fit", index+1)
+			}
+		}
+	})
 }
 
 func TestDeferredEFDDeadlineStopsBeforePreparingAChild(t *testing.T) {

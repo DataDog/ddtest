@@ -134,12 +134,17 @@ rule's opt-in `stage_sources` puts the sources there. Without them,
 
 Coverage is not reported in this first version.
 
-EFD uses the original Go test deadline to avoid starting a repetition that
-cannot fit its observed duration plus a finalization reserve. It keeps the
-existing test order. This does not reserve time for later tests in the same
-target or guarantee that a slower repetition will finish before Bazel's outer
-timeout. Disable EFD on an affected target if its additional work must be
-removed; the deadline check is a partial mitigation.
+EFD uses the earlier of Go's deadline and a `TEST_TIMEOUT` budget captured
+during Mini's package initialization. This includes the preparation before
+`TestMain` calls `m.Run()`, which Go's alarm excludes. A process retry must fit
+its observed test duration, repeated startup preparation and the existing
+teardown reserve. Children also use the earlier deadline as a hard cap.
+Missing or invalid Bazel timeout values leave Go's deadline in place.
+
+The test order stays the same. This does not reserve time for later original
+tests, cover startup before Mini initializes, or guarantee that a slower
+repetition will finish before Bazel's outer timeout. Disable EFD on an affected
+target if its additional work must be removed; this remains a partial mitigation.
 
 With Bzlmod, rules_go 0.65.0 raises `golang.org/x/mod` and `golang.org/x/sys`
 in `go_deps` to releases that need Go 1.26, so a workspace whose Go SDK is

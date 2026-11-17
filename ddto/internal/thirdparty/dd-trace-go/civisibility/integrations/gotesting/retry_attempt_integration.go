@@ -6,6 +6,8 @@
 package gotesting
 
 import (
+	"os"
+	"strconv"
 	"testing"
 	"time"
 
@@ -17,6 +19,37 @@ import (
 // guarantee: a slower future attempt or a hard kill can still prevent flushing.
 const retryFinalizationReserve = 100 * time.Millisecond
 
+// Capture this before the consumer's TestMain. Go starts its own timeout at
+// M.Run, whereas Bazel also counts the preparation that happens before it.
+var retryBinaryStarted = time.Now()
+var bazelRetryDeadline = captureBazelRetryDeadline(retryBinaryStarted, os.Getenv("TEST_TIMEOUT"), os.Getenv("TEST_UNDECLARED_OUTPUTS_DIR"))
+
+func captureBazelRetryDeadline(start time.Time, timeout, outputs string) time.Time {
+	seconds, err := strconv.ParseInt(timeout, 10, 64)
+	if outputs == "" || err != nil || seconds <= 0 || seconds > int64((1<<63-1)/time.Second) {
+		return time.Time{}
+	}
+	return start.Add(time.Duration(seconds) * time.Second)
+}
+
+func boundedRetryDeadline(deadline time.Time, present bool, bazelDeadline time.Time) (time.Time, bool) {
+	if !bazelDeadline.IsZero() && (!present || bazelDeadline.Before(deadline)) {
+		return bazelDeadline, true
+	}
+	return deadline, present
+}
+
+func processRetryEFDReserve(baseline *processRetryLaunchBaseline) time.Duration {
+	reserve := processRetryParentDeadlineReserve()
+	if baseline == nil {
+		return reserve
+	}
+	// Validated child timings describe its test body, excluding TestMain.
+	// Each fresh child repeats that setup. Clamp before adding so an oversized
+	// estimate cannot overflow into a smaller reservation.
+	return reserve + min(max(baseline.startupDuration, 0), time.Duration(1<<63-1)-reserve)
+}
+
 func retryFitsDeadline(deadline time.Time, present bool, now time.Time, estimate, reserve time.Duration) bool {
 	if !present {
 		return true
@@ -25,16 +58,17 @@ func retryFitsDeadline(deadline time.Time, present bool, now time.Time, estimate
 	return remaining > reserve && max(estimate, 0) < remaining-reserve
 }
 
-func retryEFDDeadlineStopped(execOpts *executionOptions) bool {
+func retryEFDDeadlineStoppedAt(execOpts *executionOptions, now, bazelDeadline time.Time) bool {
 	if execOpts.options.t == nil || !usesEfdRetrySemantics(execOpts.executionMetadata) {
 		return false
 	}
 	deadline, present := execOpts.options.t.Deadline()
+	deadline, present = boundedRetryDeadline(deadline, present, bazelDeadline)
 	reserve := retryFinalizationReserve
 	if execOpts.options.processRetryCoordinator != nil {
-		reserve = max(reserve, processRetryParentDeadlineReserve())
+		reserve = max(reserve, processRetryEFDReserve(execOpts.processRetryLaunchBaseline))
 	}
-	if retryFitsDeadline(deadline, present, time.Now(), max(execOpts.initialDuration, execOpts.lastObservation.duration), reserve) {
+	if retryFitsDeadline(deadline, present, now, max(execOpts.initialDuration, execOpts.lastObservation.duration), reserve) {
 		return false
 	}
 	execOpts.retryCount = 0
