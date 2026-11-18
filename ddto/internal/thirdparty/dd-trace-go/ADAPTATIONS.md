@@ -1589,8 +1589,10 @@ upstream:
   top-level test's collector with `coverage.NewTopLevelTestCoverage`, and
   hands each execution that collects no coverage while coverage is on, such
   as a retry's or Early Flake Detection's, to `coverage.LocalTIAUncovered`,
-  so that a test that passed records as repeated, which is not skipped. Its
-  lines keep their numbers: the integration tests' table of adapted call
+  so that a test that passed records as repeated, which is not skipped.
+  `finishProcessRetryTestEvent` in `retry_process.go` does the same for each
+  attempt that a child process ran, whose coverage never reaches local TIA.
+  `testing.go`'s lines keep their numbers: the integration tests' table of adapted call
   sites names the line that calls the test's body; the `else` branch takes
   the blank line before the cleanup's `if`, whose comment moves onto it. `coverage.CanCollectPerTestCoverage`
   and `FileCoverageActive` hold when either Datadog or local TIA needs

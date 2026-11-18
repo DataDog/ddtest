@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -64,6 +65,38 @@ func TestLocalTIACoverageSource(t *testing.T) {
 		}
 		if got := localTIACoverageSource(&tc.plan, opts); got != tc.want {
 			t.Errorf("%q: %q, want %q", tc.args, got, tc.want)
+		}
+	}
+}
+
+// Local TIA refuses a user's overlay, a vendored project that the CLI
+// provides, and Go's counters in set mode, which cannot complete the
+// coverage profile with the lines of the tests that it skips. A run that
+// cannot record does not refuse: it only skips.
+func TestLocalTIARefusal(t *testing.T) {
+	for _, tc := range []struct {
+		args []string
+		plan Plan
+		want string
+	}{
+		{nil, Plan{}, ""},
+		{[]string{"-cover"}, Plan{}, "set mode"},
+		{[]string{"-covermode=set"}, Plan{}, "set mode"},
+		{[]string{"-coverprofile=c.out", "-coverpkg=./..."}, Plan{}, "set mode"},
+		{[]string{"-cover"}, Plan{fileCoverage: true}, "set mode"},
+		{[]string{"-cover", "-covermode=count"}, Plan{}, ""},
+		{[]string{"-race", "-cover"}, Plan{}, ""},
+		{[]string{"-race"}, Plan{}, ""},
+		{nil, Plan{fileCoverage: true}, ""},
+		{[]string{"-overlay=o.json"}, Plan{}, "-overlay"},
+		{nil, Plan{vendorProvided: true}, "vendored"},
+	} {
+		opts, err := parseOptions(append(slices.Clone(tc.args), "."), "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := localTIARefusal(&tc.plan, opts); tc.want == "" && got != "" || !strings.Contains(got, tc.want) {
+			t.Errorf("%q file coverage %t vendor %t: %q, want %q", tc.args, tc.plan.fileCoverage, tc.plan.vendorProvided, got, tc.want)
 		}
 	}
 }

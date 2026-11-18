@@ -557,18 +557,23 @@ func TestLocalTIARetriedPass(t *testing.T) {
 	f.expect("runs again", f.run(), f.tests...)
 }
 
-// Early Flake Detection runs a new test again without coverage: the test is
-// not skipped next time, since its other executions could have run other
-// code. Once it is no longer new, it runs once more and is recorded.
+// Early Flake Detection runs a new test again without coverage, in the test
+// process or, in process mode, in child processes: the test is not skipped
+// next time, since its other executions could have run other code. Once it
+// is no longer new, it runs once more and is recorded.
 func TestLocalTIARepeatedExecutions(t *testing.T) {
-	f := newTIAFixture(t, false, localTIACoverFixture, "-cover", "-covermode=atomic", "-coverpkg=./...")
-	f.tests = []string{"app.TestApp", "lib.TestValue"}
-	f.env = append(f.env, "DD_CIVISIBILITY_EARLY_FLAKE_DETECTION_ENABLED=true")
-	f.intake.efd = true
-	f.expect("new tests, run again by Early Flake Detection", f.run(), f.tests...)
-	f.intake.efd = false
-	f.expect("known tests", f.run(), f.tests...)
-	f.expect("unchanged", f.run())
+	for _, mode := range []string{"in_process", "process"} {
+		t.Run(mode, func(t *testing.T) {
+			f := newTIAFixture(t, false, localTIACoverFixture, "-cover", "-covermode=atomic", "-coverpkg=./...")
+			f.tests = []string{"app.TestApp", "lib.TestValue"}
+			f.env = append(f.env, "DD_CIVISIBILITY_EARLY_FLAKE_DETECTION_ENABLED=true", "DD_CIVISIBILITY_RETRY_EXECUTION_MODE="+mode)
+			f.intake.efd = true
+			f.expect("new tests, run again by Early Flake Detection", f.run(), f.tests...)
+			f.intake.efd = false
+			f.expect("known tests", f.run(), f.tests...)
+			f.expect("unchanged", f.run())
+		})
+	}
 }
 
 // A run that records, by default or with DD_TIA_RECORD=true, but has no
@@ -587,7 +592,6 @@ func TestLocalTIARecordFallback(t *testing.T) {
 		// Counters of other packages than the recording's take no line
 		// coverage from the map: the tests run for their lines.
 		{"counters without -coverpkg", "true", "local TIA (DD_TIA_RECORD): recording with Go's coverage counters needs -coverpkg", []string{"-cover", "-covermode=atomic"}, f.tests},
-		{"counters in set mode", "", "local TIA (DD_TIA_RECORD): recording needs per-test coverage", []string{"-cover", "-covermode=set", "-coverpkg=./..."}, nil},
 	} {
 		f.flags, f.record, f.refusal = tc.flags, tc.record, tc.refusal
 		run := f.run()
@@ -596,6 +600,16 @@ func TestLocalTIARecordFallback(t *testing.T) {
 			t.Fatalf("%s: no fallback warning:\n%s", tc.name, run.output)
 		}
 	}
+	// Go's counters in set mode cannot complete the coverage profile with
+	// the lines of skipped tests: local TIA refuses, recording or not, and
+	// every test runs.
+	f.flags = []string{"-cover", "-covermode=set", "-coverpkg=./..."}
+	for _, readOnly := range []bool{false, true} {
+		f.readOnly, f.record = readOnly, ""
+		f.refusal = "local TIA (DD_TIA_ENABLED): Go's coverage counters in set mode cannot complete the coverage profile"
+		f.expect(fmt.Sprintf("counters in set mode, read-only %t", readOnly), f.run(), f.tests...)
+	}
+	f.readOnly = false
 	f.flags, f.record, f.refusal = nil, "", "local TIA (DD_TIA_RECORD): recording needs per-test coverage"
 	f.edit("lib/value.go", "return 1", "return 1 + 0")
 	f.expect("a change: both tests run", f.run(), f.tests...)

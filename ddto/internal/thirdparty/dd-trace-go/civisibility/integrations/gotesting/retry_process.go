@@ -2517,6 +2517,9 @@ func finishProcessRetryTestEvent(
 	}
 	execMeta.test = test
 	coverage.SubmitProcessTestCoverage(session.SessionID(), suite.SuiteID(), test.TestID(), attempt.Result.Coverage)
+	// The attempt's coverage stays in its child process: local TIA records
+	// the test as repeated, which it does not skip.
+	coverage.LocalTIAUncovered(testInfo.moduleName, testInfo.suiteName, testInfo.testName)
 	cancelExecution := setTestTagsFromExecutionMetadataNoClose(test, execMeta)
 	// A validated process skip is already the outcome of the execution. In
 	// particular, replaying an exact disabled descendant must not turn that skip

@@ -759,8 +759,8 @@ recorded. A value of `DD_TIA_RECORD` that is not a boolean gets a warning, and
 the run records.
 
 A run that records but has no per-test coverage that local TIA can use, with
-no coverage flags, with Go's counters in set mode, or with counters without
-`-coverpkg`, does not refuse: the CLI prints
+no coverage flags or with Go's counters without `-coverpkg`, does not refuse:
+the CLI prints
 `local TIA (DD_TIA_RECORD): <reason>; tests only skip, nothing is recorded`
 and runs as a read-only run.
 
@@ -782,9 +782,11 @@ Local TIA needs Mini and the CLI's Git worker: CI Visibility enabled,
 outside Bazel, a test package in the Git checkout, and no `-exec` program or
 cross-compilation helper, which would start the test processes. It refuses a
 user's `-overlay`, whose files Go compiles instead of those that local TIA
-compares, and a vendored project whose dependencies the CLI provides from its
-cache, outside the repository, as file coverage does. When it cannot run or
-refuses, the CLI prints
+compares, a vendored project whose dependencies the CLI provides from its
+cache, outside the repository, as file coverage does, and Go's coverage
+counters in set mode, the default of `-cover` without `-race`, whether the run
+records or not: they cannot complete the coverage profile with the lines of
+the tests that local TIA skips. When it cannot run or refuses, the CLI prints
 `local TIA (DD_TIA_ENABLED): <reason>; tests run without it` and runs the
 tests as without it.
 
@@ -825,9 +827,10 @@ file of C(P) with the map's file table. A test of P is skipped only when:
   an execution that failed: a test that passed only on a retry runs again,
   since its coverage comes from its first, failed, execution;
 - every execution of it in that run collected coverage: a test that Early
-  Flake Detection, an attempt to fix or a retry ran again without coverage
-  runs once more, since those executions could run other code, and is then
-  recorded from its new run;
+  Flake Detection, an attempt to fix or a retry ran again without coverage,
+  in the test process or, with `DD_CIVISIBILITY_RETRY_EXECUTION_MODE=process`,
+  in a child process, runs once more, since those executions could run other
+  code, and is then recorded from its new run;
 - that run recorded coverage for it;
 - none of its dependencies changed since;
 - no file of C(P) was added or removed since, nor a package that P's tests

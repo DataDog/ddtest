@@ -195,7 +195,10 @@ More options follow the same rule:
   `-race -cover -coverpkg=./...`, or `--experimental-file-coverage`.
   A run records by default; `DD_TIA_RECORD=false` only skips, without
   recording or coverage flags. A recording run without such coverage only
-  skips too, with a warning, and records nothing. See
+  skips too, with a warning, and records nothing. Go's counters in set mode,
+  the default of `-cover` without `-race`, turn local TIA off, recording or
+  not: they cannot complete the coverage profile with the skipped tests'
+  lines. See
   [Local Test Impact Analysis](docs/mini-runtime.md#local-test-impact-analysis).
 
 `ddtest instrument` reports one test session per command: every package's
@@ -364,7 +367,7 @@ Coverage still requires Go coverage flags.
 | `DD_CIVISIBILITY_CODE_COVERAGE_REPORT_UPLOAD_ENABLED` | `true` | Allow backend-enabled aggregate coverage-report uploads. |
 | `DD_CODE_COVERAGE_FLAGS` | Unset | Comma-separated report labels, up to 32. |
 | `DD_TIA_ENABLED` | `false` | Read by the CLI: select the tests to skip locally, from the per-test coverage of earlier runs, whatever the backend's ITR settings. |
-| `DD_TIA_RECORD` | `true` | With `DD_TIA_ENABLED`: `true` records the run's tests' coverage in the map; `false` skips from the stored map without collecting per-test coverage for it or recording, so tests keep `t.Parallel`. A recording run without per-test coverage that local TIA can use warns and runs as with `false`. |
+| `DD_TIA_RECORD` | `true` | With `DD_TIA_ENABLED`: `true` records the run's tests' coverage in the map; `false` skips from the stored map without collecting per-test coverage for it or recording, so tests keep `t.Parallel`. A recording run without per-test coverage that local TIA can use warns and runs as with `false`; Go's counters in set mode turn local TIA off. |
 
 See the [feature matrix](docs/ci-parity.md) for combinations and limitations.
 

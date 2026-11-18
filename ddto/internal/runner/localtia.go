@@ -453,10 +453,7 @@ func localTIACoverageSource(plan *Plan, opts options) string {
 	case !opts.coverage:
 		return ""
 	}
-	mode := opts.coverMode
-	if mode == "" && opts.race {
-		mode = "atomic"
-	}
+	mode := goCoverMode(opts)
 	if mode != "count" && mode != "atomic" {
 		return ""
 	}
@@ -797,8 +794,24 @@ func localTIARefusal(plan *Plan, opts options) string {
 		// Go compiles the vendored packages from the CLI's cache, as
 		// file coverage also refuses (fileCoverageRefusal).
 		return "the CLI provides the vendored dependencies from its cache, outside the repository"
+	case opts.coverage && goCoverMode(opts) == "set":
+		// ITR completes the profile only from count or atomic counters,
+		// so it would lack the lines of the tests that it skips.
+		return "Go's coverage counters in set mode cannot complete the coverage profile with the lines of the tests that it skips; use -covermode=count or atomic"
 	}
 	return ""
+}
+
+// goCoverMode returns the mode of Go's coverage counters when the build
+// collects them: -covermode, or atomic with -race and set otherwise.
+func goCoverMode(opts options) string {
+	switch {
+	case opts.coverMode != "":
+		return opts.coverMode
+	case opts.race:
+		return "atomic"
+	}
+	return "set"
 }
 
 // localTIACannotRecord returns why the run's tests cannot record, or "".
