@@ -37,9 +37,12 @@ type Test struct {
 	Name   string `json:"name"`
 }
 
-// Selection is what the CLI hands the test processes: for each test package
-// with tests to skip, those tests.
+// Selection is what the CLI hands the test processes: whether they record
+// their tests' coverage and status, and for each test package with tests to
+// skip, those tests. A run that does not record (DD_TIA_RECORD=false) only
+// skips, from what earlier runs recorded.
 type Selection struct {
+	Record   bool               `json:"record"`
 	Packages []PackageSelection `json:"packages,omitempty"`
 }
 

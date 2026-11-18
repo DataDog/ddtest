@@ -49,8 +49,9 @@ import (
 // and selects as a clean one does, and every worktree of a repository shares
 // the maps.
 
-// localTIAMapVersion is the format of the map; a new format starts new maps.
-const localTIAMapVersion = 3
+// localTIAMapVersion is the format of the map; a map of any other version is
+// ignored and rebuilt.
+const localTIAMapVersion = 1
 
 // localTIARacyWindow is how recent a modification time may be for the
 // table to vouch for the content that the run read: a file written again
@@ -59,9 +60,9 @@ const localTIARacyWindow = 2 * time.Second
 
 // localTIAIgnoredFlags are go test flags that change neither the tests'
 // build nor what a test does, only which tests run, how often, what go test
-// prints or saves, and how long it waits: the map is the same with or
-// without them.
-var localTIAIgnoredFlags = words("run skip count v json timeout a c n o p x work coverprofile outputdir parallel failfast fullpath cpuprofile memprofile memprofilerate blockprofile blockprofilerate mutexprofile mutexprofilefraction trace artifacts debug-actiongraph debug-runtime-trace debug-trace")
+// prints or saves, how long it waits, or the coverage that it collects: the
+// map is the same with or without them.
+var localTIAIgnoredFlags = words("run skip count v json timeout a c n o p x work cover covermode coverpkg coverprofile outputdir parallel failfast fullpath cpuprofile memprofile memprofilerate blockprofile blockprofilerate mutexprofile mutexprofilefraction trace artifacts debug-actiongraph debug-runtime-trace debug-trace")
 
 // tiaFile is a file's state: its content hash ("" for a file that does not
 // exist), the size and modification time in nanoseconds with which it had
@@ -79,36 +80,54 @@ type tiaFile struct {
 
 // tiaNode is a package of the repository: its own files, the packages that it
 // imports and, for a test package, its test files, the packages that they
-// import, its testdata, the files of its closure that its coverage source
-// cannot see, and its tests.
+// import, its testdata, its tests, and, by coverage source, the files of its
+// closure that the source cannot see when its tests recorded with it.
 type tiaNode struct {
 	Files, Imports                   []string
 	Tested                           bool
 	TestFiles, TestImports, Testdata []string
-	Unseen                           []string
+	Unseen                           map[string][]string
 	Tests                            []tiaTest
 	// counted reports, in this run's graph, that Go's counters count the
-	// package's code; dir is its directory.
-	counted bool
-	dir     string
+	// package's code; dir is its directory; embedded are the files that
+	// it embeds, which are data whatever their extension.
+	counted  bool
+	dir      string
+	embedded []string
 }
 
-// tiaTest is a test's last final status and the files that it covered, with
-// their line bitmaps when Go's counters gave them.
+// tiaTest is a test's last final status, the coverage source that recorded
+// it (localTIASourceID) and the files that it covered, with their line
+// bitmaps when Go's counters gave them.
 type tiaTest struct {
 	localtia.Test
 	Status  string
+	Source  string
 	Covered []string
 	Bitmaps map[string][]byte
 }
 
 // tiaMap is a build configuration's map, or this run's view of the
 // repository: files by repository path, the module files and the packages
-// by import path.
+// by import path. In this run's view, Source is the coverage source that
+// records the run's tests, or "" for a run that does not record.
 type tiaMap struct {
 	Files    map[string]tiaFile
 	Modules  []string
 	Packages map[string]*tiaNode
+	Source   string
+}
+
+// testUnseen returns the files of C(P) that every test of the package
+// depends on when t was recorded by its coverage source: the files that its
+// source could not see, and those that the current run's source cannot see
+// when the current run records.
+func testUnseen(stored, current *tiaNode, t *tiaTest, source string) []string {
+	unseen := stored.Unseen[t.Source]
+	if current != nil && source != "" {
+		unseen = union(unseen, current.Unseen[source])
+	}
+	return unseen
 }
 
 // closure returns the files of C(P) for the test package pkg, and the
@@ -145,9 +164,11 @@ func (m *tiaMap) closure(pkg string) (files, packages map[string]bool) {
 // unseen returns the files of C(P) for the test package pkg that its
 // coverage source cannot see: what is not Go source, and with Go's counters
 // the test files, the files of the packages that they do not count, and Go
-// files without code after initialization. File marks see every Go file, and
-// report those without marks for every test.
-func (m *tiaMap) unseen(pkg string, counters bool) []string {
+// files without code after initialization. Without -coverpkg, the counters
+// count only the package under test (go help testflag); with it, the
+// packages whose counted flag its patterns set. File marks see every Go
+// file, and report those without marks for every test.
+func (m *tiaMap) unseen(pkg string, counters, coverPackages bool) []string {
 	root := m.Packages[pkg]
 	if root == nil {
 		return nil
@@ -167,7 +188,9 @@ func (m *tiaMap) unseen(pkg string, counters bool) []string {
 	_, packages := m.closure(pkg)
 	for path := range packages {
 		node := m.Packages[path]
-		add(node.Files, func(file string) bool { return !counters || node.counted && m.Files[file].Code })
+		counted := node.counted || !coverPackages && path == pkg
+		add(node.Files, func(file string) bool { return !counters || counted && m.Files[file].Code })
+		add(node.embedded, never)
 	}
 	return slices.Sorted(maps.Keys(unseen))
 }
@@ -210,11 +233,10 @@ func skippable(stored, current *tiaMap, pkg string) []*tiaTest {
 			return nil // Declarations that any test may use changed.
 		}
 	}
-	unseen := union(node.Unseen, now.Unseen)
 	var skip []*tiaTest
 	for i := range node.Tests {
 		t := &node.Tests[i]
-		if t.Status == "pass" && len(t.Covered) != 0 && t.unaffected(unseen, changed) {
+		if t.Status == "pass" && len(t.Covered) != 0 && t.unaffected(testUnseen(node, now, t, current.Source), changed) {
 			skip = append(skip, t)
 		}
 	}
@@ -235,7 +257,7 @@ type tiaPackageRun struct {
 }
 
 // mergeTIAMap returns the map after a run: stored, with current's files and
-// packages, and the tests that ran recorded. A test that did not run keeps
+// packages, and the tests that ran recorded by current's coverage source. A test that did not run keeps
 // its entry only while it stays valid with the new files: a test that -run
 // left out is not exempt from a change that it depends on, and neither is a
 // test of a package that this run did not list. A package whose process
@@ -258,12 +280,21 @@ func mergeTIAMap(stored, current *tiaMap, runs map[string]tiaPackageRun) *tiaMap
 	changedPackages := map[string]bool{}
 	for path, node := range current.Packages {
 		old := merged.Packages[path]
-		if old == nil || !sameStructure(old, node) {
-			changedPackages[path] = true
-		}
 		copied := *node
+		copied.Unseen = map[string][]string{}
 		if old != nil {
 			copied.Tests = old.Tests
+			maps.Copy(copied.Unseen, old.Unseen)
+			if old.Tested && !node.Tested {
+				// Listed only as a dependency: its tests' files stay.
+				copied.Tested, copied.TestFiles, copied.TestImports, copied.Testdata = true, old.TestFiles, old.TestImports, old.Testdata
+			}
+		}
+		if old == nil || !sameStructure(old, &copied) {
+			changedPackages[path] = true
+		}
+		if current.Source != "" && node.Tested {
+			copied.Unseen[current.Source] = node.Unseen[current.Source]
 		}
 		merged.Packages[path] = &copied
 	}
@@ -287,27 +318,32 @@ func mergeTIAMap(stored, current *tiaMap, runs map[string]tiaPackageRun) *tiaMap
 			after, _ := merged.closure(path)
 			structural = !maps.Equal(before, after)
 		}
-		var unseen []string
-		if old := stored.Packages[path]; old != nil {
-			unseen = old.Unseen
+		old := stored.Packages[path]
+		if old == nil {
+			old = &tiaNode{}
 		}
-		if listed := current.Packages[path]; listed != nil {
-			unseen = union(unseen, listed.Unseen)
-		}
+		// Only a run that records adds tests.
+		recording := ran && !run.changed && current.Source != ""
 		recorded := map[localtia.Test]bool{}
-		if ran && !run.changed {
+		if recording {
 			for _, record := range run.records {
 				recorded[record.Test] = true
 			}
 		}
 		var tests []tiaTest
 		for _, t := range node.Tests {
-			if !recorded[t.Test] && !structural && t.unaffected(unseen, changed) {
+			if !recorded[t.Test] && !structural && t.unaffected(testUnseen(old, current.Packages[path], &t, current.Source), changed) {
 				tests = append(tests, t)
 			}
 		}
-		if ran && !run.changed {
-			tests = appendRecords(tests, run.records, merged.Files)
+		if recording {
+			tests = appendRecords(tests, run.records, merged.Files, current.Source)
+		}
+		// Each source's unseen files stay while a test that it recorded does.
+		for source := range node.Unseen {
+			if !slices.ContainsFunc(tests, func(t tiaTest) bool { return t.Source == source }) {
+				delete(node.Unseen, source)
+			}
 		}
 		slices.SortFunc(tests, func(a, b tiaTest) int {
 			return strings.Compare(a.Module+"\x00"+a.Suite+"\x00"+a.Name, b.Module+"\x00"+b.Suite+"\x00"+b.Name)
@@ -333,13 +369,13 @@ func sameStructure(a, b *tiaNode) bool {
 		slices.Equal(a.TestFiles, b.TestFiles) && slices.Equal(a.TestImports, b.TestImports) && slices.Equal(a.Testdata, b.Testdata)
 }
 
-// appendRecords appends the tests that a process recorded, with their
-// covered files that the map tracks; a test that a process recorded twice
+// appendRecords appends the tests that a process recorded with the coverage
+// source source, with their covered files that the map tracks; a test that a process recorded twice
 // keeps its last record.
-func appendRecords(tests []tiaTest, records []localtia.TestRecord, known map[string]tiaFile) []tiaTest {
+func appendRecords(tests []tiaTest, records []localtia.TestRecord, known map[string]tiaFile, source string) []tiaTest {
 	at := map[localtia.Test]int{}
 	for _, record := range records {
-		t := tiaTest{Test: record.Test, Status: record.Status, Covered: []string{}}
+		t := tiaTest{Test: record.Test, Status: record.Status, Source: source, Covered: []string{}}
 		for _, file := range record.Files {
 			name, ok := localtia.RepositoryPath(file.Path)
 			if _, tracked := known[name]; !ok || !tracked {
@@ -415,12 +451,34 @@ func localTIACoverageSource(plan *Plan, opts options) string {
 	return "counters " + mode
 }
 
+// localTIASourceID names the coverage source that records a run's tests,
+// as far as what it can see goes: Go's counters with the packages that they
+// count, or file marks; "" for none. The counters' mode changes nothing that
+// they see.
+func localTIASourceID(plan *Plan, opts options) string {
+	switch source := localTIACoverageSource(plan, opts); {
+	case source == "":
+		return ""
+	case !strings.HasPrefix(source, "counters"):
+		return "file marks"
+	case len(opts.coverPatterns) != 0:
+		return "counters -coverpkg=" + strings.Join(opts.coverPatterns, ",")
+	}
+	return "counters"
+}
+
 // localTIAConfiguration returns the key of the map that a run reads and
 // updates: what changes the tests' build or behavior without changing a file
-// of the repository. goflags is the caller's GOFLAGS.
-func localTIAConfiguration(opts options, goflags string, env *goEnvironment, goVersion, source string) string {
+// of the repository. Coverage is not part of it: a run that does not record,
+// such as a pull request's or a developer's without coverage flags, reads the
+// map that a run with them recorded. Each test keeps the coverage source
+// that recorded it instead. goflags is the caller's GOFLAGS.
+func localTIAConfiguration(opts options, goflags string, env *goEnvironment, goVersion string) string {
 	h := sha256.New()
-	fmt.Fprintf(h, "map %d\nddto %s\ngo %s %s\nplatform %s/%s cgo %s\ncoverage %s\n", localTIAMapVersion, version.Number, goVersion, env.GOEXPERIMENT, env.GOOS, env.GOARCH, env.CGOEnabled, source)
+	fmt.Fprintf(h, "map %d\nddto %s\ngo %s %s\nplatform %s/%s cgo %s\n", localTIAMapVersion, version.Number, goVersion, env.GOEXPERIMENT, env.GOOS, env.GOARCH, env.CGOEnabled)
+	for _, name := range buildSettings {
+		fmt.Fprintf(h, "env %s %q\n", name, env.Build[name])
+	}
 	// parseOptions already accepted GOFLAGS.
 	flags, _ := splitFlags(goflags)
 	for _, flag := range flags {
@@ -453,8 +511,7 @@ type tiaGraphInput struct {
 	moduleFiles []string
 	// coverPatterns are -coverpkg's patterns, relative to dir: Go's counters
 	// count only the code of the packages that they match, or without them
-	// that of the main modules' packages (cmd/go's
-	// load.PrepareForCoverageBuild).
+	// that of the package under test.
 	coverPatterns []string
 	dir           string
 }
@@ -539,7 +596,9 @@ func localTIAGraph(in tiaGraphInput) tiaGraph {
 			}
 			node := &tiaNode{dir: p.Dir, Imports: bases(p.Imports), counted: in.countedByCover(base, p),
 				Files: files(p.Dir, p.GoFiles, p.CgoFiles, p.EmbedFiles, p.SFiles, p.CFiles, p.CXXFiles, p.MFiles, p.HFiles, p.FFiles, p.SwigFiles, p.SwigCXXFiles, p.SysoFiles)}
+			node.embedded = files(p.Dir, p.EmbedFiles)
 			if testMains[base] {
+				node.embedded = files(p.Dir, p.EmbedFiles, p.TestEmbedFiles, p.XTestEmbedFiles)
 				node.Tested = true
 				node.TestFiles = files(p.Dir, p.TestGoFiles, p.XTestGoFiles, p.TestEmbedFiles, p.XTestEmbedFiles)
 				node.TestImports = bases(p.TestImports, p.XTestImports)
@@ -553,12 +612,13 @@ func localTIAGraph(in tiaGraphInput) tiaGraph {
 	return g
 }
 
-// countedByCover reports whether Go's counters count the code of the package
-// p, whose import path is base: those that -coverpkg names, or without it
-// those of the main modules.
+// countedByCover reports whether -coverpkg's patterns name the package p,
+// whose import path is base, so that Go's counters count its code in every
+// test binary. Without them, the counters count only the package under
+// test, which unseen knows.
 func (in *tiaGraphInput) countedByCover(base string, p *goPackage) bool {
 	if len(in.coverPatterns) == 0 {
-		return p.Module != nil && p.Module.Main
+		return false
 	}
 	named := *p
 	named.ImportPath = base
@@ -679,19 +739,60 @@ type localTIARun struct {
 	loadedFile os.FileInfo
 }
 
+// narrowsSubtests reports whether a -run or -skip pattern, in args or in
+// goflags, the caller's GOFLAGS, has a slash: it can select some subtests of a
+// top-level test and not others, whose coverage and status would then not be
+// the whole test's. A pattern without one selects whole top-level tests.
+func narrowsSubtests(opts options, goflags string) bool {
+	var words []string
+	for _, argument := range opts.arguments {
+		words = append(words, argument.raw...)
+	}
+	flags, _ := splitFlags(goflags)
+	words = append(words, flags...)
+	for i, word := range words {
+		name, value, hasValue := strings.Cut(strings.TrimLeft(word, "-"), "=")
+		if !strings.HasPrefix(word, "-") || strings.TrimPrefix(name, "test.") != "run" && strings.TrimPrefix(name, "test.") != "skip" {
+			continue
+		}
+		if !hasValue && i+1 < len(words) {
+			value = words[i+1]
+		}
+		if strings.Contains(value, "/") {
+			return true
+		}
+	}
+	return false
+}
+
 // localTIARefusal returns why the run cannot use local TIA, after
-// preparation and before the Git worker hands its state over, or "".
-func localTIARefusal(plan *Plan, opts options) string {
-	if localTIACoverageSource(plan, opts) == "" {
-		return "it needs per-test coverage: build with -cover and -covermode=count or atomic, with -race, or with --experimental-file-coverage"
+// preparation and before the Git worker hands its state over, or "". A run
+// that records needs per-test coverage; one that does not needs none.
+func localTIARefusal(plan *Plan, opts options, record bool) string {
+	if opts.overlay != "" {
+		// Go compiles the overlay's files instead of the repository's,
+		// whose contents local TIA compares.
+		return "a user's -overlay replaces files that it would compare"
+	}
+	if !record {
+		return ""
+	}
+	switch source := localTIACoverageSource(plan, opts); {
+	case source == "":
+		return "recording needs per-test coverage: build with -cover -coverpkg=./... and -covermode=count or atomic, with -race, or with --experimental-file-coverage, or set " + LocalTIARecordEnv + "=false"
+	case strings.HasPrefix(source, "counters") && len(opts.coverPatterns) == 0:
+		// Without it, the counters see only the package under test: every
+		// test would depend on every other file that it links.
+		return "recording with Go's coverage counters needs -coverpkg, such as -coverpkg=./..."
 	}
 	return ""
 }
 
 // startLocalTIA selects the tests to skip and writes the selection to the
-// state that the Git worker hands to the test processes. It returns why it
-// could not, in which case the tests run without local TIA.
-func startLocalTIA(ctx context.Context, plan *Plan, opts options, dir, state, root string, debug *cliDebug, stderr io.Writer) (*localTIARun, string) {
+// state that the Git worker hands to the test processes, which record their
+// tests when record is set. It returns why it could not, in which case the
+// tests run without local TIA.
+func startLocalTIA(ctx context.Context, plan *Plan, opts options, record bool, dir, state, root string, debug *cliDebug, stderr io.Writer) (*localTIARun, string) {
 	started := time.Now()
 	phase := debug.start("local tia selection")
 	if root == "" {
@@ -705,7 +806,7 @@ func startLocalTIA(ctx context.Context, plan *Plan, opts options, dir, state, ro
 	}
 	source := localTIACoverageSource(plan, opts)
 	run := &localTIARun{debug: debug, stderr: stderr, state: state, mapDir: filepath.Join(common, "ddtest", "tia"), counters: strings.HasPrefix(source, "counters")}
-	run.key = localTIAConfiguration(opts, callerGoFlags(), plan.environment, plan.goVersion, source)
+	run.key = localTIAConfiguration(opts, callerGoFlags(), plan.environment, plan.goVersion)
 	excluded := []string{plan.environment.GOROOT, plan.environment.GOMODCACHE}
 	if plan.gorootMirror != nil {
 		excluded = append(excluded, plan.gorootMirror.root)
@@ -721,14 +822,26 @@ func startLocalTIA(ctx context.Context, plan *Plan, opts options, dir, state, ro
 	}
 	var read int
 	run.current.Files, read = fileStates(run.current.paths, stored.Files, time.Now())
-	var selection localtia.Selection
+	if record && narrowsSubtests(opts, callerGoFlags()) {
+		// The run skips as any other does, and records nothing.
+		debug.printf("local tia record=false reason=%q", "-run or -skip selects subtests")
+		record = false
+	}
+	if record {
+		run.current.Source = localTIASourceID(plan, opts)
+	}
+	selection := localtia.Selection{Record: record}
 	skipped, tested := 0, 0
 	for path, node := range run.current.Packages {
 		if !node.Tested {
 			continue
 		}
 		tested++
-		node.Unseen = run.current.unseen(path, run.counters)
+		// A run that does not record has no coverage source of its own: its
+		// tests' sources decide what they could not see.
+		if record {
+			node.Unseen = map[string][]string{run.current.Source: run.current.unseen(path, run.counters, len(opts.coverPatterns) != 0)}
+		}
 		if selected := tiaSelection(node.dir, skippable(stored, run.current.tiaMap, path)); selected != nil {
 			selection.Packages = append(selection.Packages, *selected)
 			skipped += len(selected.Skip)
@@ -740,7 +853,7 @@ func startLocalTIA(ctx context.Context, plan *Plan, opts options, dir, state, ro
 		return nil, "the selection could not be written: " + err.Error()
 	}
 	run.spent = time.Since(started)
-	debug.printf("local tia map=%s source=%q test_packages=%d packages=%d files=%d files_read=%d stored_packages=%d skippable=%d", filepath.Join(run.mapDir, run.key+".json"), source, tested, len(run.current.Packages), len(run.current.paths), read, len(stored.Packages), skipped)
+	debug.printf("local tia record=%t map=%s source=%q test_packages=%d packages=%d files=%d files_read=%d stored_packages=%d skippable=%d", record, filepath.Join(run.mapDir, run.key+".json"), source, tested, len(run.current.Packages), len(run.current.paths), read, len(stored.Packages), skipped)
 	return run, ""
 }
 
@@ -779,7 +892,9 @@ func gitCommonDir(ctx context.Context, root string) (string, error) {
 // finish merges what the test processes recorded into the map, once go test
 // has exited and before the state is removed. It reads no file of the
 // repository: whether one changed while go test ran comes from its size and
-// modification time.
+// modification time. After a run that does not record, the merge still takes
+// the files as the run found them and drops the tests that their changes
+// affect, and adds none.
 func (r *localTIARun) finish(ctx context.Context) {
 	if r == nil {
 		return
@@ -969,14 +1084,14 @@ type tiaStoredFile struct {
 }
 
 type tiaStoredPackage struct {
-	Files       []int           `json:"files,omitempty"`
-	Imports     []string        `json:"imports,omitempty"`
-	Tested      bool            `json:"tested,omitempty"`
-	TestFiles   []int           `json:"test_files,omitempty"`
-	TestImports []string        `json:"test_imports,omitempty"`
-	Testdata    []int           `json:"testdata,omitempty"`
-	Unseen      []int           `json:"unseen,omitempty"`
-	Tests       []tiaStoredTest `json:"tests,omitempty"`
+	Files       []int            `json:"files,omitempty"`
+	Imports     []string         `json:"imports,omitempty"`
+	Tested      bool             `json:"tested,omitempty"`
+	TestFiles   []int            `json:"test_files,omitempty"`
+	TestImports []string         `json:"test_imports,omitempty"`
+	Testdata    []int            `json:"testdata,omitempty"`
+	Unseen      map[string][]int `json:"unseen,omitempty"`
+	Tests       []tiaStoredTest  `json:"tests,omitempty"`
 }
 
 // tiaStoredTest is a test; Bitmaps maps the index of a covered file to the
@@ -984,6 +1099,7 @@ type tiaStoredPackage struct {
 type tiaStoredTest struct {
 	localtia.Test
 	Status  string      `json:"status"`
+	Source  string      `json:"source,omitempty"`
 	Covered []int       `json:"covered"`
 	Bitmaps map[int]int `json:"bitmaps,omitempty"`
 }
@@ -1001,7 +1117,10 @@ func encodeTIAMap(m *tiaMap) tiaMapFile {
 	}
 	mark(m.Modules)
 	for _, node := range m.Packages {
-		mark(node.Files, node.TestFiles, node.Testdata, node.Unseen)
+		mark(node.Files, node.TestFiles, node.Testdata)
+		for _, unseen := range node.Unseen {
+			mark(unseen)
+		}
 		for _, t := range node.Tests {
 			mark(t.Covered)
 		}
@@ -1028,9 +1147,15 @@ func encodeTIAMap(m *tiaMap) tiaMapFile {
 	bitmaps := map[string]int{}
 	for path, node := range m.Packages {
 		p := tiaStoredPackage{Files: indices(node.Files), Imports: node.Imports, Tested: node.Tested, TestFiles: indices(node.TestFiles),
-			TestImports: node.TestImports, Testdata: indices(node.Testdata), Unseen: indices(node.Unseen)}
+			TestImports: node.TestImports, Testdata: indices(node.Testdata)}
+		for source, unseen := range node.Unseen {
+			if p.Unseen == nil {
+				p.Unseen = map[string][]int{}
+			}
+			p.Unseen[source] = indices(unseen)
+		}
 		for _, t := range node.Tests {
-			s := tiaStoredTest{Test: t.Test, Status: t.Status, Covered: indices(t.Covered)}
+			s := tiaStoredTest{Test: t.Test, Status: t.Status, Source: t.Source, Covered: indices(t.Covered)}
 			if len(t.Bitmaps) != 0 {
 				s.Bitmaps = make(map[int]int, len(t.Bitmaps))
 				for file, bitmap := range t.Bitmaps {
@@ -1081,9 +1206,15 @@ func (f tiaMapFile) decode() (*tiaMap, bool) {
 	m.Modules = paths(f.Modules)
 	for name, p := range f.Packages {
 		node := &tiaNode{Files: paths(p.Files), Imports: p.Imports, Tested: p.Tested, TestFiles: paths(p.TestFiles),
-			TestImports: p.TestImports, Testdata: paths(p.Testdata), Unseen: paths(p.Unseen)}
+			TestImports: p.TestImports, Testdata: paths(p.Testdata)}
+		for source, unseen := range p.Unseen {
+			if node.Unseen == nil {
+				node.Unseen = map[string][]string{}
+			}
+			node.Unseen[source] = paths(unseen)
+		}
 		for _, s := range p.Tests {
-			t := tiaTest{Test: s.Test, Status: s.Status, Covered: paths(s.Covered)}
+			t := tiaTest{Test: s.Test, Status: s.Status, Source: s.Source, Covered: paths(s.Covered)}
 			for i, b := range s.Bitmaps {
 				file, valid := path(i)
 				if b < 0 || b >= len(f.Bitmaps) {

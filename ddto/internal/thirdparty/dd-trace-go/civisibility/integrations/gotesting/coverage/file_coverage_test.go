@@ -52,7 +52,8 @@ func TestFileCoverageWindows(t *testing.T) {
 	if !FileCoverageActive() {
 		t.Fatal("file coverage is not active with banks")
 	}
-	hit := func(m *uint64) { atomic.StoreUint64(m, atomic.LoadUint64(&fileCoverageEpoch)) }
+	// A site raises a mark to the epoch plus one.
+	hit := func(m *uint64) { atomic.StoreUint64(m, atomic.LoadUint64(&fileCoverageEpoch)+1) }
 
 	first := beginFileCoverage()
 	hit(&marksA[0])
@@ -127,12 +128,12 @@ func TestFileCoverageCollector(t *testing.T) {
 	if err := collector.collectCoverageBeforeTestExecution(); err != nil || collector.fileEpoch == 0 || collector.memory != nil {
 		t.Fatalf("before: err %v, epoch %d, memory %v", err, collector.fileEpoch, collector.memory)
 	}
-	atomic.StoreUint64(&marks[0], collector.fileEpoch)
+	atomic.StoreUint64(&marks[0], collector.fileEpoch+1)
 	if err := collector.collectCoverageAfterTestExecution(); err != nil {
 		t.Fatal(err)
 	}
 	next := beginFileCoverage()
-	atomic.StoreUint64(&marks[1], next)
+	atomic.StoreUint64(&marks[1], next+1)
 	if !collector.loadCoverageData() {
 		t.Fatal("no coverage data")
 	}

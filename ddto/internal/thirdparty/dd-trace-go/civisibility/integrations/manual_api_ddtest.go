@@ -205,6 +205,8 @@ func (t *tslvTest) closeLocked(status TestResultStatus, options ...TestCloseOpti
 		setCIVisibilitySpanTag(t.span, constants.TestStatus, constants.TestStatusPass)
 	case ResultStatusFail:
 		setCIVisibilitySpanTag(t.span, constants.TestStatus, constants.TestStatusFail)
+		// Before its final status, which a retry may set to pass.
+		localtia.RecordFailure(localtia.Test{Module: t.suite.module.name, Suite: t.suite.name, Name: t.name})
 	case ResultStatusSkip:
 		setCIVisibilitySpanTag(t.span, constants.TestStatus, constants.TestStatusSkip)
 	}

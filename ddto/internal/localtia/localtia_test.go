@@ -46,12 +46,12 @@ func activate(t *testing.T, selection *PackageSelection) string {
 	t.Helper()
 	state := t.TempDir()
 	process.once.Do(func() {})
-	process.active, process.stateDir, process.selection, process.records = true, state, selection, RecordsFilePrefix+"test.json"
+	process.active, process.stateDir, process.selection, process.records, process.record = true, state, selection, RecordsFilePrefix+"test.json", true
 	process.coverage, process.status = nil, nil
 	t.Cleanup(func() {
 		process.once = sync.Once{}
-		process.active, process.stateDir, process.selection, process.records = false, "", nil, ""
-		process.coverage, process.status = nil, nil
+		process.active, process.stateDir, process.selection, process.records, process.record = false, "", nil, "", false
+		process.coverage, process.status, process.setup, process.failed = nil, nil, nil, nil
 	})
 	return state
 }
@@ -128,5 +128,71 @@ func TestWriteRecords(t *testing.T) {
 	}
 	if f.Test != flaky || f.Status != "fail" {
 		t.Fatalf("TestFlaky %+v", f)
+	}
+}
+
+// A process that only skips records nothing, and still skips.
+func TestReadOnlyRecordsNothing(t *testing.T) {
+	state := activate(t, &PackageSelection{Dir: packageDirectory, Skip: []Test{{Module: "example.com/a", Suite: "a_test.go", Name: "TestA"}}})
+	process.record = false
+	if Recording() {
+		t.Fatal("recording")
+	}
+	test := Test{Module: "example.com/a", Suite: "a_test.go", Name: "TestB"}
+	RecordCoverage(test, []File{{Path: "a/a.go"}})
+	RecordStatus(test, "pass")
+	WriteRecords()
+	if entries, err := os.ReadDir(state); err != nil || len(entries) != 0 {
+		t.Fatalf("state %v: %v", entries, err)
+	}
+	if process.coverage != nil || process.status != nil {
+		t.Fatalf("recorded %v %v", process.coverage, process.status)
+	}
+	if response := SkippableTestsResponse(); len(response.Skippables["a_test.go"]["TestA"]) != 1 {
+		t.Fatalf("response %+v", response)
+	}
+}
+
+// The files of code that ran outside every test's window join every test.
+func TestRecordSetup(t *testing.T) {
+	state := activate(t, nil)
+	test := Test{Module: "example.com/a", Suite: "a_test.go", Name: "TestA"}
+	RecordCoverage(test, []File{{Path: "a/a_test.go"}})
+	RecordStatus(test, "pass")
+	RecordSetup([]File{{Path: "lib/init.go"}})
+	RecordSetup([]File{{Path: "lib/init.go"}, {Path: "lib/main.go"}})
+	WriteRecords()
+	data, err := os.ReadFile(filepath.Join(state, process.records))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var records Records
+	if err := json.Unmarshal(data, &records); err != nil {
+		t.Fatal(err)
+	}
+	var paths []string
+	for _, file := range records.Tests[0].Files {
+		paths = append(paths, file.Path)
+	}
+	if !slices.Equal(paths, []string{"a/a_test.go", "lib/init.go", "lib/main.go"}) {
+		t.Fatalf("files %q", paths)
+	}
+}
+
+// A test that passed after an execution that failed records as flaky.
+func TestRecordFailure(t *testing.T) {
+	state := activate(t, nil)
+	test := Test{Module: "example.com/a", Suite: "a_test.go", Name: "TestRetried"}
+	RecordCoverage(test, []File{{Path: "a/a_test.go"}})
+	RecordFailure(test)
+	RecordStatus(test, "pass")
+	WriteRecords()
+	data, err := os.ReadFile(filepath.Join(state, process.records))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var records Records
+	if err := json.Unmarshal(data, &records); err != nil || records.Tests[0].Status != "flaky" {
+		t.Fatalf("records %+v: %v", records, err)
 	}
 }

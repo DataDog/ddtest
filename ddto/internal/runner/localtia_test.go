@@ -13,21 +13,26 @@ import (
 	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/utils/filebitmap"
 )
 
-// Only DD_TIA_ENABLED enables local TIA; no flag does.
+// Only DD_TIA_ENABLED enables local TIA; no flag does. DD_TIA_RECORD=false
+// makes it skip without recording.
 func TestLocalTIAEnvironment(t *testing.T) {
 	for _, tc := range []struct {
-		env     string
-		want    bool
-		warning bool
+		enabled, record string
+		want, readOnly  bool
+		warning         bool
 	}{
-		{"", false, false},
-		{"true", true, false},
-		{"0", false, false},
-		{"yes please", false, true},
+		{"", "", false, false, false},
+		{"true", "", true, false, false},
+		{"true", "true", true, false, false},
+		{"true", "false", true, true, false},
+		{"1", "0", true, true, false},
+		{"0", "", false, false, false},
+		{"yes please", "", false, false, true},
+		{"true", "sometimes", true, false, true},
 	} {
-		cli, warning := DefaultCLIOptions().WithLocalTIAEnvironment(tc.env)
-		if cli.LocalTIA != tc.want || (warning != "") != tc.warning {
-			t.Errorf("%q: LocalTIA=%t warning=%q", tc.env, cli.LocalTIA, warning)
+		cli, warning := DefaultCLIOptions().WithLocalTIAEnvironment(tc.enabled, tc.record)
+		if cli.LocalTIA != tc.want || cli.LocalTIAReadOnly != tc.readOnly || (warning != "") != tc.warning {
+			t.Errorf("%q %q: LocalTIA=%t read-only=%t warning=%q", tc.enabled, tc.record, cli.LocalTIA, cli.LocalTIAReadOnly, warning)
 		}
 	}
 	// Go test receives a flag with the name.
@@ -62,7 +67,9 @@ func TestLocalTIACoverageSource(t *testing.T) {
 }
 
 // The map's key changes with what changes the tests' build or behavior, and
-// not with which tests run, how often, or what go test prints.
+// not with which tests run, how often, what go test prints, or the coverage
+// that it collects: a run without coverage flags reads a map that a run with
+// them recorded.
 func TestLocalTIAConfiguration(t *testing.T) {
 	env := &goEnvironment{GOOS: "linux", GOARCH: "amd64", CGOEnabled: "1"}
 	key := func(goflags string, args ...string) string {
@@ -71,34 +78,36 @@ func TestLocalTIAConfiguration(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		return localTIAConfiguration(opts, goflags, env, "go1.27.3", "counters atomic")
+		return localTIAConfiguration(opts, goflags, env, "go1.27.3")
 	}
-	base := key("", "-cover", "-covermode=atomic", "./...")
+	base := key("", "./...")
 	for _, args := range [][]string{
-		{"-cover", "-covermode=atomic", "./a", "./b"},
-		{"-cover", "-covermode=atomic", "-run", "TestA", "-skip=TestB", "-count=1", "-v", "-json", "-timeout=1m", "./..."},
-		{"-cover", "-covermode=atomic", "-coverprofile=c.out", "-p=2", "-parallel=4", "-failfast", "./..."},
+		{"./a", "./b"},
+		{"-run", "TestA", "-skip=TestB", "-count=1", "-v", "-json", "-timeout=1m", "./..."},
+		{"-coverprofile=c.out", "-p=2", "-parallel=4", "-failfast", "./..."},
+		{"-cover", "-covermode=atomic", "./..."},
+		{"-covermode=count", "-coverpkg=./...", "./..."},
 	} {
 		if got := key("", args...); got != base {
 			t.Errorf("%q changed the key", args)
 		}
 	}
-	if got := key("-count=1 -v", "-cover", "-covermode=atomic", "./..."); got != base {
+	if got := key("-count=1 -v -cover", "./..."); got != base {
 		t.Error("GOFLAGS that the map ignores changed the key")
 	}
 	changes := map[string]string{
-		"-short":                key("", "-cover", "-covermode=atomic", "-short", "./..."),
-		"-tags":                 key("", "-cover", "-covermode=atomic", "-tags=integration", "./..."),
-		"-race":                 key("", "-cover", "-covermode=atomic", "-race", "./..."),
-		"-coverpkg":             key("", "-cover", "-covermode=atomic", "-coverpkg=./...", "./..."),
-		"GOFLAGS -tags":         key("-tags=integration", "-cover", "-covermode=atomic", "./..."),
-		"test binary flag":      key("", "-cover", "-covermode=atomic", "./...", "-args", "-update"),
-		"go version":            localTIAConfiguration(mustParse(t, "-cover", "-covermode=atomic", "./..."), "", env, "go1.26.0", "counters atomic"),
-		"coverage source":       localTIAConfiguration(mustParse(t, "-cover", "-covermode=atomic", "./..."), "", env, "go1.27.3", "file marks"),
-		"GOARCH":                localTIAConfiguration(mustParse(t, "-cover", "-covermode=atomic", "./..."), "", &goEnvironment{GOOS: "linux", GOARCH: "arm64", CGOEnabled: "1"}, "go1.27.3", "counters atomic"),
-		"CGO_ENABLED":           localTIAConfiguration(mustParse(t, "-cover", "-covermode=atomic", "./..."), "", &goEnvironment{GOOS: "linux", GOARCH: "amd64", CGOEnabled: "0"}, "go1.27.3", "counters atomic"),
-		"GOEXPERIMENT":          localTIAConfiguration(mustParse(t, "-cover", "-covermode=atomic", "./..."), "", &goEnvironment{GOOS: "linux", GOARCH: "amd64", CGOEnabled: "1", GOEXPERIMENT: "nodwarf5"}, "go1.27.3", "counters atomic"),
-		"another coverage mode": key("", "-cover", "-covermode=count", "./..."),
+		"-short":           key("", "-short", "./..."),
+		"-tags":            key("", "-tags=integration", "./..."),
+		"-race":            key("", "-race", "./..."),
+		"GOFLAGS -tags":    key("-tags=integration", "./..."),
+		"test binary flag": key("", "./...", "-args", "-update"),
+		"go version":       localTIAConfiguration(mustParse(t, "./..."), "", env, "go1.26.0"),
+		"GOARCH":           localTIAConfiguration(mustParse(t, "./..."), "", &goEnvironment{GOOS: "linux", GOARCH: "arm64", CGOEnabled: "1"}, "go1.27.3"),
+		"CGO_ENABLED":      localTIAConfiguration(mustParse(t, "./..."), "", &goEnvironment{GOOS: "linux", GOARCH: "amd64", CGOEnabled: "0"}, "go1.27.3"),
+		"GOEXPERIMENT":     localTIAConfiguration(mustParse(t, "./..."), "", &goEnvironment{GOOS: "linux", GOARCH: "amd64", CGOEnabled: "1", GOEXPERIMENT: "nodwarf5"}, "go1.27.3"),
+		"CGO_CFLAGS":       localTIAConfiguration(mustParse(t, "./..."), "", &goEnvironment{GOOS: "linux", GOARCH: "amd64", CGOEnabled: "1", Build: map[string]string{"CGO_CFLAGS": "-DANSWER=2"}}, "go1.27.3"),
+		"GOAMD64":          localTIAConfiguration(mustParse(t, "./..."), "", &goEnvironment{GOOS: "linux", GOARCH: "amd64", CGOEnabled: "1", Build: map[string]string{"GOAMD64": "v3"}}, "go1.27.3"),
+		"CC":               localTIAConfiguration(mustParse(t, "./..."), "", &goEnvironment{GOOS: "linux", GOARCH: "amd64", CGOEnabled: "1", Build: map[string]string{"CC": "clang"}}, "go1.27.3"),
 	}
 	for name, got := range changes {
 		if got == base {
@@ -117,10 +126,12 @@ func mustParse(t *testing.T, args ...string) options {
 }
 
 // graphFixture lists, as go list -deps -test would, the build with tests of
-// package p of a repository, and writes p's testdata.
-func graphFixture(t *testing.T) (string, []goPackage) {
+// package p of a repository, and writes p's testdata. elsewhere is outside the
+// repository. Every path is absolute on the host, as go list's are: on
+// Windows, /elsewhere would not be.
+func graphFixture(t *testing.T) (root, elsewhere string, packages []goPackage) {
 	t.Helper()
-	root := t.TempDir()
+	root, elsewhere = t.TempDir(), t.TempDir()
 	for _, name := range []string{"p/testdata/in.txt", "p/testdata/sub/deep.txt"} {
 		writeFile(t, root, name, name)
 	}
@@ -130,12 +141,12 @@ func graphFixture(t *testing.T) (string, []goPackage) {
 		Replace            *struct{ Path, Dir, Version string }
 	}{Path: "ex", Dir: root, Main: true}
 	dir := func(name string) string { return filepath.Join(root, name) }
-	return root, []goPackage{
-		{ImportPath: "testing", Standard: true, Dir: "/goroot/src/testing", GoFiles: []string{"testing.go"}},
+	return root, elsewhere, []goPackage{
+		{ImportPath: "testing", Standard: true, Dir: filepath.Join(elsewhere, "goroot", "src", "testing"), GoFiles: []string{"testing.go"}},
 		{ImportPath: "ex/lib", Dir: dir("lib"), Module: main, GoFiles: []string{"lib.go"}, TestGoFiles: []string{"lib_test.go"}, SFiles: []string{"asm.s"}, Imports: []string{"outside.com/dep", "ex/cache"}},
 		{ImportPath: "ex/kit", Dir: dir("kit"), Module: main, GoFiles: []string{"kit.go"}},
 		{ImportPath: "ex/vendored", Dir: dir("vendor/x"), GoFiles: []string{"v.go"}},
-		{ImportPath: "outside.com/dep", Dir: "/elsewhere/dep", GoFiles: []string{"dep.go"}},
+		{ImportPath: "outside.com/dep", Dir: filepath.Join(elsewhere, "dep"), GoFiles: []string{"dep.go"}},
 		{ImportPath: "ex/cache", Dir: dir("modcache/x"), GoFiles: []string{"cached.go"}},
 		{ImportPath: "ex/p", Dir: dir("p"), Name: "p", Module: main, GoFiles: []string{"p.go", "consts.go"}, TestGoFiles: []string{"in_test.go"}, XTestGoFiles: []string{"x_test.go"}, EmbedFiles: []string{"data.txt"}, TestEmbedFiles: []string{"golden.txt"}, Imports: []string{"ex/lib"}, TestImports: []string{"ex/vendored", "testing"}, XTestImports: []string{"ex/back", "ex/kit", "ex/p", "testing"}},
 		{ImportPath: "ex/p [ex/p.test]", ForTest: "ex/p", Dir: dir("p"), Name: "p", Module: main, GoFiles: []string{"p.go", "consts.go", "in_test.go"}, EmbedFiles: []string{"data.txt"}, Imports: []string{"ex/lib", "ex/vendored", "testing"}},
@@ -143,7 +154,7 @@ func graphFixture(t *testing.T) (string, []goPackage) {
 		// copy recompiled for them.
 		{ImportPath: "ex/back [ex/p.test]", ForTest: "ex/p", Dir: dir("back"), Name: "back", Module: main, GoFiles: []string{"back.go"}, Imports: []string{"ex/p [ex/p.test]"}},
 		{ImportPath: "ex/p_test [ex/p.test]", ForTest: "ex/p", Dir: dir("p"), Name: "p_test", Module: main, GoFiles: []string{"x_test.go"}, Imports: []string{"ex/back [ex/p.test]", "ex/kit", "ex/p [ex/p.test]", "testing"}},
-		{ImportPath: "ex/p.test", Dir: dir("p"), Name: "main", GoFiles: []string{"/cache/go-build/testmain.go"}, Imports: []string{"ex/p [ex/p.test]", "ex/p_test [ex/p.test]", "testing"}},
+		{ImportPath: "ex/p.test", Dir: dir("p"), Name: "main", GoFiles: []string{filepath.Join(elsewhere, "go-build", "testmain.go")}, Imports: []string{"ex/p [ex/p.test]", "ex/p_test [ex/p.test]", "testing"}},
 	}
 }
 
@@ -163,10 +174,10 @@ func writeFile(t *testing.T, dir, name, content string) string {
 // saying it has code except consts.go.
 func fixtureGraph(t *testing.T, coverPatterns ...string) tiaGraph {
 	t.Helper()
-	root, tested := graphFixture(t)
+	root, elsewhere, tested := graphFixture(t)
 	g := localTIAGraph(tiaGraphInput{
 		tested: tested, root: root, excluded: []string{filepath.Join(root, "modcache")},
-		moduleFiles:   []string{filepath.Join(root, "go.mod"), filepath.Join(root, "go.sum"), "/elsewhere/go.work"},
+		moduleFiles:   []string{filepath.Join(root, "go.mod"), filepath.Join(root, "go.sum"), filepath.Join(elsewhere, "go.work")},
 		coverPatterns: coverPatterns, dir: root,
 	})
 	for name := range g.paths {
@@ -207,28 +218,30 @@ func TestLocalTIAUnseenFiles(t *testing.T) {
 		coverPatterns []string
 		unseen        []string
 	}{
-		// Go's counters count the main modules' packages, never test files
-		// nor a file without code after initialization.
-		{"counters", true, nil, append(slices.Clone(nonGo), "p/consts.go", "p/in_test.go", "p/x_test.go", "vendor/x/v.go")},
-		// -coverpkg narrows them to what it names.
-		{"coverpkg", true, []string{"./p"}, append(slices.Clone(nonGo), "back/back.go", "kit/kit.go", "lib/lib.go", "p/consts.go", "p/in_test.go", "p/x_test.go", "vendor/x/v.go")},
+		// Without -coverpkg, Go's counters count only the package under test,
+		// never test files nor a file without code after initialization.
+		{"counters", true, nil, append(slices.Clone(nonGo), "back/back.go", "kit/kit.go", "lib/lib.go", "p/consts.go", "p/in_test.go", "p/x_test.go", "vendor/x/v.go")},
+		// -coverpkg counts what it names; ./... names no vendored package.
+		{"coverpkg", true, []string{"./..."}, append(slices.Clone(nonGo), "p/consts.go", "p/in_test.go", "p/x_test.go", "vendor/x/v.go")},
+		{"narrow coverpkg", true, []string{"./lib"}, append(slices.Clone(nonGo), "back/back.go", "kit/kit.go", "p/consts.go", "p/in_test.go", "p/p.go", "p/x_test.go", "vendor/x/v.go")},
 		// File marks see every Go file; those without marks are in every
 		// test's coverage.
 		{"file marks", false, nil, nonGo},
 	} {
 		g := fixtureGraph(t, tc.coverPatterns...)
 		slices.Sort(tc.unseen)
-		if got := g.unseen("ex/p", tc.counters); !slices.Equal(got, tc.unseen) {
+		if got := g.unseen("ex/p", tc.counters, len(tc.coverPatterns) != 0); !slices.Equal(got, tc.unseen) {
 			t.Errorf("%s: unseen %q\nwant %q", tc.name, got, tc.unseen)
 		}
 	}
 }
 
 // storedMap is a map of a test package p, which imports lib, whose tests
-// recorded their status and coverage, and the same files as they are now.
+// recorded their status and coverage with Go's counters, and the same files
+// as they are now, in a run that records with Go's counters too.
 func storedMap() (stored, current *tiaMap) {
 	test := func(name, status string, covered ...string) tiaTest {
-		return tiaTest{Test: localtia.Test{Module: "ex/p", Suite: "p_test.go", Name: name}, Status: status, Covered: covered}
+		return tiaTest{Test: localtia.Test{Module: "ex/p", Suite: "p_test.go", Name: name}, Status: status, Source: "counters", Covered: covered}
 	}
 	stored = &tiaMap{
 		Files:   map[string]tiaFile{"p/p.go": {Hash: "p1"}, "p/p_test.go": {Hash: "t1"}, "p/testdata/in.txt": {Hash: "d1"}, "lib/a.go": {Hash: "a1"}, "lib/b.go": {Hash: "b1"}, "go.mod": {Hash: "m1"}},
@@ -236,7 +249,7 @@ func storedMap() (stored, current *tiaMap) {
 		Packages: map[string]*tiaNode{
 			"ex/lib": {Files: []string{"lib/a.go", "lib/b.go"}},
 			"ex/p": {Files: []string{"p/p.go"}, Imports: []string{"ex/lib"}, Tested: true, TestFiles: []string{"p/p_test.go"}, Testdata: []string{"p/testdata/in.txt"},
-				Unseen: []string{"go.mod", "p/testdata/in.txt"},
+				Unseen: map[string][]string{"counters": {"go.mod", "p/testdata/in.txt"}},
 				Tests: []tiaTest{
 					test("TestA", "pass", "lib/a.go", "p/p_test.go"),
 					test("TestB", "pass", "lib/b.go", "p/p_test.go"),
@@ -246,7 +259,7 @@ func storedMap() (stored, current *tiaMap) {
 				}},
 		},
 	}
-	current = &tiaMap{Files: maps.Clone(stored.Files), Modules: []string{"go.mod"}, Packages: map[string]*tiaNode{}}
+	current = &tiaMap{Files: maps.Clone(stored.Files), Modules: []string{"go.mod"}, Packages: map[string]*tiaNode{}, Source: "counters"}
 	for path, node := range stored.Packages {
 		copied := *node
 		copied.Tests = nil
@@ -288,11 +301,34 @@ func TestLocalTIASelectionRules(t *testing.T) {
 			m.Packages["ex/p"].Imports = []string{"ex/kit", "ex/lib"}
 		}, nil},
 		{"a testdata file was removed", func(m *tiaMap) { m.Packages["ex/p"].Testdata = nil }, nil},
+		// A run that does not record has no unseen files of its own: the
+		// recording's decide.
+		{"read-only, no change", readOnly(func(*tiaMap) {}), []string{"TestA", "TestB"}},
+		{"read-only, an unseen file changed", readOnly(func(m *tiaMap) { m.Files["p/testdata/in.txt"] = tiaFile{Hash: "d2"} }), nil},
+		{"read-only, a file that only another source cannot see changed", readOnly(func(m *tiaMap) { m.Files["lib/b.go"] = tiaFile{Hash: "b2"} }), []string{"TestA"}},
+		// A run that records with another source cannot see lib/b.go: the
+		// tests that the counters recorded depend on it too.
+		{"recording with another source", func(m *tiaMap) {
+			m.Source = "file marks"
+			m.Packages["ex/p"].Unseen = map[string][]string{"file marks": {"go.mod", "lib/b.go"}}
+			m.Files["lib/b.go"] = tiaFile{Hash: "b2"}
+		}, nil},
 	} {
 		stored, current := storedMap()
 		tc.change(current)
 		if got := skippedNames(skippable(stored, current, "ex/p")); !slices.Equal(got, tc.want) {
 			t.Errorf("%s: skipped %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
+// readOnly makes a change in a run that does not record.
+func readOnly(change func(*tiaMap)) func(*tiaMap) {
+	return func(m *tiaMap) {
+		change(m)
+		m.Source = ""
+		for _, node := range m.Packages {
+			node.Unseen = nil
 		}
 	}
 }
@@ -342,6 +378,47 @@ func TestLocalTIAMerge(t *testing.T) {
 	merged = mergeTIAMap(stored, current, map[string]tiaPackageRun{"ex/p": {records: []localtia.TestRecord{ranA}}})
 	if got := testNames(merged, "ex/p"); !slices.Equal(got, []string{"TestA"}) {
 		t.Fatalf("after a declaration change, kept %q", got)
+	}
+
+	// A run that does not record merges no records, and still drops what its
+	// changes affect.
+	stored, current = storedMap()
+	readOnly(func(m *tiaMap) { m.Files["lib/b.go"] = tiaFile{Hash: "b2"} })(current)
+	merged = mergeTIAMap(stored, current, map[string]tiaPackageRun{"ex/p": {records: []localtia.TestRecord{ranA}}})
+	if got := testNames(merged, "ex/p"); !slices.Equal(got, []string{"TestA", "TestFail", "TestNoCoverage", "TestSkipped"}) || merged.Packages["ex/p"].Tests[0].Status != "pass" || merged.Packages["ex/p"].Unseen["counters"] == nil {
+		t.Fatalf("after a run that does not record, kept %q", got)
+	}
+
+	// A run that records with another source keeps the counters' tests
+	// only through both sources' unseen files, and each source's unseen
+	// files while a test that it recorded stays.
+	stored, current = storedMap()
+	current.Source = "file marks"
+	current.Packages["ex/p"].Unseen = map[string][]string{"file marks": {"go.mod", "lib/b.go"}}
+	current.Files["lib/b.go"] = tiaFile{Hash: "b2"}
+	merged = mergeTIAMap(stored, current, map[string]tiaPackageRun{"ex/p": {records: []localtia.TestRecord{ranA}}})
+	if got := testNames(merged, "ex/p"); !slices.Equal(got, []string{"TestA"}) || merged.Packages["ex/p"].Tests[0].Source != "file marks" {
+		t.Fatalf("after recording with another source, kept %q", got)
+	}
+	if unseen := merged.Packages["ex/p"].Unseen; len(unseen) != 1 || unseen["file marks"] == nil {
+		t.Fatalf("unseen files by source %v", unseen)
+	}
+
+	// A run that lists a tested package only as a dependency keeps its tests,
+	// unless what they depend on changed.
+	stored, current = storedMap()
+	stored.Packages["ex/lib"].Tested, stored.Packages["ex/lib"].TestFiles = true, []string{"lib/a_test.go"}
+	stored.Files["lib/a_test.go"] = tiaFile{Hash: "l1"}
+	stored.Packages["ex/lib"].Unseen = map[string][]string{"counters": {"go.mod"}}
+	stored.Packages["ex/lib"].Tests = []tiaTest{{Test: localtia.Test{Module: "ex/lib", Suite: "a_test.go", Name: "TestLib"}, Status: "pass", Source: "counters", Covered: []string{"lib/a.go", "lib/a_test.go"}}}
+	merged = mergeTIAMap(stored, current, map[string]tiaPackageRun{"ex/p": {records: []localtia.TestRecord{ranA}}})
+	if got := testNames(merged, "ex/lib"); !slices.Equal(got, []string{"TestLib"}) {
+		t.Fatalf("a package listed as a dependency kept %q", got)
+	}
+	current.Files["lib/a.go"] = tiaFile{Hash: "a2"}
+	merged = mergeTIAMap(stored, current, nil)
+	if got := testNames(merged, "ex/lib"); len(got) != 0 {
+		t.Fatalf("after a change it depends on, a package listed as a dependency kept %q", got)
 	}
 
 	// A run that did not list p, which another run's change to b.go
@@ -419,7 +496,7 @@ func TestLocalTIAMapEncoding(t *testing.T) {
 		t.Fatalf("racy lib/b.go %+v", got)
 	}
 	want, got := m.Packages["ex/p"], decoded.Packages["ex/p"]
-	if !sameStructure(want, got) || !slices.Equal(got.Unseen, want.Unseen) || len(got.Tests) != len(want.Tests) ||
+	if !sameStructure(want, got) || !slices.Equal(got.Unseen["counters"], want.Unseen["counters"]) || got.Tests[0].Source != "counters" || len(got.Tests) != len(want.Tests) ||
 		!slices.Equal(got.Tests[0].Covered, want.Tests[0].Covered) || got.Tests[0].Bitmaps["lib/a.go"][0] != 0x40 {
 		t.Fatalf("p %+v", got)
 	}
@@ -505,6 +582,7 @@ func TestLocalTIAFinish(t *testing.T) {
 		run.current.Packages["ex/"+name] = &tiaNode{dir: filepath.Join(root, name), Tested: true, TestFiles: []string{file}}
 	}
 	run.current.Files, _ = fileStates(run.current.paths, nil, time.Now())
+	run.current.Source = "counters"
 	records := func(name string, complete bool, tests ...string) {
 		file := localtia.Records{Dir: filepath.Join(root, name), Complete: complete}
 		for _, test := range tests {
@@ -569,5 +647,64 @@ func TestTestListingSplits(t *testing.T) {
 	}
 	if got, want := slices.Sorted(slices.Values(paths(callerTestsListing(both, "testing", "strings")))), slices.Sorted(slices.Values(paths(list("-deps", "-test", "./p", "./cmd")))); !slices.Equal(got, want) {
 		t.Errorf("caller's tests %q\nwant %q", got, want)
+	}
+}
+
+// The map has format version 1, and a map of any other version, or one that
+// does not parse, is ignored and rebuilt.
+func TestLocalTIAMapVersion(t *testing.T) {
+	if localTIAMapVersion != 1 {
+		t.Fatalf("map version %d", localTIAMapVersion)
+	}
+	m, _ := storedMap()
+	run := &localTIARun{mapDir: t.TempDir(), key: "key"}
+	for _, tc := range []struct {
+		name     string
+		data     func() []byte
+		packages int
+	}{
+		{"this version", func() []byte { data, _ := json.Marshal(encodeTIAMap(m)); return data }, 2},
+		{"another version", func() []byte {
+			stored := encodeTIAMap(m)
+			stored.Version = 2
+			data, _ := json.Marshal(stored)
+			return data
+		}, 0},
+		{"not JSON", func() []byte { return []byte("{") }, 0},
+	} {
+		writeFile(t, run.mapDir, "key.json", string(tc.data()))
+		run.loaded = nil
+		loaded, err := run.loadMap()
+		if err != nil || len(loaded.Packages) != tc.packages {
+			t.Errorf("%s: %d packages, %v", tc.name, len(loaded.Packages), err)
+		}
+	}
+}
+
+// A -run or -skip pattern with a slash can select some subtests of a test.
+func TestNarrowsSubtests(t *testing.T) {
+	for _, tc := range []struct {
+		goflags string
+		args    []string
+		want    bool
+	}{
+		{"", []string{"./..."}, false},
+		{"", []string{"-run", "^TestA$", "./..."}, false},
+		{"", []string{"-skip=TestB", "./..."}, false},
+		{"", []string{"-run", "^TestA$/^x$", "./..."}, true},
+		{"", []string{"-run=TestA/x", "./..."}, true},
+		{"", []string{"-skip", "/slow", "./..."}, true},
+		{"", []string{"-test.run=TestA/x", "./..."}, true},
+		{"", []string{"./...", "-args", "-test.run=TestA/x"}, true},
+		{"-run=TestA/x", []string{"./..."}, true},
+		{"", []string{"./a/b", "-v"}, false},
+	} {
+		opts, err := parseOptions(tc.args, tc.goflags)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := narrowsSubtests(opts, tc.goflags); got != tc.want {
+			t.Errorf("%q %q: %t, want %t", tc.goflags, tc.args, got, tc.want)
+		}
 	}
 }

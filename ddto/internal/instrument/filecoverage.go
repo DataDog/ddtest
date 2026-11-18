@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"go/ast"
 	"go/parser"
+	"go/scanner"
 	"go/token"
 	"sort"
 	"strconv"
@@ -53,7 +54,9 @@ var directivesWithoutMarks = []string{"//go:nosplit", "//go:norace", "//go:syste
 // in a line directive, or why the file stays unmarked.
 func MarkFileCoverage(logical string, src []byte, marks string, index int) ([]byte, FileCoverageRefusal) {
 	p, m := fileCoveragePrefix, fmt.Sprintf("&%s[%d]", marks, index)
-	site := fmt.Sprintf("if %se := %satomic.LoadUint64(&%sepoch); %satomic.LoadUint64(%s) < %se { for { %so := %satomic.LoadUint64(%s); if %so >= %se || %satomic.CompareAndSwapUint64(%s, %so, %se) { break } } };",
+	// The site raises the mark to the epoch plus one, so that code that runs
+	// before the first test, at epoch 0, marks its files too.
+	site := fmt.Sprintf("if %se := %satomic.LoadUint64(&%sepoch) + 1; %satomic.LoadUint64(%s) < %se { for { %so := %satomic.LoadUint64(%s); if %so >= %se || %satomic.CompareAndSwapUint64(%s, %so, %se) { break } } };",
 		p, p, p, p, m, p, p, p, m, p, p, p, m, p, p)
 	return markFileCoverage(logical, src, site, "; import "+p+"atomic \"sync/atomic\"", false)
 }
@@ -182,37 +185,100 @@ func runsAfterInitialization(fn *ast.FuncDecl) bool {
 }
 
 // GoFileDeclarations returns what tests can depend on in a Go file without
-// running its code while they run: src without the bodies of its functions
-// and methods that run after package initialization, each replaced with
-// "{}". The package clause, imports, comments outside those bodies (build
-// constraints and directives among them), declarations, package-level
-// function literals and init functions stay, as written: package
-// initialization runs them before any test. It also reports whether src has
-// code after initialization, which per-test coverage, from file marks or
-// from Go's counters, needs to report the file at all, as markFileCoverage
-// decides; and false for a file that does not parse.
+// running its code while they run: its tokens, without the bodies of its
+// functions and methods that run after package initialization. The package
+// clause, imports, declarations, package-level function literals and init
+// functions stay: package initialization runs them before any test. Of the
+// comments outside those bodies, only those that are code stay: build
+// constraints, //go: and //line directives, //export and //extern, and a cgo
+// preamble. Formatting does not count: the tokens are listed one per line,
+// without the semicolons and commas that may end a list. It also reports
+// whether src has code after initialization, which per-test coverage, from
+// file marks or from Go's counters, needs to report the file at all, as
+// markFileCoverage decides; and false for a file that does not parse.
 func GoFileDeclarations(src []byte) (declarations []byte, code, ok bool) {
 	src = bytes.TrimPrefix(src, []byte("\uFEFF"))
 	fs := token.NewFileSet()
-	file, err := parser.ParseFile(fs, "", src, parser.SkipObjectResolution)
+	file, err := parser.ParseFile(fs, "", src, parser.ParseComments|parser.SkipObjectResolution)
 	if err != nil {
 		return nil, false, false
 	}
-	var buf bytes.Buffer
-	cursor := 0
+	// Offsets inside the bodies, excluding their braces, and of the
+	// comments that are cgo preambles.
+	type span struct{ start, end int }
+	var bodies, preambles []span
+	offset := func(p token.Pos) int { return fs.Position(p).Offset }
 	for _, decl := range file.Decls {
-		fn, isFunc := decl.(*ast.FuncDecl)
-		if !isFunc || !runsAfterInitialization(fn) {
+		switch decl := decl.(type) {
+		case *ast.FuncDecl:
+			if runsAfterInitialization(decl) {
+				code = true
+				bodies = append(bodies, span{offset(decl.Body.Lbrace) + 1, offset(decl.Body.Rbrace)})
+			}
+		case *ast.GenDecl:
+			for _, spec := range decl.Specs {
+				if imp, isImport := spec.(*ast.ImportSpec); isImport && imp.Path.Value == `"C"` {
+					for _, doc := range []*ast.CommentGroup{decl.Doc, imp.Doc} {
+						if doc != nil {
+							preambles = append(preambles, span{offset(doc.Pos()), offset(doc.End())})
+						}
+					}
+				}
+			}
+		}
+	}
+	within := func(off int, spans []span) bool {
+		for _, s := range spans {
+			if off >= s.start && off < s.end {
+				return true
+			}
+		}
+		return false
+	}
+	var scan scanner.Scanner
+	scan.Init(fs.AddFile("", -1, len(src)), src, nil, scanner.ScanComments)
+	var buf bytes.Buffer
+	pending := token.ILLEGAL // a semicolon or comma not yet written
+	for {
+		pos, tok, lit := scan.Scan()
+		if tok == token.EOF {
+			break
+		}
+		off := offset(pos)
+		if within(off, bodies) {
 			continue
 		}
-		code = true
-		start, end := fs.Position(fn.Body.Lbrace).Offset, fs.Position(fn.Body.Rbrace).Offset+1
-		buf.Write(src[cursor:start])
-		buf.WriteString("{}")
-		cursor = end
+		switch tok {
+		case token.COMMENT:
+			if !within(off, preambles) && !codeComment(lit) {
+				continue
+			}
+		case token.SEMICOLON, token.COMMA:
+			pending = tok
+			continue
+		}
+		if pending != token.ILLEGAL && tok != token.RPAREN && tok != token.RBRACE && tok != token.RBRACK {
+			buf.WriteString(pending.String() + "\n")
+		}
+		pending = token.ILLEGAL
+		buf.WriteString(tok.String())
+		if tok.IsLiteral() || tok == token.COMMENT {
+			buf.WriteString(" " + lit)
+		}
+		buf.WriteByte('\n')
 	}
-	buf.Write(src[cursor:])
 	return buf.Bytes(), code, true
+}
+
+// codeComment reports whether a comment is code: a build constraint, a
+// directive to the compiler, the linker or cgo, or a line directive.
+func codeComment(text string) bool {
+	for _, prefix := range []string{"//go:", "//line ", "/*line ", "//export ", "//extern ", "// +build"} {
+		if strings.HasPrefix(text, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // FileCoverageNameClashError reports a Go file that the build compiles and

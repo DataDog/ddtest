@@ -43,25 +43,40 @@ type CLIOptions struct {
 	FileCoverage, FileCoverageContext bool
 	// LocalTIA selects the tests to skip from the per-test coverage that
 	// earlier runs of the repository recorded, instead of asking Datadog
-	// (LocalTIAEnv).
-	LocalTIA bool
+	// (LocalTIAEnv). LocalTIAReadOnly only skips: the run records nothing
+	// new (LocalTIARecordEnv).
+	LocalTIA, LocalTIAReadOnly bool
 }
 
 // LocalTIAEnv enables local Test Impact Analysis; no flag does.
 const LocalTIAEnv = "DD_TIA_ENABLED"
 
-// WithLocalTIAEnvironment applies LocalTIAEnv's value. It returns why it
-// ignores a value that is not a boolean, or "".
-func (o CLIOptions) WithLocalTIAEnvironment(value string) (CLIOptions, string) {
-	if value == "" {
-		return o, ""
+// LocalTIARecordEnv set to false makes local TIA skip without recording.
+const LocalTIARecordEnv = "DD_TIA_RECORD"
+
+// WithLocalTIAEnvironment applies the values of LocalTIAEnv and
+// LocalTIARecordEnv. It returns why it ignores a value that is not a
+// boolean, or "".
+func (o CLIOptions) WithLocalTIAEnvironment(enabled, record string) (CLIOptions, string) {
+	var ignored []string
+	for _, setting := range []struct {
+		name, value string
+		apply       func(bool)
+	}{
+		{LocalTIAEnv, enabled, func(on bool) { o.LocalTIA = on }},
+		{LocalTIARecordEnv, record, func(on bool) { o.LocalTIAReadOnly = !on }},
+	} {
+		if setting.value == "" {
+			continue
+		}
+		on, err := strconv.ParseBool(setting.value)
+		if err != nil {
+			ignored = append(ignored, fmt.Sprintf("%s=%q is not a boolean; ignoring it", setting.name, setting.value))
+			continue
+		}
+		setting.apply(on)
 	}
-	enabled, err := strconv.ParseBool(value)
-	if err != nil {
-		return o, fmt.Sprintf("%s=%q is not a boolean; ignoring it", LocalTIAEnv, value)
-	}
-	o.LocalTIA = enabled
-	return o, ""
+	return o, strings.Join(ignored, "; ")
 }
 
 // FileCoverageEnv enables --experimental-file-coverage without the flag:

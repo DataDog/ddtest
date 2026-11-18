@@ -724,9 +724,13 @@ With `DD_TIA_ENABLED=true`, `ddtest instrument test` decides which tests to
 skip from the per-test coverage that earlier runs of the same repository
 recorded, instead of asking Datadog for its skippable tests. No flag enables
 it yet; a value that is not a boolean gets a warning and is ignored. Local
-TIA collects the same per-test coverage as Test Impact Analysis: Go's counters in count or atomic mode, such
-as `-cover -covermode=atomic` or `-race -cover`, or the file marks of
-`--experimental-file-coverage`. It works whatever Datadog's ITR and coverage
+TIA collects the same per-test coverage as Test Impact Analysis: Go's
+counters in count or atomic mode with `-coverpkg`, such as
+`-cover -covermode=atomic -coverpkg=./...` or `-race -cover -coverpkg=./...`,
+or the file marks of `--experimental-file-coverage`. Without `-coverpkg`, Go's
+counters see only the package under test (`go help testflag`), so a test of
+one package would never show that it ran another's code: a run that records
+with them refuses. It works whatever Datadog's ITR and coverage
 settings say. Test processes then request no skippable tests, and they send
 their per-test coverage to Datadog only when its settings enable coverage. As
 with Test Impact Analysis, collecting per-test coverage runs top-level tests
@@ -736,10 +740,41 @@ Skipped tests report as ITR skips, and ITR's own rules still apply:
 counters complete the package's coverage profile with the skipped tests' last
 line coverage.
 
-Local TIA needs Mini, the CLI's Git worker and per-test coverage: CI
-Visibility enabled, outside Bazel, a test package in the Git checkout, and no
-`-exec` program or cross-compilation helper, which would start the test
-processes. Otherwise, or with Go's counters in set mode, the CLI prints
+**Recording and read-only runs.** By default a run records: its test
+processes collect per-test coverage, even when Datadog's settings do not ask
+for it, and the CLI adds what ran to the map. With Go's counters, collecting
+it runs top-level tests one at a time. With `DD_TIA_RECORD=false`, a run is
+read-only: it skips from the map as a recording run would, but its test
+processes collect no per-test coverage of their own, so tests keep
+`t.Parallel`, and it records no test. Coverage that Datadog's settings ask
+for is still collected and sent. After a read-only run, the CLI still updates
+the map's file table and drops the tests that the run's changes affect, so
+that they run until a recording run records them again. A read-only run
+without a map runs every test. It needs no coverage flags: the map's
+configuration leaves coverage out, so a `go test ./...` without them reads
+the map that a run with `-race -cover -coverpkg=...` recorded.
+
+Each test keeps the coverage source that recorded it, and each test package
+the files that each source could not see when it recorded: Go's counters,
+with the packages that they count, or file marks. A test's unseen files are
+those of its own source, and, in a run that records, also those of the run's
+source. A test that a source recorded therefore stays valid, in a later run
+with another source, only while neither source's unseen files changed. A
+source's unseen files stay in the map while a test that it recorded does.
+
+Record where the map should follow the code, such as on the default branch
+or in a nightly job, and run read-only elsewhere, such as on every commit of
+a pull request or locally, where the tests' parallelism matters more. Every
+worktree of a repository shares its maps; a CI runner has a map only when a
+recording run left one in its checkout.
+
+Local TIA needs Mini and the CLI's Git worker: CI Visibility enabled,
+outside Bazel, a test package in the Git checkout, and no `-exec` program or
+cross-compilation helper, which would start the test processes. It refuses a
+user's `-overlay`, whose files Go compiles instead of those that local TIA
+compares. A run that records also needs per-test coverage, with `-coverpkg`
+for Go's counters. Otherwise, or when a recording run's counters are in set
+mode, the CLI prints
 `local TIA (DD_TIA_ENABLED): <reason>; tests run without it` and runs the
 tests as without it.
 
@@ -749,7 +784,8 @@ or file coverage, preparation's one package query is that one, and the rest
 of preparation reads the packages that `go list -deps` would list:
 - every file of P and of each package of the repository that P's test binary
   links: Go and cgo files, P's own test files, embedded files, assembly, C and
-  the other files that `go list` reports;
+  the other files that `go list` reports, whether `go test ./...` tests that
+  package or only links it;
 - every file under P's `testdata` directory;
 - the main modules' `go.mod` and `go.sum`, and `go.work` and `go.work.sum`.
 
@@ -757,20 +793,27 @@ Files outside the repository are not tracked: the module cache's are pinned by
 `go.sum`, and the toolchain and the build's flags key the map. A test's
 dependencies are the files that its coverage reports, plus the files of C(P)
 that its coverage source cannot see, which every test of P depends on:
-- the files that are not Go source, among them testdata and the module files;
+- the files that are not Go source, among them testdata and the module files,
+  and every embedded file, Go source or not: a test can read it as data;
 - with Go's counters, the test files of P other than the test's own, the
-  files of the packages that cover does not count (without `-coverpkg`, those
-  outside the main modules; with it, those that it does not name), and Go
-  files whose only code runs while packages initialize, such as a file of
-  constants.
+  files of the packages that `-coverpkg` does not name, and Go files whose
+  only code runs while packages initialize, such as a file of constants.
+
+A test also depends on the files of code that ran outside every test's
+coverage window in its test process: a package's initialization, TestMain
+before the tests, and, with Go's counters in memory and with serial file
+marks, work between two tests. The test process captures them as it runs:
+the counts that grew before each window, or the marks raised before it, since
+sites raise a file's mark above the epoch of the window that runs.
 
 File marks see test files and report the files without marks for every test,
 so with them a test depends only on the test files that it runs.
 
 **Which tests are skipped.** Before `go test` runs, the CLI compares each
 file of C(P) with the map's file table. A test of P is skipped only when:
-- the map has an entry for it, and it passed, after its retries, the last time
-  it ran;
+- the map has an entry for it, and it passed the last time it ran, without
+  an execution that failed: a test that passed only on a retry runs again,
+  since its coverage comes from its first, failed, execution;
 - that run recorded coverage for it;
 - none of its dependencies changed since;
 - no file of C(P) was added or removed since, nor a package that P's tests
@@ -799,8 +842,11 @@ index; a file modified less than two seconds before it was read is read
 again next time, since a second write within the file system's time
 resolution would keep both. A Go file is parsed only when it is read, to
 tell whether it has code after initialization and to hash its declarations:
-the file with each such function's body replaced by `{}`, comments and
-formatting outside the bodies included.
+the file's tokens without the bodies of those functions. Formatting and
+ordinary comments do not count, so editing a doc comment or reformatting
+changes no declaration; comments that are code do: build constraints,
+`//go:` and `//line` directives, `//export` and `//extern`, and cgo
+preambles.
 
 After `go test` exits, the CLI reads the records of this run's test
 processes: each top-level test that ran with coverage, its final status and
@@ -810,10 +856,12 @@ package's closure changed while the package's tests ran; a package whose
 files changed keeps none of that run's records. It then writes the map once,
 under the lock. The table takes the files as this run found them, and every
 test that the map keeps stays valid against it:
-- a test that ran replaces its entry;
+- a test that ran replaces its entry, except in a run whose `-run` or `-skip`
+  pattern has a slash: it can select some subtests of a test and not
+  others, so that run records nothing and only skips;
 - a test that did not run, because local TIA skipped it, `-run` left it out,
   `go test` took its package's result from its cache, or its package was not
-  in this run, keeps its entry unless a file that it depends on changed, the
+  tested in this run, only linked or not listed at all, keeps its entry unless a file that it depends on changed, the
   declarations of a Go file of its closure changed, or a file or package of
   its closure was added or removed, so that it runs next time;
 - when P's test process ends without completing its records, as when it
@@ -823,20 +871,28 @@ test that the map keeps stays valid against it:
 The maps live in the repository's common Git directory, which every worktree
 shares, as `.git/ddtest/tia/<configuration>.json`. The configuration is a hash
 of the map's format, the CLI's version, the Go version and `GOEXPERIMENT`,
-`GOOS`, `GOARCH`, `CGO_ENABLED`, the coverage source and mode, and the go test
-flags, from the command line and `GOFLAGS`, that can change what a test does,
-such as `-tags`, `-race`, `-coverpkg`, `-short` or a test binary's own flags.
-Flags that only choose or repeat tests or change go test's output, such as
-`-run`, `-skip`, `-count`, `-v`, `-json`, `-timeout` or `-coverprofile`,
-leave it the same. A lock file next to each map serializes the runs that
-update it. Delete the directory to start again.
+`GOOS`, `GOARCH`, `CGO_ENABLED`, the other `go env` values that change what
+a build compiles (`CC`, `CXX`, the `CGO_*FLAGS`, `GOAMD64` and the other
+architecture levels, `GOFIPS140`), and the go test flags, from the command line
+and `GOFLAGS`, that can change what a test does, such as `-tags`, `-race`,
+`-short` or a test binary's own flags. Flags that only choose or repeat
+tests, change go test's output or select coverage, such as `-run`, `-skip`,
+`-count`, `-v`, `-json`, `-timeout`, `-cover`, `-covermode`, `-coverpkg` or
+`-coverprofile`, leave it the same. A lock file next to each map serializes
+the runs that update it. Delete the directory to start again.
 
 **Not tracked yet.** Local TIA does not see:
 - what a test's subprocesses run, such as a binary that it builds and starts;
 - files and environment variables that tests read at run time outside
   `testdata`, other than through the code that coverage sees;
 - maps from other machines: each checkout keeps its own, and CI runners
-  start without one.
+  start without one;
+- a file rewritten with other contents of the same size while keeping its
+  modification time, as some archive extractions and copies do: the table
+  takes it as unchanged;
+- testdata reached through a directory symlink: its files are not listed;
+- with Go's counters through text profiles, or with context file marks, work
+  between two tests, such as a goroutine that an earlier test left running.
 
 A package result that `go test` replays from its test cache keeps the
 selection of the run that produced it, as with Datadog's Test Impact Analysis:

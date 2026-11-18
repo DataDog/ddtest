@@ -214,7 +214,7 @@ func InitializeCoverage(m *testing.M, uploadEnabled bool) {
 		return tDown(coverprofile, gocoverdir)
 	}
 	coverageUploadEnabled = uploadEnabled
-	localTIAEnabled = localtia.Active()
+	localTIAEnabled = localtia.Recording()
 	runtimeSnapshot = nil
 	runtimeSnapshotCleaned = false
 	backfillInput = nil
@@ -710,9 +710,10 @@ func NewTopLevelTestCoverage(sessionID, moduleID, suiteID, testID uint64, testFi
 	return coverage
 }
 
-// LocalTIAActive reports whether ddto's local TIA runs in this test process,
-// which then collects per-test coverage whatever Datadog's settings say.
-func LocalTIAActive() bool { return localtia.Active() }
+// LocalTIARecords reports whether ddto's local TIA records this test
+// process's tests, which then collects per-test coverage whatever Datadog's
+// settings say.
+func LocalTIARecords() bool { return localtia.Recording() }
 
 // coverageSourceFile returns the path in the repository of a source file,
 // which the runtime names by its import path with -trimpath.
@@ -758,6 +759,9 @@ func (t *testCoverage) collectCoverageBeforeTestExecution() error {
 		t.preCoverageFilename = filepath.Join(temporaryDir, fmt.Sprintf("%d-%d-%d-pre.out", t.moduleID, t.suiteID, t.testID))
 	}
 	_, err = tearDown(t.preCoverageFilename, "")
+	if err == nil {
+		profileOutsideWindows(t.preCoverageFilename)
+	}
 	return err
 }
 

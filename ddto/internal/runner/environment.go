@@ -214,10 +214,19 @@ type goEnvironment struct {
 	// GOEXPERIMENT is the setting as go env reports it, not canonical.
 	GOEXPERIMENT string
 	CGOEnabled   string `json:"CGO_ENABLED"`
+	// Build holds the buildSettings values.
+	Build map[string]string `json:"-"`
 }
 
+// buildSettings are the go env values, besides GOOS, GOARCH, GOEXPERIMENT,
+// CGO_ENABLED and the toolchain's version, that change what a build
+// compiles without changing a file or a flag of the command: local TIA keys
+// its maps on them (localTIAConfiguration).
+var buildSettings = []string{"CC", "CXX", "CGO_CFLAGS", "CGO_CPPFLAGS", "CGO_CXXFLAGS", "CGO_FFLAGS", "CGO_LDFLAGS", "GOAMD64", "GOARM", "GOARM64", "GO386", "GOMIPS", "GOMIPS64", "GOPPC64", "GORISCV64", "GOWASM", "GOFIPS140"}
+
 func readGoEnvironment(ctx context.Context, dir string) (*goEnvironment, error) {
-	out, err := goTool(ctx, dir, nil, "env", "-json", "GOMOD", "GOWORK", "GOMODCACHE", "GOVERSION", "GOROOT", "GOOS", "GOARCH", "GOHOSTOS", "GOHOSTARCH", "GOEXPERIMENT", "CGO_ENABLED")
+	args := append([]string{"env", "-json", "GOMOD", "GOWORK", "GOMODCACHE", "GOVERSION", "GOROOT", "GOOS", "GOARCH", "GOHOSTOS", "GOHOSTARCH", "GOEXPERIMENT", "CGO_ENABLED"}, buildSettings...)
+	out, err := goTool(ctx, dir, nil, args...)
 	if err != nil {
 		// go env reads the caller's environment, such as GOFLAGS.
 		return nil, goRejected(err)
@@ -225,6 +234,14 @@ func readGoEnvironment(ctx context.Context, dir string) (*goEnvironment, error) 
 	var environment goEnvironment
 	if err := json.Unmarshal([]byte(out), &environment); err != nil {
 		return nil, fmt.Errorf("read Go environment: %w", err)
+	}
+	var values map[string]string
+	if err := json.Unmarshal([]byte(out), &values); err != nil {
+		return nil, fmt.Errorf("read Go environment: %w", err)
+	}
+	environment.Build = map[string]string{}
+	for _, name := range buildSettings {
+		environment.Build[name] = values[name]
 	}
 	return &environment, nil
 }

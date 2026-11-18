@@ -94,7 +94,28 @@ func beginFileCoverage() uint64 {
 	if contextCoverageAvailable() {
 		return beginContextCoverage()
 	}
+	// Sites raise a mark to the epoch plus one: before the first window,
+	// as while packages initialize, to 1.
+	marksOutsideWindows(atomic.LoadUint64(&fileCoverageEpoch) + 1)
 	return atomic.AddUint64(&fileCoverageEpoch, 1)
+}
+
+// markedFiles returns the files whose mark reached raised.
+func markedFiles(raised uint64) []string {
+	var names []string
+	for p := atomic.LoadPointer(&fileCoverageBanksV1); p != nil; p = (*fileCoverageBank)(p).next {
+		bank := (*fileCoverageBank)(p)
+		if bank.n > 0 {
+			marks := unsafe.Slice(bank.marks, bank.n)
+			files := unsafe.Slice(bank.names, bank.n)
+			for i := range marks {
+				if atomic.LoadUint64(&marks[i]) >= raised {
+					names = append(names, files[i])
+				}
+			}
+		}
+	}
+	return names
 }
 
 // scanFileCoverage returns the files whose mark reached epoch and the files
@@ -104,19 +125,11 @@ func scanFileCoverage(epoch uint64) []string {
 	if contextCoverageAvailable() {
 		return scanContextCoverage(epoch)
 	}
-	var names []string
+	// The test's sites raised its files' marks to epoch+1.
+	names := markedFiles(epoch + 1)
+	marksScanned(names)
 	for p := atomic.LoadPointer(&fileCoverageBanksV1); p != nil; p = (*fileCoverageBank)(p).next {
-		bank := (*fileCoverageBank)(p)
-		if bank.n > 0 {
-			marks := unsafe.Slice(bank.marks, bank.n)
-			files := unsafe.Slice(bank.names, bank.n)
-			for i := range marks {
-				if atomic.LoadUint64(&marks[i]) >= epoch {
-					names = append(names, files[i])
-				}
-			}
-		}
-		if bank.nAlways > 0 {
+		if bank := (*fileCoverageBank)(p); bank.nAlways > 0 {
 			names = append(names, unsafe.Slice(bank.always, bank.nAlways)...)
 		}
 	}

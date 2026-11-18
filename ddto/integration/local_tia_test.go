@@ -111,15 +111,22 @@ type tiaFixture struct {
 	env         []string
 	flags       []string
 	intake      *tiaIntake
+	// readOnly runs local TIA with DD_TIA_RECORD=false.
+	readOnly bool
+	// refusal is the reason that local TIA is expected to give for not
+	// running, or "" when it should run.
+	refusal string
+	// tests are the fixture's top-level tests, as package.Test.
+	tests []string
 	// written is when the fixture last wrote a file, in the past, so that
 	// local TIA's file table vouches for its content as it would for a file
 	// that a user edited earlier.
 	written time.Time
 }
 
-// newTIAFixture writes the fixture in a Git repository with a remote and
-// returns it, run with ddto's local TIA and flags.
-func newTIAFixture(t *testing.T, itr bool, flags ...string) *tiaFixture {
+// newTIAFixture writes files in a Git repository with a remote and returns
+// it, run with ddto's local TIA and flags.
+func newTIAFixture(t *testing.T, itr bool, files map[string]string, flags ...string) *tiaFixture {
 	t.Helper()
 	root, err := filepath.Abs("..")
 	if err != nil {
@@ -129,9 +136,9 @@ func newTIAFixture(t *testing.T, itr bool, flags ...string) *tiaFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f := &tiaFixture{t: t, dir: dir, driver: sharedDriver(t, root), flags: flags, intake: &tiaIntake{itr: itr}, written: time.Now().Add(-time.Hour)}
+	f := &tiaFixture{t: t, dir: dir, driver: sharedDriver(t, root), flags: flags, intake: &tiaIntake{itr: itr}, written: time.Now().Add(-time.Hour), tests: localTIATests}
 	f.write("go.mod", fmt.Sprintf("module example.com/tia\n\ngo 1.25.0\n\nrequire github.com/DataDog/ddtest/ddto v0.0.0\n\nreplace github.com/DataDog/ddtest/ddto => %q\n", filepath.ToSlash(root)))
-	for name, content := range localTIAFixture {
+	for name, content := range files {
 		f.write(name, content)
 	}
 	for _, args := range [][]string{
@@ -188,7 +195,11 @@ type tiaRun struct {
 func (f *tiaFixture) run(args ...string) tiaRun {
 	f.t.Helper()
 	args = append(append([]string{"test", "-json", "-count=1"}, f.flags...), args...)
-	out, stderr, code := command(f.t, f.dir, f.env, f.driver, append(args, "./...")...)
+	env := f.env
+	if f.readOnly {
+		env = append(slices.Clone(env), "DD_TIA_RECORD=false")
+	}
+	out, stderr, code := command(f.t, f.dir, env, f.driver, append(args, "./...")...)
 	run := tiaRun{actions: map[string]string{}, code: code, output: out + stderr}
 	for _, line := range strings.Split(out, "\n") {
 		var event struct{ Action, Package, Test, Output string }
@@ -200,36 +211,47 @@ func (f *tiaFixture) run(args ...string) tiaRun {
 			run.actions[pkg+"."+event.Test] = event.Action
 		}
 	}
-	if strings.Contains(run.output, "WARN") && strings.Contains(run.output, "local TIA") {
-		f.t.Fatalf("local TIA refused:\n%s", run.output)
+	refused := strings.Contains(run.output, "WARN") && strings.Contains(run.output, "local TIA")
+	if refused != (f.refusal != "") || !strings.Contains(run.output, f.refusal) {
+		f.t.Fatalf("local TIA refusal %t, want %q:\n%s", refused, f.refusal, run.output)
 	}
 	return run
 }
 
-// expect checks that exactly the tests in ran ran, and that every other
-// test was skipped.
+// expect checks that exactly the tests in ran ran and passed, that every
+// other test of the fixture was skipped, and that go test passed.
 func (f *tiaFixture) expect(name string, run tiaRun, ran ...string) {
 	f.t.Helper()
+	f.expectFailing(name, run, nil, ran...)
+}
+
+// expectFailing is expect for a run in which the tests in failing ran and
+// failed, and go test failed.
+func (f *tiaFixture) expectFailing(name string, run tiaRun, failing []string, ran ...string) {
+	f.t.Helper()
 	want := map[string]string{}
-	for _, test := range localTIATests {
+	for _, test := range f.tests {
 		want[test] = "skip"
 	}
 	for _, test := range ran {
 		want[test] = "pass"
 	}
-	for test, action := range run.actions {
-		if action == "fail" {
-			want[test] = "fail" // Checked by the caller.
-		}
+	for _, test := range failing {
+		want[test] = "fail"
 	}
 	if !maps.Equal(run.actions, want) {
+		tests := maps.Clone(want)
+		maps.Copy(tests, run.actions)
 		var diff []string
-		for _, test := range localTIATests {
+		for _, test := range slices.Sorted(maps.Keys(tests)) {
 			if run.actions[test] != want[test] {
 				diff = append(diff, fmt.Sprintf("%s=%s want %s", test, run.actions[test], want[test]))
 			}
 		}
 		f.t.Fatalf("%s: %s\n%s", name, strings.Join(diff, ", "), run.output)
+	}
+	if (run.code == 0) != (len(failing) == 0) {
+		f.t.Fatalf("%s: go test exited with %d\n%s", name, run.code, run.output)
 	}
 }
 
@@ -237,7 +259,7 @@ func (f *tiaFixture) expect(name string, run tiaRun, ran ...string) {
 // covered, and the next one skips the tests whose dependencies did not
 // change, whatever Datadog's ITR settings say.
 func TestLocalTIACounters(t *testing.T) {
-	f := newTIAFixture(t, false, "-cover", "-covermode=atomic")
+	f := newTIAFixture(t, false, localTIAFixture, "-cover", "-covermode=atomic", "-coverpkg=./...")
 	everything := slices.Clone(localTIATests)
 
 	f.expect("first run records", f.run(), everything...)
@@ -265,17 +287,10 @@ func TestLocalTIACounters(t *testing.T) {
 	f.expect("a file outside every package changed", f.run(), "alpha.TestUnskippable")
 
 	// A failing test runs until it passes again.
+	flaky := []string{"alpha.TestFlaky"}
 	f.edit("alpha/flaky_test.go", "broken := false", "broken := true")
-	run := f.run()
-	if run.code == 0 || run.actions["alpha.TestFlaky"] != "fail" {
-		t.Fatalf("TestFlaky did not fail: %d %v", run.code, run.actions)
-	}
-	f.expect("a test file changed", run, "alpha.TestA", "alpha.TestB", "alpha.TestData", "alpha.TestSame", "alpha.TestUnskippable")
-	run = f.run()
-	if run.actions["alpha.TestFlaky"] != "fail" {
-		t.Fatalf("the failed test did not run again: %v", run.actions)
-	}
-	f.expect("the failed test runs again", run, "alpha.TestUnskippable")
+	f.expectFailing("a test file changed", f.run(), flaky, "alpha.TestA", "alpha.TestB", "alpha.TestData", "alpha.TestSame", "alpha.TestUnskippable")
+	f.expectFailing("the failed test runs again", f.run(), flaky, "alpha.TestUnskippable")
 	f.edit("alpha/flaky_test.go", "broken := true", "broken := false")
 	f.expect("the failed test fixed", f.run(), "alpha.TestA", "alpha.TestB", "alpha.TestData", "alpha.TestFlaky", "alpha.TestSame", "alpha.TestUnskippable")
 
@@ -305,7 +320,7 @@ func TestLocalTIACounters(t *testing.T) {
 // without per-test coverage: local TIA requests no skippable tests and
 // sends no coverage.
 func TestLocalTIARace(t *testing.T) {
-	f := newTIAFixture(t, true, "-race", "-cover")
+	f := newTIAFixture(t, true, localTIAFixture, "-race", "-cover", "-coverpkg=./...")
 	f.expect("first run records", f.run(), localTIATests...)
 	f.expect("no change", f.run(), "alpha.TestUnskippable")
 	f.edit("lib/one.go", "return 1", "return 2 - 1")
@@ -318,11 +333,208 @@ func TestLocalTIARace(t *testing.T) {
 // With file marks, which also see test files, a test depends on the test
 // files that it runs, not on every test file of its package.
 func TestLocalTIAFileMarks(t *testing.T) {
-	f := newTIAFixture(t, false, "--experimental-file-coverage")
+	f := newTIAFixture(t, false, localTIAFixture, "--experimental-file-coverage")
 	f.expect("first run records", f.run(), localTIATests...)
 	f.expect("no change", f.run(), "alpha.TestUnskippable")
 	f.edit("lib/one.go", "return 1", "return 2 - 1")
 	f.expect("a dependency of TestA changed", f.run(), "alpha.TestA", "alpha.TestUnskippable")
 	f.edit("alpha/flaky_test.go", "\t\tt.Fatal(\"broken\")", "\t\tt.Fatal(\"still broken\")")
 	f.expect("a test's own file changed", f.run(), "alpha.TestFlaky", "alpha.TestUnskippable")
+}
+
+// With DD_TIA_RECORD=false, local TIA skips from what recording runs stored
+// and records nothing: a test that a change affects runs, and loses its
+// entry, until a recording run records it again.
+func TestLocalTIAReadOnly(t *testing.T) {
+	f := newTIAFixture(t, false, localTIAFixture, "-cover", "-covermode=atomic", "-coverpkg=./...")
+	f.readOnly = true
+	f.expect("read-only without a map", f.run(), localTIATests...)
+	f.readOnly = false
+	f.expect("recording run", f.run(), localTIATests...)
+	f.readOnly = true
+	f.expect("read-only, no change", f.run(), "alpha.TestUnskippable")
+	f.edit("lib/one.go", "return 1", "return 2 - 1")
+	f.expect("read-only, a dependency of TestA changed", f.run(), "alpha.TestA", "alpha.TestUnskippable")
+	f.expect("read-only again: TestA has no entry", f.run(), "alpha.TestA", "alpha.TestUnskippable")
+	f.readOnly = false
+	f.expect("recording run records TestA", f.run(), "alpha.TestA", "alpha.TestUnskippable")
+	f.readOnly = true
+	f.expect("read-only after recording", f.run(), "alpha.TestUnskippable")
+}
+
+// localTIAParallelFixture's tests each wait for the other: they pass only
+// when they run in parallel.
+var localTIAParallelFixture = map[string]string{
+	"par/par_test.go": `package par
+
+import "testing"
+
+var first, second = make(chan struct{}), make(chan struct{})
+
+func TestFirst(t *testing.T) {
+	t.Parallel()
+	close(first)
+	<-second
+}
+
+func TestSecond(t *testing.T) {
+	t.Parallel()
+	close(second)
+	<-first
+}
+`,
+}
+
+// A run that does not record collects no per-test coverage of its own, which
+// Go's counters would need top-level tests to run one at a time for: they
+// keep t.Parallel.
+func TestLocalTIAReadOnlyKeepsParallel(t *testing.T) {
+	f := newTIAFixture(t, false, localTIAParallelFixture, "-cover", "-covermode=atomic", "-parallel=2", "-timeout=1m")
+	f.readOnly = true
+	run := f.run()
+	if run.code != 0 || run.actions["par.TestFirst"] != "pass" || run.actions["par.TestSecond"] != "pass" {
+		t.Fatalf("parallel tests did not pass together: %d %v\n%s", run.code, run.actions, run.output)
+	}
+}
+
+// A read-only run without coverage flags, as a pull request's or a
+// developer's, reads the map that a run with them recorded, and depends on
+// what that recording's coverage could not see.
+func TestLocalTIAReadOnlyWithoutCoverageFlags(t *testing.T) {
+	f := newTIAFixture(t, false, localTIAFixture)
+	f.expect("recording run", f.run("-cover", "-covermode=atomic", "-coverpkg=./..."), localTIATests...)
+	f.readOnly = true
+	f.expect("read-only without coverage flags, no change", f.run(), "alpha.TestUnskippable")
+	f.edit("alpha/testdata/input.txt", "input", "changed input")
+	f.expect("read-only, a file that the recording could not see changed", f.run(), "alpha.TestA", "alpha.TestB", "alpha.TestData", "alpha.TestFlaky", "alpha.TestSame", "alpha.TestUnskippable")
+}
+
+// localTIACoverFixture's app tests a library that has tests of its own.
+var localTIACoverFixture = map[string]string{
+	"lib/value.go":      "package lib\n\nfunc Value() int { return 1 }\n",
+	"lib/other.go":      "package lib\n\nfunc Other() int { return 0 }\n",
+	"lib/value_test.go": "package lib\n\nimport \"testing\"\n\nfunc TestValue(t *testing.T) { _ = Value() }\n",
+	"app/app_test.go":   "package app\n\nimport (\n\t\"testing\"\n\n\t\"example.com/tia/lib\"\n)\n\nfunc TestApp(t *testing.T) {\n\tif lib.Value() != 1 {\n\t\tt.Fatal(lib.Value())\n\t}\n}\n",
+}
+
+// Without -coverpkg, Go's counters count only the package under test, and a
+// test of app would not show that it ran lib's code: local TIA refuses to
+// record. With -coverpkg, a test depends on the files of lib that it ran.
+func TestLocalTIACoverPackages(t *testing.T) {
+	f := newTIAFixture(t, false, localTIACoverFixture, "-cover", "-covermode=atomic")
+	f.tests = []string{"app.TestApp", "lib.TestValue"}
+	f.refusal = "needs -coverpkg"
+	f.expect("without -coverpkg", f.run(), f.tests...)
+	f.edit("lib/other.go", "return 0", "return 0 + 0")
+	f.expect("without -coverpkg, nothing is skipped", f.run(), f.tests...)
+
+	f.flags, f.refusal = append(f.flags, "-coverpkg=./..."), ""
+	f.expect("first run with -coverpkg", f.run(), f.tests...)
+	f.edit("lib/other.go", "return 0 + 0", "return 0 * 1")
+	f.expect("-coverpkg: a body that no test ran changed", f.run())
+	f.edit("lib/value.go", "Value() int { return 1 }", "Value() int { return 2 }")
+	f.expectFailing("-coverpkg: a dependency's body changed", f.run(), []string{"app.TestApp"}, "lib.TestValue")
+}
+
+// localTIASubtestFixture's TestCases has a subtest that fails.
+var localTIASubtestFixture = map[string]string{
+	"sub/sub_test.go": "package sub\n\nimport \"testing\"\n\nfunc TestCases(t *testing.T) {\n\tt.Run(\"A\", func(t *testing.T) {})\n\tt.Run(\"B\", func(t *testing.T) { t.Fatal(\"B\") })\n}\n",
+}
+
+// A run that -run narrows to some subtests of a top-level test records
+// nothing: its coverage and status would not be the whole test's.
+func TestLocalTIASubtestNarrowing(t *testing.T) {
+	f := newTIAFixture(t, false, localTIASubtestFixture, "-cover", "-covermode=atomic", "-coverpkg=./...")
+	f.tests = []string{"sub.TestCases"}
+	f.expect("only the passing subtest", f.run("-run", "^TestCases$/^A$"), "sub.TestCases")
+	f.expectFailing("every subtest", f.run(), []string{"sub.TestCases"})
+}
+
+// Local TIA hashes the files in the repository, not those that a user's
+// -overlay compiles instead: it refuses to run with one. (The fixture builds
+// without coverage flags: with -coverpkg, ddto does not compile a covered
+// package from the overlay's file, which is another defect.)
+func TestLocalTIAUserOverlay(t *testing.T) {
+	f := newTIAFixture(t, false, localTIACoverFixture)
+	f.tests = []string{"app.TestApp", "lib.TestValue"}
+	backing := filepath.Join(t.TempDir(), "value.go")
+	writeBacking := func(value string) {
+		if err := os.WriteFile(backing, []byte("package lib\n\nfunc Value() int { return "+value+" }\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeBacking("1")
+	overlay := filepath.Join(t.TempDir(), "overlay.json")
+	data, _ := json.Marshal(map[string]map[string]string{"Replace": {filepath.Join(f.dir, "lib", "value.go"): backing}})
+	if err := os.WriteFile(overlay, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f.flags = append(f.flags, "-overlay="+overlay)
+	f.refusal = "-overlay"
+	f.expect("first run", f.run(), f.tests...)
+	writeBacking("20") // Another size: Go trusts a file whose size and time match.
+	f.expectFailing("the overlay's file changed", f.run(), []string{"app.TestApp"}, "lib.TestValue")
+}
+
+// localTIAInitFixture's tests depend on code that runs before them: a
+// package's initialization and TestMain.
+var localTIAInitFixture = map[string]string{
+	"lib/state.go":      "package lib\n\nvar initial = compute()\n\nfunc Initial() int { return initial }\n",
+	"lib/compute.go":    "package lib\n\nfunc compute() int { return 1 }\n",
+	"lib/prepare.go":    "package lib\n\nvar Prepared int\n\nfunc Prepare() { Prepared = 1 }\n",
+	"app/main_test.go":  "package app\n\nimport (\n\t\"os\"\n\t\"testing\"\n\n\t\"example.com/tia/lib\"\n)\n\nfunc TestMain(m *testing.M) {\n\tlib.Prepare()\n\tos.Exit(m.Run())\n}\n",
+	"app/state_test.go": "package app\n\nimport (\n\t\"testing\"\n\n\t\"example.com/tia/lib\"\n)\n\nfunc TestInitial(t *testing.T) {\n\tif lib.Initial() != 1 {\n\t\tt.Fatal(lib.Initial())\n\t}\n}\n\nfunc TestPrepared(t *testing.T) {\n\tif lib.Prepared != 1 {\n\t\tt.Fatal(lib.Prepared)\n\t}\n}\n",
+}
+
+// Code that runs before a package's first test, at initialization or in
+// TestMain, is in no test's coverage: its files join every test of the
+// package.
+func TestLocalTIACodeBeforeTests(t *testing.T) {
+	for _, flags := range [][]string{{"-cover", "-covermode=atomic", "-coverpkg=./..."}, {"--experimental-file-coverage"}, {"--experimental-file-coverage=context"}} {
+		t.Run(strings.Join(flags, " "), func(t *testing.T) {
+			f := newTIAFixture(t, false, localTIAInitFixture, flags...)
+			f.tests = []string{"app.TestInitial", "app.TestPrepared"}
+			f.expect("first run records", f.run(), f.tests...)
+			f.expect("no change", f.run())
+			f.edit("lib/compute.go", "return 1", "return 2")
+			f.expectFailing("a function that initialization ran changed", f.run(), []string{"app.TestInitial"}, "app.TestPrepared")
+			f.edit("lib/compute.go", "return 2", "return 1")
+			f.expect("fixed", f.run(), f.tests...)
+			f.edit("lib/prepare.go", "Prepared = 1", "Prepared = 2")
+			f.expectFailing("a function that TestMain ran changed", f.run(), []string{"app.TestPrepared"}, "app.TestInitial")
+		})
+	}
+}
+
+// localTIAEmbedFixture embeds one of its own Go files as text.
+var localTIAEmbedFixture = map[string]string{
+	"emb/emb.go":      "package emb\n\nimport _ \"embed\"\n\n//go:embed render.go\nvar Source string\n",
+	"emb/render.go":   "package emb\n\nfunc Render() string { return \"v1\" }\n",
+	"emb/emb_test.go": "package emb\n\nimport (\n\t\"strings\"\n\t\"testing\"\n)\n\nfunc TestSource(t *testing.T) {\n\tif !strings.Contains(Source, \"v1\") {\n\t\tt.Fatal(Source)\n\t}\n}\n",
+}
+
+// An embedded file is data that a test can read without running it: every
+// test of the package depends on it, whatever its extension.
+func TestLocalTIAEmbeddedGoFile(t *testing.T) {
+	f := newTIAFixture(t, false, localTIAEmbedFixture, "-cover", "-covermode=atomic", "-coverpkg=./...")
+	f.tests = []string{"emb.TestSource"}
+	f.expect("first run records", f.run(), f.tests...)
+	f.expect("no change", f.run())
+	f.edit("emb/render.go", "v1", "v2")
+	f.expectFailing("the embedded file changed", f.run(), f.tests)
+}
+
+// localTIARetryFixture's test fails its first attempt and passes its retry.
+var localTIARetryFixture = map[string]string{
+	"retry/retry_test.go": "package retry\n\nimport \"testing\"\n\nvar attempts int\n\nfunc TestFlaky(t *testing.T) {\n\tattempts++\n\tif attempts == 1 {\n\t\tt.Fatal(\"first attempt\")\n\t}\n}\n",
+}
+
+// A test that passed only on a retry is not skipped: its coverage comes from
+// the attempt that failed.
+func TestLocalTIARetriedPass(t *testing.T) {
+	f := newTIAFixture(t, false, localTIARetryFixture, "-cover", "-covermode=atomic", "-coverpkg=./...")
+	f.env = append(f.env, "DD_CIVISIBILITY_FLAKY_RETRY_ENABLED=true")
+	f.tests = []string{"retry.TestFlaky"}
+	f.expect("passed on a retry", f.run(), f.tests...)
+	f.expect("runs again", f.run(), f.tests...)
 }

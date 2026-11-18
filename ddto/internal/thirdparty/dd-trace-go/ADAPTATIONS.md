@@ -1577,8 +1577,11 @@ upstream:
   base name and test name never match each other. Datadog's candidates name
   no module and match as before. `decisionFor` stays the only place that
   decides, so unskippable, attempt-to-fix and modified tests still run.
-- `testing.go` initializes coverage when local TIA is active
-  (`coverage.LocalTIAActive`), with upload as the settings say, and names each
+- `testing.go` initializes coverage when local TIA records the process's
+  tests (`coverage.LocalTIARecords`), with upload as the settings say. A run
+  with `DD_TIA_RECORD=false` only skips: its tests collect per-test coverage
+  only when the settings enable it, and keep `t.Parallel` otherwise.
+  `testing.go` also names each
   top-level test's collector with `coverage.NewTopLevelTestCoverage`. Its
   lines keep their numbers: the integration tests' table of adapted call
   sites names the line that calls the test's body. `coverage.CanCollectPerTestCoverage`
@@ -1589,7 +1592,22 @@ upstream:
   `localtia.WriteRecords` before the writer, so close actions, which run in
   reverse, write the records after every test's coverage is processed.
 - `tslvTest.SetTag` hands each `test.final_status` to `localtia.RecordStatus`:
-  every final status, after retries, is set there.
+  every final status, after retries, is set there. `tslvTest.closeLocked`
+  hands each failed execution to `localtia.RecordFailure`, so that a test that
+  passed only on a retry, whose coverage comes from its first execution,
+  records as flaky.
+- Code that runs outside every test's coverage window, at package
+  initialization, in TestMain or between tests, is in no test's coverage.
+  [`coverage/setup_coverage.go`](civisibility/integrations/gotesting/coverage/setup_coverage.go)
+  is local and hands its files to `localtia.RecordSetup`, which adds them to
+  every test of the process: the in-memory counters that grew before each
+  window (`memory_coverage.go`), the text profile's counts before the first
+  window (`test_coverage.go`), the serial file marks raised before a window
+  and not reported by the previous scan (`file_coverage.go`), and the context
+  bits set before the first window (`file_coverage_context.go`). For the
+  marks, ddto's sites raise a mark to the epoch plus one, so that code at
+  epoch 0 marks its files too, and a scan reports the marks above the test's
+  epoch.
 - `utils.WriteCLIStateFileUnlogged` writes a test process's records to the
   state without recording them in Go's test log, and `CLITests.LocalTIA`
   tells the Git worker not to request Datadog's skippable tests ahead for the

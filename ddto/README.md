@@ -190,8 +190,10 @@ More options follow the same rule:
 - `DD_TIA_ENABLED=true`, which no flag replaces yet, selects the tests to skip
   from the per-test coverage that earlier runs of the repository recorded,
   instead of asking Datadog: a test runs again when a file that it depends on
-  changes. It needs per-test coverage: `-cover -covermode=atomic` or `count`,
-  `-race -cover`, or `--experimental-file-coverage`. See
+  changes. Recording needs per-test coverage: Go's counters with `-coverpkg`,
+  such as `-cover -covermode=atomic -coverpkg=./...` or
+  `-race -cover -coverpkg=./...`, or `--experimental-file-coverage`.
+  `DD_TIA_RECORD=false` only skips, without recording or coverage flags. See
   [Local Test Impact Analysis](docs/mini-runtime.md#local-test-impact-analysis).
 
 `ddtest instrument` reports one test session per command: every package's
@@ -360,6 +362,7 @@ Coverage still requires Go coverage flags.
 | `DD_CIVISIBILITY_CODE_COVERAGE_REPORT_UPLOAD_ENABLED` | `true` | Allow backend-enabled aggregate coverage-report uploads. |
 | `DD_CODE_COVERAGE_FLAGS` | Unset | Comma-separated report labels, up to 32. |
 | `DD_TIA_ENABLED` | `false` | Read by the CLI: select the tests to skip locally, from the per-test coverage of earlier runs, whatever the backend's ITR settings. |
+| `DD_TIA_RECORD` | `true` | With `DD_TIA_ENABLED`: `false` skips from the stored map without collecting per-test coverage for it or recording, so tests keep `t.Parallel`. |
 
 See the [feature matrix](docs/ci-parity.md) for combinations and limitations.
 

@@ -30,18 +30,32 @@ var process struct {
 	active    bool
 	stateDir  string
 	selection *PackageSelection // this package's, or nil
+	// record reports that this process records its tests.
+	record bool
 	// records names this process's Records file.
 	records string
 
 	mu       sync.Mutex
 	coverage map[Test][]File
 	status   map[Test]string
+	// failed are the tests with an execution that failed.
+	failed map[Test]bool
+	// setup are the files of code that ran outside every test's coverage,
+	// which every test depends on.
+	setup []File
 }
 
 // Active reports whether local TIA runs in this test process.
 func Active() bool {
 	process.once.Do(load)
 	return process.active
+}
+
+// Recording reports whether this test process records its tests' coverage
+// and final status for local TIA. A process that only skips collects no
+// per-test coverage of its own, so its tests keep t.Parallel.
+func Recording() bool {
+	return Active() && process.record
 }
 
 func load() {
@@ -56,7 +70,7 @@ func load() {
 		}
 		return
 	}
-	process.active, process.stateDir = true, dir
+	process.active, process.stateDir, process.record = true, dir, selection.Record
 	own := filepath.Clean(packageDirectory)
 	for i := range selection.Packages {
 		if filepath.Clean(selection.Packages[i].Dir) == own {
@@ -67,7 +81,10 @@ func load() {
 	if process.selection != nil {
 		skip = len(process.selection.Skip)
 	}
-	log.Debug("civisibility.tia: local Test Impact Analysis active [skippable:%d]", skip)
+	log.Debug("civisibility.tia: local Test Impact Analysis active [skippable:%d record:%t]", skip, process.record)
+	if !process.record {
+		return
+	}
 	// Until WriteRecords completes it, the file tells the CLI that this
 	// process ran and has not finished.
 	process.records = fmt.Sprintf("%s%d-%d.json", RecordsFilePrefix, os.Getpid(), time.Now().UnixNano())
@@ -125,7 +142,7 @@ func SkippableTestsResponse() *net.SkippableTestsResponse {
 // RecordCoverage records the files that a top-level test's execution
 // covered. With -count, a test runs more than once and keeps every file.
 func RecordCoverage(test Test, files []File) {
-	if !Active() {
+	if !Recording() {
 		return
 	}
 	process.mu.Lock()
@@ -134,6 +151,18 @@ func RecordCoverage(test Test, files []File) {
 		process.coverage = map[Test][]File{}
 	}
 	process.coverage[test] = mergeFiles(process.coverage[test], files)
+}
+
+// RecordSetup records files of code that ran outside every test's coverage
+// window, such as a package's initialization or TestMain before the tests:
+// every test of the process depends on them.
+func RecordSetup(files []File) {
+	if !Recording() {
+		return
+	}
+	process.mu.Lock()
+	defer process.mu.Unlock()
+	process.setup = mergeFiles(process.setup, files)
 }
 
 // mergeFiles returns the files of both lists, each once, with their bitmaps
@@ -159,7 +188,7 @@ func mergeFiles(into, files []File) []File {
 // whose names have a slash, are never skipped and are not recorded. A test
 // that -count runs again keeps a failure.
 func RecordStatus(test Test, status string) {
-	if strings.Contains(test.Name, "/") || !Active() {
+	if strings.Contains(test.Name, "/") || !Recording() {
 		return
 	}
 	process.mu.Lock()
@@ -172,20 +201,39 @@ func RecordStatus(test Test, status string) {
 	}
 }
 
+// RecordFailure records that an execution of a test failed.
+func RecordFailure(test Test) {
+	if strings.Contains(test.Name, "/") || !Recording() {
+		return
+	}
+	process.mu.Lock()
+	defer process.mu.Unlock()
+	if process.failed == nil {
+		process.failed = map[Test]bool{}
+	}
+	process.failed[test] = true
+}
+
 // WriteRecords completes this process's Records file in the CLI's state,
 // without recording it in Go's test log, with the tests that finished with
 // coverage. It runs when CI Visibility closes: the file of a process that
 // crashes before stays incomplete, and the CLI then forgets its package's
 // tests, which run again.
 func WriteRecords() {
-	if !Active() {
+	if !Recording() {
 		return
 	}
 	process.mu.Lock()
 	records := Records{Dir: packageDirectory, Complete: true, Tests: []TestRecord{}}
 	for test, files := range process.coverage {
 		if status, ok := process.status[test]; ok {
-			records.Tests = append(records.Tests, TestRecord{Test: test, Status: status, Files: files})
+			// A pass after an execution that failed, as on a retry, is
+			// flaky, which is not skipped: the coverage comes from the
+			// first execution.
+			if status == "pass" && process.failed[test] {
+				status = "flaky"
+			}
+			records.Tests = append(records.Tests, TestRecord{Test: test, Status: status, Files: mergeFiles(slices.Clone(files), process.setup)})
 		}
 	}
 	process.mu.Unlock()

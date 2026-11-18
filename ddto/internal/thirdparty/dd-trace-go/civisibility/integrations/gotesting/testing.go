@@ -364,7 +364,7 @@ func instrumentTestingMWithOptions(m *testing.M, wrapperOpts additionalFeatureWr
 	}
 	wrapperOpts.efdFaultySessionGuard = newEarlyFlakeDetectionFaultySession(settings, knownTests)
 	if settings != nil {
-		if settings.CodeCoverage || coverage.LocalTIAActive() {
+		if settings.CodeCoverage || coverage.LocalTIARecords() {
 			// Initialize the runtime coverage if enabled, or for ddto's local TIA.
 			coverage.InitializeCoverage(m, settings.CodeCoverage)
 			coverageInitialized = true
