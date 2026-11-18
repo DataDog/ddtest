@@ -36,6 +36,12 @@ func normalizeCommitSHAs(tags map[string]string) {
 func addMergeCommitTag(tags map[string]string) {
 	var sha string
 	switch tags[constants.CIProviderName] {
+	case "appveyor":
+		commit := env.Get("APPVEYOR_REPO_COMMIT")
+		head := env.Get("APPVEYOR_PULL_REQUEST_HEAD_COMMIT")
+		if numericPR.MatchString(env.Get("APPVEYOR_PULL_REQUEST_NUMBER")) && fullCommitSHA(head) && !strings.EqualFold(commit, head) {
+			sha = commit
+		}
 	case "github":
 		if mergeRef.MatchString(env.Get("GITHUB_REF")) {
 			sha = env.Get("GITHUB_SHA")

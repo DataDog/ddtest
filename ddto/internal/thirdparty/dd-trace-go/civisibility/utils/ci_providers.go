@@ -312,6 +312,7 @@ func extractAzurePipelines() map[string]string {
 
 	tags[constants.GitRepositoryURL] = firstEnv("SYSTEM_PULLREQUEST_SOURCEREPOSITORYURI", "BUILD_REPOSITORY_URI")
 	tags[constants.GitCommitSHA] = firstEnv("SYSTEM_PULLREQUEST_SOURCECOMMITID", "BUILD_SOURCEVERSION")
+	tags[constants.GitHeadCommit] = env.Get("SYSTEM_PULLREQUEST_SOURCECOMMITID")
 	tags[constants.GitBranch] = branch
 	tags[constants.GitTag] = tag
 	tags[constants.GitCommitMessage] = env.Get("BUILD_SOURCEVERSIONMESSAGE")
