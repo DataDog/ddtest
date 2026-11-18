@@ -897,3 +897,64 @@ func TestSameBasenameFilesInPackagesDontCollide(t *testing.T) {
 		}
 	}
 }
+
+func TestSplitPartsTakeTheirFilesModuleName(t *testing.T) {
+	t.Chdir(t.TempDir())
+	writeTestTree(t, "tests/__init__.py", "tests/a/__init__.py", "tests/a/test_init.py", "flat/test_util.py")
+	namer := newPytestModuleNamer()
+	for path, want := range map[string]string{
+		"tests/a/test_init.py[1/2]": "tests.a.test_init",
+		"flat/test_util.py[3/3]":    "test_util",
+	} {
+		if got := namer.pytestModuleName(path); got != want {
+			t.Errorf("pytestModuleName(%q) = %q, want %q", path, got, want)
+		}
+	}
+}
+
+func TestSplitPartsOfDifferentFilesDontCollide(t *testing.T) {
+	t.Chdir(t.TempDir())
+	writeTestTree(t, "a/test_x.py", "b/test_y.py")
+	// Two files split in as many parts, and one file's own parts: the
+	// parts of a file are that file, which pytest imports once.
+	parts := map[string]int{"a/test_x.py[1/2]": 10, "a/test_x.py[2/2]": 9, "b/test_y.py[1/2]": 8, "b/test_y.py[2/2]": 7}
+	if hasDuplicateBasenames(parts) {
+		t.Error("parts of different files with distinct module names reported as colliding")
+	}
+	if groups := basenameCollisionGroups(parts); len(groups) != 0 {
+		t.Errorf("collision groups for parts of different files: %v", groups)
+	}
+}
+
+func TestSplitPartsCollideWithSameNamedFiles(t *testing.T) {
+	t.Chdir(t.TempDir())
+	writeTestTree(t, "x/test_util.py", "y/test_util.py", "z/test_other.py")
+	units := map[string]int{"x/test_util.py[1/2]": 10, "x/test_util.py[2/2]": 10, "y/test_util.py": 5, "z/test_other.py": 12}
+	groups := basenameCollisionGroups(units)
+	if len(groups) != 1 || len(groups[0]) != 3 {
+		t.Errorf("collision groups = %v, want x's parts and y's file in one", groups)
+	}
+	// Outside packages, x's parts and y's file share the module name
+	// test_util: pytest would fail to import the second on one runner.
+	builder := newTestSplitBuilder(3)
+	for _, runner := range builder.distributeFiles(units, true) {
+		var x, y bool
+		for _, unit := range runner {
+			x = x || strings.HasPrefix(unit, "x/test_util.py")
+			y = y || unit == "y/test_util.py"
+		}
+		if x && y {
+			t.Errorf("runner %v holds two files pytest imports as test_util", runner)
+		}
+	}
+}
+
+func TestSplitPartsLeaveARunnerForTheirGroupsOtherFiles(t *testing.T) {
+	t.Chdir(t.TempDir())
+	writeTestTree(t, "x/test_util.py", "y/test_util.py")
+	// Two runners: x's parts on one, so that y, which pytest imports as
+	// test_util too, gets the other.
+	units := map[string]int{"x/test_util.py[1/2]": 10, "x/test_util.py[2/2]": 10, "y/test_util.py": 5}
+	builder := newTestSplitBuilder(2)
+	assertDistribution(t, builder.distributeFiles(units, true), [][]string{{"x/test_util.py[1/2]", "x/test_util.py[2/2]"}, {"y/test_util.py"}})
+}
