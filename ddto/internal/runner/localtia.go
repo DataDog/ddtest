@@ -966,8 +966,10 @@ func gitCommonDir(ctx context.Context, root string) (string, error) {
 // repository: whether one changed while go test ran comes from its size and
 // modification time. After a run that does not record, the merge still takes
 // the files as the run found them and drops the tests that their changes
-// affect, and adds none.
-func (r *localTIARun) finish(ctx context.Context) {
+// affect, and adds none. A run that records then uploads the map, unless
+// signaled is closed: a signal before the upload skips it, and one during
+// it cancels it.
+func (r *localTIARun) finish(ctx context.Context, signaled <-chan struct{}) {
 	if r == nil {
 		return
 	}
@@ -1010,10 +1012,26 @@ func (r *localTIARun) finish(ctx context.Context) {
 		return
 	}
 	// A run that records shares the map that it merged; one that only
-	// skips never does.
-	if r.record && r.remote != nil {
-		r.remote.upload(ctx, merged, localTIAWarn(r))
+	// skips never does, and neither does one that a signal ended.
+	if !r.record || r.remote == nil {
+		return
 	}
+	select {
+	case <-signaled:
+		r.debug.printf("local tia remote upload skipped reason=%q", "a signal")
+		return
+	default:
+	}
+	uploadCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	go func() {
+		select {
+		case <-signaled:
+			cancel()
+		case <-uploadCtx.Done():
+		}
+	}()
+	r.remote.upload(uploadCtx, merged, localTIAWarn(r))
 }
 
 // adopt writes a map that Datadog stored as this configuration's local map,

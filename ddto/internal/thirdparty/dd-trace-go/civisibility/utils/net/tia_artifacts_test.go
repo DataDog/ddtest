@@ -99,6 +99,37 @@ func TestTIAArtifactLookup(t *testing.T) {
 	}
 }
 
+// A lookup reads at most 5 MiB, as the API stores, before and after HTTP's
+// gzip encoding: a larger or expanding body is an error, not a map.
+func TestTIAArtifactLookupBound(t *testing.T) {
+	large := append([]byte(`{"version":1}`), bytes.Repeat([]byte(" "), MaxTIAArtifactBytes)...)
+	for _, encoded := range []bool{false, true} {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("x-dd-tia-git-commit-sha", tiaCommitA)
+			w.Header().Set("x-dd-tia-source-commit", tiaCommitA)
+			w.Header().Set(HeaderContentType, ContentTypeJSON)
+			body := large
+			if encoded {
+				w.Header().Set(HeaderContentEncoding, ContentEncodingGzip)
+				var compressed bytes.Buffer
+				writer := gzip.NewWriter(&compressed)
+				_, _ = writer.Write(large)
+				_ = writer.Close()
+				body = compressed.Bytes()
+			}
+			_, _ = w.Write(body)
+		}))
+		origEnv := saveEnv()
+		setCiVisibilityEnv(os.Getenv("PATH"), server.URL)
+		artifact, err := NewTIAArtifactsClient().LookupTIAArtifact(context.Background(), tiaTestKey, []string{tiaCommitA})
+		restoreEnv(origEnv)
+		server.Close()
+		if artifact != nil || err == nil {
+			t.Fatalf("gzip-encoded %t: %d bytes, %v", encoded, len(artifact.Content), err)
+		}
+	}
+}
+
 // The upload sends the map's JSON as it is, as dd-trace-py does, with the key
 // and the commit in the query, and succeeds with a 201; a body over 5 MiB is
 // not sent.

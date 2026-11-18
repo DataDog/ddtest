@@ -1078,7 +1078,16 @@ func RunRuntime(ctx context.Context, args []string, cli CLIOptions, stdin io.Rea
 	if opts.localTIA {
 		refusal := "the test processes do not receive the CLI's Git state, as when a launcher starts them or no test package is in the checkout"
 		if len(handoff) != 0 {
-			tia, refusal = startLocalTIA(ctx, &plan, opts, !cli.LocalTIAReadOnly, dir, gitWorker.state, gitWorker.gitRecord, debug, stderr)
+			// Preparation, which can wait for Datadog's TIA artifacts API
+			// and a shallow clone's fetch: a signal stops it before go
+			// test starts.
+			interrupted := interruptibly(ctx, signals, func(ctx context.Context) {
+				tia, refusal = startLocalTIA(ctx, &plan, opts, !cli.LocalTIAReadOnly, dir, gitWorker.state, gitWorker.gitRecord, debug, stderr)
+			})
+			if interrupted != nil {
+				debug.printf("preparation interrupted")
+				return interruptedStatus(interrupted)
+			}
 		}
 		if tia == nil {
 			fmt.Fprintln(stderr, version.BuildLogPrefix+" WARN: local TIA ("+LocalTIAEnv+"): "+refusal+"; tests run without it")
@@ -1170,10 +1179,12 @@ func RunRuntime(ctx context.Context, args []string, cli CLIOptions, stdin io.Rea
 			plan.goVersion = testRuntimeVersion(ctx, dir, plan.goVersion, plan.goExperiment)
 		}
 	}
-	relayed := gitWorker.relaySignals(signals)
+	signaled := make(chan struct{})
+	relayed := observeSignals(gitWorker.relaySignals(signals), signaled)
 	exitCode = runGo(ctx, dir, forwarded, env, relayed, stdin, stdout, stderr)
-	// Before the worker's state, which holds the records, is removed.
-	tia.finish(ctx)
+	// Before the worker's state, which holds the records, is removed. A
+	// signal, during go test or now, cancels the map's upload.
+	tia.finish(ctx, signaled)
 	var coverage *float64
 	if session != nil {
 		if path := coverProfilePath(opts, dir); path != "" {
@@ -1193,6 +1204,22 @@ func RunRuntime(ctx context.Context, args []string, cli CLIOptions, stdin io.Rea
 	gitWorker.finish()
 	gitWorker = nil
 	return statusAfterSignal(relayed, exitCode, debug)
+}
+
+// observeSignals passes on the signals of in and closes signaled at the first.
+func observeSignals(in <-chan os.Signal, signaled chan<- struct{}) <-chan os.Signal {
+	out := make(chan os.Signal, cap(in))
+	go func() {
+		first := true
+		for s := range in {
+			if first {
+				first = false
+				close(signaled)
+			}
+			out <- s
+		}
+	}()
+	return out
 }
 
 // statusAfterSignal returns the status of a signal that arrived after go test

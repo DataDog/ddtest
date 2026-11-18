@@ -1,15 +1,19 @@
 package net
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"maps"
+	"io"
+	"net/http"
 	"net/url"
 	"regexp"
 	"slices"
 	"strconv"
+	"time"
 
 	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/log"
 )
@@ -86,10 +90,11 @@ func (c *client) LookupTIAArtifact(ctx context.Context, key TIAArtifactKey, comm
 	attributes := map[string]any{"git_commit_shas": commits}
 	encoded, _ := json.Marshal(key)
 	_ = json.Unmarshal(encoded, &attributes)
-	body := map[string]any{"data": map[string]any{"id": c.id, "type": tiaArtifactLookupType, "attributes": attributes}}
-	config := RequestConfig{Method: "POST", URL: c.getURLPath(tiaArtifactsURLPath + "/lookup"), Body: body, Format: FormatJSON}
-	// The handler asks for, and decodes, a gzip-encoded response.
-	response, err := c.tiaRequestWith(ctx, config, map[string]string{HeaderContentType: ContentTypeJSONAlternative, "Accept": ContentTypeJSON})
+	body, err := json.Marshal(map[string]any{"data": map[string]any{"id": c.id, "type": tiaArtifactLookupType, "attributes": attributes}})
+	if err != nil {
+		return nil, err
+	}
+	response, err := c.tiaRequest(ctx, "POST", c.getURLPath(tiaArtifactsURLPath+"/lookup"), body, map[string]string{HeaderContentType: ContentTypeJSONAlternative, "Accept": ContentTypeJSON})
 	if err != nil {
 		return nil, err
 	}
@@ -122,8 +127,7 @@ func (c *client) StoreTIAArtifact(ctx context.Context, key TIAArtifactKey, commi
 	query.Set("language", key.Language)
 	query.Set("compatibility_version", strconv.Itoa(key.CompatibilityVersion))
 	query.Set("git_commit_sha", commit)
-	config := RequestConfig{Method: "PUT", URL: c.getURLPath(tiaArtifactsURLPath) + "?" + query.Encode(), Body: content}
-	response, err := c.tiaRequestWith(ctx, config, map[string]string{HeaderContentType: tiaArtifactContentType})
+	response, err := c.tiaRequest(ctx, "PUT", c.getURLPath(tiaArtifactsURLPath)+"?"+query.Encode(), content, map[string]string{HeaderContentType: tiaArtifactContentType})
 	if err != nil {
 		return err
 	}
@@ -134,16 +138,82 @@ func (c *client) StoreTIAArtifact(ctx context.Context, key TIAArtifactKey, commi
 	return nil
 }
 
-// tiaRequestWith sends config with the client's headers and headers, with
-// ctx and at most one retry.
-func (c *client) tiaRequestWith(ctx context.Context, config RequestConfig, headers map[string]string) (*Response, error) {
-	config.Headers = maps.Clone(c.headers)
-	maps.Copy(config.Headers, headers)
-	config.MaxRetries = 1
-	handler := &RequestHandler{Client: c.handler.Client, Context: ctx}
-	response, err := handler.SendRequest(config)
-	if err == nil && response == nil {
-		err = errors.New("civisibility.tia: no response")
+// tiaResponse is a TIA artifacts response: its status, headers and body.
+type tiaResponse struct {
+	StatusCode int
+	Header     http.Header
+	Body       []byte
+}
+
+// errTIAResponseTooLarge is a response body over MaxTIAArtifactBytes, before
+// or after HTTP's gzip encoding.
+var errTIAResponseTooLarge = fmt.Errorf("civisibility.tia: a response over %d bytes", MaxTIAArtifactBytes)
+
+// tiaRequest sends a request with the client's headers and headers, with ctx
+// and at most one retry, after a transport error, a 429 or a 5xx. It reads at
+// most MaxTIAArtifactBytes of the response, which it decodes when it is
+// gzip-encoded, also at most MaxTIAArtifactBytes: the shared request handler
+// reads whole bodies, which a lookup must not.
+func (c *client) tiaRequest(ctx context.Context, method, url string, body []byte, headers map[string]string) (*tiaResponse, error) {
+	var last error
+	for attempt := range 2 {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(DefaultBackoff):
+			}
+		}
+		request, err := http.NewRequestWithContext(ctx, method, url, bytes.NewReader(body))
+		if err != nil {
+			return nil, redactURLError(err)
+		}
+		for key, value := range c.headers {
+			request.Header.Set(key, value)
+		}
+		for key, value := range headers {
+			request.Header.Set(key, value)
+		}
+		request.Header.Set(HeaderAcceptEncoding, ContentEncodingGzip)
+		response, err := c.handler.Client.Do(request)
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			last = redactURLError(err)
+			continue
+		}
+		data, err := readTIABody(response)
+		_ = response.Body.Close()
+		if err != nil {
+			return nil, err
+		}
+		if response.StatusCode == HTTPStatusTooManyRequests || response.StatusCode >= 500 {
+			last = fmt.Errorf("civisibility.tia: HTTP %d", response.StatusCode)
+			continue
+		}
+		return &tiaResponse{Body: data, StatusCode: response.StatusCode, Header: response.Header}, nil
 	}
-	return response, err
+	return nil, last
+}
+
+// readTIABody reads at most MaxTIAArtifactBytes of a response, decoded when
+// it is gzip-encoded.
+func readTIABody(response *http.Response) ([]byte, error) {
+	reader := io.LimitReader(response.Body, MaxTIAArtifactBytes+1)
+	if response.Header.Get(HeaderContentEncoding) == ContentEncodingGzip {
+		decoded, err := gzip.NewReader(reader)
+		if err != nil {
+			return nil, err
+		}
+		reader = io.LimitReader(decoded, MaxTIAArtifactBytes+1)
+	}
+	data, err := io.ReadAll(reader)
+	switch {
+	case err != nil:
+		return nil, err
+	case len(data) > MaxTIAArtifactBytes:
+		return nil, errTIAResponseTooLarge
+	}
+	return data, nil
 }

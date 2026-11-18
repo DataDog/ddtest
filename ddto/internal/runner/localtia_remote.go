@@ -37,9 +37,10 @@ var newTIAArtifactsClient = func() net.TIAArtifactsClient {
 // localTIAMaxUpload is the largest map that a run uploads, in bytes of JSON.
 var localTIAMaxUpload = net.MaxTIAArtifactBytes
 
-// unshallowRepository expands a shallow clone, as the Git worker does before
-// it uploads the repository's metadata; tests replace it.
-var unshallowRepository = utils.UnshallowGitRepository
+// unshallowRepository expands the shallow clone whose root is dir, as the
+// Git worker does before it uploads the repository's metadata; tests replace
+// it.
+var unshallowRepository = utils.UnshallowGitRepositoryIn
 
 // localTIARemote shares a run's map through Datadog's TIA artifacts API: the
 // key of the run's maps, and the commits that a lookup names, nearest first,
@@ -126,7 +127,9 @@ func (r *localTIARemote) lookupCommits(ctx context.Context) []string {
 		started := time.Now()
 		gitCtx, cancel := context.WithTimeout(ctx, localTIAUnshallowTimeout)
 		utils.SetGitCommandContext(gitCtx)
-		expanded, err := unshallowRepository()
+		// The checkout's, which go test's -C can make another directory
+		// than the CLI's.
+		expanded, err := unshallowRepository(r.root)
 		utils.SetGitCommandContext(context.Background())
 		cancel()
 		r.debug.printf("local tia unshallow expanded=%t duration=%s error=%v", expanded, time.Since(started).Round(time.Millisecond), err)

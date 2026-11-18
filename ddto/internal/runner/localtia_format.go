@@ -9,6 +9,7 @@ import (
 	"slices"
 
 	"github.com/DataDog/ddtest/ddto/internal/localtia"
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/utils/net"
 )
 
 // tiaMapFile is the stored form of a map. Files are one table, by column,
@@ -85,7 +86,9 @@ func unmarshalTIAMap(data []byte) (*tiaMap, bool) {
 		if err != nil {
 			return nil, false
 		}
-		if data, err = io.ReadAll(reader); err != nil {
+		// No larger than the TIA artifacts API stores: a small download
+		// cannot expand without bound.
+		if data, err = io.ReadAll(io.LimitReader(reader, net.MaxTIAArtifactBytes+1)); err != nil || len(data) > net.MaxTIAArtifactBytes {
 			return nil, false
 		}
 	}
@@ -253,13 +256,15 @@ func encodeTests(p *tiaStoredPackage, tests []tiaTest, paths []string, index map
 func (f tiaMapFile) decode() (*tiaMap, bool) {
 	files := f.Files
 	n := len(files.Paths)
-	if len(files.Hashes) != n || len(files.Decls) != n || files.Sizes != nil && len(files.Sizes) != n || files.ModTimes != nil && len(files.ModTimes) != n {
+	// Sizes and times come together, one of each per file, or not at all.
+	stats := files.Sizes != nil || files.ModTimes != nil
+	if len(files.Hashes) != n || len(files.Decls) != n || stats && (len(files.Sizes) != n || len(files.ModTimes) != n) {
 		return nil, false
 	}
 	m := emptyTIAMap()
 	for i, path := range files.Paths {
 		state := tiaFile{Hash: files.Hashes[i], Decl: files.Decls[i]}
-		if files.Sizes != nil {
+		if stats {
 			state.Size, state.ModTime = files.Sizes[i], files.ModTimes[i]
 		}
 		m.Files[path] = state

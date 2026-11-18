@@ -1630,23 +1630,30 @@ upstream:
   `NewTIAArtifactsClient` builds the client of `newClientWithServiceNameAndSubdomain`
   for the `api` subdomain, agentless or through the Agent's EVP proxy, without
   starting telemetry, and returns nil in agentless mode without an API key.
-  `LookupTIAArtifact` posts a `ci_app_tia_artifact_lookup` request, whose
-  response the handler decodes when it is gzip-encoded, and
+  `LookupTIAArtifact` posts a `ci_app_tia_artifact_lookup` request and
   `StoreTIAArtifact` puts the map's JSON as it is, as dd-trace-py does, each
-  with one retry and the caller's context. The lookup reads the matched and source commits from
-  the response's headers, which `http.go`'s `Response` now carries in
-  `Header`; that field and its assignment are the only change to `http.go`.
+  with one retry, after a transport error, a 429 or a 5xx, and the caller's
+  context. They send their requests themselves, with the client's HTTP
+  client and headers, instead of through `RequestHandler`, which reads whole
+  bodies: they read at most the API's 5 MiB of a response and of its gzip
+  decoding, so a small download cannot expand without bound, and they read
+  the lookup's matched and source commits from the response's headers.
+  `http.go` stays as upstream.
   The CLI calls `utils.UseCLIGitState` with the Git worker's record before it
   creates the client, as the worker does, so that the CI tags, among them
   `git.repository_url` and `git.commit.sha`, come from that record. Before a
-  lookup in a shallow clone that has only its commit, it calls
-  `utils.UnshallowGitRepository`, as the worker's upload would later, which
+  lookup in a shallow clone that has only its commit, it calls local
+  [`utils/git_unshallow_dir.go`](civisibility/utils/git_unshallow_dir.go)'s
+  `UnshallowGitRepositoryIn` with the checkout's root, which `go test -C` can
+  make another directory than the CLI's: it runs `UnshallowGitRepository`
+  with that directory as the Git commands' working and safe directory, and
+  restores the process's own after. The worker's upload, in the checkout,
   then finds the history and does not fetch again.
 
 Checks: `TestITRCandidatesMatchLocalTIAModule`, the `internal/localtia` and
 `internal/runner` `LocalTIA` tests, `TestFileCoverageOutsideWindows` and
 `TestFileCoverageBetweenWindowsWithoutLocalTIA`, `TestTIAArtifactLookup`,
-`TestTIAArtifactUpload`, `TestTIAArtifactsThroughTheAgent` and
+`TestTIAArtifactLookupBound`, `TestTIAArtifactUpload`, `TestTIAArtifactsThroughTheAgent` and
 `TestTIAArtifactsWithoutCredentials`, and `TestLocalTIACounters`,
 `TestLocalTIARace`, `TestLocalTIAFileMarks`, `TestLocalTIARepeatedExecutions`,
 `TestLocalTIALineCoverageFromAnotherSource`, `TestLocalTIARecordFallback` and

@@ -580,7 +580,9 @@ func TestLocalTIAMapEncoding(t *testing.T) {
 	if _, ok := read.decode(); ok {
 		t.Fatal("an index out of range decoded")
 	}
-	for _, bad := range []string{"", "{", `{"version":1,"files":[{"p":"a.go"}],"packages":{}}`, "\x1f\x8bnot gzip"} {
+	for _, bad := range []string{"", "{", `{"version":1,"files":[{"p":"a.go"}],"packages":{}}`, "\x1f\x8bnot gzip",
+		`{"version":1,"files":{"paths":["a.go"],"sizes":[1],"hashes":["h"],"decls":["d"]},"packages":{}}`,
+		`{"version":1,"files":{"paths":["a.go"],"mtimes":[1],"hashes":["h"],"decls":["d"]},"packages":{}}`} {
 		if _, ok := unmarshalTIAMap([]byte(bad)); ok {
 			t.Errorf("%q decoded", bad)
 		}
@@ -694,7 +696,7 @@ func TestLocalTIAFinish(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	run.finish(t.Context())
+	run.finish(t.Context(), nil)
 	merged, err := run.loadMap()
 	if err != nil {
 		t.Fatal(err)
@@ -861,4 +863,40 @@ func TestLocalTIASourceID(t *testing.T) {
 	if got := localTIASourceID(&Plan{fileCoverage: true}, mustParse(t, "./..."), graph()); got != "file marks" {
 		t.Fatalf("file marks source %q", got)
 	}
+}
+
+// A gzip-compressed map, as a download could be, decodes only up to the
+// 5 MiB that the TIA artifacts API stores: a small download cannot expand
+// without bound.
+func TestLocalTIAMapGzipBound(t *testing.T) {
+	m, _ := storedMap()
+	data, err := marshalTIAMap(m, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := unmarshalTIAMap(gzipTIAMap(data)); !ok {
+		t.Fatal("a small map")
+	}
+	padded := append(slices.Clone(data), bytes.Repeat([]byte(" "), 5<<20)...)
+	if _, ok := unmarshalTIAMap(gzipTIAMap(padded)); ok {
+		t.Fatal("a map that expands past 5 MiB decoded")
+	}
+}
+
+// A stored map that does not decode is no map: decoding never panics on what
+// a file or a download holds.
+func FuzzLocalTIAMapDecode(f *testing.F) {
+	m, _ := storedMap()
+	m.Packages["ex/p"].Tests[0].Bitmaps = map[string][]byte{"lib/a.go": {0x40}}
+	for _, withStats := range []bool{true, false} {
+		data, err := marshalTIAMap(m, withStats)
+		if err != nil {
+			f.Fatal(err)
+		}
+		f.Add(data)
+	}
+	f.Add([]byte(`{"version":1,"files":{"paths":["a.go"],"sizes":[1],"hashes":["h"],"decls":["d"]},"packages":{}}`))
+	f.Fuzz(func(t *testing.T, data []byte) {
+		_, _ = unmarshalTIAMap(data)
+	})
 }

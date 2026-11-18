@@ -96,6 +96,11 @@ type tiaIntake struct {
 	gzipped  bool
 	lookups  [][]string
 	uploads  []tiaUpload
+	// block, "lookup" or "upload", holds those requests until their
+	// client gives up or release closes, after telling arrived.
+	block   string
+	arrived chan string
+	release chan struct{}
 }
 
 type tiaUpload struct {
@@ -112,6 +117,19 @@ func gzipBytes(data []byte) []byte {
 }
 
 func (in *tiaIntake) handler(w http.ResponseWriter, r *http.Request) {
+	in.mu.Lock()
+	block, arrived, release := in.block, in.arrived, in.release
+	in.mu.Unlock()
+	for _, request := range []struct{ name, suffix, method string }{{"lookup", "/api/unstable/ci/tia/artifacts/lookup", http.MethodPost}, {"upload", "/api/unstable/ci/tia/artifacts", http.MethodPut}} {
+		if block == request.name && r.Method == request.method && strings.HasSuffix(r.URL.Path, request.suffix) {
+			arrived <- request.name
+			select {
+			case <-r.Context().Done():
+			case <-release:
+			}
+			return
+		}
+	}
 	in.mu.Lock()
 	defer in.mu.Unlock()
 	switch {
@@ -797,7 +815,8 @@ func TestLocalTIARemoteMapStats(t *testing.T) {
 func TestLocalTIARemoteMapUnreadable(t *testing.T) {
 	f := newTIAFixture(t, false, localTIACoverFixture, "-cover", "-covermode=atomic", "-coverpkg=./...")
 	f.tests = []string{"app.TestApp", "lib.TestValue"}
-	for i, artifact := range [][]byte{[]byte("not a map"), gzipBytes([]byte(`{"version":1,"files":[{"p":"lib/value.go"}]}`)), {0x1f, 0x8b, 0}} {
+	for i, artifact := range [][]byte{[]byte("not a map"), gzipBytes([]byte(`{"version":1,"files":[{"p":"lib/value.go"}]}`)), {0x1f, 0x8b, 0},
+		[]byte(`{"version":1,"files":{"paths":["a.go"],"sizes":[1],"hashes":["h"],"decls":["d"]},"packages":{}}`)} {
 		f.intake.artifact = artifact
 		f.forgetMap()
 		f.expect(fmt.Sprintf("unreadable map %d", i), f.run(), f.tests...)
@@ -809,38 +828,48 @@ func TestLocalTIARemoteMapUnreadable(t *testing.T) {
 
 // A shallow clone has only its commit: before the lookup, the run expands
 // it as the Git worker would for Test Optimization, once, so that the lookup
-// names the recent commits too.
+// names the recent commits too. It expands the checkout that go test runs
+// in, also when -C names it from another directory.
 func TestLocalTIARemoteMapShallowClone(t *testing.T) {
-	origin := newTIAFixture(t, false, localTIACoverFixture, "-cover", "-covermode=atomic", "-coverpkg=./...")
-	for i := range 3 {
-		if out, stderr, code := command(t, origin.dir, testEnv(), "git", "-c", "user.name=TIA Fixture", "-c", "user.email=tia@example.invalid", "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", fmt.Sprint(i)); code != 0 {
-			t.Fatalf("git commit: %s %s", out, stderr)
-		}
-	}
-	clone := filepath.Join(t.TempDir(), "clone")
-	// A file URL, which --depth needs; on Windows its path starts with the
-	// drive, after a slash.
-	source := filepath.ToSlash(origin.dir)
-	if !strings.HasPrefix(source, "/") {
-		source = "/" + source
-	}
-	if out, stderr, code := command(t, origin.dir, testEnv(), "git", "clone", "--depth=1", (&url.URL{Scheme: "file", Path: source}).String(), clone); code != 0 {
-		t.Fatalf("git clone: %s %s", out, stderr)
-	}
-	f := *origin
-	f.dir, f.t = clone, t
-	f.tests = []string{"app.TestApp", "lib.TestValue"}
-	f.env = append(slices.Clone(f.env), "DD_TRACE_DEBUG=true")
-	run := f.run()
-	f.expect("shallow clone without a map", run, f.tests...)
-	lookups, _ := f.intake.requests()
-	if lookups != 1 || len(f.intake.lookups[0]) != 4 || f.intake.lookups[0][0] != f.head() {
-		t.Fatalf("lookups %q, want HEAD and its 3 ancestors", f.intake.lookups)
-	}
-	for _, line := range strings.Split(run.output, "\n") {
-		if i := strings.Index(line, "local tia unshallow"); i >= 0 {
-			t.Logf("%s", line[i:])
-		}
+	for _, outside := range []bool{false, true} {
+		t.Run(fmt.Sprintf("outside %t", outside), func(t *testing.T) {
+			origin := newTIAFixture(t, false, localTIACoverFixture, "-cover", "-covermode=atomic", "-coverpkg=./...")
+			for i := range 3 {
+				if out, stderr, code := command(t, origin.dir, testEnv(), "git", "-c", "user.name=TIA Fixture", "-c", "user.email=tia@example.invalid", "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", fmt.Sprint(i)); code != 0 {
+					t.Fatalf("git commit: %s %s", out, stderr)
+				}
+			}
+			clone := filepath.Join(t.TempDir(), "clone")
+			// A file URL, which --depth needs; on Windows its path starts
+			// with the drive, after a slash.
+			source := filepath.ToSlash(origin.dir)
+			if !strings.HasPrefix(source, "/") {
+				source = "/" + source
+			}
+			if out, stderr, code := command(t, origin.dir, testEnv(), "git", "clone", "--depth=1", (&url.URL{Scheme: "file", Path: source}).String(), clone); code != 0 {
+				t.Fatalf("git clone: %s %s", out, stderr)
+			}
+			f := *origin
+			f.dir, f.t = clone, t
+			head := f.head()
+			if outside {
+				// The CLI runs in a directory outside any checkout.
+				f.dir, f.chdir = t.TempDir(), clone
+			}
+			f.tests = []string{"app.TestApp", "lib.TestValue"}
+			f.env = append(slices.Clone(f.env), "DD_TRACE_DEBUG=true")
+			run := f.run()
+			f.expect("shallow clone without a map", run, f.tests...)
+			lookups, _ := f.intake.requests()
+			if lookups != 1 || len(f.intake.lookups[0]) != 4 || f.intake.lookups[0][0] != head {
+				t.Fatalf("lookups %q, want HEAD and its 3 ancestors", f.intake.lookups)
+			}
+			for _, line := range strings.Split(run.output, "\n") {
+				if i := strings.Index(line, "local tia unshallow"); i >= 0 {
+					t.Logf("%s", line[i:])
+				}
+			}
+		})
 	}
 }
 

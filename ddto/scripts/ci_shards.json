@@ -343,6 +343,9 @@
       "parity": [
         "TestCIVisibilityUnixAgent"
       ],
+      "transparency": [
+        "TestLocalTIARemoteMapSignals"
+      ],
       "sdk-orchestrion": [
         "TestMiniOrchestrionSupportedVersions"
       ]
@@ -357,6 +360,9 @@
       ],
       "parity": [
         "TestCIVisibilityUnixAgent"
+      ],
+      "transparency": [
+        "TestLocalTIARemoteMapSignals"
       ]
     },
     "windows": {

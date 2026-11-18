@@ -911,8 +911,9 @@ the runs that update it. Delete the directory to start again.
   commit is expanded first, as the Git worker expands it for Test
   Optimization's repository upload (`git fetch --shallow-since="1 month ago"
   --filter=blob:none`), which then does not fetch again; this happens before
-  `go test` starts. A run that has a local map, however old, does not look
-  one up.
+  `go test` starts, in the checkout that `go test` runs in, also when `-C`
+  names it from another directory. A run that has a local map, however old,
+  does not look one up.
 - On a hit, the run writes the map as its local map and selects from it.
   Sizes and modification times from another machine cannot vouch for a
   file's hash, as a tarball or an image layer can keep them for other
@@ -937,10 +938,15 @@ the runs that update it. Delete the directory to start again.
   Agent's EVP proxy. Without an API key in agentless mode, there is no
   request. A miss, an error, a timeout (10 s for the lookup, 30 s for the
   upload, 60 s for a shallow clone's fetch), a response whose commits are not
-  the ones asked for, or a map that does not decode only goes to the debug
-  log: the run continues as without a map, and the transport never changes
-  test results or the exit status. The API must be enabled for the
-  organization; a disabled one answers as a miss.
+  the ones asked for, a response over 5 MiB, before or after its gzip
+  encoding, or a map that does not decode only goes to the debug log: the run
+  continues as without a map, and the transport never changes test results
+  or the exit status. The API must be enabled for the organization; a
+  disabled one answers as a miss.
+- An interrupt or termination signal stops a lookup or a shallow clone's
+  fetch at once, before `go test` starts, and the CLI ends with the signal's
+  status, as during the rest of preparation. After a signal that reached
+  `go test`, no upload starts, and one during the upload stops it.
 - A shared map holds the repository's file paths, the hashes of their
   contents and declarations, package import paths, test names and statuses,
   and the line numbers that each test covered, as bitmaps. It holds no

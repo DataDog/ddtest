@@ -83,7 +83,13 @@ func TestLocalTIALookupCommits(t *testing.T) {
 	slices.Reverse(commits)
 	unshallowed := 0
 	original := unshallowRepository
-	unshallowRepository = func() (bool, error) { unshallowed++; return false, nil }
+	unshallowRepository = func(root string) (bool, error) {
+		if root != dir {
+			t.Errorf("unshallow in %s, want %s", root, dir)
+		}
+		unshallowed++
+		return false, nil
+	}
 	t.Cleanup(func() { unshallowRepository = original })
 	remote := &localTIARemote{commits: []string{commits[0]}, root: dir, debug: nil}
 	if got := remote.lookupCommits(context.Background()); !slices.Equal(got, commits[:20]) || unshallowed != 0 {
