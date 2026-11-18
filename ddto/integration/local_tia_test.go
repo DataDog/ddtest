@@ -77,7 +77,10 @@ var localTIATests = []string{"alpha.TestA", "alpha.TestB", "alpha.TestData", "al
 // itr says, and counts the requests for skippable tests and the per-test
 // coverage payloads.
 type tiaIntake struct {
-	itr       bool
+	itr bool
+	// efd turns Early Flake Detection on: every test of the fixture is new
+	// and runs again without coverage.
+	efd       bool
 	mu        sync.Mutex
 	skippable int
 	coverage  int
@@ -89,7 +92,10 @@ func (in *tiaIntake) handler(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case strings.HasSuffix(r.URL.Path, "/setting"):
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, `{"data":{"id":"tia","type":"ci_app_test_service_libraries_settings","attributes":{"code_coverage":false,"tests_skipping":%t,"itr_enabled":%t,"require_git":false,"known_tests_enabled":false,"impacted_tests_enabled":false,"flaky_test_retries_enabled":false,"early_flake_detection":{"enabled":false},"test_management":{"enabled":false}}}}`, in.itr, in.itr)
+		fmt.Fprintf(w, `{"data":{"id":"tia","type":"ci_app_test_service_libraries_settings","attributes":{"code_coverage":false,"tests_skipping":%t,"itr_enabled":%t,"require_git":false,"known_tests_enabled":%t,"impacted_tests_enabled":false,"flaky_test_retries_enabled":false,"early_flake_detection":{"enabled":%t,"faulty_session_threshold":100,"slow_test_retries":{"5s":2}},"test_management":{"enabled":false}}}}`, in.itr, in.itr, in.efd, in.efd)
+	case strings.HasSuffix(r.URL.Path, "/ci/libraries/tests"):
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"data":{"id":"tia","type":"ci_app_libraries_tests","attributes":{"tests":{"example.com/other":{"other_test.go":["TestOther"]}}}}}`)
 	case strings.HasSuffix(r.URL.Path, "/skippable"):
 		in.skippable++
 		w.Header().Set("Content-Type", "application/json")
@@ -111,13 +117,17 @@ type tiaFixture struct {
 	env         []string
 	flags       []string
 	intake      *tiaIntake
-	// readOnly runs local TIA with DD_TIA_RECORD=false.
-	readOnly bool
+	// readOnly runs local TIA with DD_TIA_RECORD=false, and auto without
+	// DD_TIA_RECORD, whose default is auto; otherwise every package records,
+	// with DD_TIA_RECORD=true.
+	readOnly, auto bool
 	// refusal is the reason that local TIA is expected to give for not
 	// running, or "" when it should run.
 	refusal string
 	// tests are the fixture's top-level tests, as package.Test.
 	tests []string
+	// chdir is go test's -C directory, or "".
+	chdir string
 	// written is when the fixture last wrote a file, in the past, so that
 	// local TIA's file table vouches for its content as it would for a file
 	// that a user edited earlier.
@@ -194,10 +204,17 @@ type tiaRun struct {
 // test takes from its cache keeps the selection of the run that produced it.
 func (f *tiaFixture) run(args ...string) tiaRun {
 	f.t.Helper()
-	args = append(append([]string{"test", "-json", "-count=1"}, f.flags...), args...)
-	env := f.env
-	if f.readOnly {
-		env = append(slices.Clone(env), "DD_TIA_RECORD=false")
+	words := []string{"test"}
+	if f.chdir != "" {
+		words = append(words, "-C", f.chdir)
+	}
+	args = append(append(append(words, "-json", "-count=1"), f.flags...), args...)
+	env := slices.Clone(f.env)
+	switch {
+	case f.readOnly:
+		env = append(env, "DD_TIA_RECORD=false")
+	case !f.auto:
+		env = append(env, "DD_TIA_RECORD=true")
 	}
 	out, stderr, code := command(f.t, f.dir, env, f.driver, append(args, "./...")...)
 	run := tiaRun{actions: map[string]string{}, code: code, output: out + stderr}
@@ -537,4 +554,120 @@ func TestLocalTIARetriedPass(t *testing.T) {
 	f.tests = []string{"retry.TestFlaky"}
 	f.expect("passed on a retry", f.run(), f.tests...)
 	f.expect("runs again", f.run(), f.tests...)
+}
+
+// Early Flake Detection runs a new test again without coverage: the test is
+// not skipped next time, since its other executions could have run other
+// code. Once it is no longer new, it runs once more and is recorded.
+func TestLocalTIARepeatedExecutions(t *testing.T) {
+	f := newTIAFixture(t, false, localTIACoverFixture, "-cover", "-covermode=atomic", "-coverpkg=./...")
+	f.tests = []string{"app.TestApp", "lib.TestValue"}
+	f.env = append(f.env, "DD_CIVISIBILITY_EARLY_FLAKE_DETECTION_ENABLED=true")
+	f.intake.efd = true
+	f.expect("new tests, run again by Early Flake Detection", f.run(), f.tests...)
+	f.intake.efd = false
+	f.expect("known tests", f.run(), f.tests...)
+	f.expect("unchanged", f.run())
+}
+
+// localTIAAutoFixture has two test packages: a, whose two tests each run a
+// file of their own, and b, whose three tests do.
+var localTIAAutoFixture = map[string]string{
+	"a/a.go":      "package a\n\nfunc A() int { return 1 }\n",
+	"a/b.go":      "package a\n\nfunc B() int { return 1 }\n",
+	"a/a_test.go": "package a\n\nimport \"testing\"\n\nfunc TestA(t *testing.T) { _ = A() }\n\nfunc TestB(t *testing.T) { _ = B() }\n",
+	"b/c.go":      "package b\n\nfunc C() int { return 1 }\n",
+	"b/d.go":      "package b\n\nfunc D() int { return 1 }\n",
+	"b/e.go":      "package b\n\nfunc E() int { return 1 }\n",
+	"b/b_test.go": "package b\n\nimport \"testing\"\n\nfunc TestC(t *testing.T) { _ = C() }\n\nfunc TestD(t *testing.T) { _ = D() }\n\nfunc TestE(t *testing.T) { _ = E() }\n",
+}
+
+// With DD_TIA_RECORD's default, auto, a test package records while it skips
+// fewer than 51% of its tests, and otherwise only skips: in one run, a, which
+// skips one test of two, records, and b, which skips two of three, does not.
+func TestLocalTIAAutoRecord(t *testing.T) {
+	f := newTIAFixture(t, false, localTIAAutoFixture, "-cover", "-covermode=atomic", "-coverpkg=./...")
+	f.tests = []string{"a.TestA", "a.TestB", "b.TestC", "b.TestD", "b.TestE"}
+	f.auto = true
+	f.expect("no map: every package records", f.run(), f.tests...)
+	f.expect("unchanged", f.run())
+	f.edit("a/b.go", "return 1", "return 2")
+	f.edit("b/e.go", "return 1", "return 2")
+	f.expect("a records, b only skips", f.run(), "a.TestB", "b.TestE")
+	f.expect("a recorded TestB, b did not record TestE", f.run(), "b.TestE")
+}
+
+// With auto, a run without per-test coverage only skips, and says so when a
+// package would have recorded.
+func TestLocalTIAAutoWithoutCoverage(t *testing.T) {
+	f := newTIAFixture(t, false, localTIACoverFixture)
+	f.tests = []string{"app.TestApp", "lib.TestValue"}
+	f.auto = true
+	f.refusal = "2 test packages would record their tests, but recording needs per-test coverage"
+	f.expect("no map", f.run(), f.tests...)
+	f.expect("still no map", f.run(), f.tests...)
+	f.auto, f.refusal, f.flags = false, "", []string{"-cover", "-covermode=atomic", "-coverpkg=./..."}
+	f.expect("recording with Go's counters", f.run(), f.tests...)
+	f.auto, f.flags = true, nil
+	f.expect("every test skipped: no package would record", f.run())
+	f.edit("lib/value.go", "return 1", "return 1 + 0")
+	f.refusal = "2 test packages would record"
+	f.expect("every test runs", f.run(), f.tests...)
+}
+
+// localTIAVendorFixture vendors a dependency and does not require ddto, whose
+// runtime the CLI then provides through a workspace of its own.
+var localTIAVendorFixture = map[string]string{
+	"go.mod":          "module example.com/tia\n\ngo 1.25.0\n\nrequire example.com/dep v0.0.0\n\nreplace example.com/dep => ./depsrc\n",
+	"depsrc/go.mod":   "module example.com/dep\n\ngo 1.25.0\n",
+	"depsrc/dep.go":   "package dep\n\nfunc Value() int { return 1 }\n",
+	"app/app_test.go": "package app\n\nimport (\n\t\"testing\"\n\n\t\"example.com/dep\"\n)\n\nfunc TestApp(t *testing.T) {\n\tif dep.Value() != 1 {\n\t\tt.Fatal(dep.Value())\n\t}\n}\n",
+}
+
+// When the CLI provides a vendored project's dependencies from its own
+// workspace, Go compiles them from outside the repository: local TIA
+// refuses, as file coverage does.
+func TestLocalTIAProvidedVendor(t *testing.T) {
+	f := newTIAFixture(t, false, localTIAVendorFixture, "-cover", "-covermode=atomic", "-coverpkg=./...")
+	if out, stderr, code := command(t, f.dir, testEnv("GOFLAGS=-mod=mod"), "go", "mod", "vendor"); code != 0 {
+		t.Fatalf("go mod vendor: %s %s", out, stderr)
+	}
+	f.tests = []string{"app.TestApp"}
+	f.refusal = "vendor"
+	f.expect("first run", f.run(), f.tests...)
+	f.edit("vendor/example.com/dep/dep.go", "return 1", "return 2")
+	f.expectFailing("a vendored dependency changed", f.run(), f.tests)
+}
+
+// A coverage source is the set of packages that Go's counters count, not
+// -coverpkg's text: ./... from app counts app alone, and from the
+// repository's root also lib. A run with the broader scope, which -run keeps
+// from running app's test, keeps what the narrower recording could not see.
+// (Run, a test that the narrower scope recorded would run again: its record
+// has no line coverage of lib for the broader counters.)
+func TestLocalTIACoverageScope(t *testing.T) {
+	f := newTIAFixture(t, false, localTIACoverFixture, "-cover", "-covermode=atomic", "-coverpkg=./...")
+	f.tests = []string{"app.TestApp"}
+	f.chdir = "app"
+	f.expect("recording from app", f.run(), "app.TestApp")
+	f.chdir, f.tests = "", []string{"lib.TestValue"}
+	f.expect("recording lib from the root", f.run("-run", "TestValue"), "lib.TestValue")
+	f.tests = []string{"app.TestApp", "lib.TestValue"}
+	f.edit("lib/value.go", "Value() int { return 1 }", "Value() int { return 2 }")
+	// Without counters, which would run app's test for its line coverage.
+	f.readOnly, f.flags = true, nil
+	f.expectFailing("read-only after a change in lib", f.run(), []string{"app.TestApp"}, "lib.TestValue")
+}
+
+// A test that file marks recorded has no line bitmaps: a run that collects
+// Go's counters runs it, through ITR's safeguard for candidates without line
+// coverage, so that the coverage profile holds its lines.
+func TestLocalTIALineCoverageFromAnotherSource(t *testing.T) {
+	f := newTIAFixture(t, false, localTIACoverFixture, "--experimental-file-coverage")
+	f.tests = []string{"app.TestApp", "lib.TestValue"}
+	f.expect("recording with file marks", f.run(), f.tests...)
+	f.expect("file marks again", f.run())
+	profile := filepath.Join(t.TempDir(), "cover.out")
+	f.flags, f.readOnly = []string{"-cover", "-covermode=atomic", "-coverpkg=./...", "-coverprofile=" + profile}, true
+	f.expect("read-only with Go's counters", f.run(), f.tests...)
 }

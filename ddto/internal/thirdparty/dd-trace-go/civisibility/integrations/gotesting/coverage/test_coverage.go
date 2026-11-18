@@ -715,6 +715,14 @@ func NewTopLevelTestCoverage(sessionID, moduleID, suiteID, testID uint64, testFi
 // settings say.
 func LocalTIARecords() bool { return localtia.Recording() }
 
+// LocalTIAUncovered tells ddto's local TIA that a top-level test ran without
+// collecting coverage, as an Early Flake Detection, retry or attempt-to-fix
+// execution does: that execution could run code that the test's coverage
+// does not show.
+func LocalTIAUncovered(module, suite, name string) {
+	localtia.RecordUncovered(localtia.Test{Module: module, Suite: suite, Name: name})
+}
+
 // coverageSourceFile returns the path in the repository of a source file,
 // which the runtime names by its import path with -trimpath.
 func coverageSourceFile(path string) string {

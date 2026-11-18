@@ -809,10 +809,10 @@ func (ddm *M) executeInternalTest(testInfo *testingTInfo, wrapperOpts additional
 				tParentOldBarrier = *tParent.barrier
 				*tParent.barrier = nil
 			}
+		} else if coverageEnabled { // a retry, or an execution whose coverage is not collected
+			coverage.LocalTIAUncovered(testInfo.moduleName, testInfo.suiteName, testInfo.testName)
 		}
-
-		if tCoverage != nil {
-			// Capture after user cleanup and descendants, before delivery resumes.
+		if tCoverage != nil { // Capture after user cleanup and descendants, before delivery resumes.
 			registerTestCoverageCleanup(t, tCoverage, tParentOldBarrier)
 		}
 

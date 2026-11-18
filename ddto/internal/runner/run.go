@@ -118,6 +118,9 @@ type Plan struct {
 	// tested is the build with tests, which preparation lists for local TIA
 	// and file coverage.
 	tested []goPackage
+	// vendorProvided reports that the CLI provides the vendored
+	// dependencies from its cache, outside the repository.
+	vendorProvided bool
 }
 
 // savedEnvironment records the caller's values of the Go settings that go test
@@ -898,7 +901,7 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime, pro
 			plan.Warnings = append(plan.Warnings, "--experimental-file-coverage: "+refusal+"; per-test coverage keeps Go's coverage counters")
 		}
 	}
-	plan.tested = tested
+	plan.tested, plan.vendorProvided = tested, vendorProvided
 	plan.coverOverlay = needsCoverOverlay(dir, opts, packages, rewrittenPackages)
 	plan.File = filepath.Join(temp, "overlay.json")
 	plan.InstrumentedFiles = len(rewritten.Files)
@@ -1064,7 +1067,7 @@ func RunRuntime(ctx context.Context, args []string, cli CLIOptions, stdin io.Rea
 		plan.goVersion = testRuntimeVersion(ctx, dir, plan.goVersion, plan.goExperiment)
 	}
 	if opts.localTIA {
-		if refusal := localTIARefusal(&plan, opts, !cli.LocalTIAReadOnly); refusal != "" {
+		if refusal := localTIARefusal(&plan, opts, cli.LocalTIARecord); refusal != "" {
 			fmt.Fprintln(stderr, version.BuildLogPrefix+" WARN: local TIA ("+LocalTIAEnv+"): "+refusal+"; tests run without it")
 			opts.localTIA = false
 		}
@@ -1075,7 +1078,7 @@ func RunRuntime(ctx context.Context, args []string, cli CLIOptions, stdin io.Rea
 	if opts.localTIA {
 		refusal := "the test processes do not receive the CLI's Git state, as when a launcher starts them or no test package is in the checkout"
 		if len(handoff) != 0 {
-			tia, refusal = startLocalTIA(ctx, &plan, opts, !cli.LocalTIAReadOnly, dir, gitWorker.state, gitWorker.gitRecord.SourceRoot, debug, stderr)
+			tia, refusal = startLocalTIA(ctx, &plan, opts, cli.LocalTIARecord, dir, gitWorker.state, gitWorker.gitRecord.SourceRoot, debug, stderr)
 		}
 		if tia == nil {
 			fmt.Fprintln(stderr, version.BuildLogPrefix+" WARN: local TIA ("+LocalTIAEnv+"): "+refusal+"; tests run without it")

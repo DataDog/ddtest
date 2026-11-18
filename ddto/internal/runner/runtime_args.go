@@ -43,38 +43,53 @@ type CLIOptions struct {
 	FileCoverage, FileCoverageContext bool
 	// LocalTIA selects the tests to skip from the per-test coverage that
 	// earlier runs of the repository recorded, instead of asking Datadog
-	// (LocalTIAEnv). LocalTIAReadOnly only skips: the run records nothing
-	// new (LocalTIARecordEnv).
-	LocalTIA, LocalTIAReadOnly bool
+	// (LocalTIAEnv). LocalTIARecord says which test packages record their
+	// tests (LocalTIARecordEnv): LocalTIARecordAuto, the default, or
+	// LocalTIARecordAlways or LocalTIARecordNever.
+	LocalTIA       bool
+	LocalTIARecord string
 }
 
 // LocalTIAEnv enables local Test Impact Analysis; no flag does.
 const LocalTIAEnv = "DD_TIA_ENABLED"
 
-// LocalTIARecordEnv set to false makes local TIA skip without recording.
+// LocalTIARecordEnv says which test packages record their tests for local
+// TIA: true for every one, false for none, which only skip, and auto, the
+// default, for each package that skips few of its tests
+// (localTIARecordPercent).
 const LocalTIARecordEnv = "DD_TIA_RECORD"
+
+// The values of LocalTIARecordEnv.
+const (
+	LocalTIARecordAuto   = "auto"
+	LocalTIARecordAlways = "true"
+	LocalTIARecordNever  = "false"
+)
 
 // WithLocalTIAEnvironment applies the values of LocalTIAEnv and
 // LocalTIARecordEnv. It returns why it ignores a value that is not a
-// boolean, or "".
+// boolean, or for LocalTIARecordEnv also auto, or "".
 func (o CLIOptions) WithLocalTIAEnvironment(enabled, record string) (CLIOptions, string) {
 	var ignored []string
-	for _, setting := range []struct {
-		name, value string
-		apply       func(bool)
-	}{
-		{LocalTIAEnv, enabled, func(on bool) { o.LocalTIA = on }},
-		{LocalTIARecordEnv, record, func(on bool) { o.LocalTIAReadOnly = !on }},
-	} {
-		if setting.value == "" {
-			continue
-		}
-		on, err := strconv.ParseBool(setting.value)
+	if enabled != "" {
+		on, err := strconv.ParseBool(enabled)
 		if err != nil {
-			ignored = append(ignored, fmt.Sprintf("%s=%q is not a boolean; ignoring it", setting.name, setting.value))
-			continue
+			ignored = append(ignored, fmt.Sprintf("%s=%q is not a boolean; ignoring it", LocalTIAEnv, enabled))
+		} else {
+			o.LocalTIA = on
 		}
-		setting.apply(on)
+	}
+	o.LocalTIARecord = LocalTIARecordAuto
+	if record != "" && !strings.EqualFold(record, LocalTIARecordAuto) {
+		on, err := strconv.ParseBool(record)
+		switch {
+		case err != nil:
+			ignored = append(ignored, fmt.Sprintf("%s=%q is neither a boolean nor auto; using auto", LocalTIARecordEnv, record))
+		case on:
+			o.LocalTIARecord = LocalTIARecordAlways
+		default:
+			o.LocalTIARecord = LocalTIARecordNever
+		}
 	}
 	return o, strings.Join(ignored, "; ")
 }

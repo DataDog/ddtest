@@ -1,7 +1,6 @@
 package coverage
 
 import (
-	"slices"
 	"sync"
 
 	"github.com/DataDog/ddtest/ddto/internal/localtia"
@@ -16,8 +15,9 @@ import (
 //     window, or since the process started, when a window begins;
 //   - Go's counters in text profiles: the entries counted when the first
 //     window begins;
-//   - file marks: the files whose mark the time before a window raised and
-//     the previous scan did not report, when the window begins;
+//   - file marks: the files whose mark the time before a window raised, when
+//     the window begins: a scan advances the epoch, so work after it raises
+//     marks above what the window reported;
 //   - context file coverage: the bits that goroutines set before the first
 //     window began.
 var outsideWindows struct {
@@ -26,12 +26,13 @@ var outsideWindows struct {
 	after []uint32
 	// baseline is set once text profiles took the first window's baseline.
 	baseline bool
-	// scanned are the files that the last scan of file marks reported.
-	scanned map[string]bool
 	// first is set once context file coverage read the bits set before
 	// the first window.
 	first bool
 }
+
+// recordSetup is localtia.RecordSetup; tests replace it.
+var recordSetup = localtia.RecordSetup
 
 // recordOutsideWindows hands files to local TIA as the setup of every test.
 func recordOutsideWindows(files []coveredFile) {
@@ -45,7 +46,7 @@ func recordOutsideWindows(files []coveredFile) {
 		}
 	}
 	if len(setup) != 0 {
-		localtia.RecordSetup(setup)
+		recordSetup(setup)
 	}
 }
 
@@ -105,29 +106,10 @@ func profileOutsideWindows(filename string) {
 }
 
 // marksOutsideWindows records the files whose mark reached raised, the value
-// that sites set before the window that begins, and that the last scan did
-// not report.
+// that sites set since the last scan, or since the process started, when a
+// window begins.
 func marksOutsideWindows(raised uint64) {
-	if !localTIAEnabled {
-		return
+	if localTIAEnabled {
+		recordOutsideWindows(fileCoverageFiles("", markedFiles(raised)))
 	}
-	names := markedFiles(raised)
-	outsideWindows.Lock()
-	names = slices.DeleteFunc(names, func(name string) bool { return outsideWindows.scanned[name] })
-	outsideWindows.Unlock()
-	recordOutsideWindows(fileCoverageFiles("", names))
-}
-
-// marksScanned keeps the files that a scan reported.
-func marksScanned(names []string) {
-	if !localTIAEnabled {
-		return
-	}
-	scanned := make(map[string]bool, len(names))
-	for _, name := range names {
-		scanned[name] = true
-	}
-	outsideWindows.Lock()
-	outsideWindows.scanned = scanned
-	outsideWindows.Unlock()
 }

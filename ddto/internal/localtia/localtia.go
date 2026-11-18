@@ -37,12 +37,11 @@ type Test struct {
 	Name   string `json:"name"`
 }
 
-// Selection is what the CLI hands the test processes: whether they record
-// their tests' coverage and status, and for each test package with tests to
-// skip, those tests. A run that does not record (DD_TIA_RECORD=false) only
-// skips, from what earlier runs recorded.
+// Selection is what the CLI hands the test processes: for each test package
+// that has tests to skip or records its tests, its selection. A package that
+// does not record (DD_TIA_RECORD) only skips, from what earlier runs
+// recorded; one without a selection neither skips nor records.
 type Selection struct {
-	Record   bool               `json:"record"`
 	Packages []PackageSelection `json:"packages,omitempty"`
 }
 
@@ -50,8 +49,15 @@ type Selection struct {
 // directory that go test runs its test binary in.
 type PackageSelection struct {
 	Dir string `json:"dir"`
+	// Record says that the package's test processes record their tests'
+	// coverage and status.
+	Record bool `json:"record,omitempty"`
 	// Skip are the tests that local TIA lets ITR skip.
 	Skip []Test `json:"skip"`
+	// NoLineCoverage are the tests of Skip whose records hold no line
+	// coverage that this run's coverage counters could take: ITR runs them
+	// when the process collects coverage (MissingLineCodeCoverage).
+	NoLineCoverage []Test `json:"no_line_coverage,omitempty"`
 	// Coverage is the union of the skipped tests' line bitmaps by
 	// repository path, from their last run, with which ITR completes the
 	// package's coverage profile.

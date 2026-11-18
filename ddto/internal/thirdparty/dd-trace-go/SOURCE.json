@@ -11,7 +11,7 @@
   "files": [
     {
       "path": "ADAPTATIONS.md",
-      "sha256": "6d2c505eab4fa3b56907e9a02215d8836b85087a81212336fed3787f3b5eb224",
+      "sha256": "fe72847ef40674016bb9959fba165ca3d430369aaeebfb2cce33ab6e7afcd641",
       "role": "local"
     },
     {
@@ -339,7 +339,7 @@
     },
     {
       "path": "civisibility/integrations/gotesting/coverage/file_coverage.go",
-      "sha256": "5780eba254a6cad928e57bb9d8c75cd6638a0074cb673762fab7d71e549bccaa",
+      "sha256": "62e284ea1456a48da1f771b80b8a2c53e07241bb85ed5e99361a2ccd00b7fa42",
       "role": "local"
     },
     {
@@ -354,7 +354,7 @@
     },
     {
       "path": "civisibility/integrations/gotesting/coverage/file_coverage_test.go",
-      "sha256": "d397374494498e8456a586568f789c293f2adda4d1f59d4b940a360d3893aab7",
+      "sha256": "7179ac16066687bc6e6b618c7de5b6964a261d680e48f3f56bafc0993e991ff6",
       "role": "local"
     },
     {
@@ -440,12 +440,12 @@
     },
     {
       "path": "civisibility/integrations/gotesting/coverage/setup_coverage.go",
-      "sha256": "f804ec1ec1884717e00a81dd859dd640cedf9f182b9ff22757487119839da162",
+      "sha256": "6c25709e6958fa8c3f98b2fa099d250017e20eb4b04e9ed0f887ffac1b14ddfd",
       "role": "local"
     },
     {
       "path": "civisibility/integrations/gotesting/coverage/test_coverage.go",
-      "sha256": "0f5ad993a3aa4b978ed1fd9550dbc58f703de1d7fa7eee9724e9fcce4eadbfaa",
+      "sha256": "0cd969e6e59d31a22a0fca3ac0312b55fe1697189b4f97027a6eb63390cc5a76",
       "role": "adapted",
       "source_path": "internal/civisibility/integrations/gotesting/coverage/test_coverage.go",
       "source_sha256": "90f437bef02e1c4eca6e220f13d128ce8da64109359b66b98db6b5bb3bb5c352"
@@ -836,7 +836,7 @@
     },
     {
       "path": "civisibility/integrations/gotesting/testing.go",
-      "sha256": "f29b6e01d9451ef8373574cbc380b9e775a403beb9e607b5ad365d36e317af75",
+      "sha256": "edcc456093c1c70b86f840b74fdc34cc0296824e7960ba2c9e17df16326233d3",
       "role": "adapted",
       "source_path": "internal/civisibility/integrations/gotesting/testing.go",
       "source_sha256": "73324a56f1b1c581df8620a4f67a51743b198b2470d43f9b645425fff6a63646"

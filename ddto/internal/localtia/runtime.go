@@ -40,6 +40,9 @@ var process struct {
 	status   map[Test]string
 	// failed are the tests with an execution that failed.
 	failed map[Test]bool
+	// uncovered are the tests with an execution whose coverage was not
+	// collected.
+	uncovered map[Test]bool
 	// setup are the files of code that ran outside every test's coverage,
 	// which every test depends on.
 	setup []File
@@ -70,11 +73,12 @@ func load() {
 		}
 		return
 	}
-	process.active, process.stateDir, process.record = true, dir, selection.Record
+	process.active, process.stateDir = true, dir
 	own := filepath.Clean(packageDirectory)
 	for i := range selection.Packages {
 		if filepath.Clean(selection.Packages[i].Dir) == own {
 			process.selection = &selection.Packages[i]
+			process.record = selection.Packages[i].Record
 		}
 	}
 	skip := 0
@@ -124,7 +128,8 @@ func SkippableTestsResponse() *net.SkippableTestsResponse {
 			tests = map[string][]net.SkippableResponseDataAttributes{}
 			response.Skippables[test.Suite] = tests
 		}
-		tests[test.Name] = append(tests[test.Name], net.SkippableResponseDataAttributes{Suite: test.Suite, Name: test.Name, Module: test.Module})
+		tests[test.Name] = append(tests[test.Name], net.SkippableResponseDataAttributes{Suite: test.Suite, Name: test.Name, Module: test.Module,
+			MissingLineCodeCoverage: slices.Contains(selected.NoLineCoverage, test)})
 	}
 	response.ResponseTestsCount = len(selected.Skip)
 	if len(selected.Coverage) == 0 {
@@ -214,6 +219,20 @@ func RecordFailure(test Test) {
 	process.failed[test] = true
 }
 
+// RecordUncovered records that an execution of a test ran without collecting
+// coverage, as a retry or an Early Flake Detection execution does.
+func RecordUncovered(test Test) {
+	if strings.Contains(test.Name, "/") || !Recording() {
+		return
+	}
+	process.mu.Lock()
+	defer process.mu.Unlock()
+	if process.uncovered == nil {
+		process.uncovered = map[Test]bool{}
+	}
+	process.uncovered[test] = true
+}
+
 // WriteRecords completes this process's Records file in the CLI's state,
 // without recording it in Go's test log, with the tests that finished with
 // coverage. It runs when CI Visibility closes: the file of a process that
@@ -229,9 +248,15 @@ func WriteRecords() {
 		if status, ok := process.status[test]; ok {
 			// A pass after an execution that failed, as on a retry, is
 			// flaky, which is not skipped: the coverage comes from the
-			// first execution.
-			if status == "pass" && process.failed[test] {
+			// first execution. A pass with another execution whose
+			// coverage was not collected, such as an Early Flake Detection
+			// execution, is repeated, which is not skipped either: that
+			// execution could run other code. Both run again next time.
+			switch {
+			case status == "pass" && process.failed[test]:
 				status = "flaky"
+			case status == "pass" && process.uncovered[test]:
+				status = "repeated"
 			}
 			records.Tests = append(records.Tests, TestRecord{Test: test, Status: status, Files: mergeFiles(slices.Clone(files), process.setup)})
 		}

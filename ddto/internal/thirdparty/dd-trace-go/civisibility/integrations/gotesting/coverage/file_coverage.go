@@ -125,9 +125,10 @@ func scanFileCoverage(epoch uint64) []string {
 	if contextCoverageAvailable() {
 		return scanContextCoverage(epoch)
 	}
-	// The test's sites raised its files' marks to epoch+1.
+	// The test's sites raised its files' marks to epoch+1. Work after the
+	// scan raises them higher, which the next window tells apart.
 	names := markedFiles(epoch + 1)
-	marksScanned(names)
+	atomic.AddUint64(&fileCoverageEpoch, 1)
 	for p := atomic.LoadPointer(&fileCoverageBanksV1); p != nil; p = (*fileCoverageBank)(p).next {
 		if bank := (*fileCoverageBank)(p); bank.nAlways > 0 {
 			names = append(names, unsafe.Slice(bank.always, bank.nAlways)...)

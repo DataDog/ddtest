@@ -1576,15 +1576,24 @@ upstream:
   module differs from the test's, so tests of two packages with the same file
   base name and test name never match each other. Datadog's candidates name
   no module and match as before. `decisionFor` stays the only place that
-  decides, so unskippable, attempt-to-fix and modified tests still run.
+  decides, so unskippable, attempt-to-fix and modified tests still run. A
+  local candidate whose record holds no line coverage that the run's
+  counters can take has `MissingLineCodeCoverage`, so it runs when the
+  process collects coverage, as Datadog's candidates without line coverage
+  do.
 - `testing.go` initializes coverage when local TIA records the process's
-  tests (`coverage.LocalTIARecords`), with upload as the settings say. A run
-  with `DD_TIA_RECORD=false` only skips: its tests collect per-test coverage
-  only when the settings enable it, and keep `t.Parallel` otherwise.
-  `testing.go` also names each
-  top-level test's collector with `coverage.NewTopLevelTestCoverage`. Its
+  tests (`coverage.LocalTIARecords`), with upload as the settings say. The
+  CLI decides, for each test package, whether its processes record
+  (`DD_TIA_RECORD`); a package that does not only skips: its tests collect
+  per-test coverage only when the settings enable it, and keep `t.Parallel`
+  otherwise. `testing.go` also names each
+  top-level test's collector with `coverage.NewTopLevelTestCoverage`, and
+  hands each execution that collects no coverage while coverage is on, such
+  as a retry's or Early Flake Detection's, to `coverage.LocalTIAUncovered`,
+  so that a test that passed records as repeated, which is not skipped. Its
   lines keep their numbers: the integration tests' table of adapted call
-  sites names the line that calls the test's body. `coverage.CanCollectPerTestCoverage`
+  sites names the line that calls the test's body; the `else` branch takes
+  the blank line before the cleanup's `if`, whose comment moves onto it. `coverage.CanCollectPerTestCoverage`
   and `FileCoverageActive` hold when either Datadog or local TIA needs
   per-test coverage. The coverage writer exists only for an upload, and
   `processCoverageData` submits a row only to it; it records every top-level
@@ -1607,15 +1616,20 @@ upstream:
   bits set before the first window (`file_coverage_context.go`). For the
   marks, ddto's sites raise a mark to the epoch plus one, so that code at
   epoch 0 marks its files too, and a scan reports the marks above the test's
-  epoch.
+  epoch. A serial scan then advances the epoch, so that work after the window
+  and before the next one raises marks that neither the window's scan nor an
+  earlier one reported, and the next window reports them as setup. Without
+  local TIA, the scans report each window's files as before.
 - `utils.WriteCLIStateFileUnlogged` writes a test process's records to the
   state without recording them in Go's test log, and `CLITests.LocalTIA`
   tells the Git worker not to request Datadog's skippable tests ahead for the
   test processes (`cligit.localTIAClient`).
 
 Checks: `TestITRCandidatesMatchLocalTIAModule`, the `internal/localtia` and
-`internal/runner` `LocalTIA` tests, and `TestLocalTIACounters`,
-`TestLocalTIARace` and `TestLocalTIAFileMarks`.
+`internal/runner` `LocalTIA` tests, `TestFileCoverageOutsideWindows` and
+`TestFileCoverageBetweenWindowsWithoutLocalTIA`, and `TestLocalTIACounters`,
+`TestLocalTIARace`, `TestLocalTIAFileMarks`, `TestLocalTIARepeatedExecutions`,
+`TestLocalTIALineCoverageFromAnotherSource` and `TestLocalTIAAutoRecord`.
 
 ## Requests from ddto's CLI
 

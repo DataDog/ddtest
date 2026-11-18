@@ -2,6 +2,7 @@ package runner
 
 import (
 	"encoding/json"
+	"fmt"
 	"maps"
 	"os"
 	"path/filepath"
@@ -13,26 +14,29 @@ import (
 	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/utils/filebitmap"
 )
 
-// Only DD_TIA_ENABLED enables local TIA; no flag does. DD_TIA_RECORD=false
-// makes it skip without recording.
+// Only DD_TIA_ENABLED enables local TIA; no flag does. DD_TIA_RECORD is
+// true, false or auto, the default.
 func TestLocalTIAEnvironment(t *testing.T) {
 	for _, tc := range []struct {
 		enabled, record string
-		want, readOnly  bool
+		want            bool
+		mode            string
 		warning         bool
 	}{
-		{"", "", false, false, false},
-		{"true", "", true, false, false},
-		{"true", "true", true, false, false},
-		{"true", "false", true, true, false},
-		{"1", "0", true, true, false},
-		{"0", "", false, false, false},
-		{"yes please", "", false, false, true},
-		{"true", "sometimes", true, false, true},
+		{"", "", false, "auto", false},
+		{"true", "", true, "auto", false},
+		{"true", "auto", true, "auto", false},
+		{"true", "AUTO", true, "auto", false},
+		{"true", "true", true, "true", false},
+		{"true", "false", true, "false", false},
+		{"1", "0", true, "false", false},
+		{"0", "", false, "auto", false},
+		{"yes please", "", false, "auto", true},
+		{"true", "sometimes", true, "auto", true},
 	} {
 		cli, warning := DefaultCLIOptions().WithLocalTIAEnvironment(tc.enabled, tc.record)
-		if cli.LocalTIA != tc.want || cli.LocalTIAReadOnly != tc.readOnly || (warning != "") != tc.warning {
-			t.Errorf("%q %q: LocalTIA=%t read-only=%t warning=%q", tc.enabled, tc.record, cli.LocalTIA, cli.LocalTIAReadOnly, warning)
+		if cli.LocalTIA != tc.want || cli.LocalTIARecord != tc.mode || (warning != "") != tc.warning {
+			t.Errorf("%q %q: LocalTIA=%t record=%q warning=%q", tc.enabled, tc.record, cli.LocalTIA, cli.LocalTIARecord, warning)
 		}
 	}
 	// Go test receives a flag with the name.
@@ -404,6 +408,15 @@ func TestLocalTIAMerge(t *testing.T) {
 		t.Fatalf("unseen files by source %v", unseen)
 	}
 
+	// A run of the same source that sees more keeps what it could not see
+	// for the tests that it does not record again.
+	stored, current = storedMap()
+	current.Packages["ex/p"].Unseen = map[string][]string{"counters": {"go.mod"}}
+	merged = mergeTIAMap(stored, current, map[string]tiaPackageRun{"ex/p": {records: []localtia.TestRecord{ranA}}})
+	if unseen := merged.Packages["ex/p"].Unseen["counters"]; !slices.Contains(unseen, "p/testdata/in.txt") {
+		t.Fatalf("the unseen files of kept tests shrank: %q", unseen)
+	}
+
 	// A run that lists a tested package only as a dependency keeps its tests,
 	// unless what they depend on changed.
 	stored, current = storedMap()
@@ -554,19 +567,105 @@ func TestLocalTIAFileStates(t *testing.T) {
 }
 
 func TestLocalTIASelectionCoverage(t *testing.T) {
-	if tiaSelection("/repo/p", nil) != nil {
-		t.Fatal("a selection that skips nothing")
+	if tiaSelection("/repo/p", nil, "", false) != nil {
+		t.Fatal("a selection that skips and records nothing")
+	}
+	if selection := tiaSelection("/repo/p", nil, "", true); selection == nil || !selection.Record || len(selection.Skip) != 0 {
+		t.Fatalf("a package that only records: %+v", selection)
 	}
 	one, two := filebitmap.FromLineCount(8), filebitmap.FromLineCount(8)
 	one.Set(1)
 	two.Set(4)
-	selection := tiaSelection("/repo/p", []*tiaTest{
-		{Test: localtia.Test{Name: "TestA"}, Bitmaps: map[string][]byte{"p/a.go": one.GetBuffer()}},
-		{Test: localtia.Test{Name: "TestB"}, Bitmaps: map[string][]byte{"p/a.go": two.GetBuffer(), "p/b.go": two.GetBuffer()}},
-	})
+	skip := []*tiaTest{
+		{Test: localtia.Test{Name: "TestA"}, Source: "counters 1", Bitmaps: map[string][]byte{"p/a.go": one.GetBuffer()}},
+		{Test: localtia.Test{Name: "TestB"}, Source: "counters 1", Bitmaps: map[string][]byte{"p/a.go": two.GetBuffer(), "p/b.go": two.GetBuffer()}},
+		{Test: localtia.Test{Name: "TestMarks"}, Source: "file marks"},
+	}
+	selection := tiaSelection("/repo/p", skip, "counters 1", false)
 	union := filebitmap.NewFileBitmapFromBytes(selection.Coverage["p/a.go"])
-	if selection.Dir != "/repo/p" || len(selection.Skip) != 2 || !union.Get(1) || !union.Get(4) || len(selection.Coverage) != 2 {
+	if selection.Dir != "/repo/p" || selection.Record || len(selection.Skip) != 3 || !union.Get(1) || !union.Get(4) || len(selection.Coverage) != 2 {
 		t.Fatalf("selection %+v", selection)
+	}
+	// A run that collects Go's counters of other packages, or none, cannot
+	// take the line coverage of a test that another source recorded.
+	for counters, want := range map[string][]string{"counters 1": {"TestMarks"}, "counters 2": {"TestA", "TestB", "TestMarks"}, "": nil} {
+		var got []string
+		for _, test := range tiaSelection("/repo/p", skip, counters, false).NoLineCoverage {
+			got = append(got, test.Name)
+		}
+		if !slices.Equal(got, want) {
+			t.Errorf("counters %q: no line coverage %q, want %q", counters, got, want)
+		}
+	}
+}
+
+// With DD_TIA_RECORD=auto, a package records when it has no entry, or when
+// the tests that it skips are fewer than 51% of its tests with an entry and
+// its new ones; new tests are looked up only when they can change that.
+func TestLocalTIAAutoRecords(t *testing.T) {
+	entries := func(n int) *tiaNode {
+		node := &tiaNode{Tested: true}
+		for i := range n {
+			node.Tests = append(node.Tests, tiaTest{Test: localtia.Test{Name: fmt.Sprintf("Test%d", i)}})
+		}
+		return node
+	}
+	names := func(n int) []string {
+		var declared []string
+		for i := range n {
+			declared = append(declared, fmt.Sprintf("Test%d", i))
+		}
+		return declared
+	}
+	for _, tc := range []struct {
+		name     string
+		stored   *tiaNode
+		skip     int
+		declared []string
+		want     bool
+	}{
+		{"no map", nil, 0, nil, true},
+		{"no entries", &tiaNode{Tested: true}, 0, names(3), true},
+		{"skips nothing", entries(4), 0, nil, true},
+		{"exactly 50%", entries(100), 50, names(100), true},
+		{"exactly 51%", entries(100), 51, names(100), false},
+		{"over 51%", entries(100), 52, names(100), false},
+		{"one of two", entries(2), 1, names(2), true},
+		{"two of three", entries(3), 2, names(3), false},
+		{"every test", entries(3), 3, names(3), false},
+		// 51 of 100 entries, and 1 new test: 51 of 101 is under 51%.
+		{"a new test", entries(100), 51, append(names(100), "TestNew"), true},
+		// A declared test with an entry, or declared twice, counts once.
+		{"declared twice", entries(100), 51, append(names(100), "Test0", "Test1"), false},
+		// Two of three entries and one new test: 2 of 4 is 50%.
+		{"new tests lower the share", entries(3), 2, append(names(3), "TestNew"), true},
+	} {
+		lookedUp := false
+		got := autoRecords(tc.stored, tc.skip, func() []string { lookedUp = true; return tc.declared })
+		if got != tc.want {
+			t.Errorf("%s: records %t, want %t", tc.name, got, tc.want)
+		}
+		// New tests only add to the share's denominator: when the entries
+		// alone are enough to record, they are not looked up.
+		if tc.stored != nil && len(tc.stored.Tests) != 0 && tc.skip*100 < localTIARecordPercent*len(tc.stored.Tests) && lookedUp {
+			t.Errorf("%s: looked up the declared tests", tc.name)
+		}
+	}
+	if localTIARecordPercent != 51 {
+		t.Fatalf("localTIARecordPercent %d", localTIARecordPercent)
+	}
+}
+
+// A package's tests are the functions TestXxx(*testing.T) of its test files,
+// as go test finds them.
+func TestDeclaredTests(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "a_test.go", "package a\n\nimport (\n\t\"testing\"\n\tt2 \"testing\"\n)\n\nfunc TestA(t *testing.T) {}\nfunc Test(t *testing.T) {}\nfunc Test_b(t *testing.T) {}\nfunc TestÉ(t *t2.T) {}\nfunc Testlower(t *testing.T) {}\nfunc TestMain(m *testing.M) {}\nfunc TestTwo(a, b *testing.T) {}\nfunc TestResult(t *testing.T) error { return nil }\nfunc TestGeneric[T any](t *testing.T) {}\nfunc BenchmarkA(b *testing.B) {}\nfunc ExampleA() {}\ntype s struct{}\nfunc (s) TestMethod(t *testing.T) {}\n")
+	writeFile(t, dir, "b_test.go", "package a_test\n\nimport \"testing\"\n\nfunc TestB(t *testing.T) {}\n")
+	writeFile(t, dir, "bad_test.go", "package a\n\nfunc TestBad(\n")
+	got := declaredTests([]string{filepath.Join(dir, "a_test.go"), filepath.Join(dir, "b_test.go"), filepath.Join(dir, "bad_test.go"), filepath.Join(dir, "missing_test.go")})
+	if want := []string{"TestA", "Test", "Test_b", "TestÉ", "TestB"}; !slices.Equal(got, want) {
+		t.Fatalf("declared %q, want %q", got, want)
 	}
 }
 
@@ -706,5 +805,25 @@ func TestNarrowsSubtests(t *testing.T) {
 		if got := narrowsSubtests(opts, tc.goflags); got != tc.want {
 			t.Errorf("%q %q: %t, want %t", tc.goflags, tc.args, got, tc.want)
 		}
+	}
+}
+
+// Go's counters are one source per set of packages that they count, whatever
+// -coverpkg's text; file marks are one source.
+func TestLocalTIASourceID(t *testing.T) {
+	opts := mustParse(t, "-cover", "-covermode=atomic", "-coverpkg=./...", "./...")
+	graph := func(counted ...string) *tiaMap {
+		m := emptyTIAMap()
+		for _, path := range []string{"ex/app", "ex/lib"} {
+			m.Packages[path] = &tiaNode{counted: slices.Contains(counted, path)}
+		}
+		return m
+	}
+	app, both := localTIASourceID(&Plan{}, opts, graph("ex/app")), localTIASourceID(&Plan{}, opts, graph("ex/app", "ex/lib"))
+	if app == both || app != localTIASourceID(&Plan{}, mustParse(t, "-race", "-cover", "-coverpkg=./app", "./..."), graph("ex/app")) {
+		t.Fatalf("counters sources %q and %q", app, both)
+	}
+	if got := localTIASourceID(&Plan{fileCoverage: true}, mustParse(t, "./..."), graph()); got != "file marks" {
+		t.Fatalf("file marks source %q", got)
 	}
 }

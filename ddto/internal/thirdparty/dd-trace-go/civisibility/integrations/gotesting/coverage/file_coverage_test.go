@@ -7,6 +7,7 @@ import (
 	"testing"
 	"unsafe"
 
+	"github.com/DataDog/ddtest/ddto/internal/localtia"
 	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/utils"
 )
 
@@ -144,5 +145,61 @@ func TestFileCoverageCollector(t *testing.T) {
 	// Rows are relative to the CI source root, as the test file is.
 	if want := []string{"a_test.go", utils.GetRelativePathFromCITagsSourceRoot("/repo/a.go")}; !slices.Equal(names, want) {
 		t.Fatalf("rows %v, want %v", names, want)
+	}
+}
+
+// With local TIA, the files of code that runs outside every test's window
+// are setup: before the first window, and between two windows even for a
+// file that the previous window reported.
+func TestFileCoverageOutsideWindows(t *testing.T) {
+	marks := make([]uint64, 2)
+	withFileCoverageBanks(t, newFileCoverageBank(marks, []string{"/repo/init.go", "/repo/fill.go"}, nil))
+	var setup []string
+	previousRecord, previousEnabled := recordSetup, localTIAEnabled
+	recordSetup = func(files []localtia.File) {
+		for _, file := range files {
+			setup = append(setup, file.Path)
+		}
+	}
+	localTIAEnabled = true
+	t.Cleanup(func() { recordSetup, localTIAEnabled = previousRecord, previousEnabled })
+	hit := func(m *uint64) { atomic.StoreUint64(m, atomic.LoadUint64(&fileCoverageEpoch)+1) }
+
+	hit(&marks[0]) // package initialization
+	first := beginFileCoverage()
+	if want := []string{utils.GetRelativePathFromCITagsSourceRoot("/repo/init.go")}; !slices.Equal(setup, want) {
+		t.Fatalf("setup before the first window %q, want %q", setup, want)
+	}
+	hit(&marks[1])
+	if got := scanFileCoverage(first); !slices.Equal(got, []string{"/repo/fill.go"}) {
+		t.Fatalf("first window %q", got)
+	}
+	setup = nil
+	hit(&marks[1]) // between the windows, again
+	second := beginFileCoverage()
+	if want := []string{utils.GetRelativePathFromCITagsSourceRoot("/repo/fill.go")}; !slices.Equal(setup, want) {
+		t.Fatalf("setup between the windows %q, want %q", setup, want)
+	}
+	if got := scanFileCoverage(second); len(got) != 0 {
+		t.Fatalf("second window %q", got)
+	}
+}
+
+// Without local TIA, a test's files stay those that ran in its window: work
+// between two windows goes to neither, as before scans advanced the epoch.
+func TestFileCoverageBetweenWindowsWithoutLocalTIA(t *testing.T) {
+	marks := make([]uint64, 2)
+	withFileCoverageBanks(t, newFileCoverageBank(marks, []string{"/repo/a.go", "/repo/b.go"}, nil))
+	hit := func(m *uint64) { atomic.StoreUint64(m, atomic.LoadUint64(&fileCoverageEpoch)+1) }
+	first := beginFileCoverage()
+	hit(&marks[0])
+	if got := scanFileCoverage(first); !slices.Equal(got, []string{"/repo/a.go"}) {
+		t.Fatalf("first window %q", got)
+	}
+	hit(&marks[1]) // between the windows
+	second := beginFileCoverage()
+	hit(&marks[0])
+	if got := scanFileCoverage(second); !slices.Equal(got, []string{"/repo/a.go"}) {
+		t.Fatalf("second window %q", got)
 	}
 }

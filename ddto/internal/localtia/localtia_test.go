@@ -2,6 +2,7 @@ package localtia
 
 import (
 	"encoding/json"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -51,7 +52,7 @@ func activate(t *testing.T, selection *PackageSelection) string {
 	t.Cleanup(func() {
 		process.once = sync.Once{}
 		process.active, process.stateDir, process.selection, process.records, process.record = false, "", nil, "", false
-		process.coverage, process.status, process.setup, process.failed = nil, nil, nil, nil
+		process.coverage, process.status, process.setup, process.failed, process.uncovered = nil, nil, nil, nil, nil
 	})
 	return state
 }
@@ -60,16 +61,20 @@ func TestSkippableTestsResponse(t *testing.T) {
 	line := filebitmap.FromLineCount(8)
 	line.Set(3)
 	activate(t, &PackageSelection{
-		Dir:      packageDirectory,
-		Skip:     []Test{{Module: "example.com/a", Suite: "a_test.go", Name: "TestA"}, {Module: "example.com/a_test", Suite: "x_test.go", Name: "TestX"}},
-		Coverage: map[string][]byte{"a/a.go": line.GetBuffer()},
+		Dir:            packageDirectory,
+		Skip:           []Test{{Module: "example.com/a", Suite: "a_test.go", Name: "TestA"}, {Module: "example.com/a_test", Suite: "x_test.go", Name: "TestX"}},
+		Coverage:       map[string][]byte{"a/a.go": line.GetBuffer()},
+		NoLineCoverage: []Test{{Module: "example.com/a_test", Suite: "x_test.go", Name: "TestX"}},
 	})
 	response := SkippableTestsResponse()
 	candidates := response.Skippables["a_test.go"]["TestA"]
 	if len(candidates) != 1 || candidates[0].Module != "example.com/a" || candidates[0].Name != "TestA" {
 		t.Fatalf("TestA candidates %+v", candidates)
 	}
-	if got := response.Skippables["x_test.go"]["TestX"]; len(got) != 1 || got[0].Module != "example.com/a_test" {
+	if candidates[0].MissingLineCodeCoverage {
+		t.Fatal("TestA has line coverage")
+	}
+	if got := response.Skippables["x_test.go"]["TestX"]; len(got) != 1 || got[0].Module != "example.com/a_test" || !got[0].MissingLineCodeCoverage {
 		t.Fatalf("TestX candidates %+v", got)
 	}
 	if !response.CoveragePresent || !response.CoverageBackfillSafe || !response.Coverage["a/a.go"].Get(3) {
@@ -180,6 +185,46 @@ func TestRecordSetup(t *testing.T) {
 }
 
 // A test that passed after an execution that failed records as flaky.
+// A test with an execution whose coverage was not collected, such as an
+// Early Flake Detection one, is recorded as repeated, and not as a pass;
+// a failed execution still makes it flaky, and a failure stays one.
+func TestRecordUncovered(t *testing.T) {
+	state := activate(t, nil)
+	repeated := Test{Module: "example.com/a", Suite: "a_test.go", Name: "TestRepeated"}
+	flaky := Test{Module: "example.com/a", Suite: "a_test.go", Name: "TestFlaky"}
+	failed := Test{Module: "example.com/a", Suite: "a_test.go", Name: "TestFailed"}
+	once := Test{Module: "example.com/a", Suite: "a_test.go", Name: "TestOnce"}
+	for _, test := range []Test{repeated, flaky, failed, once} {
+		RecordCoverage(test, []File{{Path: "a/a_test.go"}})
+	}
+	for _, test := range []Test{repeated, flaky, failed} {
+		RecordUncovered(test)
+	}
+	RecordUncovered(Test{Module: "example.com/a", Suite: "a_test.go", Name: "TestOnce/sub"})
+	RecordFailure(flaky)
+	RecordStatus(repeated, "pass")
+	RecordStatus(flaky, "pass")
+	RecordStatus(failed, "fail")
+	RecordStatus(once, "pass")
+	WriteRecords()
+	data, err := os.ReadFile(filepath.Join(state, process.records))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var records Records
+	if err := json.Unmarshal(data, &records); err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, record := range records.Tests {
+		got[record.Test.Name] = record.Status
+	}
+	want := map[string]string{"TestRepeated": "repeated", "TestFlaky": "flaky", "TestFailed": "fail", "TestOnce": "pass"}
+	if !maps.Equal(got, want) {
+		t.Fatalf("statuses %v, want %v", got, want)
+	}
+}
+
 func TestRecordFailure(t *testing.T) {
 	state := activate(t, nil)
 	test := Test{Module: "example.com/a", Suite: "a_test.go", Name: "TestRetried"}
