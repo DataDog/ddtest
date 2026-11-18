@@ -117,10 +117,10 @@ type tiaFixture struct {
 	env         []string
 	flags       []string
 	intake      *tiaIntake
-	// readOnly runs local TIA with DD_TIA_RECORD=false, and auto without
-	// DD_TIA_RECORD, whose default is auto; otherwise every package records,
-	// with DD_TIA_RECORD=true.
-	readOnly, auto bool
+	// readOnly runs local TIA with DD_TIA_RECORD=false; otherwise record,
+	// when set, is DD_TIA_RECORD's value, whose default is true.
+	readOnly bool
+	record   string
 	// refusal is the reason that local TIA is expected to give for not
 	// running, or "" when it should run.
 	refusal string
@@ -213,8 +213,8 @@ func (f *tiaFixture) run(args ...string) tiaRun {
 	switch {
 	case f.readOnly:
 		env = append(env, "DD_TIA_RECORD=false")
-	case !f.auto:
-		env = append(env, "DD_TIA_RECORD=true")
+	case f.record != "":
+		env = append(env, "DD_TIA_RECORD="+f.record)
 	}
 	out, stderr, code := command(f.t, f.dir, env, f.driver, append(args, "./...")...)
 	run := tiaRun{actions: map[string]string{}, code: code, output: out + stderr}
@@ -435,8 +435,9 @@ var localTIACoverFixture = map[string]string{
 }
 
 // Without -coverpkg, Go's counters count only the package under test, and a
-// test of app would not show that it ran lib's code: local TIA refuses to
-// record. With -coverpkg, a test depends on the files of lib that it ran.
+// test of app would not show that it ran lib's code: local TIA only skips,
+// and records nothing. With -coverpkg, a test depends on the files of lib
+// that it ran.
 func TestLocalTIACoverPackages(t *testing.T) {
 	f := newTIAFixture(t, false, localTIACoverFixture, "-cover", "-covermode=atomic")
 	f.tests = []string{"app.TestApp", "lib.TestValue"}
@@ -570,49 +571,35 @@ func TestLocalTIARepeatedExecutions(t *testing.T) {
 	f.expect("unchanged", f.run())
 }
 
-// localTIAAutoFixture has two test packages: a, whose two tests each run a
-// file of their own, and b, whose three tests do.
-var localTIAAutoFixture = map[string]string{
-	"a/a.go":      "package a\n\nfunc A() int { return 1 }\n",
-	"a/b.go":      "package a\n\nfunc B() int { return 1 }\n",
-	"a/a_test.go": "package a\n\nimport \"testing\"\n\nfunc TestA(t *testing.T) { _ = A() }\n\nfunc TestB(t *testing.T) { _ = B() }\n",
-	"b/c.go":      "package b\n\nfunc C() int { return 1 }\n",
-	"b/d.go":      "package b\n\nfunc D() int { return 1 }\n",
-	"b/e.go":      "package b\n\nfunc E() int { return 1 }\n",
-	"b/b_test.go": "package b\n\nimport \"testing\"\n\nfunc TestC(t *testing.T) { _ = C() }\n\nfunc TestD(t *testing.T) { _ = D() }\n\nfunc TestE(t *testing.T) { _ = E() }\n",
-}
-
-// With DD_TIA_RECORD's default, auto, a test package records while it skips
-// fewer than 51% of its tests, and otherwise only skips: in one run, a, which
-// skips one test of two, records, and b, which skips two of three, does not.
-func TestLocalTIAAutoRecord(t *testing.T) {
-	f := newTIAFixture(t, false, localTIAAutoFixture, "-cover", "-covermode=atomic", "-coverpkg=./...")
-	f.tests = []string{"a.TestA", "a.TestB", "b.TestC", "b.TestD", "b.TestE"}
-	f.auto = true
-	f.expect("no map: every package records", f.run(), f.tests...)
-	f.expect("unchanged", f.run())
-	f.edit("a/b.go", "return 1", "return 2")
-	f.edit("b/e.go", "return 1", "return 2")
-	f.expect("a records, b only skips", f.run(), "a.TestB", "b.TestE")
-	f.expect("a recorded TestB, b did not record TestE", f.run(), "b.TestE")
-}
-
-// With auto, a run without per-test coverage only skips, and says so when a
-// package would have recorded.
-func TestLocalTIAAutoWithoutCoverage(t *testing.T) {
-	f := newTIAFixture(t, false, localTIACoverFixture)
+// A run that records, by default or with DD_TIA_RECORD=true, but has no
+// per-test coverage that local TIA can use, does not refuse: it says so, and
+// only skips, as a read-only run does, recording nothing.
+func TestLocalTIARecordFallback(t *testing.T) {
+	f := newTIAFixture(t, false, localTIACoverFixture, "-cover", "-covermode=atomic", "-coverpkg=./...")
 	f.tests = []string{"app.TestApp", "lib.TestValue"}
-	f.auto = true
-	f.refusal = "2 test packages would record their tests, but recording needs per-test coverage"
-	f.expect("no map", f.run(), f.tests...)
-	f.expect("still no map", f.run(), f.tests...)
-	f.auto, f.refusal, f.flags = false, "", []string{"-cover", "-covermode=atomic", "-coverpkg=./..."}
 	f.expect("recording with Go's counters", f.run(), f.tests...)
-	f.auto, f.flags = true, nil
-	f.expect("every test skipped: no package would record", f.run())
+	for _, tc := range []struct {
+		name, record, refusal string
+		flags                 []string
+		ran                   []string
+	}{
+		{"no coverage flags", "", "local TIA (DD_TIA_RECORD): recording needs per-test coverage", nil, nil},
+		// Counters of other packages than the recording's take no line
+		// coverage from the map: the tests run for their lines.
+		{"counters without -coverpkg", "true", "local TIA (DD_TIA_RECORD): recording with Go's coverage counters needs -coverpkg", []string{"-cover", "-covermode=atomic"}, f.tests},
+		{"counters in set mode", "", "local TIA (DD_TIA_RECORD): recording needs per-test coverage", []string{"-cover", "-covermode=set", "-coverpkg=./..."}, nil},
+	} {
+		f.flags, f.record, f.refusal = tc.flags, tc.record, tc.refusal
+		run := f.run()
+		f.expect(tc.name, run, tc.ran...)
+		if !strings.Contains(run.output, "tests only skip, nothing is recorded") {
+			t.Fatalf("%s: no fallback warning:\n%s", tc.name, run.output)
+		}
+	}
+	f.flags, f.record, f.refusal = nil, "", "local TIA (DD_TIA_RECORD): recording needs per-test coverage"
 	f.edit("lib/value.go", "return 1", "return 1 + 0")
-	f.refusal = "2 test packages would record"
-	f.expect("every test runs", f.run(), f.tests...)
+	f.expect("a change: both tests run", f.run(), f.tests...)
+	f.expect("nothing was recorded: both run again", f.run(), f.tests...)
 }
 
 // localTIAVendorFixture vendors a dependency and does not require ddto, whose

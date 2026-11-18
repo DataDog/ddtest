@@ -193,10 +193,9 @@ More options follow the same rule:
   changes. Recording needs per-test coverage: Go's counters with `-coverpkg`,
   such as `-cover -covermode=atomic -coverpkg=./...` or
   `-race -cover -coverpkg=./...`, or `--experimental-file-coverage`.
-  `DD_TIA_RECORD` chooses which test packages record: `auto`, the default,
-  records a package that has no entries yet or skips fewer than 51% of its
-  tests, and only skips in the others; `true` records every package, and
-  `false` none, which needs no coverage flags. See
+  A run records by default; `DD_TIA_RECORD=false` only skips, without
+  recording or coverage flags. A recording run without such coverage only
+  skips too, with a warning, and records nothing. See
   [Local Test Impact Analysis](docs/mini-runtime.md#local-test-impact-analysis).
 
 `ddtest instrument` reports one test session per command: every package's
@@ -365,7 +364,7 @@ Coverage still requires Go coverage flags.
 | `DD_CIVISIBILITY_CODE_COVERAGE_REPORT_UPLOAD_ENABLED` | `true` | Allow backend-enabled aggregate coverage-report uploads. |
 | `DD_CODE_COVERAGE_FLAGS` | Unset | Comma-separated report labels, up to 32. |
 | `DD_TIA_ENABLED` | `false` | Read by the CLI: select the tests to skip locally, from the per-test coverage of earlier runs, whatever the backend's ITR settings. |
-| `DD_TIA_RECORD` | `auto` | With `DD_TIA_ENABLED`: which test packages record their tests' coverage. `auto` records a package that has no entries in the map or skips fewer than 51% of its tests (those with entries plus new ones); `true` records every package; `false` none. A package that does not record skips from the map without collecting per-test coverage for it, so its tests keep `t.Parallel`. |
+| `DD_TIA_RECORD` | `true` | With `DD_TIA_ENABLED`: `true` records the run's tests' coverage in the map; `false` skips from the stored map without collecting per-test coverage for it or recording, so tests keep `t.Parallel`. A recording run without per-test coverage that local TIA can use warns and runs as with `false`. |
 
 See the [feature matrix](docs/ci-parity.md) for combinations and limitations.
 

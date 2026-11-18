@@ -7,9 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"go/ast"
-	"go/parser"
-	"go/token"
 	"io"
 	"io/fs"
 	"maps"
@@ -19,8 +16,6 @@ import (
 	"slices"
 	"strings"
 	"time"
-	"unicode"
-	"unicode/utf8"
 
 	"github.com/DataDog/ddtest/ddto/internal/instrument"
 	"github.com/DataDog/ddtest/ddto/internal/localtia"
@@ -95,12 +90,10 @@ type tiaNode struct {
 	Tests                            []tiaTest
 	// counted reports, in this run's graph, that Go's counters count the
 	// package's code; dir is its directory; embedded are the files that
-	// it embeds, which are data whatever their extension; goTests are the
-	// absolute paths of a test package's Go test files.
+	// it embeds, which are data whatever their extension.
 	counted  bool
 	dir      string
 	embedded []string
-	goTests  []string
 }
 
 // tiaTest is a test's last final status, the coverage source that recorded
@@ -300,9 +293,8 @@ func mergeTIAMap(stored, current *tiaMap, runs map[string]tiaPackageRun) *tiaMap
 		if old == nil || !sameStructure(old, &copied) {
 			changedPackages[path] = true
 		}
-		// Only a package that records has the run's source's unseen files.
-		if unseen, ok := node.Unseen[current.Source]; ok && current.Source != "" && node.Tested {
-			copied.Unseen[current.Source] = unseen
+		if current.Source != "" && node.Tested {
+			copied.Unseen[current.Source] = node.Unseen[current.Source]
 		}
 		merged.Packages[path] = &copied
 	}
@@ -416,16 +408,15 @@ func appendRecords(tests []tiaTest, records []localtia.TestRecord, known map[str
 
 // tiaSelection returns what the test process of the package in dir skips,
 // with the union of the skipped tests' line bitmaps, which completes the
-// package's coverage profile, and whether it records its tests, or nil when
-// it neither skips nor records. counters is the
+// package's coverage profile, or nil when it skips nothing. counters is the
 // source of the coverage counters that the run collects, or "": a test that
 // another source recorded, as file marks or counters of other packages,
 // holds no line coverage that they could take.
-func tiaSelection(dir string, skip []*tiaTest, counters string, record bool) *localtia.PackageSelection {
-	if len(skip) == 0 && !record {
+func tiaSelection(dir string, skip []*tiaTest, counters string) *localtia.PackageSelection {
+	if len(skip) == 0 {
 		return nil
 	}
-	selection := &localtia.PackageSelection{Dir: dir, Record: record}
+	selection := &localtia.PackageSelection{Dir: dir}
 	coverage := map[string]*filebitmap.FileBitmap{}
 	for _, t := range skip {
 		selection.Skip = append(selection.Skip, t.Test)
@@ -629,9 +620,6 @@ func localTIAGraph(in tiaGraphInput) tiaGraph {
 				node.embedded = files(p.Dir, p.EmbedFiles, p.TestEmbedFiles, p.XTestEmbedFiles)
 				node.Tested = true
 				node.TestFiles = files(p.Dir, p.TestGoFiles, p.XTestGoFiles, p.TestEmbedFiles, p.XTestEmbedFiles)
-				for _, name := range slices.Concat(p.TestGoFiles, p.XTestGoFiles) {
-					node.goTests = append(node.goTests, filepath.Join(p.Dir, name))
-				}
 				node.TestImports = bases(p.TestImports, p.XTestImports)
 				g.testdata[base] = filepath.Join(p.Dir, "testdata")
 				node.Testdata = files("", testdataFiles(g.testdata[base]))
@@ -797,11 +785,9 @@ func narrowsSubtests(opts options, goflags string) bool {
 }
 
 // localTIARefusal returns why the run cannot use local TIA, after
-// preparation and before the Git worker hands its state over, or "". record
-// is DD_TIA_RECORD's value: a run in which every test package records needs
-// per-test coverage; with auto, a run without it only skips
-// (localTIACannotRecord).
-func localTIARefusal(plan *Plan, opts options, record string) string {
+// preparation and before the Git worker hands its state over, or "". A run
+// that cannot record only skips instead (localTIACannotRecord).
+func localTIARefusal(plan *Plan, opts options) string {
 	switch {
 	case opts.overlay != "":
 		// Go compiles the overlay's files instead of the repository's,
@@ -811,12 +797,6 @@ func localTIARefusal(plan *Plan, opts options, record string) string {
 		// Go compiles the vendored packages from the CLI's cache, as
 		// file coverage also refuses (fileCoverageRefusal).
 		return "the CLI provides the vendored dependencies from its cache, outside the repository"
-	}
-	if record != LocalTIARecordAlways {
-		return ""
-	}
-	if why := localTIACannotRecord(plan, opts); why != "" {
-		return why + ", or set " + LocalTIARecordEnv + "=false"
 	}
 	return ""
 }
@@ -834,90 +814,13 @@ func localTIACannotRecord(plan *Plan, opts options) string {
 	return ""
 }
 
-// localTIARecordPercent is the share of a test package's tests, in percent,
-// that it must skip not to record them with DD_TIA_RECORD=auto: a package
-// that skips fewer records them.
-const localTIARecordPercent = 51
-
-// autoRecords reports whether a test package records its tests with
-// DD_TIA_RECORD=auto. It does when the map has no entry for any of its
-// tests, or when the tests that local TIA skips in it, skip, are fewer than
-// localTIARecordPercent percent of its tests: those with an entry in the
-// map, stored's, and those that its test files declare without one, which
-// are new. declared returns the names of the tests that the test files
-// declare; it is called only when the new tests can change the outcome.
-func autoRecords(stored *tiaNode, skip int, declared func() []string) bool {
-	if stored == nil || len(stored.Tests) == 0 {
-		return true
-	}
-	tests := len(stored.Tests)
-	if skip*100 < localTIARecordPercent*tests {
-		return true
-	}
-	known := map[string]bool{}
-	for _, t := range stored.Tests {
-		known[t.Name] = true
-	}
-	for _, name := range declared() {
-		if !known[name] {
-			known[name] = true
-			tests++
-		}
-	}
-	return skip*100 < localTIARecordPercent*tests
-}
-
-// declaredTests returns the names of the top-level tests that Go test files
-// declare, as go test finds them: functions TestXxx(*testing.T) whose Xxx
-// does not start with a lower-case letter. A file that does not parse
-// declares none.
-func declaredTests(paths []string) []string {
-	var names []string
-	fset := token.NewFileSet()
-	for _, path := range paths {
-		file, err := parser.ParseFile(fset, path, nil, parser.SkipObjectResolution)
-		if err != nil {
-			continue
-		}
-		for _, decl := range file.Decls {
-			if fn, ok := decl.(*ast.FuncDecl); ok && fn.Recv == nil && fn.Type.TypeParams == nil && isTestName(fn.Name.Name) && takesTestingT(fn.Type) {
-				names = append(names, fn.Name.Name)
-			}
-		}
-	}
-	return names
-}
-
-func isTestName(name string) bool {
-	rest, ok := strings.CutPrefix(name, "Test")
-	if !ok {
-		return false
-	}
-	r, _ := utf8.DecodeRuneInString(rest)
-	return rest == "" || !unicode.IsLower(r)
-}
-
-// takesTestingT reports whether a function takes one *testing.T, or a *T of
-// a package that a test file imports as testing under another name.
-func takesTestingT(fn *ast.FuncType) bool {
-	params := fn.Params.List
-	if len(params) != 1 || len(params[0].Names) > 1 || fn.Results != nil {
-		return false
-	}
-	star, ok := params[0].Type.(*ast.StarExpr)
-	if !ok {
-		return false
-	}
-	selector, ok := star.X.(*ast.SelectorExpr)
-	return ok && selector.Sel.Name == "T"
-}
-
 // startLocalTIA selects the tests to skip and writes the selection to the
-// state that the Git worker hands to the test processes, with the test
-// packages that record their tests, as record, DD_TIA_RECORD's value, says.
-// It returns why it could not, in which case the tests run without local
-// TIA.
-func startLocalTIA(ctx context.Context, plan *Plan, opts options, record string, dir, state, root string, debug *cliDebug, stderr io.Writer) (*localTIARun, string) {
+// state that the Git worker hands to the test processes, which record their
+// tests when record is set and the run can record. A run that cannot, for
+// want of per-test coverage that local TIA can use, says so and only skips.
+// It returns why it could not select, in which case the tests run without
+// local TIA.
+func startLocalTIA(ctx context.Context, plan *Plan, opts options, record bool, dir, state, root string, debug *cliDebug, stderr io.Writer) (*localTIARun, string) {
 	started := time.Now()
 	phase := debug.start("local tia selection")
 	if root == "" {
@@ -947,19 +850,18 @@ func startLocalTIA(ctx context.Context, plan *Plan, opts options, record string,
 	}
 	var read int
 	run.current.Files, read = fileStates(run.current.paths, stored.Files, time.Now())
-	// The packages that can record: none with DD_TIA_RECORD=false, nor, with
-	// auto, without per-test coverage that local TIA can use.
-	canRecord, cannot := record != LocalTIARecordNever, ""
-	if canRecord && record != LocalTIARecordAlways {
-		cannot = localTIACannotRecord(plan, opts)
-		canRecord = cannot == ""
+	if record {
+		if cannot := localTIACannotRecord(plan, opts); cannot != "" {
+			fmt.Fprintln(stderr, version.BuildLogPrefix+" WARN: local TIA ("+LocalTIARecordEnv+"): "+cannot+"; tests only skip, nothing is recorded")
+			record = false
+		}
 	}
-	if canRecord && narrowsSubtests(opts, callerGoFlags()) {
+	if record && narrowsSubtests(opts, callerGoFlags()) {
 		// The run skips as any other does, and records nothing.
 		debug.printf("local tia record=false reason=%q", "-run or -skip selects subtests")
-		canRecord, cannot = false, ""
+		record = false
 	}
-	if canRecord {
+	if record {
 		run.current.Source = localTIASourceID(plan, opts, run.current.tiaMap)
 	}
 	// The run's coverage counters, recording or not, need line coverage.
@@ -967,43 +869,22 @@ func startLocalTIA(ctx context.Context, plan *Plan, opts options, record string,
 	if run.counters {
 		counters = localTIASourceID(plan, opts, run.current.tiaMap)
 	}
-	var selection localtia.Selection
-	skipped, tested, recording, wouldRecord := 0, 0, 0, 0
+	selection := localtia.Selection{Record: record}
+	skipped, tested := 0, 0
 	for path, node := range run.current.Packages {
 		if !node.Tested {
 			continue
 		}
 		tested++
-		if canRecord {
+		// A run that does not record has no coverage source of its own: its
+		// tests' sources decide what they could not see.
+		if record {
 			node.Unseen = map[string][]string{run.current.Source: run.current.unseen(path, run.counters, len(opts.coverPatterns) != 0)}
 		}
-		skip := skippable(stored, run.current.tiaMap, path)
-		records := canRecord
-		if record != LocalTIARecordAlways && record != LocalTIARecordNever {
-			auto := autoRecords(stored.Packages[path], len(skip), func() []string { return declaredTests(node.goTests) })
-			if auto && cannot != "" {
-				wouldRecord++
-			}
-			records = records && auto
-		}
-		if canRecord && !records {
-			// A package that does not record has no coverage source of its
-			// own: its tests' sources decide what they could not see. It
-			// skips the tests that it would skip if it recorded, and any
-			// whose source's unseen files are the only ones that changed.
-			node.Unseen = nil
-			skip = skippable(stored, run.current.tiaMap, path)
-		}
-		if records {
-			recording++
-		}
-		if selected := tiaSelection(node.dir, skip, counters, records); selected != nil {
+		if selected := tiaSelection(node.dir, skippable(stored, run.current.tiaMap, path), counters); selected != nil {
 			selection.Packages = append(selection.Packages, *selected)
 			skipped += len(selected.Skip)
 		}
-	}
-	if wouldRecord != 0 {
-		fmt.Fprintf(stderr, "%s WARN: local TIA (%s=auto): %d test packages would record their tests, but %s; they only skip\n", version.BuildLogPrefix, LocalTIARecordEnv, wouldRecord, cannot)
 	}
 	err = utils.WriteCLIGitStateFile(state, localtia.SelectionFile, selection)
 	phase.finish(err)
@@ -1011,7 +892,7 @@ func startLocalTIA(ctx context.Context, plan *Plan, opts options, record string,
 		return nil, "the selection could not be written: " + err.Error()
 	}
 	run.spent = time.Since(started)
-	debug.printf("local tia record=%s map=%s source=%q test_packages=%d recording_packages=%d packages=%d files=%d files_read=%d stored_packages=%d skippable=%d", record, filepath.Join(run.mapDir, run.key+".json"), source, tested, recording, len(run.current.Packages), len(run.current.paths), read, len(stored.Packages), skipped)
+	debug.printf("local tia record=%t map=%s source=%q test_packages=%d packages=%d files=%d files_read=%d stored_packages=%d skippable=%d", record, filepath.Join(run.mapDir, run.key+".json"), source, tested, len(run.current.Packages), len(run.current.paths), read, len(stored.Packages), skipped)
 	return run, ""
 }
 

@@ -742,39 +742,27 @@ line coverage. A test that another coverage source recorded, such as file
 marks or Go's counters of other packages, has no line coverage that this
 run's counters can take: when the run collects Go's counters, it runs.
 
-**Recording and read-only packages.** A test package that records has its
-test processes collect per-test coverage, even when Datadog's settings do not
-ask for it, and the CLI adds what ran to the map. With Go's counters,
-collecting it runs top-level tests one at a time. A read-only package skips
-from the map as a recording one would, but its test processes collect no
-per-test coverage of their own, so tests keep `t.Parallel`, and it records no
-test. Coverage that Datadog's settings ask for is still collected and sent.
-After a run, the CLI still updates the map's file table and drops the tests
-that the run's changes affect, so that they run until a run of their package
-records them again. A read-only package without entries in the map runs every
-test. Reading needs no coverage flags: the map's configuration leaves
-coverage out, so a `go test ./...` without them reads the map that a run with
-`-race -cover -coverpkg=...` recorded.
+**Recording and read-only runs.** By default a run records
+(`DD_TIA_RECORD=true`): its test processes collect per-test coverage, even
+when Datadog's settings do not ask for it, and the CLI adds what ran to the
+map. With Go's counters, collecting it runs top-level tests one at a time.
+With `DD_TIA_RECORD=false`, a run is read-only: it skips from the map as a
+recording run would, but its test processes collect no per-test coverage of
+their own, so tests keep `t.Parallel`, and it records no test. Coverage that
+Datadog's settings ask for is still collected and sent. After a read-only
+run, the CLI still updates the map's file table and drops the tests that the
+run's changes affect, so that they run until a recording run records them
+again. A read-only run without a map runs every test. It needs no coverage
+flags: the map's configuration leaves coverage out, so a `go test ./...`
+without them reads the map that a run with `-race -cover -coverpkg=...`
+recorded. A value of `DD_TIA_RECORD` that is not a boolean gets a warning, and
+the run records.
 
-`DD_TIA_RECORD` chooses which test packages record:
-- `auto`, the default: the CLI decides for each test package before `go test`
-  runs. A package records when the map has no entry for any of its tests, or
-  when the tests that local TIA skips in it are fewer than 51% of its tests.
-  Its tests, for this count, are its top-level tests that have an entry in the
-  map, whatever their status, plus the top-level tests that its test files
-  declare without an entry, which are new: the functions `TestXxx(*testing.T)`
-  that `go test` would run. Otherwise the package is read-only. A package that
-  skips one test of two (50%) records; one that skips 51 of 100, or two of
-  three, does not. A run without per-test coverage that local TIA can use has
-  no package record, and when one would have, the CLI prints
-  `local TIA (DD_TIA_RECORD=auto): <n> test packages would record their tests, but <reason>; they only skip`.
-- `true`: every test package records.
-- `false`: every test package is read-only.
-
-A value that is neither a boolean nor `auto` gets a warning, and `auto`
-applies. With `auto`, a package that skips most of its tests stays read-only
-and keeps `t.Parallel`; the tests that a change affects run in each such run
-until a run of the package skips fewer than 51% of its tests and records them.
+A run that records but has no per-test coverage that local TIA can use, with
+no coverage flags, with Go's counters in set mode, or with counters without
+`-coverpkg`, does not refuse: the CLI prints
+`local TIA (DD_TIA_RECORD): <reason>; tests only skip, nothing is recorded`
+and runs as a read-only run.
 
 Each test keeps the coverage source that recorded it, and each test package
 the files that each source could not see when it recorded: Go's counters,
@@ -795,11 +783,10 @@ outside Bazel, a test package in the Git checkout, and no `-exec` program or
 cross-compilation helper, which would start the test processes. It refuses a
 user's `-overlay`, whose files Go compiles instead of those that local TIA
 compares, and a vendored project whose dependencies the CLI provides from its
-cache, outside the repository, as file coverage does. With
-`DD_TIA_RECORD=true`, a run also needs per-test coverage, with `-coverpkg` for
-Go's counters. Otherwise, or when such a run's counters are in set mode, the
-CLI prints `local TIA (DD_TIA_ENABLED): <reason>; tests run without it` and
-runs the tests as without it.
+cache, outside the repository, as file coverage does. When it cannot run or
+refuses, the CLI prints
+`local TIA (DD_TIA_ENABLED): <reason>; tests run without it` and runs the
+tests as without it.
 
 **What a test depends on.** For each test package P, the CLI lists C(P), the
 files that its tests can depend on, from `go list -deps -test`. With local TIA

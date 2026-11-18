@@ -1582,11 +1582,10 @@ upstream:
   process collects coverage, as Datadog's candidates without line coverage
   do.
 - `testing.go` initializes coverage when local TIA records the process's
-  tests (`coverage.LocalTIARecords`), with upload as the settings say. The
-  CLI decides, for each test package, whether its processes record
-  (`DD_TIA_RECORD`); a package that does not only skips: its tests collect
-  per-test coverage only when the settings enable it, and keep `t.Parallel`
-  otherwise. `testing.go` also names each
+  tests (`coverage.LocalTIARecords`), with upload as the settings say. A run
+  that does not record (`DD_TIA_RECORD=false`, or no per-test coverage that
+  local TIA can use) only skips: its tests collect per-test coverage only
+  when the settings enable it, and keep `t.Parallel` otherwise. `testing.go` also names each
   top-level test's collector with `coverage.NewTopLevelTestCoverage`, and
   hands each execution that collects no coverage while coverage is on, such
   as a retry's or Early Flake Detection's, to `coverage.LocalTIAUncovered`,
@@ -1629,7 +1628,7 @@ Checks: `TestITRCandidatesMatchLocalTIAModule`, the `internal/localtia` and
 `internal/runner` `LocalTIA` tests, `TestFileCoverageOutsideWindows` and
 `TestFileCoverageBetweenWindowsWithoutLocalTIA`, and `TestLocalTIACounters`,
 `TestLocalTIARace`, `TestLocalTIAFileMarks`, `TestLocalTIARepeatedExecutions`,
-`TestLocalTIALineCoverageFromAnotherSource` and `TestLocalTIAAutoRecord`.
+`TestLocalTIALineCoverageFromAnotherSource` and `TestLocalTIARecordFallback`.
 
 ## Requests from ddto's CLI
 

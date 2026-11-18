@@ -73,12 +73,11 @@ func load() {
 		}
 		return
 	}
-	process.active, process.stateDir = true, dir
+	process.active, process.stateDir, process.record = true, dir, selection.Record
 	own := filepath.Clean(packageDirectory)
 	for i := range selection.Packages {
 		if filepath.Clean(selection.Packages[i].Dir) == own {
 			process.selection = &selection.Packages[i]
-			process.record = selection.Packages[i].Record
 		}
 	}
 	skip := 0
