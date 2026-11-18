@@ -318,7 +318,9 @@ func (f tiaMapFile) decode() (*tiaMap, bool) {
 			for j, i := 0, 0; j+1 < len(s.Bitmaps); j += 2 {
 				i += s.Bitmaps[j]
 				b := s.Bitmaps[j+1]
-				if i < 0 || i >= n || b < 0 || b >= len(f.Bitmaps) {
+				// A null or empty bitmap is no line coverage: selection
+				// takes every bitmap that a test names as one.
+				if i < 0 || i >= n || b < 0 || b >= len(f.Bitmaps) || len(f.Bitmaps[b]) == 0 {
 					ok = false
 					continue
 				}

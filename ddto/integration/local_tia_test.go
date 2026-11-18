@@ -810,6 +810,41 @@ func TestLocalTIARemoteMapStats(t *testing.T) {
 	f.expect("same size and time, other contents", f.run(), f.tests...)
 }
 
+// A shared map whose test names a null line bitmap is unreadable: a run
+// that adopts it would select from it. Every test runs, the exit status is
+// that of the tests, and the map is not kept.
+func TestLocalTIARemoteMapNullBitmap(t *testing.T) {
+	f := newTIAFixture(t, false, localTIACoverFixture, "-cover", "-covermode=atomic", "-coverpkg=./...")
+	f.tests = []string{"app.TestApp", "lib.TestValue"}
+	f.expect("recording", f.run(), f.tests...)
+	var shared map[string]any
+	if err := json.Unmarshal(f.intake.uploads[0].body, &shared); err != nil {
+		t.Fatal(err)
+	}
+	bitmaps, _ := shared["bitmaps"].([]any)
+	if len(bitmaps) == 0 {
+		t.Fatalf("no bitmaps in %s", f.intake.uploads[0].body)
+	}
+	for i := range bitmaps {
+		bitmaps[i] = nil
+	}
+	artifact, err := json.Marshal(shared)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.intake.artifact = artifact
+	f.forgetMap()
+	f.flags, f.readOnly = nil, true
+	f.expect("a null bitmap", f.run(), f.tests...)
+	local, err := filepath.Glob(filepath.Join(f.dir, ".git", "ddtest", "tia", "*.json"))
+	if err != nil || len(local) != 1 {
+		t.Fatalf("maps %v: %v", local, err)
+	}
+	if data, err := os.ReadFile(local[0]); err != nil || bytes.Contains(data, []byte("null")) {
+		t.Fatalf("the shared map was kept: %v %s", err, data)
+	}
+}
+
 // A map that does not decode, gzip-compressed or not, is no map: every test
 // runs, and the recording run replaces it.
 func TestLocalTIARemoteMapUnreadable(t *testing.T) {

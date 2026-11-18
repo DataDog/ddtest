@@ -582,7 +582,8 @@ func TestLocalTIAMapEncoding(t *testing.T) {
 	}
 	for _, bad := range []string{"", "{", `{"version":1,"files":[{"p":"a.go"}],"packages":{}}`, "\x1f\x8bnot gzip",
 		`{"version":1,"files":{"paths":["a.go"],"sizes":[1],"hashes":["h"],"decls":["d"]},"packages":{}}`,
-		`{"version":1,"files":{"paths":["a.go"],"mtimes":[1],"hashes":["h"],"decls":["d"]},"packages":{}}`} {
+		`{"version":1,"files":{"paths":["a.go"],"mtimes":[1],"hashes":["h"],"decls":["d"]},"packages":{}}`,
+		`{"version":1,"files":{"paths":["a.go"],"hashes":["h"],"decls":["d"]},"bitmaps":[null],"packages":{"p":{"tested":true,"files":[0],"modules":["p"],"suites":["a_test.go"],"sources":["counters"],"tests":[{"n":"TestA","t":"pass","c":[0],"b":[0,0]}]}}}`} {
 		if _, ok := unmarshalTIAMap([]byte(bad)); ok {
 			t.Errorf("%q decoded", bad)
 		}
@@ -896,7 +897,17 @@ func FuzzLocalTIAMapDecode(f *testing.F) {
 		f.Add(data)
 	}
 	f.Add([]byte(`{"version":1,"files":{"paths":["a.go"],"sizes":[1],"hashes":["h"],"decls":["d"]},"packages":{}}`))
+	f.Add([]byte(`{"version":1,"files":{"paths":["a.go"],"hashes":["h"],"decls":["d"]},"bitmaps":[null],"packages":{"p":{"tested":true,"files":[0],"modules":["p"],"suites":["a_test.go"],"sources":["counters"],"tests":[{"n":"TestA","t":"pass","c":[0],"b":[0,0]}]}}}`))
 	f.Fuzz(func(t *testing.T, data []byte) {
-		_, _ = unmarshalTIAMap(data)
+		m, ok := unmarshalTIAMap(data)
+		if !ok {
+			return
+		}
+		// What decodes, a run can select from.
+		for pkg := range m.Packages {
+			skip := skippable(m, m, pkg)
+			tiaSelection("/repo/"+pkg, skip, "")
+			tiaSelection("/repo/"+pkg, skip, "counters other")
+		}
 	})
 }

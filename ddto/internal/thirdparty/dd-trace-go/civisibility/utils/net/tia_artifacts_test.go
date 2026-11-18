@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -127,6 +128,40 @@ func TestTIAArtifactLookupBound(t *testing.T) {
 		if artifact != nil || err == nil {
 			t.Fatalf("gzip-encoded %t: %d bytes, %v", encoded, len(artifact.Content), err)
 		}
+	}
+}
+
+// A response that breaks off in its body is retried once, as an error
+// before the response is.
+func TestTIAArtifactLookupRetriesABrokenBody(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		body := []byte(`{"version":1}`)
+		w.Header().Set("x-dd-tia-git-commit-sha", tiaCommitA)
+		w.Header().Set("x-dd-tia-source-commit", tiaCommitA)
+		w.Header().Set(HeaderContentType, ContentTypeJSON)
+		if requests == 1 {
+			// Headers and part of the body, then the connection closes.
+			w.Header().Set("Content-Length", fmt.Sprint(len(body)))
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(body[:4])
+			w.(http.Flusher).Flush()
+			conn, _, err := w.(http.Hijacker).Hijack()
+			if err == nil {
+				_ = conn.Close()
+			}
+			return
+		}
+		_, _ = w.Write(body)
+	}))
+	defer server.Close()
+	origEnv := saveEnv()
+	defer restoreEnv(origEnv)
+	setCiVisibilityEnv(os.Getenv("PATH"), server.URL)
+	artifact, err := NewTIAArtifactsClient().LookupTIAArtifact(context.Background(), tiaTestKey, []string{tiaCommitA})
+	if err != nil || artifact == nil || string(artifact.Content) != `{"version":1}` || requests != 2 {
+		t.Fatalf("artifact %+v, err %v, %d requests", artifact, err, requests)
 	}
 }
 

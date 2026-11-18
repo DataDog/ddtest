@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/DataDog/ddtest/ddto/internal/bundle"
@@ -1179,7 +1180,7 @@ func RunRuntime(ctx context.Context, args []string, cli CLIOptions, stdin io.Rea
 			plan.goVersion = testRuntimeVersion(ctx, dir, plan.goVersion, plan.goExperiment)
 		}
 	}
-	signaled := make(chan struct{})
+	signaled := &runSignals{done: make(chan struct{})}
 	relayed := observeSignals(gitWorker.relaySignals(signals), signaled)
 	exitCode = runGo(ctx, dir, forwarded, env, relayed, stdin, stdout, stderr)
 	// Before the worker's state, which holds the records, is removed. A
@@ -1206,17 +1207,35 @@ func RunRuntime(ctx context.Context, args []string, cli CLIOptions, stdin io.Rea
 	return statusAfterSignal(relayed, exitCode, debug)
 }
 
-// observeSignals passes on the signals of in and closes signaled at the first.
-func observeSignals(in <-chan os.Signal, signaled chan<- struct{}) <-chan os.Signal {
+// runSignals tells local TIA's finish about the run's first signal: seen is
+// set before the signal goes on, to go test or to statusAfterSignal, and
+// done closes after it is in their channel, so that a run whose upload the
+// signal cancels still ends with the signal's status.
+type runSignals struct {
+	seen atomic.Bool
+	done chan struct{}
+}
+
+// betweenSignalSteps runs between observeSignals' passing on the first
+// signal and closing done; tests replace it.
+var betweenSignalSteps = func() {}
+
+// observeSignals passes on the signals of in, and records the first in
+// signaled.
+func observeSignals(in <-chan os.Signal, signaled *runSignals) <-chan os.Signal {
 	out := make(chan os.Signal, cap(in))
 	go func() {
 		first := true
 		for s := range in {
-			if first {
-				first = false
-				close(signaled)
+			if !first {
+				out <- s
+				continue
 			}
+			first = false
+			signaled.seen.Store(true)
 			out <- s
+			betweenSignalSteps()
+			close(signaled.done)
 		}
 	}()
 	return out

@@ -150,7 +150,8 @@ type tiaResponse struct {
 var errTIAResponseTooLarge = fmt.Errorf("civisibility.tia: a response over %d bytes", MaxTIAArtifactBytes)
 
 // tiaRequest sends a request with the client's headers and headers, with ctx
-// and at most one retry, after a transport error, a 429 or a 5xx. It reads at
+// and at most one retry, after a transport error, also while it reads the
+// body, a 429 or a 5xx. It reads at
 // most MaxTIAArtifactBytes of the response, which it decodes when it is
 // gzip-encoded, also at most MaxTIAArtifactBytes: the shared request handler
 // reads whole bodies, which a lookup must not.
@@ -185,8 +186,16 @@ func (c *client) tiaRequest(ctx context.Context, method, url string, body []byte
 		}
 		data, err := readTIABody(response)
 		_ = response.Body.Close()
-		if err != nil {
+		switch {
+		case errors.Is(err, errTIAResponseTooLarge):
 			return nil, err
+		case err != nil:
+			// A body that breaks off is retried as a failed request is.
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			last = err
+			continue
 		}
 		if response.StatusCode == HTTPStatusTooManyRequests || response.StatusCode >= 500 {
 			last = fmt.Errorf("civisibility.tia: HTTP %d", response.StatusCode)

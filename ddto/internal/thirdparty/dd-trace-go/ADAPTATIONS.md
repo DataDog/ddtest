@@ -1632,8 +1632,8 @@ upstream:
   starting telemetry, and returns nil in agentless mode without an API key.
   `LookupTIAArtifact` posts a `ci_app_tia_artifact_lookup` request and
   `StoreTIAArtifact` puts the map's JSON as it is, as dd-trace-py does, each
-  with one retry, after a transport error, a 429 or a 5xx, and the caller's
-  context. They send their requests themselves, with the client's HTTP
+  with one retry, after a transport error, also one that breaks off the
+  body, a 429 or a 5xx, and the caller's context. They send their requests themselves, with the client's HTTP
   client and headers, instead of through `RequestHandler`, which reads whole
   bodies: they read at most the API's 5 MiB of a response and of its gzip
   decoding, so a small download cannot expand without bound, and they read
