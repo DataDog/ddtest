@@ -443,7 +443,7 @@ func TestGitIntegrationUnshallowRepository(t *testing.T) {
 	for _, command := range []string{
 		"check_shallow",
 		"get_local_commits",
-		"get_remote_upstream_tracking",
+		"get_remote",
 		"get_head",
 		"unshallow",
 	} {

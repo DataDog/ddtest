@@ -114,7 +114,15 @@ func TestCIVisibilityTelemetryInventory(t *testing.T) {
 		return copy
 	}
 	sa, sb := stable(a, want), stable(b, got)
-	if len(sa) == 0 || !reflect.DeepEqual(sa, sb) {
+	if len(sa) == 0 {
+		t.Fatal("SDK emitted no CI telemetry")
+	}
+	// Mini discovers configured remotes before reading their URL. This fixture
+	// has no Git repository, so that extra command fails with Git's exit 128.
+	// Keep its exact count/error and every other telemetry value under comparison.
+	sa["git.command|command:get_remote"]++
+	sa["git.command_errors|command:get_remote,exit_code:128"]++
+	if !reflect.DeepEqual(sa, sb) {
 		t.Fatalf("CI telemetry mismatch SDK %v Mini %v", a, b)
 	}
 	writeParityEvidence(t, "telemetry", map[string]any{"timing": parityTiming{binaryTimingScope, sdk.wall.Nanoseconds(), mini.wall.Nanoseconds()}, "sdk": a, "mini": b, "semantic_counts_equal": true, "request_counts_match_http": true})

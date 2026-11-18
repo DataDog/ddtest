@@ -57,6 +57,7 @@ type parityCase struct {
 	Git             bool
 	RequireEndpoint string
 	RequiredEvent   string
+	CheckoutRoot    string
 }
 
 func parityCases() []parityCase {
@@ -552,6 +553,7 @@ func runCIVisibilityParityMatrix(t *testing.T, deferred bool) {
 		cases = kept
 	}
 	for i := range cases {
+		cases[i].CheckoutRoot = filepath.ToSlash(fixture.dir)
 		if cases[i].Git {
 			cases[i].Env = append(cases[i].Env, "DD_GIT_COMMIT_SHA="+fixture.head, "DD_GIT_PULL_REQUEST_BASE_BRANCH_SHA="+fixture.base)
 		}
@@ -646,8 +648,8 @@ func assertParityCase(t *testing.T, tc parityCase, want, got *parityReceiver, sd
 			}
 		}
 	}
-	assertMiniCIAttributes(t, comparableOracleEvents(t, withPortedEmptySession(withPortedListCoverage(tc.Args, want.events))), comparableOracleEvents(t, got.events))
-	assertSidePayloadParity(t, want, got)
+	assertMiniCIAttributes(t, comparableOracleEvents(t, withPortedCheckoutRoot(withPortedEmptySession(withPortedListCoverage(tc.Args, want.events)), tc.CheckoutRoot)), comparableOracleEvents(t, got.events))
+	assertSidePayloadParity(t, want, got, tc.CheckoutRoot)
 	if len(want.payloads) > 0 && ciWireMetadata(t, &want.miniWireCapture) != ciWireMetadata(t, &got.miniWireCapture) {
 		t.Fatal("envelope metadata differs")
 	}

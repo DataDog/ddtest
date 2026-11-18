@@ -456,6 +456,7 @@ func TestUploadRepositoryChangesFromGitAllCommitsKnown(t *testing.T) {
 	localCommits := []string{repo.Commits[1], repo.Commits[0]}
 
 	mockTransport := &MockAPIClient{RemoteCommits: localCommits}
+	withoutCIProviderEnvironment(t)
 	client := newTestOptimizationClient(mockTransport, nil, nil)
 
 	bytes, err := client.uploadRepositoryChangesFromGit()
@@ -483,6 +484,7 @@ func TestUploadRepositoryChangesFromGitSearchError(t *testing.T) {
 	localCommits := []string{repo.Commits[1], repo.Commits[0]}
 
 	searchErr := errors.New("search commits failed")
+	withoutCIProviderEnvironment(t)
 	client := newTestOptimizationClient(&MockAPIClient{GetCommitsErr: searchErr}, nil, nil)
 
 	bytes, err := client.uploadRepositoryChangesFromGit()
@@ -508,6 +510,7 @@ func TestUploadRepositoryChangesFromGitUploadsMissingCommits(t *testing.T) {
 		RemoteCommits:      remoteCommits,
 		SendPackFilesBytes: 123,
 	}
+	withoutCIProviderEnvironment(t)
 	client := newTestOptimizationClient(mockTransport, nil, nil)
 
 	bytes, err := client.uploadRepositoryChangesFromGit()
@@ -593,6 +596,7 @@ func TestGetSearchCommitsWithoutGitRepository(t *testing.T) {
 		t.Fatalf("chdir temp dir: %v", err)
 	}
 
+	withoutCIProviderEnvironment(t)
 	client := newTestOptimizationClient(&MockAPIClient{}, nil, nil)
 	response, err := client.getSearchCommits()
 	if err != nil {

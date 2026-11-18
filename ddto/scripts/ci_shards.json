@@ -44,6 +44,7 @@
       "TestMiniGitStateCacheWithTemporaryDirectoryInModule",
       "TestMiniGitStateDeferredWaitsForUpload",
       "TestMiniGitStateHandoff",
+      "TestMiniCheckoutIdentity",
       "TestMiniGitStateImpactedTests",
       "TestMiniGitStateStopsUploadCleanly",
       "TestMiniGitStateUploadsOnce",
@@ -206,6 +207,7 @@
   },
   "mini": {
     "native": [
+      "TestMiniCheckoutIdentity",
       "TestGoleakCacheAndAPIGuard",
       "TestMiniChdirSymlinkWithUserTool",
       "TestMiniConsumerAddsOnlyOwnModule",

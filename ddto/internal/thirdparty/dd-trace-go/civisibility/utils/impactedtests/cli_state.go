@@ -71,7 +71,7 @@ func handedAnalyzer() (*ImpactedTestAnalyzer, bool) {
 		logger.Debug("civisibility.ImpactedTests: CLI state not computed: %s", state.Reason)
 		return nil, false
 	}
-	ciTags := utils.GetCITagsReadOnly()
+	ciTags := utils.GetGitCheckoutTags()
 	currentCommitSha := ciTags[constants.GitHeadCommit]
 	if currentCommitSha == "" {
 		currentCommitSha = ciTags[constants.GitCommitSHA]

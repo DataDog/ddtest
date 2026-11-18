@@ -31,7 +31,7 @@ func sourcePathRepositoryRoot(t *testing.T) string {
 
 	workingDirectory, err := os.Getwd()
 	require.NoError(t, err)
-	return filepath.Clean(filepath.Join(workingDirectory, "..", "..", ".."))
+	return filepath.Clean(filepath.Join(workingDirectory, "..", "..", "..", "..", "..", ".."))
 }
 
 // configureSourcePathTestState resets process-global CI Visibility state and installs source tags.
@@ -42,6 +42,7 @@ func configureSourcePathTestState(t *testing.T, workspacePath string) {
 	initializeSourceMetadataTestRuntime()
 	utils.AddCITagsMap(map[string]string{
 		constants.CIWorkspacePath:  workspacePath,
+		constants.GitCheckoutRoot:  workspacePath,
 		constants.GitRepositoryURL: "https://github.com/DataDog/ddtest.git",
 	})
 	t.Cleanup(resetCIVisibilityStateForTesting)

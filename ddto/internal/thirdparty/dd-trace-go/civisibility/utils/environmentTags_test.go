@@ -156,8 +156,9 @@ func TestGetCITagsUsesGitEnrichmentOutsidePayloadFilesMode(t *testing.T) {
 
 	getProviderTagsFunc = func() map[string]string {
 		return map[string]string{
-			constants.CIJobName:     "job-name",
-			constants.GitHeadCommit: "head-sha",
+			constants.CIJobName:           "job-name",
+			constants.GitHeadCommit:       "head-sha",
+			constants.CIGitMergeCommitSHA: "commit-sha",
 		}
 	}
 	getLocalGitDataFunc = func() (localGitData, error) {

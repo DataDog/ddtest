@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"slices"
 
+	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/constants"
 	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/utils"
 	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/log"
 )
@@ -111,7 +112,11 @@ func Upload(hooks Hooks) (bytes int64, err error) {
 
 // SearchCommits gets the search commits response with the local and remote commits
 func SearchCommits(client Client) (*SearchCommitsResponse, error) {
-	localCommits := utils.GetLastLocalGitCommitShas()
+	selectedSHA := utils.GetGitCheckoutTags()[constants.GitCommitSHA]
+	if selectedSHA == "" {
+		return NewSearchCommitsResponse(nil, nil, false), nil
+	}
+	localCommits := utils.GetLocalGitCommitShas(selectedSHA)
 	if len(localCommits) == 0 {
 		log.Debug("civisibility: no local commits found")
 		return NewSearchCommitsResponse(nil, nil, false), nil
