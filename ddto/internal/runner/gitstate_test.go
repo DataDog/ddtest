@@ -12,6 +12,8 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -115,7 +117,7 @@ func TestGitWorkerFinishKillsAWorkerThatDoesNotStop(t *testing.T) {
 func TestGitWorkerSignalStopsTheWorker(t *testing.T) {
 	w, lines := helperWorker(t, cligit.Stop)
 	signals := make(chan os.Signal, 1)
-	relayed := w.relaySignals(signals)
+	relayed := w.relaySignals(signals, &runSignals{done: make(chan struct{})})
 	signals <- os.Interrupt
 	if got := <-relayed; got != os.Interrupt {
 		t.Fatalf("relayed %v", got)
@@ -129,6 +131,39 @@ func TestGitWorkerSignalStopsTheWorker(t *testing.T) {
 	w.finish()
 	if w.summary.Worker != "stopped" || w.summary.StopReason != "signal" {
 		t.Fatalf("summary %+v", w.summary)
+	}
+}
+
+// The worker stops only after the first signal is where the run's status
+// finds it: once the worker has stopped, as RunRuntime waits for, the status
+// is the signal's, also while the relay is held before it records the signal.
+func TestGitWorkerSignalStatusAfterTheWorkerStops(t *testing.T) {
+	w, _ := helperWorker(t, cligit.Stop)
+	held, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	t.Cleanup(func() { once.Do(func() { close(release) }) })
+	original := betweenSignalSteps
+	betweenSignalSteps = func() {
+		close(held)
+		<-release
+	}
+	t.Cleanup(func() { betweenSignalSteps = original })
+	signals := make(chan os.Signal, 4)
+	signaled := &runSignals{done: make(chan struct{})}
+	relayed := w.relaySignals(signals, signaled)
+	signals <- syscall.SIGTERM
+	<-held
+	// Held before it records the signal, the relay has not stopped the
+	// worker, so RunRuntime cannot go on to the status yet.
+	if !w.stoppedAt().IsZero() {
+		t.Fatal("the worker was stopped before the signal was recorded")
+	}
+	once.Do(func() { close(release) })
+	if !w.waitExit(30 * time.Second) {
+		t.Fatal("the signalled worker did not stop")
+	}
+	if got := signaled.status(relayed, 0, nil); got != interruptedStatus(syscall.SIGTERM) {
+		t.Fatalf("status %d", got)
 	}
 }
 

@@ -1181,7 +1181,7 @@ func RunRuntime(ctx context.Context, args []string, cli CLIOptions, stdin io.Rea
 		}
 	}
 	signaled := &runSignals{done: make(chan struct{})}
-	relayed := observeSignals(gitWorker.relaySignals(signals), signaled)
+	relayed := gitWorker.relaySignals(signals, signaled)
 	exitCode = runGo(ctx, dir, forwarded, env, relayed, stdin, stdout, stderr)
 	// Before the worker's state, which holds the records, is removed. A
 	// signal, during go test or now, cancels the map's upload.
@@ -1217,33 +1217,12 @@ type runSignals struct {
 	done chan struct{}
 }
 
-// betweenSignalSteps runs between observeSignals' recording the first signal
-// as seen and passing it on; tests replace it.
+// betweenSignalSteps runs before relaySignals records the first signal;
+// tests replace it.
 var betweenSignalSteps = func() {}
 
-// observeSignals passes on the signals of in, and records the first in
-// signaled.
-func observeSignals(in <-chan os.Signal, signaled *runSignals) <-chan os.Signal {
-	out := make(chan os.Signal, cap(in))
-	go func() {
-		first := true
-		for s := range in {
-			if !first {
-				out <- s
-				continue
-			}
-			first = false
-			signaled.seen.Store(true)
-			betweenSignalSteps()
-			out <- s
-			close(signaled.done)
-		}
-	}()
-	return out
-}
-
-// status is statusAfterSignal for the channel that observeSignals returned,
-// out: once a signal is seen, it waits until observeSignals has passed it on,
+// status is statusAfterSignal for the channel that relaySignals returned,
+// out: once a signal is seen, it waits until relaySignals has passed it on,
 // unless out already holds one. A signal that go test took is no longer in
 // out, and go test's code stays.
 func (s *runSignals) status(out <-chan os.Signal, code int, debug *cliDebug) int {
