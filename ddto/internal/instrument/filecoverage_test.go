@@ -120,7 +120,7 @@ func TestMarkFileCoverageKeepsLines(t *testing.T) {
 }
 
 // fileCoverageSite matches one mark site of mark array __ddto_m.
-var fileCoverageSite = regexp.MustCompile(`if __ddto_e := __ddto_atomic\.LoadUint64\(&__ddto_epoch\); .*?\{ break \} \} \};`)
+var fileCoverageSite = regexp.MustCompile(`if __ddto_e := __ddto_atomic\.LoadUint64\(&__ddto_epoch\) \+ 1; .*?\{ break \} \} \};`)
 
 // Sites go at the start of a statement list and after statements that end a
 // basic block or can block: a call, other than to a builtin that cannot, or
@@ -256,7 +256,7 @@ func marked(e uint64) []string {
 		marks := unsafe.Slice(b.marks, b.n)
 		names := unsafe.Slice(b.names, b.n)
 		for i := range marks {
-			if atomic.LoadUint64(&marks[i]) >= e {
+			if atomic.LoadUint64(&marks[i]) >= e+1 {
 				files = append(files, names[i])
 			}
 		}
@@ -373,5 +373,116 @@ func TestFileCoverageNameClash(t *testing.T) {
 	}
 	if err := FileCoverageNameClashError("/src/p/f.go", []byte("package p\n\n// __ddto_ in a comment\nfunc F() {}\n")); err != nil {
 		t.Fatalf("clash for a comment: %v", err)
+	}
+}
+
+// A change inside the body of a function or method that runs after package
+// initialization, to an ordinary comment or to formatting leaves a file's
+// declarations as they were; any other change, which a test can depend on
+// without running the file's code, changes them, and so do comments that are
+// code.
+func TestGoFileDeclarations(t *testing.T) {
+	const base = `//go:build linux
+// +build linux
+
+// Package p.
+package p
+
+/*
+#include <stdlib.h>
+*/
+import "C"
+
+import "strings"
+
+//go:embed data.txt
+var data string
+
+//go:linkname now time.now
+func now() (int64, int32, int64)
+
+// Limit is documented.
+const Limit = 3
+
+var Default = strings.ToUpper("a") // a trailing comment
+
+var (
+	Hook = func() int { return 1 }
+	List = []int{1, 2}
+)
+
+type Item struct {
+	Name string ` + "`json:\"name\"`" + `
+}
+
+type Namer interface{ Name() string }
+
+func init() { Default = "b" }
+
+//export Use
+func Use(n int) int {
+	// A comment inside the body.
+	return n + Limit
+}
+
+//line p.go:100
+func (i Item) Label() string { return i.Name }
+`
+	declarations := func(src string) string {
+		t.Helper()
+		got, code, ok := GoFileDeclarations([]byte(src))
+		if !ok || !code {
+			t.Fatalf("GoFileDeclarations(%q) = %q, %t, %t", src, got, code, ok)
+		}
+		return string(got)
+	}
+	want := declarations(base)
+	if strings.Contains(want, "n + Limit") || strings.Contains(want, "Limit is documented") || !strings.Contains(want, `"b"`) {
+		t.Fatalf("declarations of the base file:\n%s", want)
+	}
+	for _, tc := range []struct {
+		name, old, new string
+		same           bool
+	}{
+		{"function body", "return n + Limit", "return Limit + n", true},
+		{"comment in a body", "// A comment inside the body.", "// Another comment.", true},
+		{"method body", "return i.Name }", "return \"x\" + i.Name }", true},
+		{"doc comment", "// Limit is documented.", "// Limit bounds the items.", true},
+		{"trailing comment", "// a trailing comment", "// another one", true},
+		{"package comment", "// Package p.", "// Package p does things.", true},
+		{"spacing", "const Limit = 3", "const  Limit=3", true},
+		{"blank lines", "type Namer interface", "\n\ntype Namer interface", true},
+		{"line breaks", "List = []int{1, 2}", "List = []int{\n\t\t1,\n\t\t2,\n\t}", true},
+		{"a list on one line", "var (\n\tHook = func() int { return 1 }\n\tList = []int{1, 2}\n)", "var (Hook = func() int { return 1 }; List = []int{1, 2})", true},
+		{"constant", "const Limit = 3", "const Limit = 4", false},
+		{"variable initializer", `strings.ToUpper("a")`, `strings.ToUpper("c")`, false},
+		{"package-level function literal", "return 1 }", "return 2 }", false},
+		{"init body", `Default = "b"`, `Default = "d"`, false},
+		{"type", "Name string", "Name, Title string", false},
+		{"struct tag", `json:"name"`, `json:"title"`, false},
+		{"interface", "Name() string }", "Name() (string, error) }", false},
+		{"function signature", "func Use(n int) int", "func Use(n int64) int", false},
+		{"method signature", "func (i Item) Label", "func (i *Item) Label", false},
+		{"import", `import "strings"`, `import strings "strings"`, false},
+		{"go: directive", "//go:embed data.txt", "//go:embed other.txt", false},
+		{"linkname", "//go:linkname now time.now", "//go:linkname now time.nanotime", false},
+		{"build constraint", "//go:build linux", "//go:build darwin", false},
+		{"legacy build constraint", "// +build linux", "// +build darwin", false},
+		{"line directive", "//line p.go:100", "//line p.go:200", false},
+		{"export", "//export Use", "//export UseIt", false},
+		{"cgo preamble", "#include <stdlib.h>", "#include <stdio.h>", false},
+	} {
+		if !strings.Contains(base, tc.old) {
+			t.Fatalf("%s: base lacks %q", tc.name, tc.old)
+		}
+		if got := declarations(strings.Replace(base, tc.old, tc.new, 1)); (got == want) != tc.same {
+			t.Errorf("%s: declarations same=%t, want %t", tc.name, got == want, tc.same)
+		}
+	}
+	if _, code, ok := GoFileDeclarations([]byte("package p\n\nconst A = 1\n\nfunc init() {}\n")); !ok || code {
+		t.Errorf("a file whose only code runs at initialization: code=%t ok=%t", code, ok)
+	}
+	if _, _, ok := GoFileDeclarations([]byte("package p\nfunc {")); ok {
+		t.Error("a file that does not parse")
 	}
 }

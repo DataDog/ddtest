@@ -5,7 +5,9 @@ package utils
 import (
 	"io/fs"
 	"os"
+	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"syscall"
 )
@@ -75,4 +77,27 @@ func existsUnlogged(name string) bool {
 	}
 	_ = file.Close()
 	return true
+}
+
+// WriteCLIStateFileUnlogged writes data to name in dir through a temporary
+// file that it then renames, so that a reader never sees a partial value,
+// without recording either in Go's test log. A test process writes it while
+// its tests run.
+func WriteCLIStateFileUnlogged(dir, name string, data []byte) error {
+	temp := filepath.Join(dir, name+".tmp-"+strconv.Itoa(os.Getpid()))
+	file, err := openUnlogged(temp, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	_, err = file.Write(data)
+	if closeErr := file.Close(); err == nil {
+		err = closeErr
+	}
+	if err == nil {
+		err = os.Rename(temp, filepath.Join(dir, name))
+	}
+	if err != nil {
+		_ = os.Remove(temp)
+	}
+	return err
 }

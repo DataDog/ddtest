@@ -23,10 +23,12 @@ const (
 	fileCoverageTestBankFile  = "zz_ddto_file_coverage_test.go"
 	fileCoverageXTestBankFile = "zz_ddto_file_coverage_x_test.go"
 
-	// fileCoverageListFields are what file coverage needs from the build
+	// listFields are what preparation reads of every package, and
+	// testListFields what file coverage and local TIA also read of the build
 	// with tests: every source file, including test embeds that only the
 	// test build resolves.
-	fileCoverageListFields = "Dir,Name,ImportPath,ForTest,Standard,Module,Error,GoFiles,CgoFiles,TestGoFiles,XTestGoFiles,EmbedPatterns,TestEmbedPatterns,XTestEmbedPatterns,EmbedFiles,TestEmbedFiles,XTestEmbedFiles,SFiles,CFiles,CXXFiles,MFiles,HFiles,FFiles,SwigFiles,SwigCXXFiles,SysoFiles"
+	listFields     = "Dir,Name,ImportPath,Standard,DepOnly,GoFiles,TestGoFiles,XTestGoFiles,Imports,TestImports,XTestImports,Module,Error"
+	testListFields = "ForTest,CgoFiles,EmbedPatterns,TestEmbedPatterns,XTestEmbedPatterns,EmbedFiles,TestEmbedFiles,XTestEmbedFiles,SFiles,CFiles,CXXFiles,MFiles,HFiles,FFiles,SwigFiles,SwigCXXFiles,SysoFiles"
 )
 
 // contextWords bounds the words of a build's context banks

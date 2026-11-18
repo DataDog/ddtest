@@ -11,7 +11,7 @@
   "files": [
     {
       "path": "ADAPTATIONS.md",
-      "sha256": "918822ce5bfd1e1e81656d87d35be78d5ee251221662568c5a214c0418a6f948",
+      "sha256": "a076d5b5d29c69b5dc5fc49a0097d1da58041f3602b227e630c6e00a4b8c39cc",
       "role": "local"
     },
     {
@@ -78,7 +78,7 @@
     },
     {
       "path": "civisibility/cligit/cligit.go",
-      "sha256": "6b0a00919bfe9225411bd17d885214a6dd0079ab80e6dc11462aa72b82335712",
+      "sha256": "004009ae23bab74b089b7101f0714a3c690f13e51c3d81c3241f09cbc87e2584",
       "role": "local"
     },
     {
@@ -185,7 +185,7 @@
     },
     {
       "path": "civisibility/integrations/civisibility_features.go",
-      "sha256": "8fe8caf46faa003e07f1ad7db69738a6d5eea924844bda25a76b8c57a317d82d",
+      "sha256": "285a95451c3a871a1f6b4a8ceab2ea1b7929db21d3268ec4e74d926b916b7ffb",
       "role": "adapted",
       "source_path": "internal/civisibility/integrations/civisibility_features.go",
       "source_sha256": "08c2f82bfc944754d4c7870cfd0c0fc5c4d257edcdea844f00a89bd9cc88f5d8"
@@ -339,12 +339,12 @@
     },
     {
       "path": "civisibility/integrations/gotesting/coverage/file_coverage.go",
-      "sha256": "fff1ad8ed47c1d423b8cc00a7bab895a92f1be0802cf39f0530442e635d01d5b",
+      "sha256": "62e284ea1456a48da1f771b80b8a2c53e07241bb85ed5e99361a2ccd00b7fa42",
       "role": "local"
     },
     {
       "path": "civisibility/integrations/gotesting/coverage/file_coverage_context.go",
-      "sha256": "e8d5e378fa868e7695513dbefe267ad54538a6c78305f42a65c5618e0dfa6ce0",
+      "sha256": "29b3a373e1e8a4e13467fdfa043b13206f6becd50076da741e026f78f2e0a42b",
       "role": "local"
     },
     {
@@ -354,7 +354,7 @@
     },
     {
       "path": "civisibility/integrations/gotesting/coverage/file_coverage_test.go",
-      "sha256": "8ba028949c841555d509da51c17af227581c08c12fe255980d82357e9bd6faf9",
+      "sha256": "7179ac16066687bc6e6b618c7de5b6964a261d680e48f3f56bafc0993e991ff6",
       "role": "local"
     },
     {
@@ -373,7 +373,7 @@
     },
     {
       "path": "civisibility/integrations/gotesting/coverage/memory_coverage.go",
-      "sha256": "d48b5d7543904204e1d5956595909e6211de354497d9b054798f8c30e1eb2ce6",
+      "sha256": "9733b41809cd8ae2e3a2da26c1bbdac353b96a38e6bb36a7adbd2c7b339a13db",
       "role": "local"
     },
     {
@@ -439,8 +439,13 @@
       "role": "local"
     },
     {
+      "path": "civisibility/integrations/gotesting/coverage/setup_coverage.go",
+      "sha256": "6c25709e6958fa8c3f98b2fa099d250017e20eb4b04e9ed0f887ffac1b14ddfd",
+      "role": "local"
+    },
+    {
       "path": "civisibility/integrations/gotesting/coverage/test_coverage.go",
-      "sha256": "c8ae206dd72485a3fa2d2df6ebca9d96df9c2b2b4d4d34c9f3d0c0b87f968b28",
+      "sha256": "0cd969e6e59d31a22a0fca3ac0312b55fe1697189b4f97027a6eb63390cc5a76",
       "role": "adapted",
       "source_path": "internal/civisibility/integrations/gotesting/coverage/test_coverage.go",
       "source_sha256": "90f437bef02e1c4eca6e220f13d128ce8da64109359b66b98db6b5bb3bb5c352"
@@ -555,8 +560,13 @@
       "source_sha256": "c1673bff20eea826b440682e29a4678a8aab3d49e83776bc84e4ff425edddc47"
     },
     {
+      "path": "civisibility/integrations/gotesting/itr_local_tia_test.go",
+      "sha256": "47f5e713bd75c73f7ea261ffddbe970716e644f2128a5fd01f0046b464cc79db",
+      "role": "local"
+    },
+    {
       "path": "civisibility/integrations/gotesting/itr_state.go",
-      "sha256": "3bbc8472401142a9eeffe4b545242805904dcc7aaa816240c633e99b977cb8ad",
+      "sha256": "fa97ddc63ea6c2a250ca86095846e40d355b787cb504dece2529ae79af6fbb44",
       "role": "adapted",
       "source_path": "internal/civisibility/integrations/gotesting/itr_state.go",
       "source_sha256": "3f7f548af4bea6aee100ebc30655db6fcb17dd22c5ca2a52a56718d7c3f231ee"
@@ -726,7 +736,7 @@
     },
     {
       "path": "civisibility/integrations/gotesting/retry_process.go",
-      "sha256": "6f0b90bb807d1dec5757a87ee17f1fb47db1aeec5319ca42d539b64da3ace026",
+      "sha256": "3d446cc559cef37e44edde72839dc47091a798cabc283a66a0817078ad76dcb5",
       "role": "adapted",
       "source_path": "internal/civisibility/integrations/gotesting/retry_process.go",
       "source_sha256": "e1bdfd9174b86b856a05dbeb4278d386e8126cbb272248b9f7ab00bf8ee8feca"
@@ -826,7 +836,7 @@
     },
     {
       "path": "civisibility/integrations/gotesting/testing.go",
-      "sha256": "42c050456254b40c27513a35ed48238d16ffe9c6737f9bce9807312563a20e57",
+      "sha256": "edcc456093c1c70b86f840b74fdc34cc0296824e7960ba2c9e17df16326233d3",
       "role": "adapted",
       "source_path": "internal/civisibility/integrations/gotesting/testing.go",
       "source_sha256": "73324a56f1b1c581df8620a4f67a51743b198b2470d43f9b645425fff6a63646"
@@ -982,7 +992,7 @@
     },
     {
       "path": "civisibility/integrations/manual_api_ddtest.go",
-      "sha256": "3dca403bd586c383365eddb16a51cb4e1f16a5e1363c90d2ded52417dfa7617d",
+      "sha256": "116cbc8b709c2b2733222a3ec9c2c83dd4e05bb0ea868be7060170538f75b05a",
       "role": "adapted",
       "source_path": "internal/civisibility/integrations/manual_api_ddtest.go",
       "source_sha256": "7380f18e54348da3d6c9515d1f6e31f8c9fb33e8423cd90791c305cf3d51afc2"
@@ -1156,7 +1166,7 @@
     },
     {
       "path": "civisibility/utils/cli_state_files.go",
-      "sha256": "339c0dfb19b31385820eb92445c3165a01741b14a72786386eb01cf879e2f606",
+      "sha256": "6755975b687f5c2d7e6f80ffe5374ba70eae59971bbb2548484285d9383b45fd",
       "role": "local"
     },
     {
@@ -1186,7 +1196,7 @@
     },
     {
       "path": "civisibility/utils/cli_tests_state.go",
-      "sha256": "0dd68dcc39fd496b9e9e28854c0202196359bac4c4493ce1aec73e4a47692fc1",
+      "sha256": "53f05b3c12d3de76fe36006d480f1d02a65dd5c48c841142c91d13c908222a87",
       "role": "local"
     },
     {
@@ -1398,6 +1408,11 @@
       "role": "adapted",
       "source_path": "internal/civisibility/utils/git_test.go",
       "source_sha256": "a36fb9a5c074542d6104cb78850c8ac1b03d516a8177e2c61e9e61e2229efd6b"
+    },
+    {
+      "path": "civisibility/utils/git_unshallow_dir.go",
+      "sha256": "a0a95099bc77507aadb0c502b657b8492bcd8c1900c0733212087d281f9e8a71",
+      "role": "local"
     },
     {
       "path": "civisibility/utils/githubjob/fifo_other_test.go",
@@ -1715,7 +1730,7 @@
     },
     {
       "path": "civisibility/utils/net/skippable.go",
-      "sha256": "cc6ccebabfb366a8595ac3703b5177f562775d99e41bd8c318463008ddb5c912",
+      "sha256": "dfed82be1ba2a8671f6db9a0d9cdaf40d356d77d757a9f3d26000cb70c6e65f8",
       "role": "adapted",
       "source_path": "internal/civisibility/utils/net/skippable.go",
       "source_sha256": "2c0465e55f4e1e7586531e5fba69ce29a9f6bc28d1c5cefe1c14f607b319ddf6"
@@ -1740,6 +1755,16 @@
       "role": "adapted",
       "source_path": "internal/civisibility/utils/net/test_management_tests_api_test.go",
       "source_sha256": "c1b159510051564d8a01ca47faacd4e633356f204534447f982fa2cef7f6f735"
+    },
+    {
+      "path": "civisibility/utils/net/tia_artifacts.go",
+      "sha256": "eb205499e2b9026c01366250ab2012784e9d6568bfc14596fcdbf374d044b169",
+      "role": "local"
+    },
+    {
+      "path": "civisibility/utils/net/tia_artifacts_test.go",
+      "sha256": "70b3081dd968dd21c22ddaa308a47255cdbd6eedc65cc93fbe285748319bcac6",
+      "role": "local"
     },
     {
       "path": "civisibility/utils/net/uds_client_test.go",

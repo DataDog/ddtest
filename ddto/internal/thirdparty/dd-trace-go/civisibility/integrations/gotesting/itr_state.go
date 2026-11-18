@@ -219,6 +219,11 @@ func (s *itrState) skippableCandidates(testInfo *testingTInfo) []net.SkippableRe
 		if strings.TrimSpace(candidate.Parameters) != "" {
 			continue
 		}
+		// Local TIA's candidates name their module: a test of another
+		// package with the same file base name and test name is not this one.
+		if candidate.Module != "" && candidate.Module != testInfo.moduleName {
+			continue
+		}
 		matching = append(matching, candidate)
 	}
 	return matching

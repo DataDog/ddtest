@@ -65,6 +65,9 @@ type (
 		Parameters              string             `json:"parameters"`
 		Configurations          testConfigurations `json:"configurations"`
 		MissingLineCodeCoverage bool               `json:"_is_missing_line_code_coverage"`
+		// Module is set only by ddto's local TIA, whose candidates also
+		// match the test's module; Datadog's never name one.
+		Module string `json:"-"`
 	}
 
 	// SkippableTestsResponse stores the skippable-tests response plus backend

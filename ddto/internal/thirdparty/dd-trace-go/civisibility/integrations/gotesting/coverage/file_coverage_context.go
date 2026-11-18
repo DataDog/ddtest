@@ -208,6 +208,9 @@ func (c *contextState) setup() {
 func beginContextCoverage() uint64 {
 	c := &contextCoverage
 	c.mu.Lock()
+	if c.epoch == 0 {
+		contextOutsideWindows(c)
+	}
 	c.epoch++
 	window := fileWindow{c.epoch, make([]uint64, c.words)}
 	c.windows = append(c.windows, window)
@@ -219,6 +222,33 @@ func beginContextCoverage() uint64 {
 	c.mu.Unlock()
 	fileCoverageSetState(ctx.pointer(), nil)
 	return window.epoch
+}
+
+// contextOutsideWindows records the files of the bits that goroutines set
+// before the first window began, as while packages initialized and in
+// TestMain: they went to the build's scratch array.
+func contextOutsideWindows(c *contextState) {
+	if !localTIAEnabled {
+		return
+	}
+	outsideWindows.Lock()
+	first := !outsideWindows.first
+	outsideWindows.first = true
+	outsideWindows.Unlock()
+	scratch := (*uint64)(atomic.LoadPointer(&fileCoverageUnknown))
+	if !first || scratch == nil {
+		return
+	}
+	var names []string
+	words := unsafe.Slice(scratch, c.words)
+	for w := range words {
+		for word := atomic.LoadUint64(&words[w]); word != 0; word &= word - 1 {
+			if name := c.names[w*64+bits.TrailingZeros64(word)]; name != "" {
+				names = append(names, name)
+			}
+		}
+	}
+	recordOutsideWindows(fileCoverageFiles("", names))
 }
 
 // scanContextCoverage captures the test that began at epoch: the files of

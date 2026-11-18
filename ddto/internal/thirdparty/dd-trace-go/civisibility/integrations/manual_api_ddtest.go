@@ -15,6 +15,7 @@ import (
 	"time"
 	_ "unsafe" // for go:linkname
 
+	"github.com/DataDog/ddtest/ddto/internal/localtia"
 	tracer "github.com/DataDog/ddtest/ddto/internal/minitracer"
 	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/constants"
 	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/integrations/logs"
@@ -204,6 +205,8 @@ func (t *tslvTest) closeLocked(status TestResultStatus, options ...TestCloseOpti
 		setCIVisibilitySpanTag(t.span, constants.TestStatus, constants.TestStatusPass)
 	case ResultStatusFail:
 		setCIVisibilitySpanTag(t.span, constants.TestStatus, constants.TestStatusFail)
+		// Before its final status, which a retry may set to pass.
+		localtia.RecordFailure(localtia.Test{Module: t.suite.module.name, Suite: t.suite.name, Name: t.name})
 	case ResultStatusSkip:
 		setCIVisibilitySpanTag(t.span, constants.TestStatus, constants.TestStatusSkip)
 	}
@@ -273,6 +276,11 @@ func (t *tslvTest) internalClose(tags map[string]any, options ...tracer.FinishOp
 // SetTag sets a tag on the test event.
 func (t *tslvTest) SetTag(key string, value any) {
 	t.ciVisibilityCommon.SetTag(key, value)
+	if key == constants.TestFinalStatus {
+		// Every final status, after retries, comes through here.
+		status, _ := value.(string)
+		localtia.RecordStatus(localtia.Test{Module: t.suite.module.name, Suite: t.suite.name, Name: t.name}, status)
+	}
 	if key == constants.TestIsNew ||
 		key == constants.TestIsRetry ||
 		key == constants.TestEarlyFlakeDetectionRetryAborted ||

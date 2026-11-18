@@ -344,7 +344,9 @@ before this package initializes. The layout version is in the list's name
 and in each bank record. ddto checks the declaration before it emits banks,
 and a bank of another layout turns file coverage off.
 
-`FileCoverageActive` reports banks, Go's coverage off and coverage upload on.
+`FileCoverageActive` reports banks, Go's coverage off and per-test coverage
+collected: for Datadog's coverage upload or for ddto's
+[local TIA](#local-test-impact-analysis-from-ddtos-cli).
 It extends three places that upstream gates on Go's counters:
 - the session's `test.code_coverage.enabled` tag;
 - the test wrapper's choice to collect;
@@ -1553,6 +1555,109 @@ Checks: `TestSharedAppReportsOwnerIdentity`, `TestSharedAppRequiresSequence`,
 `TestRunOwnsTelemetryApplication` and `integration/TestMiniCLITelemetry`, which
 checks one application, sequential `seq_id`s, the worker's Git metrics, no
 telemetry from a cached run, reported failures and a binary run alone.
+
+## Local Test Impact Analysis from ddto's CLI
+
+Upstream skips the tests that Datadog's skippable-tests response lists, and
+collects per-test coverage only when the settings enable it. With ddto's
+local TIA (`DD_TIA_ENABLED`), the CLI selects the tests itself from a per-test dependency map
+that earlier runs recorded, and hands each test process its package's
+selection in the Git worker's state; see
+[Local Test Impact Analysis](../../../docs/mini-runtime.md#local-test-impact-analysis).
+The test process's side lives outside this subset, in `internal/localtia`,
+and is active only when that selection exists, so other processes behave as
+upstream:
+- `civisibility_features.go` enables ITR's test skipping, whatever the
+  settings say or when they are unavailable, and takes the skippable tests
+  from `localtia.SkippableTestsResponse` instead of requesting them.
+  `GetSkippableTestsResponse` returns that response.
+- `net.SkippableResponseDataAttributes` has a `Module`, which only local TIA
+  sets and JSON never carries. `skippableCandidates` skips a candidate whose
+  module differs from the test's, so tests of two packages with the same file
+  base name and test name never match each other. Datadog's candidates name
+  no module and match as before. `decisionFor` stays the only place that
+  decides, so unskippable, attempt-to-fix and modified tests still run. A
+  local candidate whose record holds no line coverage that the run's
+  counters can take has `MissingLineCodeCoverage`, so it runs when the
+  process collects coverage, as Datadog's candidates without line coverage
+  do.
+- `testing.go` initializes coverage when local TIA records the process's
+  tests (`coverage.LocalTIARecords`), with upload as the settings say. A run
+  that does not record (`DD_TIA_RECORD=false`, or no per-test coverage that
+  local TIA can use) only skips: its tests collect per-test coverage only
+  when the settings enable it, and keep `t.Parallel` otherwise. `testing.go` also names each
+  top-level test's collector with `coverage.NewTopLevelTestCoverage`, and
+  hands each execution that collects no coverage while coverage is on, such
+  as a retry's or Early Flake Detection's, to `coverage.LocalTIAUncovered`,
+  so that a test that passed records as repeated, which is not skipped.
+  `finishProcessRetryTestEvent` in `retry_process.go` does the same for each
+  attempt that a child process ran, whose coverage never reaches local TIA.
+  `testing.go`'s lines keep their numbers: the integration tests' table of adapted call
+  sites names the line that calls the test's body; the `else` branch takes
+  the blank line before the cleanup's `if`, whose comment moves onto it. `coverage.CanCollectPerTestCoverage`
+  and `FileCoverageActive` hold when either Datadog or local TIA needs
+  per-test coverage. The coverage writer exists only for an upload, and
+  `processCoverageData` submits a row only to it; it records every top-level
+  test's files in local TIA. `InitializeCoverage` registers
+  `localtia.WriteRecords` before the writer, so close actions, which run in
+  reverse, write the records after every test's coverage is processed.
+- `tslvTest.SetTag` hands each `test.final_status` to `localtia.RecordStatus`:
+  every final status, after retries, is set there. `tslvTest.closeLocked`
+  hands each failed execution to `localtia.RecordFailure`, so that a test that
+  passed only on a retry, whose coverage comes from its first execution,
+  records as flaky.
+- Code that runs outside every test's coverage window, at package
+  initialization, in TestMain or between tests, is in no test's coverage.
+  [`coverage/setup_coverage.go`](civisibility/integrations/gotesting/coverage/setup_coverage.go)
+  is local and hands its files to `localtia.RecordSetup`, which adds them to
+  every test of the process: the in-memory counters that grew before each
+  window (`memory_coverage.go`), the text profile's counts before the first
+  window (`test_coverage.go`), the serial file marks raised before a window
+  and not reported by the previous scan (`file_coverage.go`), and the context
+  bits set before the first window (`file_coverage_context.go`). For the
+  marks, ddto's sites raise a mark to the epoch plus one, so that code at
+  epoch 0 marks its files too, and a scan reports the marks above the test's
+  epoch. A serial scan then advances the epoch, so that work after the window
+  and before the next one raises marks that neither the window's scan nor an
+  earlier one reported, and the next window reports them as setup. Without
+  local TIA, the scans report each window's files as before.
+- `utils.WriteCLIStateFileUnlogged` writes a test process's records to the
+  state without recording them in Go's test log, and `CLITests.LocalTIA`
+  tells the Git worker not to request Datadog's skippable tests ahead for the
+  test processes (`cligit.localTIAClient`).
+- The CLI shares its maps through the TIA artifacts API with local
+  [`utils/net/tia_artifacts.go`](civisibility/utils/net/tia_artifacts.go):
+  `NewTIAArtifactsClient` builds the client of `newClientWithServiceNameAndSubdomain`
+  for the `api` subdomain, agentless or through the Agent's EVP proxy, without
+  starting telemetry, and returns nil in agentless mode without an API key.
+  `LookupTIAArtifact` posts a `ci_app_tia_artifact_lookup` request and
+  `StoreTIAArtifact` puts the map's JSON as it is, as dd-trace-py does, each
+  with one retry, after a transport error, also one that breaks off the
+  body, a 429 or a 5xx, and the caller's context. They send their requests themselves, with the client's HTTP
+  client and headers, instead of through `RequestHandler`, which reads whole
+  bodies: they read at most the API's 5 MiB of a response and of its gzip
+  decoding, so a small download cannot expand without bound, and they read
+  the lookup's matched and source commits from the response's headers.
+  `http.go` stays as upstream.
+  The CLI calls `utils.UseCLIGitState` with the Git worker's record before it
+  creates the client, as the worker does, so that the CI tags, among them
+  `git.repository_url` and `git.commit.sha`, come from that record. Before a
+  lookup in a shallow clone that has only its commit, it calls local
+  [`utils/git_unshallow_dir.go`](civisibility/utils/git_unshallow_dir.go)'s
+  `UnshallowGitRepositoryIn` with the checkout's root, which `go test -C` can
+  make another directory than the CLI's: it runs `UnshallowGitRepository`
+  with that directory as the Git commands' working and safe directory, and
+  restores the process's own after. The worker's upload, in the checkout,
+  then finds the history and does not fetch again.
+
+Checks: `TestITRCandidatesMatchLocalTIAModule`, the `internal/localtia` and
+`internal/runner` `LocalTIA` tests, `TestFileCoverageOutsideWindows` and
+`TestFileCoverageBetweenWindowsWithoutLocalTIA`, `TestTIAArtifactLookup`,
+`TestTIAArtifactLookupBound`, `TestTIAArtifactUpload`, `TestTIAArtifactsThroughTheAgent` and
+`TestTIAArtifactsWithoutCredentials`, and `TestLocalTIACounters`,
+`TestLocalTIARace`, `TestLocalTIAFileMarks`, `TestLocalTIARepeatedExecutions`,
+`TestLocalTIALineCoverageFromAnotherSource`, `TestLocalTIARecordFallback` and
+the `TestLocalTIARemoteMap` tests.
 
 ## Requests from ddto's CLI
 

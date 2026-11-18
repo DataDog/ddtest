@@ -121,6 +121,28 @@
       "TestMiniFileCoverageRefusals",
       "TestMiniFileCoverageRefusesPlugins",
       "TestMiniFileCoverageTestCache",
+      "TestLocalTIACounters",
+      "TestLocalTIAFileMarks",
+      "TestLocalTIARace",
+      "TestLocalTIAReadOnly",
+      "TestLocalTIAReadOnlyKeepsParallel",
+      "TestLocalTIAReadOnlyWithoutCoverageFlags",
+      "TestLocalTIACoverPackages",
+      "TestLocalTIASubtestNarrowing",
+      "TestLocalTIAUserOverlay",
+      "TestLocalTIACodeBeforeTests",
+      "TestLocalTIAEmbeddedGoFile",
+      "TestLocalTIARetriedPass",
+      "TestLocalTIAProvidedVendor",
+      "TestLocalTIACoverageScope",
+      "TestLocalTIALineCoverageFromAnotherSource",
+      "TestLocalTIARepeatedExecutions",
+      "TestLocalTIARecordFallback",
+      "TestLocalTIARemoteMap",
+      "TestLocalTIARemoteMapStats",
+      "TestLocalTIARemoteMapUnreadable",
+      "TestLocalTIARemoteMapNullBitmap",
+      "TestLocalTIARemoteMapShallowClone",
       "TestMiniHelperMarksKeepLocations",
       "TestMiniHelperSubtestKeepsTheTestModule",
       "TestMiniDynamicFlakyRetries",
@@ -235,6 +257,28 @@
       "TestMiniFileCoverageRefusals",
       "TestMiniFileCoverageRefusesPlugins",
       "TestMiniFileCoverageTestCache",
+      "TestLocalTIACounters",
+      "TestLocalTIAFileMarks",
+      "TestLocalTIARace",
+      "TestLocalTIAReadOnly",
+      "TestLocalTIAReadOnlyKeepsParallel",
+      "TestLocalTIAReadOnlyWithoutCoverageFlags",
+      "TestLocalTIACoverPackages",
+      "TestLocalTIASubtestNarrowing",
+      "TestLocalTIAUserOverlay",
+      "TestLocalTIACodeBeforeTests",
+      "TestLocalTIAEmbeddedGoFile",
+      "TestLocalTIARetriedPass",
+      "TestLocalTIAProvidedVendor",
+      "TestLocalTIACoverageScope",
+      "TestLocalTIALineCoverageFromAnotherSource",
+      "TestLocalTIARepeatedExecutions",
+      "TestLocalTIARecordFallback",
+      "TestLocalTIARemoteMap",
+      "TestLocalTIARemoteMapStats",
+      "TestLocalTIARemoteMapUnreadable",
+      "TestLocalTIARemoteMapNullBitmap",
+      "TestLocalTIARemoteMapShallowClone",
       "TestMiniHelperMarksKeepLocations",
       "TestMiniHelperSubtestKeepsTheTestModule",
       "TestMiniDynamicFlakyRetries",
@@ -301,6 +345,9 @@
       "parity": [
         "TestCIVisibilityUnixAgent"
       ],
+      "transparency": [
+        "TestLocalTIARemoteMapSignals"
+      ],
       "sdk-orchestrion": [
         "TestMiniOrchestrionSupportedVersions"
       ]
@@ -315,6 +362,9 @@
       ],
       "parity": [
         "TestCIVisibilityUnixAgent"
+      ],
+      "transparency": [
+        "TestLocalTIARemoteMapSignals"
       ]
     },
     "windows": {

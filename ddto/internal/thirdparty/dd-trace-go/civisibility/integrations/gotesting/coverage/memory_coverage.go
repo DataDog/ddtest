@@ -395,6 +395,7 @@ func beginMemoryCoverage() (*memoryCollector, error) {
 	if memoryCoverage.oracle {
 		c.rawBefore = raw
 	}
+	countsOutsideWindows(before)
 	return c, nil
 }
 
@@ -414,6 +415,7 @@ func (c *memoryCollector) finish() error {
 			c.covered = append(c.covered, int32(i))
 		}
 	}
+	countsWindowEnded(after)
 	if memoryCoverage.oracle {
 		c.rawAfter = raw
 	}

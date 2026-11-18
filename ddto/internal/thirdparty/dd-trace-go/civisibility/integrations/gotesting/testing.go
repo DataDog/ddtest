@@ -364,9 +364,9 @@ func instrumentTestingMWithOptions(m *testing.M, wrapperOpts additionalFeatureWr
 	}
 	wrapperOpts.efdFaultySessionGuard = newEarlyFlakeDetectionFaultySession(settings, knownTests)
 	if settings != nil {
-		if settings.CodeCoverage {
-			// Initialize the runtime coverage if enabled.
-			coverage.InitializeCoverage(m, true)
+		if settings.CodeCoverage || coverage.LocalTIARecords() {
+			// Initialize the runtime coverage if enabled, or for ddto's local TIA.
+			coverage.InitializeCoverage(m, settings.CodeCoverage)
 			coverageInitialized = true
 		}
 		if settings.TestManagement.Enabled && internal.BoolEnv(constants.CIVisibilityTestManagementEnabledEnvironmentVariable, true) {
@@ -796,12 +796,12 @@ func (ddm *M) executeInternalTest(testInfo *testingTInfo, wrapperOpts additional
 		if shouldCollectExecutionCoverage(coverageEnabled, execMeta) && (coverage.CanCollect() || coverage.FileCoverageActive()) {
 			// set the test coverage collector
 			testFile, _ := originalFunc.FileLine(originalFunc.Entry())
-			tCoverage = coverage.NewTestCoverage(
+			tCoverage = coverage.NewTopLevelTestCoverage(
 				session.SessionID(),
 				module.ModuleID(),
 				suite.SuiteID(),
 				test.TestID(),
-				testFile)
+				testFile, testInfo.moduleName, testInfo.suiteName, testInfo.testName)
 
 			// now we need to disable parallelism for the test in order to collect the test coverage, unless file coverage keeps it
 			tParent := getTestParentPrivateFields(t)
@@ -809,10 +809,10 @@ func (ddm *M) executeInternalTest(testInfo *testingTInfo, wrapperOpts additional
 				tParentOldBarrier = *tParent.barrier
 				*tParent.barrier = nil
 			}
+		} else if coverageEnabled { // a retry, or an execution whose coverage is not collected
+			coverage.LocalTIAUncovered(testInfo.moduleName, testInfo.suiteName, testInfo.testName)
 		}
-
-		if tCoverage != nil {
-			// Capture after user cleanup and descendants, before delivery resumes.
+		if tCoverage != nil { // Capture after user cleanup and descendants, before delivery resumes.
 			registerTestCoverageCleanup(t, tCoverage, tParentOldBarrier)
 		}
 

@@ -79,6 +79,8 @@ type gitWorker struct {
 	keepZip       string
 	log           *os.File
 	summary       ciStateSummaryFile
+	// gitRecord is the record of the checkout whose state handOff handed.
+	gitRecord utils.CLIGitRecord
 }
 
 // ciStateSummaryFile records ddto's view of the worker, in ci-state.json.
@@ -272,6 +274,7 @@ func (w *gitWorker) handOff(tests utils.CLITests, launcher bool, goVersion strin
 		return nil
 	}
 	w.summary.Handed = true
+	w.gitRecord = record
 	// The input stays open: finish writes Exited once go test exits.
 	return []string{goenv.GitStateHandoff + "=" + w.state}
 }
@@ -500,18 +503,27 @@ func zipDirectory(dir, path string) error {
 
 // relaySignals forwards each signal to go test through the returned channel
 // and stops the worker, which ends its work as finish describes: an
-// interrupted command should not wait for an upload.
-func (w *gitWorker) relaySignals(signals <-chan os.Signal) <-chan os.Signal {
-	if w == nil {
-		return signals
-	}
+// interrupted command should not wait for an upload. For the first signal,
+// it records it in signaled first: seen, then the signal in the channel,
+// then done, and only then the stop, so that when the worker's end lets
+// RunRuntime go on, the run's status finds the signal.
+func (w *gitWorker) relaySignals(signals <-chan os.Signal, signaled *runSignals) <-chan os.Signal {
 	relayed := make(chan os.Signal, cap(signals))
 	go func() {
+		first := true
 		for s := range signals {
-			// Relayed first: once the stop ends finish's wait, RunRuntime
-			// looks for the signal.
-			relayed <- s
-			w.stop("signal")
+			if first {
+				first = false
+				betweenSignalSteps()
+				signaled.seen.Store(true)
+				relayed <- s
+				close(signaled.done)
+			} else {
+				relayed <- s
+			}
+			if w != nil {
+				w.stop("signal")
+			}
 		}
 	}()
 	return relayed

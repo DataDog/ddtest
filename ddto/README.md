@@ -187,6 +187,21 @@ More options follow the same rule:
   `DD_CIVISIBILITY_EXPERIMENTAL_FILE_COVERAGE=true` or `=context` does the
   same; the flag decides when both are set.
   See [Experimental file coverage](docs/mini-runtime.md#experimental-file-coverage).
+- `DD_TIA_ENABLED=true`, which no flag replaces yet, selects the tests to skip
+  from the per-test coverage that earlier runs of the repository recorded,
+  instead of asking Datadog: a test runs again when a file that it depends on
+  changes. Recording needs per-test coverage: Go's counters with `-coverpkg`,
+  such as `-cover -covermode=atomic -coverpkg=./...` or
+  `-race -cover -coverpkg=./...`, or `--experimental-file-coverage`.
+  A run records by default; `DD_TIA_RECORD=false` only skips, without
+  recording or coverage flags. A recording run without such coverage only
+  skips too, with a warning, and records nothing. Go's counters in set mode,
+  the default of `-cover` without `-race`, turn local TIA off, recording or
+  not: they cannot complete the coverage profile with the skipped tests'
+  lines. A run without a local map takes the one that Datadog's TIA
+  artifacts API stores for its commit or a recent one, and every recording
+  run uploads its map there, as plain JSON of up to 5 MiB. See
+  [Local Test Impact Analysis](docs/mini-runtime.md#local-test-impact-analysis).
 
 `ddtest instrument` reports one test session per command: every package's
 tests report in it, and it lasts the command and has `go test`'s exit status.
@@ -353,6 +368,8 @@ Coverage still requires Go coverage flags.
 | `DD_CIVISIBILITY_IMPACTED_TESTS_DETECTION_ENABLED` | `true` | Allow backend-enabled impacted-test detection. |
 | `DD_CIVISIBILITY_CODE_COVERAGE_REPORT_UPLOAD_ENABLED` | `true` | Allow backend-enabled aggregate coverage-report uploads. |
 | `DD_CODE_COVERAGE_FLAGS` | Unset | Comma-separated report labels, up to 32. |
+| `DD_TIA_ENABLED` | `false` | Read by the CLI: select the tests to skip locally, from the per-test coverage of earlier runs, whatever the backend's ITR settings. A run without a local map takes the one that Datadog's TIA artifacts API stores, and a recording run uploads its map. |
+| `DD_TIA_RECORD` | `true` | With `DD_TIA_ENABLED`: `true` records the run's tests' coverage in the map; `false` skips from the stored map without collecting per-test coverage for it or recording, so tests keep `t.Parallel`. A recording run without per-test coverage that local TIA can use warns and runs as with `false`; Go's counters in set mode turn local TIA off. |
 
 See the [feature matrix](docs/ci-parity.md) for combinations and limitations.
 
