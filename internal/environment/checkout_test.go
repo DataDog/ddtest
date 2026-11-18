@@ -178,6 +178,13 @@ func TestCIMergeCommitEvidence(t *testing.T) {
 		env            map[string]string
 		merge          bool
 	}{
+		{"AppVeyor merge", "appveyor", map[string]string{"APPVEYOR_REPO_COMMIT": sha, "APPVEYOR_PULL_REQUEST_NUMBER": "42", "APPVEYOR_PULL_REQUEST_HEAD_COMMIT": strings.Repeat("b", 40)}, true},
+		{"AppVeyor same revision", "appveyor", map[string]string{"APPVEYOR_REPO_COMMIT": sha, "APPVEYOR_PULL_REQUEST_NUMBER": "42", "APPVEYOR_PULL_REQUEST_HEAD_COMMIT": strings.ToLower(sha)}, false},
+		{"AppVeyor no PR", "appveyor", map[string]string{"APPVEYOR_REPO_COMMIT": sha, "APPVEYOR_PULL_REQUEST_NUMBER": "", "APPVEYOR_PULL_REQUEST_HEAD_COMMIT": strings.Repeat("b", 40)}, false},
+		{"AppVeyor invalid PR", "appveyor", map[string]string{"APPVEYOR_REPO_COMMIT": sha, "APPVEYOR_PULL_REQUEST_NUMBER": "false", "APPVEYOR_PULL_REQUEST_HEAD_COMMIT": strings.Repeat("b", 40)}, false},
+		{"AppVeyor no head", "appveyor", map[string]string{"APPVEYOR_REPO_COMMIT": sha, "APPVEYOR_PULL_REQUEST_NUMBER": "42", "APPVEYOR_PULL_REQUEST_HEAD_COMMIT": ""}, false},
+		{"AppVeyor invalid head", "appveyor", map[string]string{"APPVEYOR_REPO_COMMIT": sha, "APPVEYOR_PULL_REQUEST_NUMBER": "42", "APPVEYOR_PULL_REQUEST_HEAD_COMMIT": "not-a-sha"}, false},
+		{"AppVeyor invalid merge", "appveyor", map[string]string{"APPVEYOR_REPO_COMMIT": "not-a-sha", "APPVEYOR_PULL_REQUEST_NUMBER": "42", "APPVEYOR_PULL_REQUEST_HEAD_COMMIT": strings.Repeat("b", 40)}, false},
 		{"GitHub merge", "github", map[string]string{"GITHUB_SHA": sha, "GITHUB_REF": "refs/pull/42/merge"}, true},
 		{"GitHub branch", "github", map[string]string{"GITHUB_SHA": sha, "GITHUB_REF": "refs/heads/main"}, false},
 		{"GitHub head ref", "github", map[string]string{"GITHUB_SHA": sha, "GITHUB_REF": "refs/pull/42/head"}, false},
@@ -310,6 +317,30 @@ func TestCheckoutRelationshipSelection(t *testing.T) {
 			}
 			if !tc.explicitHead && tags[constants.GitHeadCommit] != head {
 				t.Fatal("operation filtering changed reported workflow tags")
+			}
+		})
+	}
+}
+
+func TestAzurePullRequestHeadSHA(t *testing.T) {
+	build := strings.Repeat("a", 40)
+	head := strings.Repeat("B", 40)
+	for _, test := range []struct {
+		name, source, wantCommit, wantHead string
+	}{
+		{"PR head", head, strings.ToLower(head), strings.ToLower(head)},
+		{"no PR head", "", build, ""},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv("BUILD_SOURCEVERSION", build)
+			t.Setenv("SYSTEM_PULLREQUEST_SOURCECOMMITID", test.source)
+			tags := extractAzurePipelines()
+			normalizeTags(tags)
+			if tags[constants.GitCommitSHA] != test.wantCommit {
+				t.Fatalf("commit=%q, want %q", tags[constants.GitCommitSHA], test.wantCommit)
+			}
+			if tags[constants.GitHeadCommit] != test.wantHead {
+				t.Fatalf("head=%q, want %q", tags[constants.GitHeadCommit], test.wantHead)
 			}
 		})
 	}

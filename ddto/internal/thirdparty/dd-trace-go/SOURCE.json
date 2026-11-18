@@ -11,7 +11,7 @@
   "files": [
     {
       "path": "ADAPTATIONS.md",
-      "sha256": "15e05364dbde6f4b48dd1dad38294ff947b0aff408b8cd9eb36f93d6cc075868",
+      "sha256": "918822ce5bfd1e1e81656d87d35be78d5ee251221662568c5a214c0418a6f948",
       "role": "local"
     },
     {
@@ -1102,7 +1102,7 @@
     },
     {
       "path": "civisibility/utils/checkout.go",
-      "sha256": "b5f818329111758fb93e8accb022b074bcf3616abc8f43b9cb8b1b4bf0722547",
+      "sha256": "53b6d1112dd86c98943452bf2b383ffd1e209db2e9b65d4e4afbe28f155e7d74",
       "role": "local"
     },
     {
@@ -1122,12 +1122,12 @@
     },
     {
       "path": "civisibility/utils/checkout_test.go",
-      "sha256": "d5c67408f546d4a4eb6d58c31b414da781f22d729fa7129cc18e6820bd9cf424",
+      "sha256": "90ed79b95f0d11a738943364d62a7e491e21c38715ab808838a88a039cb325db",
       "role": "local"
     },
     {
       "path": "civisibility/utils/ci_providers.go",
-      "sha256": "3fbd2502d1798dee2fe919e04941be8d577167b4f226e68309a2ca6c3d58daeb",
+      "sha256": "462bf5ca59ed30fa2eaf1356857656f637d08b0496edd5bc946b4140debf6811",
       "role": "adapted",
       "source_path": "internal/civisibility/utils/ci_providers.go",
       "source_sha256": "f87619eac80f09a6a4e90b12392009fa24f8eb50e00d5971d64bea99c99f68b9"
@@ -1826,8 +1826,8 @@
     },
     {
       "path": "civisibility/utils/testdata/fixtures/providers/appveyor.json",
-      "sha256": "0d6a168561a78a993495cc1ca89aff7b94ff555181027f482ed07a7d050aebc6",
-      "role": "upstream",
+      "sha256": "10c72d548aa22095641e8dedfbd4607c8c64dd6edfd56fdde87d2623cd096629",
+      "role": "adapted",
       "source_path": "internal/civisibility/utils/testdata/fixtures/providers/appveyor.json",
       "source_sha256": "0d6a168561a78a993495cc1ca89aff7b94ff555181027f482ed07a7d050aebc6"
     },
@@ -1840,8 +1840,8 @@
     },
     {
       "path": "civisibility/utils/testdata/fixtures/providers/azurepipelines.json",
-      "sha256": "3ff552d4e581c36fb8368c4ada238bdcb8345f960edf9e4bafad342611133a00",
-      "role": "upstream",
+      "sha256": "1f9ea2dae2cb52d8a097df69391937a7b42460a8828e6f98ed7aef7bd56af815",
+      "role": "adapted",
       "source_path": "internal/civisibility/utils/testdata/fixtures/providers/azurepipelines.json",
       "source_sha256": "3ff552d4e581c36fb8368c4ada238bdcb8345f960edf9e4bafad342611133a00"
     },
@@ -1896,15 +1896,15 @@
     },
     {
       "path": "civisibility/utils/testdata/fixtures/providers/github.json",
-      "sha256": "cc392aa7d9c1d13dffd64b011656f940798b99795aee049f13384de41955fe3f",
-      "role": "upstream",
+      "sha256": "3d35bf78ca1f32d2ac2d07a2c8eb811b916847dc4d33cadaeb3b6b4fbb945408",
+      "role": "adapted",
       "source_path": "internal/civisibility/utils/testdata/fixtures/providers/github.json",
       "source_sha256": "cc392aa7d9c1d13dffd64b011656f940798b99795aee049f13384de41955fe3f"
     },
     {
       "path": "civisibility/utils/testdata/fixtures/providers/gitlab.json",
-      "sha256": "f2277c77b94abe580c071dbf3be6f8e2a6fd050f0b71e8fdca1c0d74ed95224e",
-      "role": "upstream",
+      "sha256": "b7209d052f8117c091430f570fa52c111cf9e793c59c746ccf18d00fe906c1b1",
+      "role": "adapted",
       "source_path": "internal/civisibility/utils/testdata/fixtures/providers/gitlab.json",
       "source_sha256": "f2277c77b94abe580c071dbf3be6f8e2a6fd050f0b71e8fdca1c0d74ed95224e"
     },
@@ -1924,15 +1924,15 @@
     },
     {
       "path": "civisibility/utils/testdata/fixtures/providers/travisci.json",
-      "sha256": "0ed872ff22bf47dbe64314a840d2f280c11e7c218522aab03793d9706a75c71b",
-      "role": "upstream",
+      "sha256": "fbe8d63f1dec0fb9522613126f0765c697a9fef60632ea15afc7deba8e9f1ed6",
+      "role": "adapted",
       "source_path": "internal/civisibility/utils/testdata/fixtures/providers/travisci.json",
       "source_sha256": "0ed872ff22bf47dbe64314a840d2f280c11e7c218522aab03793d9706a75c71b"
     },
     {
       "path": "civisibility/utils/testdata/fixtures/providers/usersupplied.json",
-      "sha256": "c005d5b26ff01d34d9344567e95ec1fb6eb0329c1f7533d15ebcce55eb89a6f7",
-      "role": "upstream",
+      "sha256": "878062ae63b2933b9e6b2d20e79ac337ed2469bc1e1d7ae2600a79fa87346333",
+      "role": "adapted",
       "source_path": "internal/civisibility/utils/testdata/fixtures/providers/usersupplied.json",
       "source_sha256": "c005d5b26ff01d34d9344567e95ec1fb6eb0329c1f7533d15ebcce55eb89a6f7"
     },

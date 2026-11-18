@@ -3177,3 +3177,16 @@ against the pinned Git working directory, including a relative
 directory after the process changes directories. Native regressions capture
 debug logs with synthetic credentials and force the pack fallback, verifying
 the selected commit and cleanup.
+
+## Pull request revisions from CI providers
+
+Azure Pipelines keeps `SYSTEM_PULLREQUEST_SOURCECOMMITID` in
+`git.commit.head.sha` as well as its existing commit fallback. AppVeyor sets
+`ci.git.merge_commit_sha` when a numeric pull request has valid, distinct build
+and head revisions. SHA comparison ignores case, and the merge tag uses lowercase.
+Checkout identity and explicit user override precedence stay the same.
+
+Both provider fixture sets retain existing cases and add merge evidence, invalid
+merge revisions, and mixed-case SHA cases. `TestCIMergeCommitEvidence` rejects
+missing or invalid AppVeyor evidence and equal revisions.
+`TestAzurePullRequestHeadSHA` covers a mixed-case head and a missing source revision.
