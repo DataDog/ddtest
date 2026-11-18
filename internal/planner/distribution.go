@@ -55,8 +55,9 @@ func (tp *TestPlanner) basenameAffinityEnabled() bool {
 // outermost package, the closest ancestor directories that have an
 // __init__.py. Two files only collide in one pytest process when their module
 // names are equal, so test files in packages, as in most large projects, don't
-// collide however many share a basename. Package lookups are cached per
-// directory, since many files share each one.
+// collide however many share a basename. A part of a split file, such as
+// "tests/test_a.py[2/3]", is its file, and takes the file's name. Package
+// lookups are cached per directory, since many files share each one.
 type pytestModuleNamer struct {
 	isPackage map[string]bool
 }
@@ -66,6 +67,7 @@ func newPytestModuleNamer() *pytestModuleNamer {
 }
 
 func (n *pytestModuleNamer) pytestModuleName(path string) string {
+	path = splitPartFile(path)
 	name := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 	for directory := filepath.Dir(path); n.directoryIsPackage(directory); directory = filepath.Dir(directory) {
 		name = filepath.Base(directory) + "." + name
@@ -134,25 +136,27 @@ func isIdentifierContinue(r rune) bool {
 }
 
 // hasDuplicateBasenames reports whether any two files would get the same
-// pytest module name (see pytestModuleName).
+// pytest module name (see pytestModuleName). The parts of one split file are
+// that file, which pytest imports once, so they don't collide with each other.
 func hasDuplicateBasenames(testFiles map[string]int) bool {
 	namer := newPytestModuleNamer()
-	basenames := make(map[string]int, len(testFiles))
+	fileOf := make(map[string]string, len(testFiles)) // module name → a file of that name
 	for path := range testFiles {
-		basenames[namer.pytestModuleName(path)]++
-	}
-	for _, count := range basenames {
-		if count > 1 {
+		file := splitPartFile(path)
+		name := namer.pytestModuleName(file)
+		if other, ok := fileOf[name]; ok && other != file {
 			return true
 		}
+		fileOf[name] = file
 	}
 	return false
 }
 
 // basenameCollisionGroups groups files that share a pytest module name (see
-// pytestModuleName) with at least one other file. Groups are ordered by total
-// weight (desc) and each group's members by weight (desc) for deterministic,
-// reasonably balanced placement.
+// pytestModuleName) with at least one other file, a split file with all its
+// parts; a split file's parts alone aren't a group. Groups are ordered by
+// total weight (desc) and each group's members by weight (desc) for
+// deterministic, reasonably balanced placement.
 func basenameCollisionGroups(testFiles map[string]int) [][]weightedTestFile {
 	namer := newPytestModuleNamer()
 	byBasename := make(map[string][]weightedTestFile, len(testFiles))
@@ -162,7 +166,8 @@ func basenameCollisionGroups(testFiles map[string]int) [][]weightedTestFile {
 	}
 	groups := make([][]weightedTestFile, 0)
 	for _, files := range byBasename {
-		if len(files) > 1 {
+		first := splitPartFile(files[0].path)
+		if slices.ContainsFunc(files, func(f weightedTestFile) bool { return splitPartFile(f.path) != first }) {
 			sortWeightedFilesDesc(files)
 			groups = append(groups, files)
 		}
@@ -466,23 +471,37 @@ func (b *testSplitBuilder) placePrepared(prepared preparedSplitFiles) ([][]strin
 func (b *testSplitBuilder) placePreparedFiles(prepared preparedSplitFiles, assignments []int) map[string][]string {
 	var collisions map[string][]string
 	for _, group := range prepared.collisionGroups {
-		usedRunners := make(map[int]bool, len(group))
+		// The group's files on each runner: a unit goes where no other file
+		// of the group is, and a split file's next part goes beside its other
+		// parts when a runner free of the group's files must stay free for
+		// each of the group's files not placed yet.
+		held := make(map[int][]string, len(group))
+		waiting := make(map[string]bool, len(group))
 		for _, fileIndex := range group {
-			weight := prepared.sortedFiles[fileIndex].weight
-			runnerIndex, ok := b.lightestUnusedRunner(usedRunners)
+			waiting[splitPartFile(prepared.sortedFiles[fileIndex].path)] = true
+		}
+		for _, fileIndex := range group {
+			unit := prepared.sortedFiles[fileIndex]
+			file := splitPartFile(unit.path)
+			first := waiting[file]
+			delete(waiting, file)
+			free := b.parallelRunners - len(held)
+			runnerIndex, ok := b.lightestRunnerFor(held, file, first || free > len(waiting))
 			if !ok {
 				// More same-basename files than runners: the collision cannot
 				// be avoided; place the rest for balance and report it.
 				if collisions == nil {
 					collisions = make(map[string][]string)
 				}
-				basename := filepath.Base(prepared.sortedFiles[fileIndex].path)
-				collisions[basename] = append(collisions[basename], prepared.sortedFiles[fileIndex].path)
-				runnerIndex = b.addFile(weight)
+				basename := filepath.Base(file)
+				collisions[basename] = append(collisions[basename], unit.path)
+				runnerIndex = b.addFile(unit.weight)
 			} else {
-				b.addLoadToRunner(runnerIndex, weight)
+				b.addLoadToRunner(runnerIndex, unit.weight)
 			}
-			usedRunners[runnerIndex] = true
+			if !slices.Contains(held[runnerIndex], file) {
+				held[runnerIndex] = append(held[runnerIndex], file)
+			}
 			if assignments != nil {
 				assignments[fileIndex] = runnerIndex
 			}
@@ -500,13 +519,16 @@ func (b *testSplitBuilder) placePreparedFiles(prepared preparedSplitFiles, assig
 	return collisions
 }
 
-// lightestUnusedRunner returns the least-loaded runner whose index is not in
-// used, preferring lower runner indexes on ties.
-func (b *testSplitBuilder) lightestUnusedRunner(used map[int]bool) (int, bool) {
+// lightestRunnerFor returns the least-loaded runner for a unit of file, one
+// of a collision group whose files each runner holds in held: one that holds
+// only file's other parts, or, with takeFree, one that holds none of the
+// group's files. It prefers lower runner indexes on ties.
+func (b *testSplitBuilder) lightestRunnerFor(held map[int][]string, file string, takeFree bool) (int, bool) {
 	best := -1
 	bestLoad := 0
 	for _, load := range b.loads {
-		if used[load.index] {
+		files := held[load.index]
+		if !slices.Equal(files, []string{file}) && (!takeFree || len(files) > 0) {
 			continue
 		}
 		if best == -1 || load.load < bestLoad || (load.load == bestLoad && load.index < best) {

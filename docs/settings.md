@@ -109,12 +109,15 @@ sharing a basename collide; a file inside packages (directories with an
 dotted path from above its outermost package, so
 same-basename files in different packages, such as `tests/a/test_init.py` and
 `tests/b/test_init.py` with `__init__.py` files, don't constrain distribution.
-If a group has more files than runners, DDTest keeps
-all files in the plan and warns that pytest import collisions remain possible.
-This also applies to a single runner. Splitting does not resolve collisions
-during full test collection, which runs before distribution. Add `__init__.py`
-packages, rename the files, or configure pytest's `--import-mode=importlib` to
-resolve collisions that runner distribution cannot avoid.
+A part of a split file (`--split-files-over`) is its file: it gets the file's
+module name, so it stays apart from the other files of that name, and a file's
+own parts don't constrain each other. If a group has more files than runners,
+DDTest keeps all files in the plan and warns that pytest import collisions
+remain possible. This also applies to a single runner. Splitting does not
+resolve collisions during full test collection, which runs before
+distribution. Add `__init__.py` packages, rename
+the files, or configure pytest's `--import-mode=importlib` to resolve
+collisions that runner distribution cannot avoid.
 
 ## Testdrive-only configuration check
 

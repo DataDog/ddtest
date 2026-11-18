@@ -128,7 +128,7 @@ func splitLongFiles(weights map[string]int, durations testDurationsFile, thresho
 			continue
 		}
 		for i, part := range partitionTests(tests, parts) {
-			unit := fmt.Sprintf("%s[%d/%d]", file, i+1, parts)
+			unit := splitPartName(file, i+1, parts)
 			split[unit] = part.weight(weight)
 			if last == lastPartComplement && i == parts-1 {
 				lines[unit] = []string{file}
@@ -143,6 +143,30 @@ func splitLongFiles(weights map[string]int, durations testDurationsFile, thresho
 		}
 	}
 	return split, lines, listed
+}
+
+// splitPartName names part i of parts of a split file, such as
+// "tests/test_a.py[2/3]", and splitPartFile reads the file back from it.
+func splitPartName(file string, i, parts int) string {
+	return fmt.Sprintf("%s[%d/%d]", file, i, parts)
+}
+
+// splitPartFile is the test file a unit of the distribution runs: the file a
+// part names (see splitPartName), or the unit itself when it is a whole file.
+func splitPartFile(unit string) string {
+	open := strings.LastIndexByte(unit, '[')
+	if open < 0 || !strings.HasSuffix(unit, "]") {
+		return unit
+	}
+	part, parts, ok := strings.Cut(unit[open+1:len(unit)-1], "/")
+	if !ok || !isDigits(part) || !isDigits(parts) {
+		return unit
+	}
+	return unit[:open]
+}
+
+func isDigits(s string) bool {
+	return s != "" && strings.Trim(s, "0123456789") == ""
 }
 
 type testPart struct {

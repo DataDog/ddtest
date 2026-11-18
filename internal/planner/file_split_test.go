@@ -366,3 +366,16 @@ func TestTestPlanner_Plan_RefusesPytestDurationsOfTwoGranularities(t *testing.T)
 		t.Errorf("error code = %v, want %v", code, errcode.PlanTestDurationsFileInvalid)
 	}
 }
+
+func TestSplitPartFileReadsTheFileOfAPart(t *testing.T) {
+	for unit, want := range map[string]string{
+		splitPartName("tests/test_a.py", 2, 3): "tests/test_a.py",
+		"tests/test_a.py":                      "tests/test_a.py",
+		"tests/test_a.py[x/3]":                 "tests/test_a.py[x/3]",
+		"tests/test_a.py[]":                    "tests/test_a.py[]",
+	} {
+		if got := splitPartFile(unit); got != want {
+			t.Errorf("splitPartFile(%q) = %q, want %q", unit, got, want)
+		}
+	}
+}
