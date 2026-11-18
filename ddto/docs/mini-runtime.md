@@ -775,8 +775,9 @@ source's unseen files stay in the map while a test that it recorded does.
 Record where the map should follow the code, such as on the default branch
 or in a nightly job, and run read-only elsewhere, such as on every commit of
 a pull request or locally, where the tests' parallelism matters more. Every
-worktree of a repository shares its maps; a CI runner has a map only when a
-recording run left one in its checkout.
+worktree of a repository shares its maps, and Datadog shares them between
+machines, so a CI runner without one takes the map that a recording run
+uploaded (see **Shared maps**).
 
 Local TIA needs Mini and the CLI's Git worker: CI Visibility enabled,
 outside Bazel, a test package in the Git checkout, and no `-exec` program or
@@ -863,7 +864,12 @@ the file's tokens without the bodies of those functions. Formatting and
 ordinary comments do not count, so editing a doc comment or reformatting
 changes no declaration; comments that are code do: build constraints,
 `//go:` and `//line` directives, `//export` and `//extern`, and cgo
-preambles.
+preambles. The stored map names each package's test modules, suites and
+coverage sources once, and the files that all of a package's tests cover
+once for the package; lists of indices are sorted and stored as the
+differences between neighbors. On this repository's root module, a map of Go's
+counters with `-coverpkg=./...` is 2.9 MB, and one of file marks 0.7 MB; the
+earlier layout took 5.6 MB and 1.9 MB. The file is plain JSON.
 
 After `go test` exits, the CLI reads the records of this run's test
 processes: each top-level test that ran with coverage, its final status and
@@ -898,12 +904,53 @@ tests, change go test's output or select coverage, such as `-run`, `-skip`,
 `-coverprofile`, leave it the same. A lock file next to each map serializes
 the runs that update it. Delete the directory to start again.
 
+**Shared maps.** Datadog's TIA artifacts API shares maps between machines:
+- A run without a local map for its configuration looks one up, naming its
+  commit, `git.commit.sha` as Test Optimization reports it, and up to 19 of
+  its most recent ancestors, nearest first. A shallow clone that has only that
+  commit is expanded first, as the Git worker expands it for Test
+  Optimization's repository upload (`git fetch --shallow-since="1 month ago"
+  --filter=blob:none`), which then does not fetch again; this happens before
+  `go test` starts. A run that has a local map, however old, does not look
+  one up.
+- On a hit, the run writes the map as its local map and selects from it.
+  Sizes and modification times from another machine cannot vouch for a
+  file's hash, as a tarball or an image layer can keep them for other
+  contents, so that run reads and hashes every file of the closures once:
+  on this repository's root module, with file marks, selection took 415 ms
+  instead of 74 ms.
+- Every recording run, with `DD_TIA_RECORD=true` (the default), uploads the
+  map that it merged as its commit's, after `go test`: plain JSON without
+  sizes and modification times, as dd-trace-py uploads its maps. A
+  read-only run never uploads. A map over the API's 5 MiB is not shared,
+  and the CLI warns. On this repository's root module, the map of Go's
+  counters takes 2.8 MB, and one of file marks 0.66 MB.
+- The key is the repository, `git.repository_url` as Test Optimization
+  reports it, without credentials and with CI and `DD_GIT_REPOSITORY_URL`
+  overrides; the suite, a SHA-256 of the working directory relative to the
+  repository's root, the package patterns and the `-run` and `-skip`
+  patterns, so that jobs testing other packages keep maps of their own; the
+  map's configuration hash; the language, `go`; and the map's format version.
+  A run without `-cover` therefore finds the map that a run with
+  `-cover -coverpkg=./...` uploaded, but a run with another `-run` does not.
+- Requests go agentless with `DD_API_KEY` to `api.<DD_SITE>`, or through the
+  Agent's EVP proxy. Without an API key in agentless mode, there is no
+  request. A miss, an error, a timeout (10 s for the lookup, 30 s for the
+  upload, 60 s for a shallow clone's fetch), a response whose commits are not
+  the ones asked for, or a map that does not decode only goes to the debug
+  log: the run continues as without a map, and the transport never changes
+  test results or the exit status. The API must be enabled for the
+  organization; a disabled one answers as a miss.
+- A shared map holds the repository's file paths, the hashes of their
+  contents and declarations, package import paths, test names and statuses,
+  and the line numbers that each test covered, as bitmaps. It holds no
+  source code.
+
 **Not tracked yet.** Local TIA does not see:
 - what a test's subprocesses run, such as a binary that it builds and starts;
 - files and environment variables that tests read at run time outside
   `testdata`, other than through the code that coverage sees;
-- maps from other machines: each checkout keeps its own, and CI runners
-  start without one;
+- a newer shared map once a checkout has its own: the local map wins;
 - a file rewritten with other contents of the same size while keeping its
   modification time, as some archive extractions and copies do: the table
   takes it as unchanged;

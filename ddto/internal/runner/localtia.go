@@ -753,6 +753,10 @@ type localTIARun struct {
 	// the merge reads again only if another run replaced it meanwhile.
 	loaded     *tiaMap
 	loadedFile os.FileInfo
+	// record reports that the run records; remote, when not nil, shares
+	// its map through Datadog.
+	record bool
+	remote *localTIARemote
 }
 
 // narrowsSubtests reports whether a -run or -skip pattern, in args or in
@@ -833,8 +837,9 @@ func localTIACannotRecord(plan *Plan, opts options) string {
 // want of per-test coverage that local TIA can use, says so and only skips.
 // It returns why it could not select, in which case the tests run without
 // local TIA.
-func startLocalTIA(ctx context.Context, plan *Plan, opts options, record bool, dir, state, root string, debug *cliDebug, stderr io.Writer) (*localTIARun, string) {
+func startLocalTIA(ctx context.Context, plan *Plan, opts options, record bool, dir, state string, gitRecord utils.CLIGitRecord, debug *cliDebug, stderr io.Writer) (*localTIARun, string) {
 	started := time.Now()
+	root := gitRecord.SourceRoot
 	phase := debug.start("local tia selection")
 	if root == "" {
 		phase.finish(errors.New("no checkout"))
@@ -860,6 +865,20 @@ func startLocalTIA(ctx context.Context, plan *Plan, opts options, record bool, d
 	if err != nil {
 		phase.finish(err)
 		return nil, "the map could not be read: " + err.Error()
+	}
+	// Without a map here, the run takes the one that Datadog stores for a
+	// recent commit, if any; a run that records shares its map after.
+	noMap := len(stored.Files) == 0 && len(stored.Packages) == 0
+	if noMap || record {
+		run.remote = newLocalTIARemote(state, gitRecord, opts, callerGoFlags(), dir, run.key, debug)
+	}
+	if noMap && run.remote != nil {
+		if adopted := run.remote.lookup(ctx); adopted != nil {
+			if err := run.adopt(ctx, adopted); err != nil {
+				debug.printf("local tia remote map not written: %v", err)
+			}
+			stored = adopted
+		}
 	}
 	var read int
 	run.current.Files, read = fileStates(run.current.paths, stored.Files, time.Now())
@@ -904,6 +923,7 @@ func startLocalTIA(ctx context.Context, plan *Plan, opts options, record bool, d
 	if err != nil {
 		return nil, "the selection could not be written: " + err.Error()
 	}
+	run.record = record
 	run.spent = time.Since(started)
 	debug.printf("local tia record=%t map=%s source=%q test_packages=%d packages=%d files=%d files_read=%d stored_packages=%d skippable=%d", record, filepath.Join(run.mapDir, run.key+".json"), source, tested, len(run.current.Packages), len(run.current.paths), read, len(stored.Packages), skipped)
 	return run, ""
@@ -971,9 +991,11 @@ func (r *localTIARun) finish(ctx context.Context) {
 	}
 	stored, unlock, err := r.lockMap(ctx)
 	size := 0
+	var merged *tiaMap
 	if err == nil {
+		merged = mergeTIAMap(stored, r.current.tiaMap, runs)
 		var data []byte
-		if data, err = json.Marshal(encodeTIAMap(mergeTIAMap(stored, r.current.tiaMap, runs))); err == nil {
+		if data, err = marshalTIAMap(merged, true); err == nil {
 			size = len(data)
 			// Written whole and renamed, as the state's files are.
 			err = utils.WriteCLIGitStateFile(r.mapDir, r.key+".json", json.RawMessage(data))
@@ -984,8 +1006,32 @@ func (r *localTIARun) finish(ctx context.Context) {
 	r.spent += time.Since(started)
 	r.debug.printf("local tia merged packages_run=%d map_bytes=%d overhead=%s", len(runs), size, r.spent.Round(time.Microsecond))
 	if err != nil {
-		fmt.Fprintln(r.stderr, version.BuildLogPrefix+" WARN: local TIA ("+LocalTIAEnv+"): the map was not updated: "+err.Error())
+		localTIAWarn(r)("the map was not updated: " + err.Error())
+		return
 	}
+	// A run that records shares the map that it merged; one that only
+	// skips never does.
+	if r.record && r.remote != nil {
+		r.remote.upload(ctx, merged, localTIAWarn(r))
+	}
+}
+
+// adopt writes a map that Datadog stored as this configuration's local map,
+// unless another run wrote one meanwhile.
+func (r *localTIARun) adopt(ctx context.Context, m *tiaMap) error {
+	stored, unlock, err := r.lockMap(ctx)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	if len(stored.Files) != 0 || len(stored.Packages) != 0 {
+		return nil
+	}
+	data, err := marshalTIAMap(m, true)
+	if err != nil {
+		return err
+	}
+	return utils.WriteCLIGitStateFile(r.mapDir, r.key+".json", json.RawMessage(data))
 }
 
 // absolute returns the absolute paths of files, sorted.
@@ -1076,14 +1122,9 @@ func (r *localTIARun) loadMap() (*tiaMap, error) {
 	if err != nil {
 		return nil, err
 	}
-	var stored tiaMapFile
-	if json.Unmarshal(data, &stored) != nil || stored.Version != localTIAMapVersion {
-		r.debug.printf("local tia map unreadable; starting a new one")
-		return emptyTIAMap(), nil
-	}
-	m, ok := stored.decode()
+	m, ok := unmarshalTIAMap(data)
 	if !ok {
-		r.debug.printf("local tia map inconsistent; starting a new one")
+		r.debug.printf("local tia map unreadable; starting a new one")
 		return emptyTIAMap(), nil
 	}
 	r.loaded, r.loadedFile = m, info
@@ -1110,179 +1151,4 @@ func (r *localTIARun) lock(ctx context.Context, exclusive bool) (func(), error) 
 		return nil, err
 	}
 	return func() { _ = file.Close() }, nil
-}
-
-// tiaMapFile is the stored form of a map: one table of files and one of
-// line bitmaps, which the packages and tests name by index, so that a file
-// that many packages share, or the lines that many tests cover in a shared
-// helper, appear once.
-type tiaMapFile struct {
-	Version  int                         `json:"version"`
-	Files    []tiaStoredFile             `json:"files"`
-	Bitmaps  [][]byte                    `json:"bitmaps,omitempty"`
-	Modules  []int                       `json:"modules,omitempty"`
-	Packages map[string]tiaStoredPackage `json:"packages"`
-}
-
-// tiaStoredFile is a file's path and state. A modification time of 0 does not
-// vouch for the hash: the next run reads the file.
-type tiaStoredFile struct {
-	Path    string `json:"p"`
-	Size    int64  `json:"s,omitempty"`
-	ModTime int64  `json:"m,omitempty"`
-	Hash    string `json:"h,omitempty"`
-	Decl    string `json:"d,omitempty"`
-	Code    bool   `json:"c,omitempty"`
-}
-
-type tiaStoredPackage struct {
-	Files       []int            `json:"files,omitempty"`
-	Imports     []string         `json:"imports,omitempty"`
-	Tested      bool             `json:"tested,omitempty"`
-	TestFiles   []int            `json:"test_files,omitempty"`
-	TestImports []string         `json:"test_imports,omitempty"`
-	Testdata    []int            `json:"testdata,omitempty"`
-	Unseen      map[string][]int `json:"unseen,omitempty"`
-	Tests       []tiaStoredTest  `json:"tests,omitempty"`
-}
-
-// tiaStoredTest is a test; Bitmaps maps the index of a covered file to the
-// index of its line bitmap.
-type tiaStoredTest struct {
-	localtia.Test
-	Status  string      `json:"status"`
-	Source  string      `json:"source,omitempty"`
-	Covered []int       `json:"covered"`
-	Bitmaps map[int]int `json:"bitmaps,omitempty"`
-}
-
-// encodeTIAMap returns m's stored form, with the files that a package or a
-// test names.
-func encodeTIAMap(m *tiaMap) tiaMapFile {
-	used := map[string]bool{}
-	mark := func(files ...[]string) {
-		for _, list := range files {
-			for _, file := range list {
-				used[file] = true
-			}
-		}
-	}
-	mark(m.Modules)
-	for _, node := range m.Packages {
-		mark(node.Files, node.TestFiles, node.Testdata)
-		for _, unseen := range node.Unseen {
-			mark(unseen)
-		}
-		for _, t := range node.Tests {
-			mark(t.Covered)
-		}
-	}
-	stored := tiaMapFile{Version: localTIAMapVersion, Packages: make(map[string]tiaStoredPackage, len(m.Packages))}
-	index := map[string]int{}
-	for _, file := range slices.Sorted(maps.Keys(used)) {
-		state := m.Files[file]
-		modTime := state.ModTime
-		if state.racy {
-			modTime = 0
-		}
-		index[file] = len(stored.Files)
-		stored.Files = append(stored.Files, tiaStoredFile{Path: file, Size: state.Size, ModTime: modTime, Hash: state.Hash, Decl: state.Decl, Code: state.Code})
-	}
-	indices := func(files []string) []int {
-		out := make([]int, len(files))
-		for i, file := range files {
-			out[i] = index[file]
-		}
-		return out
-	}
-	stored.Modules = indices(m.Modules)
-	bitmaps := map[string]int{}
-	for path, node := range m.Packages {
-		p := tiaStoredPackage{Files: indices(node.Files), Imports: node.Imports, Tested: node.Tested, TestFiles: indices(node.TestFiles),
-			TestImports: node.TestImports, Testdata: indices(node.Testdata)}
-		for source, unseen := range node.Unseen {
-			if p.Unseen == nil {
-				p.Unseen = map[string][]int{}
-			}
-			p.Unseen[source] = indices(unseen)
-		}
-		for _, t := range node.Tests {
-			s := tiaStoredTest{Test: t.Test, Status: t.Status, Source: t.Source, Covered: indices(t.Covered)}
-			if len(t.Bitmaps) != 0 {
-				s.Bitmaps = make(map[int]int, len(t.Bitmaps))
-				for file, bitmap := range t.Bitmaps {
-					i, ok := index[file]
-					if !ok {
-						continue
-					}
-					b, ok := bitmaps[string(bitmap)]
-					if !ok {
-						b = len(stored.Bitmaps)
-						bitmaps[string(bitmap)] = b
-						stored.Bitmaps = append(stored.Bitmaps, bitmap)
-					}
-					s.Bitmaps[i] = b
-				}
-			}
-			p.Tests = append(p.Tests, s)
-		}
-		stored.Packages[path] = p
-	}
-	return stored
-}
-
-// decode returns the map that f stores, or false when an index is out of
-// range.
-func (f tiaMapFile) decode() (*tiaMap, bool) {
-	m := emptyTIAMap()
-	for _, file := range f.Files {
-		m.Files[file.Path] = tiaFile{Size: file.Size, ModTime: file.ModTime, Hash: file.Hash, Decl: file.Decl, Code: file.Code}
-	}
-	ok := true
-	path := func(i int) (string, bool) {
-		if i < 0 || i >= len(f.Files) {
-			ok = false
-			return "", false
-		}
-		return f.Files[i].Path, true
-	}
-	paths := func(indices []int) []string {
-		var out []string
-		for _, i := range indices {
-			if name, valid := path(i); valid {
-				out = append(out, name)
-			}
-		}
-		return out
-	}
-	m.Modules = paths(f.Modules)
-	for name, p := range f.Packages {
-		node := &tiaNode{Files: paths(p.Files), Imports: p.Imports, Tested: p.Tested, TestFiles: paths(p.TestFiles),
-			TestImports: p.TestImports, Testdata: paths(p.Testdata)}
-		for source, unseen := range p.Unseen {
-			if node.Unseen == nil {
-				node.Unseen = map[string][]string{}
-			}
-			node.Unseen[source] = paths(unseen)
-		}
-		for _, s := range p.Tests {
-			t := tiaTest{Test: s.Test, Status: s.Status, Source: s.Source, Covered: paths(s.Covered)}
-			for i, b := range s.Bitmaps {
-				file, valid := path(i)
-				if b < 0 || b >= len(f.Bitmaps) {
-					ok = false
-					continue
-				}
-				if valid {
-					if t.Bitmaps == nil {
-						t.Bitmaps = map[string][]byte{}
-					}
-					t.Bitmaps[file] = f.Bitmaps[b]
-				}
-			}
-			node.Tests = append(node.Tests, t)
-		}
-		m.Packages[name] = node
-	}
-	return m, ok
 }

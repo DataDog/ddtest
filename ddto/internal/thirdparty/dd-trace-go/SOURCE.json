@@ -11,7 +11,7 @@
   "files": [
     {
       "path": "ADAPTATIONS.md",
-      "sha256": "3e93e58be1b1a8bb3a7cb8892c7c0dd124ee2ca0cc786d9444b6c1b2f996db37",
+      "sha256": "66df7aae27f6140d5c622fb941f0e0191e7dcb6b57aa914205537ddf6c19d1af",
       "role": "local"
     },
     {
@@ -1567,7 +1567,7 @@
     },
     {
       "path": "civisibility/utils/net/http.go",
-      "sha256": "c330fe0b237fb7b7da8b39fbc4b3bd34bd81030aefc6b0be39c23310f495919a",
+      "sha256": "2a34ca3d9f9db5a53781eff6533b1326899b568fee60963d55a4003bd913eaa4",
       "role": "adapted",
       "source_path": "internal/civisibility/utils/net/http.go",
       "source_sha256": "6a0ad6c1e3935019ce88e4d6931a091c562c3e9f96cc2e21474b716ac8cf8d09"
@@ -1750,6 +1750,16 @@
       "role": "adapted",
       "source_path": "internal/civisibility/utils/net/test_management_tests_api_test.go",
       "source_sha256": "c1b159510051564d8a01ca47faacd4e633356f204534447f982fa2cef7f6f735"
+    },
+    {
+      "path": "civisibility/utils/net/tia_artifacts.go",
+      "sha256": "7747d330587ba9adad9ae20d8b86baf75ab63d833e75266813db8b22ac17f2b0",
+      "role": "local"
+    },
+    {
+      "path": "civisibility/utils/net/tia_artifacts_test.go",
+      "sha256": "7f92545e4868a63b3757d82f58962ddc3e2a7a6c4f8765e293c376f4c691ddfe",
+      "role": "local"
     },
     {
       "path": "civisibility/utils/net/uds_client_test.go",

@@ -72,6 +72,10 @@ type Response struct {
 	StatusCode   int    // HTTP status code
 	CanUnmarshal bool   // Whether the response body can be unmarshalled
 	Compressed   bool   // Whether to use gzip compression
+
+	// Header is the response's headers, where ddto's local TIA reads the
+	// commits of its artifacts.
+	Header http.Header
 }
 
 // Unmarshal deserializes the response body into the provided target based on the response format.
@@ -499,7 +503,7 @@ func (rh *RequestHandler) internalSendRequest(config *RequestConfig, attempt int
 	canUnmarshal := statusCode >= 200 && statusCode < 300
 
 	// Return the successful response with status code and unmarshal capability
-	return true, &Response{Body: responseBody, Format: responseFormat, StatusCode: statusCode, CanUnmarshal: canUnmarshal, Compressed: compressedResponse}, nil
+	return true, &Response{Body: responseBody, Format: responseFormat, StatusCode: statusCode, CanUnmarshal: canUnmarshal, Compressed: compressedResponse, Header: resp.Header}, nil
 }
 
 // Helper functions for data serialization, compression, and handling multipart form data

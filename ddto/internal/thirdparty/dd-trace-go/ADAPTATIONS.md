@@ -1625,12 +1625,32 @@ upstream:
   state without recording them in Go's test log, and `CLITests.LocalTIA`
   tells the Git worker not to request Datadog's skippable tests ahead for the
   test processes (`cligit.localTIAClient`).
+- The CLI shares its maps through the TIA artifacts API with local
+  [`utils/net/tia_artifacts.go`](civisibility/utils/net/tia_artifacts.go):
+  `NewTIAArtifactsClient` builds the client of `newClientWithServiceNameAndSubdomain`
+  for the `api` subdomain, agentless or through the Agent's EVP proxy, without
+  starting telemetry, and returns nil in agentless mode without an API key.
+  `LookupTIAArtifact` posts a `ci_app_tia_artifact_lookup` request, whose
+  response the handler decodes when it is gzip-encoded, and
+  `StoreTIAArtifact` puts the map's JSON as it is, as dd-trace-py does, each
+  with one retry and the caller's context. The lookup reads the matched and source commits from
+  the response's headers, which `http.go`'s `Response` now carries in
+  `Header`; that field and its assignment are the only change to `http.go`.
+  The CLI calls `utils.UseCLIGitState` with the Git worker's record before it
+  creates the client, as the worker does, so that the CI tags, among them
+  `git.repository_url` and `git.commit.sha`, come from that record. Before a
+  lookup in a shallow clone that has only its commit, it calls
+  `utils.UnshallowGitRepository`, as the worker's upload would later, which
+  then finds the history and does not fetch again.
 
 Checks: `TestITRCandidatesMatchLocalTIAModule`, the `internal/localtia` and
 `internal/runner` `LocalTIA` tests, `TestFileCoverageOutsideWindows` and
-`TestFileCoverageBetweenWindowsWithoutLocalTIA`, and `TestLocalTIACounters`,
+`TestFileCoverageBetweenWindowsWithoutLocalTIA`, `TestTIAArtifactLookup`,
+`TestTIAArtifactUpload`, `TestTIAArtifactsThroughTheAgent` and
+`TestTIAArtifactsWithoutCredentials`, and `TestLocalTIACounters`,
 `TestLocalTIARace`, `TestLocalTIAFileMarks`, `TestLocalTIARepeatedExecutions`,
-`TestLocalTIALineCoverageFromAnotherSource` and `TestLocalTIARecordFallback`.
+`TestLocalTIALineCoverageFromAnotherSource`, `TestLocalTIARecordFallback` and
+the `TestLocalTIARemoteMap` tests.
 
 ## Requests from ddto's CLI
 

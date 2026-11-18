@@ -1,10 +1,14 @@
 package integration
 
 import (
+	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"fmt"
+	"io"
 	"maps"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -84,6 +88,27 @@ type tiaIntake struct {
 	mu        sync.Mutex
 	skippable int
 	coverage  int
+	// artifact is the map's JSON that the TIA artifacts API stores, which
+	// every lookup gets, with HTTP's gzip encoding when gzipped is set, or
+	// nil for a miss; lookups are the commits of each lookup and uploads
+	// each upload's query and body.
+	artifact []byte
+	gzipped  bool
+	lookups  [][]string
+	uploads  []tiaUpload
+}
+
+type tiaUpload struct {
+	query url.Values
+	body  []byte
+}
+
+func gzipBytes(data []byte) []byte {
+	var compressed bytes.Buffer
+	writer := gzip.NewWriter(&compressed)
+	_, _ = writer.Write(data)
+	_ = writer.Close()
+	return compressed.Bytes()
 }
 
 func (in *tiaIntake) handler(w http.ResponseWriter, r *http.Request) {
@@ -106,6 +131,41 @@ func (in *tiaIntake) handler(w http.ResponseWriter, r *http.Request) {
 	case strings.HasSuffix(r.URL.Path, "/citestcov"):
 		in.coverage++
 		w.WriteHeader(http.StatusAccepted)
+	case strings.HasSuffix(r.URL.Path, "/api/unstable/ci/tia/artifacts/lookup"):
+		var request struct {
+			Data struct {
+				Attributes struct {
+					Commits []string `json:"git_commit_shas"`
+				} `json:"attributes"`
+			} `json:"data"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&request)
+		commits := request.Data.Attributes.Commits
+		in.lookups = append(in.lookups, commits)
+		if in.artifact == nil || len(commits) == 0 {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("x-dd-tia-git-commit-sha", commits[0])
+		w.Header().Set("x-dd-tia-source-commit", commits[0])
+		w.Header().Set("Content-Type", "application/json")
+		body := in.artifact
+		if in.gzipped {
+			w.Header().Set("Content-Encoding", "gzip")
+			body = gzipBytes(body)
+		}
+		_, _ = w.Write(body)
+	case strings.HasSuffix(r.URL.Path, "/api/unstable/ci/tia/artifacts") && r.Method == http.MethodPut:
+		// The map's JSON as it is, as dd-trace-py sends it.
+		body, err := io.ReadAll(r.Body)
+		if r.Header.Get("Content-Encoding") != "" || err != nil || !json.Valid(body) {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		in.uploads = append(in.uploads, tiaUpload{query: r.URL.Query(), body: body})
+		w.Header().Set("Content-Type", "application/vnd.api+json")
+		w.WriteHeader(http.StatusCreated)
+		fmt.Fprint(w, `{"data":{"type":"ci_app_tia_artifact_upload","attributes":{"blob_id":"blob","deduplicated":false}}}`)
 	default:
 		w.WriteHeader(http.StatusAccepted)
 	}
@@ -614,6 +674,174 @@ func TestLocalTIARecordFallback(t *testing.T) {
 	f.edit("lib/value.go", "return 1", "return 1 + 0")
 	f.expect("a change: both tests run", f.run(), f.tests...)
 	f.expect("nothing was recorded: both run again", f.run(), f.tests...)
+}
+
+// head returns the fixture's HEAD commit.
+func (f *tiaFixture) head() string {
+	f.t.Helper()
+	out, stderr, code := command(f.t, f.dir, testEnv(), "git", "rev-parse", "HEAD")
+	if code != 0 {
+		f.t.Fatalf("git rev-parse: %s", stderr)
+	}
+	return strings.TrimSpace(out)
+}
+
+// forgetMap removes the fixture's local maps, as in a fresh checkout.
+func (f *tiaFixture) forgetMap() {
+	f.t.Helper()
+	if err := os.RemoveAll(filepath.Join(f.dir, ".git", "ddtest")); err != nil {
+		f.t.Fatal(err)
+	}
+}
+
+// requests returns how many lookups and uploads the intake received.
+func (in *tiaIntake) requests() (lookups, uploads int) {
+	in.mu.Lock()
+	defer in.mu.Unlock()
+	return len(in.lookups), len(in.uploads)
+}
+
+// Without a local map, a run looks the map up in Datadog with its commit
+// first; a recording run uploads its map, as plain JSON without the files'
+// sizes and times, for its commit. A fresh checkout
+// adopts that map, gzip-encoded or not, and skips; a run with a local map
+// does not look up, and a read-only run never uploads.
+func TestLocalTIARemoteMap(t *testing.T) {
+	f := newTIAFixture(t, false, localTIACoverFixture, "-cover", "-covermode=atomic", "-coverpkg=./...")
+	f.tests = []string{"app.TestApp", "lib.TestValue"}
+	head := f.head()
+	f.expect("no map anywhere", f.run(), f.tests...)
+	if lookups, uploads := f.intake.requests(); lookups != 1 || uploads != 1 {
+		t.Fatalf("%d lookups and %d uploads, want 1 and 1", lookups, uploads)
+	}
+	if commits := f.intake.lookups[0]; len(commits) != 1 || commits[0] != head {
+		t.Fatalf("lookup commits %q, want [%s]", commits, head)
+	}
+	upload := f.intake.uploads[0]
+	for key, want := range map[string]string{"repository_id": "https://example.invalid/acme/tia.git", "language": "go", "compatibility_version": "1", "git_commit_sha": head} {
+		if got := upload.query.Get(key); got != want {
+			t.Errorf("%s=%q, want %q", key, got, want)
+		}
+	}
+	if len(upload.query.Get("suite_id")) != 64 || len(upload.query.Get("env_hash")) != 32 {
+		t.Errorf("suite_id %q env_hash %q", upload.query.Get("suite_id"), upload.query.Get("env_hash"))
+	}
+	stored := upload.body
+	var decoded struct {
+		Version int `json:"version"`
+		Files   struct {
+			Paths    []string `json:"paths"`
+			Sizes    []int64  `json:"sizes"`
+			ModTimes []int64  `json:"mtimes"`
+		} `json:"files"`
+		Packages map[string]json.RawMessage `json:"packages"`
+	}
+	if err := json.Unmarshal(stored, &decoded); err != nil || decoded.Version != 1 || !slices.Contains(decoded.Files.Paths, "lib/value.go") || decoded.Files.Sizes != nil || decoded.Files.ModTimes != nil || decoded.Packages["example.com/tia/app"] == nil {
+		t.Fatalf("uploaded map %v: %s", err, stored)
+	}
+
+	f.intake.artifact, f.intake.gzipped = upload.body, true
+	f.forgetMap()
+	f.expect("fresh checkout: the shared map", f.run())
+	f.intake.gzipped = false
+	if lookups, uploads := f.intake.requests(); lookups != 2 || uploads != 2 {
+		t.Fatalf("%d lookups and %d uploads, want 2 and 2", lookups, uploads)
+	}
+	f.readOnly = true
+	f.expect("read-only with a local map", f.run())
+	f.forgetMap()
+	f.expect("read-only without one: the shared map", f.run())
+	if lookups, uploads := f.intake.requests(); lookups != 3 || uploads != 2 {
+		t.Fatalf("%d lookups and %d uploads, want 3 and 2", lookups, uploads)
+	}
+	f.edit("lib/value.go", "return 1", "return 2")
+	f.expectFailing("a change after adopting", f.run(), []string{"app.TestApp"}, "lib.TestValue")
+}
+
+// A map from another machine cannot vouch for a file with its size and
+// modification time, which a tarball or an image layer can keep for other
+// contents: a run that adopts a map with them hashes every file.
+func TestLocalTIARemoteMapStats(t *testing.T) {
+	f := newTIAFixture(t, false, localTIACoverFixture, "-cover", "-covermode=atomic", "-coverpkg=./...")
+	f.tests = []string{"app.TestApp", "lib.TestValue"}
+	f.expect("recording", f.run(), f.tests...)
+	mapFiles, err := filepath.Glob(filepath.Join(f.dir, ".git", "ddtest", "tia", "*.json"))
+	if err != nil || len(mapFiles) != 1 {
+		t.Fatalf("maps %v: %v", mapFiles, err)
+	}
+	local, err := os.ReadFile(mapFiles[0])
+	if err != nil || !bytes.Contains(local, []byte(`"mtimes"`)) {
+		t.Fatalf("local map without times: %v %s", err, local)
+	}
+	// The local map, in plain JSON with its sizes and times, as the map
+	// that Datadog serves.
+	f.intake.artifact = local
+	path := filepath.Join(f.dir, "lib", "value.go")
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.edit("lib/value.go", "{ return 1 }", "{  return 1}")
+	if err := os.Chtimes(path, info.ModTime(), info.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+	if after, _ := os.Stat(path); after.Size() != info.Size() || !after.ModTime().Equal(info.ModTime()) {
+		t.Fatalf("stat changed: %d %s", after.Size(), after.ModTime())
+	}
+	f.forgetMap()
+	f.expect("same size and time, other contents", f.run(), f.tests...)
+}
+
+// A map that does not decode, gzip-compressed or not, is no map: every test
+// runs, and the recording run replaces it.
+func TestLocalTIARemoteMapUnreadable(t *testing.T) {
+	f := newTIAFixture(t, false, localTIACoverFixture, "-cover", "-covermode=atomic", "-coverpkg=./...")
+	f.tests = []string{"app.TestApp", "lib.TestValue"}
+	for i, artifact := range [][]byte{[]byte("not a map"), gzipBytes([]byte(`{"version":1,"files":[{"p":"lib/value.go"}]}`)), {0x1f, 0x8b, 0}} {
+		f.intake.artifact = artifact
+		f.forgetMap()
+		f.expect(fmt.Sprintf("unreadable map %d", i), f.run(), f.tests...)
+		if lookups, uploads := f.intake.requests(); lookups != i+1 || uploads != i+1 {
+			t.Fatalf("%d lookups and %d uploads, want %d", lookups, uploads, i+1)
+		}
+	}
+}
+
+// A shallow clone has only its commit: before the lookup, the run expands
+// it as the Git worker would for Test Optimization, once, so that the lookup
+// names the recent commits too.
+func TestLocalTIARemoteMapShallowClone(t *testing.T) {
+	origin := newTIAFixture(t, false, localTIACoverFixture, "-cover", "-covermode=atomic", "-coverpkg=./...")
+	for i := range 3 {
+		if out, stderr, code := command(t, origin.dir, testEnv(), "git", "-c", "user.name=TIA Fixture", "-c", "user.email=tia@example.invalid", "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", fmt.Sprint(i)); code != 0 {
+			t.Fatalf("git commit: %s %s", out, stderr)
+		}
+	}
+	clone := filepath.Join(t.TempDir(), "clone")
+	// A file URL, which --depth needs; on Windows its path starts with the
+	// drive, after a slash.
+	source := filepath.ToSlash(origin.dir)
+	if !strings.HasPrefix(source, "/") {
+		source = "/" + source
+	}
+	if out, stderr, code := command(t, origin.dir, testEnv(), "git", "clone", "--depth=1", (&url.URL{Scheme: "file", Path: source}).String(), clone); code != 0 {
+		t.Fatalf("git clone: %s %s", out, stderr)
+	}
+	f := *origin
+	f.dir, f.t = clone, t
+	f.tests = []string{"app.TestApp", "lib.TestValue"}
+	f.env = append(slices.Clone(f.env), "DD_TRACE_DEBUG=true")
+	run := f.run()
+	f.expect("shallow clone without a map", run, f.tests...)
+	lookups, _ := f.intake.requests()
+	if lookups != 1 || len(f.intake.lookups[0]) != 4 || f.intake.lookups[0][0] != f.head() {
+		t.Fatalf("lookups %q, want HEAD and its 3 ancestors", f.intake.lookups)
+	}
+	for _, line := range strings.Split(run.output, "\n") {
+		if i := strings.Index(line, "local tia unshallow"); i >= 0 {
+			t.Logf("%s", line[i:])
+		}
+	}
 }
 
 // localTIAVendorFixture vendors a dependency and does not require ddto, whose

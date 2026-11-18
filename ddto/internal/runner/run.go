@@ -1078,7 +1078,7 @@ func RunRuntime(ctx context.Context, args []string, cli CLIOptions, stdin io.Rea
 	if opts.localTIA {
 		refusal := "the test processes do not receive the CLI's Git state, as when a launcher starts them or no test package is in the checkout"
 		if len(handoff) != 0 {
-			tia, refusal = startLocalTIA(ctx, &plan, opts, !cli.LocalTIAReadOnly, dir, gitWorker.state, gitWorker.gitRecord.SourceRoot, debug, stderr)
+			tia, refusal = startLocalTIA(ctx, &plan, opts, !cli.LocalTIAReadOnly, dir, gitWorker.state, gitWorker.gitRecord, debug, stderr)
 		}
 		if tia == nil {
 			fmt.Fprintln(stderr, version.BuildLogPrefix+" WARN: local TIA ("+LocalTIAEnv+"): "+refusal+"; tests run without it")

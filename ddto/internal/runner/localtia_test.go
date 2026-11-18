@@ -1,7 +1,10 @@
 package runner
 
 import (
+	"bytes"
+	"compress/gzip"
 	"encoding/json"
+	"fmt"
 	"maps"
 	"os"
 	"path/filepath"
@@ -506,7 +509,17 @@ func TestLocalTIAMerge(t *testing.T) {
 
 // The stored map names each file once, by index, and keeps what decodes to
 // the same map; a hash that a racy modification time cannot vouch for is
-// stored without that time.
+// stored without that time. Without stats, it keeps no size or time, and it
+// reads the same whether gzip compressed it or not.
+// gzipTIAMap compresses a stored map.
+func gzipTIAMap(data []byte) []byte {
+	var out bytes.Buffer
+	writer := gzip.NewWriter(&out)
+	_, _ = writer.Write(data)
+	_ = writer.Close()
+	return out.Bytes()
+}
+
 func TestLocalTIAMapEncoding(t *testing.T) {
 	m, _ := storedMap()
 	m.Packages["ex/p"].Tests[0].Bitmaps = map[string][]byte{"lib/a.go": {0x40}}
@@ -514,8 +527,7 @@ func TestLocalTIAMapEncoding(t *testing.T) {
 	m.Files["lib/a.go"] = tiaFile{Size: 3, ModTime: 7, Hash: "a1", Decl: "d1", Code: true}
 	m.Files["lib/b.go"] = tiaFile{Size: 3, ModTime: 9, Hash: "b1", racy: true}
 	m.Files["unused.go"] = tiaFile{Hash: "u"}
-	stored := encodeTIAMap(m)
-	data, err := json.Marshal(stored)
+	data, err := marshalTIAMap(m, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -530,7 +542,7 @@ func TestLocalTIAMapEncoding(t *testing.T) {
 	if len(read.Bitmaps) != 1 || decoded.Packages["ex/p"].Tests[1].Bitmaps["lib/b.go"][0] != 0x40 {
 		t.Fatalf("bitmaps %v", read.Bitmaps)
 	}
-	if len(read.Files) != 6 || decoded.Files["unused.go"].Hash != "" {
+	if len(read.Files.Paths) != 6 || decoded.Files["unused.go"].Hash != "" {
 		t.Fatalf("files %+v", read.Files)
 	}
 	if got := decoded.Files["lib/a.go"]; got != (tiaFile{Size: 3, ModTime: 7, Hash: "a1", Decl: "d1", Code: true}) {
@@ -540,13 +552,38 @@ func TestLocalTIAMapEncoding(t *testing.T) {
 		t.Fatalf("racy lib/b.go %+v", got)
 	}
 	want, got := m.Packages["ex/p"], decoded.Packages["ex/p"]
-	if !sameStructure(want, got) || !slices.Equal(got.Unseen["counters"], want.Unseen["counters"]) || got.Tests[0].Source != "counters" || len(got.Tests) != len(want.Tests) ||
-		!slices.Equal(got.Tests[0].Covered, want.Tests[0].Covered) || got.Tests[0].Bitmaps["lib/a.go"][0] != 0x40 {
+	if !sameStructure(want, got) || !slices.Equal(got.Unseen["counters"], want.Unseen["counters"]) || len(got.Tests) != len(want.Tests) {
 		t.Fatalf("p %+v", got)
 	}
-	read.Packages["ex/p"].Tests[0].Covered[0] = 99
+	for i, test := range want.Tests {
+		if got := got.Tests[i]; got.Test != test.Test || got.Status != test.Status || got.Source != test.Source || !slices.Equal(got.Covered, test.Covered) && len(test.Covered)+len(got.Covered) != 0 {
+			t.Errorf("test %d: %+v, want %+v", i, got, test)
+		}
+	}
+	if got.Tests[0].Bitmaps["lib/a.go"][0] != 0x40 {
+		t.Fatalf("bitmap %+v", got.Tests[0])
+	}
+	without, err := marshalTIAMap(m, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, data := range [][]byte{without, gzipTIAMap(without)} {
+		read, ok := unmarshalTIAMap(data)
+		if !ok || read.Files["lib/a.go"] != (tiaFile{Hash: "a1", Decl: "d1", Code: true}) || len(read.Packages["ex/p"].Tests) != len(want.Tests) {
+			t.Fatalf("without stats: %v %+v", ok, read)
+		}
+	}
+	if bytes.Contains(without, []byte("mtimes")) || bytes.Contains(without, []byte("sizes")) {
+		t.Fatalf("stats in %s", without)
+	}
+	read.Packages["ex/p"].Tests[0].Covered = []int{99}
 	if _, ok := read.decode(); ok {
 		t.Fatal("an index out of range decoded")
+	}
+	for _, bad := range []string{"", "{", `{"version":1,"files":[{"p":"a.go"}],"packages":{}}`, "\x1f\x8bnot gzip"} {
+		if _, ok := unmarshalTIAMap([]byte(bad)); ok {
+			t.Errorf("%q decoded", bad)
+		}
 	}
 }
 
@@ -709,6 +746,46 @@ func TestTestListingSplits(t *testing.T) {
 
 // The map has format version 1, and a map of any other version, or one that
 // does not parse, is ignored and rebuilt.
+// largeTIAMap is a map shaped like a repository's: packages whose tests
+// share most of the files that they cover, as their package's setup and
+// helpers, each with a few of its own and with long test and package names.
+func largeTIAMap() *tiaMap {
+	m := emptyTIAMap()
+	for p := range 20 {
+		pkg := fmt.Sprintf("github.com/example/repository/internal/package%02d", p)
+		node := &tiaNode{Tested: true, Imports: []string{"github.com/example/repository/internal/shared"}}
+		var shared []string
+		for f := range 60 {
+			name := fmt.Sprintf("internal/package%02d/file%02d.go", p, f)
+			m.Files[name] = tiaFile{Size: 4096 + int64(f), ModTime: 1700000000000000000 + int64(f), Hash: fmt.Sprintf("%032x", p*1000+f), Decl: fmt.Sprintf("%032x", p*1000+f+1), Code: true}
+			node.Files = append(node.Files, name)
+			if f < 50 {
+				shared = append(shared, name)
+			}
+		}
+		for i := range 50 {
+			covered := append(slices.Clone(shared), node.Files[50+i%10])
+			slices.Sort(covered)
+			node.Tests = append(node.Tests, tiaTest{Test: localtia.Test{Module: pkg, Suite: fmt.Sprintf("file%02d_test.go", i%5), Name: fmt.Sprintf("TestBehaviorNumber%03d", i)}, Status: "pass", Source: "file marks", Covered: covered})
+		}
+		m.Packages[pkg] = node
+	}
+	return m
+}
+
+// The stored map names each package's module, suites and coverage sources
+// once, and the files that all of a package's tests cover once for the
+// package, not for each test.
+func TestLocalTIAMapCompact(t *testing.T) {
+	data, err := marshalTIAMap(largeTIAMap(), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(data) > 250_000 {
+		t.Fatalf("%d bytes", len(data))
+	}
+}
+
 func TestLocalTIAMapVersion(t *testing.T) {
 	if localTIAMapVersion != 1 {
 		t.Fatalf("map version %d", localTIAMapVersion)
@@ -720,9 +797,9 @@ func TestLocalTIAMapVersion(t *testing.T) {
 		data     func() []byte
 		packages int
 	}{
-		{"this version", func() []byte { data, _ := json.Marshal(encodeTIAMap(m)); return data }, 2},
+		{"this version", func() []byte { data, _ := marshalTIAMap(m, true); return data }, 2},
 		{"another version", func() []byte {
-			stored := encodeTIAMap(m)
+			stored := encodeTIAMap(m, true)
 			stored.Version = 2
 			data, _ := json.Marshal(stored)
 			return data
