@@ -187,6 +187,12 @@ More options follow the same rule:
   `DD_CIVISIBILITY_EXPERIMENTAL_FILE_COVERAGE=true` or `=context` does the
   same; the flag decides when both are set.
   See [Experimental file coverage](docs/mini-runtime.md#experimental-file-coverage).
+- `DD_TIA_ENABLED=true`, which no flag replaces yet, selects the tests to skip
+  from the per-test coverage that earlier runs of the repository recorded,
+  instead of asking Datadog: a test runs again when a file that it depends on
+  changes. It needs per-test coverage: `-cover -covermode=atomic` or `count`,
+  `-race -cover`, or `--experimental-file-coverage`. See
+  [Local Test Impact Analysis](docs/mini-runtime.md#local-test-impact-analysis).
 
 `ddtest instrument` reports one test session per command: every package's
 tests report in it, and it lasts the command and has `go test`'s exit status.
@@ -353,6 +359,7 @@ Coverage still requires Go coverage flags.
 | `DD_CIVISIBILITY_IMPACTED_TESTS_DETECTION_ENABLED` | `true` | Allow backend-enabled impacted-test detection. |
 | `DD_CIVISIBILITY_CODE_COVERAGE_REPORT_UPLOAD_ENABLED` | `true` | Allow backend-enabled aggregate coverage-report uploads. |
 | `DD_CODE_COVERAGE_FLAGS` | Unset | Comma-separated report labels, up to 32. |
+| `DD_TIA_ENABLED` | `false` | Read by the CLI: select the tests to skip locally, from the per-test coverage of earlier runs, whatever the backend's ITR settings. |
 
 See the [feature matrix](docs/ci-parity.md) for combinations and limitations.
 

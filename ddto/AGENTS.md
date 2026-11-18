@@ -14,6 +14,8 @@ repository upload deepens a shallow clone, impacted-test detection fetches the
 base branch, and a pull-request run in a shallow clone fetches its head
 commit. `DD_CIVISIBILITY_GIT_UPLOAD_ENABLED=false` and
 `DD_CIVISIBILITY_IMPACTED_TESTS_DETECTION_ENABLED=false` stop the first two.
+With `DD_TIA_ENABLED=true` (local Test Impact Analysis), the CLI keeps its per-test dependency maps in the
+repository's Git directory, under `ddtest/tia`.
 
 ## Install
 

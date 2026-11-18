@@ -344,7 +344,9 @@ before this package initializes. The layout version is in the list's name
 and in each bank record. ddto checks the declaration before it emits banks,
 and a bank of another layout turns file coverage off.
 
-`FileCoverageActive` reports banks, Go's coverage off and coverage upload on.
+`FileCoverageActive` reports banks, Go's coverage off and per-test coverage
+collected: for Datadog's coverage upload or for ddto's
+[local TIA](#local-test-impact-analysis-from-ddtos-cli).
 It extends three places that upstream gates on Go's counters:
 - the session's `test.code_coverage.enabled` tag;
 - the test wrapper's choice to collect;
@@ -1553,6 +1555,49 @@ Checks: `TestSharedAppReportsOwnerIdentity`, `TestSharedAppRequiresSequence`,
 `TestRunOwnsTelemetryApplication` and `integration/TestMiniCLITelemetry`, which
 checks one application, sequential `seq_id`s, the worker's Git metrics, no
 telemetry from a cached run, reported failures and a binary run alone.
+
+## Local Test Impact Analysis from ddto's CLI
+
+Upstream skips the tests that Datadog's skippable-tests response lists, and
+collects per-test coverage only when the settings enable it. With ddto's
+local TIA (`DD_TIA_ENABLED`), the CLI selects the tests itself from a per-test dependency map
+that earlier runs recorded, and hands each test process its package's
+selection in the Git worker's state; see
+[Local Test Impact Analysis](../../../docs/mini-runtime.md#local-test-impact-analysis).
+The test process's side lives outside this subset, in `internal/localtia`,
+and is active only when that selection exists, so other processes behave as
+upstream:
+- `civisibility_features.go` enables ITR's test skipping, whatever the
+  settings say or when they are unavailable, and takes the skippable tests
+  from `localtia.SkippableTestsResponse` instead of requesting them.
+  `GetSkippableTestsResponse` returns that response.
+- `net.SkippableResponseDataAttributes` has a `Module`, which only local TIA
+  sets and JSON never carries. `skippableCandidates` skips a candidate whose
+  module differs from the test's, so tests of two packages with the same file
+  base name and test name never match each other. Datadog's candidates name
+  no module and match as before. `decisionFor` stays the only place that
+  decides, so unskippable, attempt-to-fix and modified tests still run.
+- `testing.go` initializes coverage when local TIA is active
+  (`coverage.LocalTIAActive`), with upload as the settings say, and names each
+  top-level test's collector with `coverage.NewTopLevelTestCoverage`. Its
+  lines keep their numbers: the integration tests' table of adapted call
+  sites names the line that calls the test's body. `coverage.CanCollectPerTestCoverage`
+  and `FileCoverageActive` hold when either Datadog or local TIA needs
+  per-test coverage. The coverage writer exists only for an upload, and
+  `processCoverageData` submits a row only to it; it records every top-level
+  test's files in local TIA. `InitializeCoverage` registers
+  `localtia.WriteRecords` before the writer, so close actions, which run in
+  reverse, write the records after every test's coverage is processed.
+- `tslvTest.SetTag` hands each `test.final_status` to `localtia.RecordStatus`:
+  every final status, after retries, is set there.
+- `utils.WriteCLIStateFileUnlogged` writes a test process's records to the
+  state without recording them in Go's test log, and `CLITests.LocalTIA`
+  tells the Git worker not to request Datadog's skippable tests ahead for the
+  test processes (`cligit.localTIAClient`).
+
+Checks: `TestITRCandidatesMatchLocalTIAModule`, the `internal/localtia` and
+`internal/runner` `LocalTIA` tests, and `TestLocalTIACounters`,
+`TestLocalTIARace` and `TestLocalTIAFileMarks`.
 
 ## Requests from ddto's CLI
 

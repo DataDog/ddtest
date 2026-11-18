@@ -41,6 +41,27 @@ type CLIOptions struct {
 	// for it, which goroutines, channels and timers carry
 	// (instrument.TransformContextRuntime).
 	FileCoverage, FileCoverageContext bool
+	// LocalTIA selects the tests to skip from the per-test coverage that
+	// earlier runs of the repository recorded, instead of asking Datadog
+	// (LocalTIAEnv).
+	LocalTIA bool
+}
+
+// LocalTIAEnv enables local Test Impact Analysis; no flag does.
+const LocalTIAEnv = "DD_TIA_ENABLED"
+
+// WithLocalTIAEnvironment applies LocalTIAEnv's value. It returns why it
+// ignores a value that is not a boolean, or "".
+func (o CLIOptions) WithLocalTIAEnvironment(value string) (CLIOptions, string) {
+	if value == "" {
+		return o, ""
+	}
+	enabled, err := strconv.ParseBool(value)
+	if err != nil {
+		return o, fmt.Sprintf("%s=%q is not a boolean; ignoring it", LocalTIAEnv, value)
+	}
+	o.LocalTIA = enabled
+	return o, ""
 }
 
 // FileCoverageEnv enables --experimental-file-coverage without the flag:

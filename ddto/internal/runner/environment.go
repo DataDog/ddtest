@@ -213,10 +213,11 @@ type goEnvironment struct {
 	GOOS, GOARCH, GOHOSTOS, GOHOSTARCH   string
 	// GOEXPERIMENT is the setting as go env reports it, not canonical.
 	GOEXPERIMENT string
+	CGOEnabled   string `json:"CGO_ENABLED"`
 }
 
 func readGoEnvironment(ctx context.Context, dir string) (*goEnvironment, error) {
-	out, err := goTool(ctx, dir, nil, "env", "-json", "GOMOD", "GOWORK", "GOMODCACHE", "GOVERSION", "GOROOT", "GOOS", "GOARCH", "GOHOSTOS", "GOHOSTARCH", "GOEXPERIMENT")
+	out, err := goTool(ctx, dir, nil, "env", "-json", "GOMOD", "GOWORK", "GOMODCACHE", "GOVERSION", "GOROOT", "GOOS", "GOARCH", "GOHOSTOS", "GOHOSTARCH", "GOEXPERIMENT", "CGO_ENABLED")
 	if err != nil {
 		// go env reads the caller's environment, such as GOFLAGS.
 		return nil, goRejected(err)

@@ -26,6 +26,9 @@ type CLITests struct {
 	// from the cache, and the worker requests nothing before a test process
 	// uses its state.
 	RunsEveryTest bool `json:"runs_every_test,omitempty"`
+	// LocalTIA reports that ddto's local TIA selects the tests to skip:
+	// test processes do not request Datadog's skippable tests.
+	LocalTIA bool `json:"local_tia,omitempty"`
 	// Packages are the packages that have tests.
 	Packages []CLITestPackage `json:"packages"`
 }

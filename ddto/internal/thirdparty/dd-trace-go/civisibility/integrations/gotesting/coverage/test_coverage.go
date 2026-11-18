@@ -27,6 +27,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/DataDog/ddtest/ddto/internal/cidelivery"
+	"github.com/DataDog/ddtest/ddto/internal/localtia"
 	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/integrations"
 	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/utils"
 	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/utils/filebitmap"
@@ -66,6 +67,9 @@ type (
 		// coverage; fileNames are the files captured after the test.
 		fileEpoch uint64
 		fileNames []string
+		// test names a top-level test, whose coverage ddto's local TIA
+		// records; it is zero for other executions.
+		test localtia.Test
 	}
 
 	// coverageData holds information about coverage data with their block
@@ -148,6 +152,9 @@ var (
 	tearDown func(coverprofile string, gocoverdir string) (string, error)
 	// coverageUploadEnabled is true when per-test coverage should be sent to Datadog.
 	coverageUploadEnabled bool
+	// localTIAEnabled is true when tests collect per-test coverage for
+	// ddto's local TIA, which records it whether Datadog receives it or not.
+	localTIAEnabled bool
 
 	// covWriter is the coverage writer for sending test coverage data to the backend.
 	covWriter *coverageWriter
@@ -207,6 +214,7 @@ func InitializeCoverage(m *testing.M, uploadEnabled bool) {
 		return tDown(coverprofile, gocoverdir)
 	}
 	coverageUploadEnabled = uploadEnabled
+	localTIAEnabled = localtia.Active()
 	runtimeSnapshot = nil
 	runtimeSnapshotCleaned = false
 	backfillInput = nil
@@ -225,11 +233,18 @@ func InitializeCoverage(m *testing.M, uploadEnabled bool) {
 	// time.Local. Resolve it before the tests start.
 	resolveModuleInfo()
 
+	// Close actions run in reverse order: the records are written after
+	// every test's coverage has been processed.
+	if localTIAEnabled {
+		integrations.PushCiVisibilityCloseAction(localtia.WriteRecords)
+	}
 	// initializing coverage writer
-	covWriter = newCoverageWriter()
-	integrations.PushCiVisibilityCloseAction(func() {
-		covWriter.stop()
-	})
+	if coverageUploadEnabled {
+		covWriter = newCoverageWriter()
+		integrations.PushCiVisibilityCloseAction(func() {
+			covWriter.stop()
+		})
+	}
 
 	// create a temporary directory to store coverage files
 	temporaryDir, err = mkdirCoverageTemp("coverage")
@@ -316,9 +331,16 @@ func CanComputeCoverageProfile() bool {
 	return tearDown != nil && (mode == "set" || mode == "count" || mode == "atomic")
 }
 
-// CanCollectPerTestCoverage returns whether per-test coverage upload can run.
+// CanCollectPerTestCoverage returns whether tests collect their own coverage
+// from Go's counters, to send it to Datadog or for ddto's local TIA.
 func CanCollectPerTestCoverage() bool {
-	return coverageUploadEnabled && CanCollect()
+	return collectsPerTestCoverage() && CanCollect()
+}
+
+// collectsPerTestCoverage reports whether tests collect their own coverage
+// from either source: Datadog receives it, or local TIA records it.
+func collectsPerTestCoverage() bool {
+	return coverageUploadEnabled || localTIAEnabled
 }
 
 // GetCoverage returns the total coverage percentage for the test package
@@ -653,6 +675,7 @@ func ResetForTesting() {
 	mode = ""
 	tearDown = nil
 	coverageUploadEnabled = false
+	localTIAEnabled = false
 	covWriter = nil
 	runtimeSnapshot = nil
 	runtimeSnapshotCleaned = false
@@ -678,6 +701,18 @@ func NewTestCoverage(sessionID, moduleID, suiteID, testID uint64, testFile strin
 		testFile:  coverageSourceFile(testFile),
 	}
 }
+
+// NewTopLevelTestCoverage is NewTestCoverage for a top-level test, whose
+// coverage ddto's local TIA records under the test's module, suite and name.
+func NewTopLevelTestCoverage(sessionID, moduleID, suiteID, testID uint64, testFile, module, suite, name string) TestCoverage {
+	coverage := NewTestCoverage(sessionID, moduleID, suiteID, testID, testFile).(*testCoverage)
+	coverage.test = localtia.Test{Module: module, Suite: suite, Name: name}
+	return coverage
+}
+
+// LocalTIAActive reports whether ddto's local TIA runs in this test process,
+// which then collects per-test coverage whatever Datadog's settings say.
+func LocalTIAActive() bool { return localtia.Active() }
 
 // coverageSourceFile returns the path in the repository of a source file,
 // which the runtime names by its import path with -trimpath.
@@ -808,7 +843,17 @@ func (t *testCoverage) processCoverageData() {
 	if !t.loadCoverageData() {
 		return
 	}
-	t.submitCoverageData()
+	if localTIAEnabled && t.test.Name != "" {
+		files := make([]localtia.File, len(t.filesCovered))
+		for i, file := range t.filesCovered {
+			files[i] = localtia.File{Path: file.name, Bitmap: file.bitmap}
+		}
+		localtia.RecordCoverage(t.test, files)
+	}
+	// Only coverage that Datadog receives has a writer.
+	if covWriter != nil {
+		t.submitCoverageData()
+	}
 	t.removeCoverageFiles()
 }
 

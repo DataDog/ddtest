@@ -66,6 +66,73 @@ func appendImports(pending []string, p *goPackage) []string {
 	return pending
 }
 
+// plainListing returns, from a go list -deps -test listing, what go list
+// -deps of the same patterns lists: the named packages and those that they
+// import, in listing order, without the copies recompiled for tests, the
+// test mains and the packages that only tests import.
+func plainListing(listing []goPackage) []goPackage {
+	graph := packageGraph{}
+	var pending []string
+	for i := range listing {
+		p := &listing[i]
+		if p.ForTest != "" || strings.Contains(p.ImportPath, " [") || isTestMain(*p) {
+			continue
+		}
+		graph[p.ImportPath] = p
+		if !p.DepOnly {
+			pending = append(pending, p.ImportPath)
+		}
+	}
+	reached := map[string]bool{}
+	for len(pending) != 0 {
+		path := pending[len(pending)-1]
+		pending = pending[:len(pending)-1]
+		if p := graph[path]; p != nil && !reached[path] {
+			reached[path] = true
+			pending = appendImports(pending, p)
+		}
+	}
+	var plain []goPackage
+	for i := range listing {
+		if p := &listing[i]; reached[p.ImportPath] && graph[p.ImportPath] == p {
+			plain = append(plain, *p)
+		}
+	}
+	return plain
+}
+
+// callerTestsListing returns, from a go list -deps -test listing, what go
+// list -deps -test of the caller's packages lists, without added, the
+// packages that ddto adds to the query: each caller's package, its test
+// main and what they import.
+func callerTestsListing(listing []goPackage, added ...string) []goPackage {
+	graph := make(packageGraph, len(listing))
+	var pending []string
+	for i := range listing {
+		p := &listing[i]
+		graph[p.ImportPath] = p
+		if !p.DepOnly && p.ForTest == "" && !slices.Contains(added, p.ImportPath) && !isTestMain(*p) {
+			pending = append(pending, p.ImportPath, p.ImportPath+".test")
+		}
+	}
+	reached := map[string]bool{}
+	for len(pending) != 0 {
+		path := pending[len(pending)-1]
+		pending = pending[:len(pending)-1]
+		if p := graph[path]; p != nil && !reached[path] {
+			reached[path] = true
+			pending = appendImports(pending, p)
+		}
+	}
+	var tests []goPackage
+	for i := range listing {
+		if reached[listing[i].ImportPath] {
+			tests = append(tests, listing[i])
+		}
+	}
+	return tests
+}
+
 // readPackages decodes go list output as it arrives instead of retaining a
 // second, complete JSON copy. It always drains stdout and waits for the command,
 // including after a decoding failure. A command failure takes precedence over

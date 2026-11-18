@@ -79,6 +79,8 @@ type gitWorker struct {
 	keepZip       string
 	log           *os.File
 	summary       ciStateSummaryFile
+	// gitRecord is the record of the checkout whose state handOff handed.
+	gitRecord utils.CLIGitRecord
 }
 
 // ciStateSummaryFile records ddto's view of the worker, in ci-state.json.
@@ -272,6 +274,7 @@ func (w *gitWorker) handOff(tests utils.CLITests, launcher bool, goVersion strin
 		return nil
 	}
 	w.summary.Handed = true
+	w.gitRecord = record
 	// The input stays open: finish writes Exited once go test exits.
 	return []string{goenv.GitStateHandoff + "=" + w.state}
 }

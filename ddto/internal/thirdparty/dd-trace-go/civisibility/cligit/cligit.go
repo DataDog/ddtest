@@ -136,6 +136,11 @@ func Run(dir, runtimeID string, uploadWait time.Duration, input io.Reader, resul
 	started := time.Now()
 	requestNow := func(trigger string) {
 		clients := testProcessClients(c, goVersion, tests)
+		if tests != nil && tests.LocalTIA {
+			for i := range clients {
+				clients[i] = localTIAClient{clients[i]}
+			}
+		}
 		log.Debug("civisibility: CLI requests ahead started [trigger:%s go_version:%s clients:%d after:%s]", trigger, goVersion, len(clients), time.Since(started).Round(time.Microsecond))
 		search = searchAhead(c, uploadEnabled)
 		requests = requestAhead(clients)
@@ -401,6 +406,20 @@ var testProcessClients = func(c client, goVersion string, tests *utils.CLITests)
 		clients = append(clients, tc)
 	}
 	return clients
+}
+
+// localTIAClient requests what a test process with ddto's local TIA
+// requests: not the skippable tests, which the CLI selects itself.
+type localTIAClient struct{ featureClient }
+
+func (c localTIAClient) GetSettings() (*net.SettingsResponseData, error) {
+	settings, err := c.featureClient.GetSettings()
+	if settings != nil {
+		local := *settings
+		local.TestsSkipping = false
+		settings = &local
+	}
+	return settings, err
 }
 
 // requestAhead requests, while go test builds, what the test processes request

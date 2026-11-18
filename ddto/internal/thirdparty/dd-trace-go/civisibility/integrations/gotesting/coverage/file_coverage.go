@@ -77,9 +77,9 @@ func markCoverageAvailable() bool {
 }
 
 // FileCoverageActive reports whether per-test coverage comes from file marks:
-// the build has them, Go's coverage is off, and coverage is uploaded.
+// the build has them, Go's coverage is off, and tests collect their coverage.
 func FileCoverageActive() bool {
-	return coverageUploadEnabled && mode == "" && fileCoverageAvailable()
+	return collectsPerTestCoverage() && mode == "" && fileCoverageAvailable()
 }
 
 // FileCoverageParallel reports whether tests keep t.Parallel while file

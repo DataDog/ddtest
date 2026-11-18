@@ -132,7 +132,7 @@ func markFileCoverage(logical string, src []byte, site, imports string, noLineDi
 		case *ast.FuncDecl:
 			// Function literals outside such declarations, as in a variable's
 			// initializer, may run only while the package initializes.
-			if n.Body != nil && (n.Recv != nil || n.Name.Name != "init") {
+			if runsAfterInitialization(n) {
 				code = true
 			}
 			return n.Body != nil
@@ -172,6 +172,47 @@ func markFileCoverage(logical string, src []byte, site, imports string, noLineDi
 	}
 	buf.Write(src[cursor:])
 	return buf.Bytes(), ""
+}
+
+// runsAfterInitialization reports whether a function declaration has code
+// that can run during a test: a body, in a method or a function other than
+// init.
+func runsAfterInitialization(fn *ast.FuncDecl) bool {
+	return fn.Body != nil && (fn.Recv != nil || fn.Name.Name != "init")
+}
+
+// GoFileDeclarations returns what tests can depend on in a Go file without
+// running its code while they run: src without the bodies of its functions
+// and methods that run after package initialization, each replaced with
+// "{}". The package clause, imports, comments outside those bodies (build
+// constraints and directives among them), declarations, package-level
+// function literals and init functions stay, as written: package
+// initialization runs them before any test. It also reports whether src has
+// code after initialization, which per-test coverage, from file marks or
+// from Go's counters, needs to report the file at all, as markFileCoverage
+// decides; and false for a file that does not parse.
+func GoFileDeclarations(src []byte) (declarations []byte, code, ok bool) {
+	src = bytes.TrimPrefix(src, []byte("\uFEFF"))
+	fs := token.NewFileSet()
+	file, err := parser.ParseFile(fs, "", src, parser.SkipObjectResolution)
+	if err != nil {
+		return nil, false, false
+	}
+	var buf bytes.Buffer
+	cursor := 0
+	for _, decl := range file.Decls {
+		fn, isFunc := decl.(*ast.FuncDecl)
+		if !isFunc || !runsAfterInitialization(fn) {
+			continue
+		}
+		code = true
+		start, end := fs.Position(fn.Body.Lbrace).Offset, fs.Position(fn.Body.Rbrace).Offset+1
+		buf.Write(src[cursor:start])
+		buf.WriteString("{}")
+		cursor = end
+	}
+	buf.Write(src[cursor:])
+	return buf.Bytes(), code, true
 }
 
 // FileCoverageNameClashError reports a Go file that the build compiles and

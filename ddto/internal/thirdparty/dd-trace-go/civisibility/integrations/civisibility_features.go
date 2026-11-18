@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/DataDog/ddtest/ddto/internal/cidelivery"
+	"github.com/DataDog/ddtest/ddto/internal/localtia"
 	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go"
 	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/bazel"
 	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/constants"
@@ -133,6 +134,8 @@ func ensureSettingsInitialization(serviceName string) {
 				log.Debug("civisibility: settings initialization finished duration=%s", time.Since(started).Round(time.Microsecond))
 			}()
 		}
+		// Whatever Datadog's settings say, even when they are unavailable.
+		defer applyLocalTIASettings()
 
 		// Create the CI Visibility client
 		client, waitTelemetry := newCIVisibilityClientWithServiceNameFunc(serviceName)
@@ -337,6 +340,16 @@ func ensureSettingsInitialization(serviceName string) {
 	})
 }
 
+// applyLocalTIASettings enables ITR's test skipping when ddto's local TIA
+// selects the tests to skip: they then come from the CLI, never from Datadog.
+// Per-test coverage is collected for local TIA (coverage.InitializeCoverage),
+// and still sent to Datadog only when its settings enable it.
+func applyLocalTIASettings() {
+	if localtia.Active() {
+		ciVisibilitySettings.ItrEnabled, ciVisibilitySettings.TestsSkipping = true, true
+	}
+}
+
 func capEarlyFlakeDetectionRetries(retries, maxRetries int) int {
 	if maxRetries >= 0 && retries > maxRetries {
 		return maxRetries
@@ -480,6 +493,13 @@ func ensureAdditionalFeaturesInitialization(_ string) {
 
 		// get a copy of the settings instance
 		currentSettings := *GetSettings()
+
+		// ddto's local TIA hands the tests to skip; Datadog's are not requested.
+		if localtia.Active() {
+			ciVisibilitySkippablesResponse = localtia.SkippableTestsResponse()
+			ciVisibilitySkippables = ciVisibilitySkippablesResponse.Skippables
+			currentSettings.TestsSkipping = false
+		}
 
 		// if there's no ciVisibilityClient then we don't need to do anything
 		if ciVisibilityClient == nil {
@@ -631,7 +651,8 @@ func GetSkippableTests() map[string]map[string][]net.SkippableResponseDataAttrib
 	return ciVisibilitySkippables
 }
 
-// GetSkippableTestsResponse gets the full skippable-tests response from the backend.
+// GetSkippableTestsResponse gets the full skippable-tests response from the
+// backend, or the one that ddto's local TIA builds from the CLI's selection.
 func GetSkippableTestsResponse() *net.SkippableTestsResponse {
 	if IsProcessRetryChild() {
 		return nil

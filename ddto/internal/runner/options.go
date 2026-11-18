@@ -101,7 +101,9 @@ type options struct {
 	exec                 string
 	coverage             bool
 	coverPatterns        []string
-	race                 bool
+	// coverMode is -covermode's value, or "" for Go's default.
+	coverMode string
+	race      bool
 	// workFlagPattern records a per-package build flag for the work pattern.
 	workFlagPattern bool
 	// panicHook is ddto's --panic-hook, which go test does not see.
@@ -109,6 +111,10 @@ type options struct {
 	// fileCoverage and fileCoverageContext are ddto's
 	// --experimental-file-coverage and its =context.
 	fileCoverage, fileCoverageContext bool
+	// localTIA is ddto's local TIA (DD_TIA_ENABLED), once its Git worker
+	// runs: preparation
+	// then lists the build with tests for it.
+	localTIA bool
 	// coverProfile and outputDir are go test's -coverprofile and -outputdir.
 	coverProfile, outputDir string
 	// execSet records -exec, even empty: then go test uses no
@@ -381,6 +387,8 @@ func (o *options) apply(name, value string) error {
 		o.coverage = true
 		if name == "coverprofile" {
 			o.coverProfile = value
+		} else {
+			o.coverMode = value
 		}
 	case "outputdir":
 		o.outputDir = value

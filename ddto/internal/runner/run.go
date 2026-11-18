@@ -115,6 +115,9 @@ type Plan struct {
 	// goVersion is the selected toolchain's version, as go env reports it,
 	// and goExperiment its GOEXPERIMENT setting.
 	goVersion, goExperiment string
+	// tested is the build with tests, which preparation lists for local TIA
+	// and file coverage.
+	tested []goPackage
 }
 
 // savedEnvironment records the caller's values of the Go settings that go test
@@ -426,8 +429,17 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime, pro
 		packages, err = readPackages(ctx, cmd, "resolve packages")
 		return packages, goRejected(err)
 	}
+	// File coverage and local TIA read the build with tests, which also
+	// links what only tests import. One query lists it with what the other
+	// consumers read, who get the packages of go list -deps: see
+	// plainListing.
+	withTests := opts.fileCoverage || opts.localTIA
+	fields, depsFlags := listFields, []string{"-deps"}
+	if withTests {
+		fields, depsFlags = listFields+","+testListFields, []string{"-deps", "-test"}
+	}
 	list := func(patterns ...string) ([]goPackage, error) {
-		return listWith("Dir,Name,ImportPath,Standard,DepOnly,GoFiles,TestGoFiles,XTestGoFiles,Imports,TestImports,XTestImports,Module,Error", patterns...)
+		return listWith(fields, patterns...)
 	}
 	if runtime == Mini && opts.mod != "mod" && plan.Workfile == "" {
 		plan.Modfile, e = preprovideMini(ctx, dir, opts, temp, replacements, progress)
@@ -438,7 +450,7 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime, pro
 			opts.buildFlags = append(opts.buildFlags, "-modfile="+plan.Modfile)
 		}
 	}
-	patterns := append([]string{"-deps"}, opts.packages...)
+	patterns := append(depsFlags, opts.packages...)
 	patterns = append(patterns, "testing", runtimePackage)
 	var listed []goPackage
 	if opts.mod == "mod" && !plan.moduleWorkspace {
@@ -470,6 +482,10 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime, pro
 			}
 			break
 		}
+	}
+	var tested []goPackage
+	if withTests {
+		tested, listed = listed, plainListing(listed)
 	}
 	graph := newPackageGraph(listed)
 	var packages []goPackage
@@ -787,15 +803,10 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime, pro
 		var singleflightPackage *goPackage
 		var summary fileCoverageSummary
 		if refusal == "" {
-			// The build with tests also links what only tests import.
-			patterns := append([]string{"-deps", "-test"}, opts.packages...)
-			if opts.mod == "mod" && !plan.moduleWorkspace {
-				patterns = append([]string{"-mod=readonly"}, patterns...)
-			}
-			tested, e := listWith(fileCoverageListFields, patterns...)
-			if e != nil {
-				refusal = "the package query with tests failed: " + strings.SplitN(e.Error(), "\n", 2)[0]
-			} else {
+			// The tests of the caller's packages, without those of the
+			// packages that the query adds.
+			tested := callerTestsListing(tested, "testing", runtimePackage)
+			{
 				excluded := []string{opts.environment.GOROOT, opts.environment.GOMODCACHE}
 				if plan.gorootMirror != nil {
 					excluded = append(excluded, plan.gorootMirror.root)
@@ -887,6 +898,7 @@ func prepare(ctx context.Context, dir string, opts options, runtime Runtime, pro
 			plan.Warnings = append(plan.Warnings, "--experimental-file-coverage: "+refusal+"; per-test coverage keeps Go's coverage counters")
 		}
 	}
+	plan.tested = tested
 	plan.coverOverlay = needsCoverOverlay(dir, opts, packages, rewrittenPackages)
 	plan.File = filepath.Join(temp, "overlay.json")
 	plan.InstrumentedFiles = len(rewritten.Files)
@@ -986,6 +998,10 @@ func RunRuntime(ctx context.Context, args []string, cli CLIOptions, stdin io.Rea
 		fmt.Fprintln(stderr, version.BuildLogPrefix+" WARN: "+warning)
 	}
 	opts.fileCoverage, opts.fileCoverageContext = cli.FileCoverage, cli.FileCoverageContext
+	cli, warning = cli.WithLocalTIAEnvironment(os.Getenv(LocalTIAEnv))
+	if warning != "" {
+		fmt.Fprintln(stderr, version.BuildLogPrefix+" WARN: "+warning)
+	}
 	dir := workingDirectory(cwd, opts)
 	debug.printf("working_directory=%q package_patterns=%d build_flags=%d", dir, len(opts.packages), len(opts.buildFlags))
 	if opts.help || explicitFiles(dir, opts.packages) {
@@ -1002,6 +1018,12 @@ func RunRuntime(ctx context.Context, args []string, cli CLIOptions, stdin io.Rea
 	gitHubJobID := handGitHubJobID(runtime, debug)
 	gitWorker := startGitWorker(cli, opts, dir, debug, stderr)
 	defer func() { gitWorker.finish() }()
+	// Local TIA hands its selection to the test processes, and collects
+	// their records, through the Git worker's state.
+	opts.localTIA = cli.LocalTIA && gitWorker != nil
+	if cli.LocalTIA && gitWorker == nil && !opts.compileOnly && !opts.printOnly {
+		fmt.Fprintln(stderr, version.BuildLogPrefix+" WARN: local TIA ("+LocalTIAEnv+") needs the Mini runtime with CI Visibility enabled, outside Bazel; tests run without it")
+	}
 	if gitWorker == nil && cli.KeepCIState {
 		fmt.Fprintln(stderr, version.BuildLogPrefix+" INFO: --keep-ci-state: this command starts no Git worker, so it has no CI state")
 	}
@@ -1041,7 +1063,24 @@ func RunRuntime(ctx context.Context, args []string, cli CLIOptions, stdin io.Rea
 		// processes, whose version includes their experiments.
 		plan.goVersion = testRuntimeVersion(ctx, dir, plan.goVersion, plan.goExperiment)
 	}
+	if opts.localTIA {
+		if refusal := localTIARefusal(&plan, opts); refusal != "" {
+			fmt.Fprintln(stderr, version.BuildLogPrefix+" WARN: local TIA ("+LocalTIAEnv+"): "+refusal+"; tests run without it")
+			opts.localTIA = false
+		}
+	}
+	plan.tests.LocalTIA = opts.localTIA
 	handoff := gitWorker.handOff(plan.tests, plan.testLauncher, plan.goVersion)
+	var tia *localTIARun
+	if opts.localTIA {
+		refusal := "the test processes do not receive the CLI's Git state, as when a launcher starts them or no test package is in the checkout"
+		if len(handoff) != 0 {
+			tia, refusal = startLocalTIA(ctx, &plan, opts, dir, gitWorker.state, gitWorker.gitRecord.SourceRoot, debug, stderr)
+		}
+		if tia == nil {
+			fmt.Fprintln(stderr, version.BuildLogPrefix+" WARN: local TIA ("+LocalTIAEnv+"): "+refusal+"; tests run without it")
+		}
+	}
 	// When go test may take every result from its cache, the worker requests
 	// for the test processes once go test links a test binary, which it does
 	// only for a result that is not in its cache, unless -o or -a makes it
@@ -1130,6 +1169,8 @@ func RunRuntime(ctx context.Context, args []string, cli CLIOptions, stdin io.Rea
 	}
 	relayed := gitWorker.relaySignals(signals)
 	exitCode = runGo(ctx, dir, forwarded, env, relayed, stdin, stdout, stderr)
+	// Before the worker's state, which holds the records, is removed.
+	tia.finish(ctx)
 	var coverage *float64
 	if session != nil {
 		if path := coverProfilePath(opts, dir); path != "" {
