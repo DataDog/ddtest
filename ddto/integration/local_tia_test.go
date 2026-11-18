@@ -406,8 +406,8 @@ func TestLocalTIACounters(t *testing.T) {
 	f.edit("lib/lib.go", "func Unused() {}", "func Unused() { _ = Limit }")
 	f.expect("only a body changed", f.run(), "alpha.TestUnskippable")
 
-	if f.intake.skippable != 0 || f.intake.coverage != 0 {
-		t.Fatalf("requests for skippable tests %d, coverage payloads %d; want none", f.intake.skippable, f.intake.coverage)
+	if skippable, coverage := f.intake.counts(); skippable != 0 || coverage != 0 {
+		t.Fatalf("requests for skippable tests %d, coverage payloads %d; want none", skippable, coverage)
 	}
 }
 
@@ -420,8 +420,8 @@ func TestLocalTIARace(t *testing.T) {
 	f.expect("no change", f.run(), "alpha.TestUnskippable")
 	f.edit("lib/one.go", "return 1", "return 2 - 1")
 	f.expect("a dependency of TestA changed", f.run(), "alpha.TestA", "alpha.TestUnskippable")
-	if f.intake.skippable != 0 || f.intake.coverage != 0 {
-		t.Fatalf("requests for skippable tests %d, coverage payloads %d; want none", f.intake.skippable, f.intake.coverage)
+	if skippable, coverage := f.intake.counts(); skippable != 0 || coverage != 0 {
+		t.Fatalf("requests for skippable tests %d, coverage payloads %d; want none", skippable, coverage)
 	}
 }
 
@@ -645,9 +645,9 @@ func TestLocalTIARepeatedExecutions(t *testing.T) {
 			f := newTIAFixture(t, false, localTIACoverFixture, "-cover", "-covermode=atomic", "-coverpkg=./...")
 			f.tests = []string{"app.TestApp", "lib.TestValue"}
 			f.env = append(f.env, "DD_CIVISIBILITY_EARLY_FLAKE_DETECTION_ENABLED=true", "DD_CIVISIBILITY_RETRY_EXECUTION_MODE="+mode)
-			f.intake.efd = true
+			f.intake.setEFD(true)
 			f.expect("new tests, run again by Early Flake Detection", f.run(), f.tests...)
-			f.intake.efd = false
+			f.intake.setEFD(false)
 			f.expect("known tests", f.run(), f.tests...)
 			f.expect("unchanged", f.run())
 		})
@@ -719,6 +719,39 @@ func (in *tiaIntake) requests() (lookups, uploads int) {
 	return len(in.lookups), len(in.uploads)
 }
 
+// A request of an earlier run can still be in flight, so the test reads and
+// changes the intake's fields only under its lock, as the handler does.
+
+// setEFD turns Early Flake Detection on or off for the next requests.
+func (in *tiaIntake) setEFD(on bool) {
+	in.mu.Lock()
+	defer in.mu.Unlock()
+	in.efd = on
+}
+
+// counts returns the requests for skippable tests and the coverage payloads
+// so far.
+func (in *tiaIntake) counts() (skippable, coverage int) {
+	in.mu.Lock()
+	defer in.mu.Unlock()
+	return in.skippable, in.coverage
+}
+
+// serve makes the TIA artifacts API store artifact, gzip-encoded in its
+// responses when gzipped is set.
+func (in *tiaIntake) serve(artifact []byte, gzipped bool) {
+	in.mu.Lock()
+	defer in.mu.Unlock()
+	in.artifact, in.gzipped = artifact, gzipped
+}
+
+// requested returns the commits of each lookup and each upload so far.
+func (in *tiaIntake) requested() (lookups [][]string, uploads []tiaUpload) {
+	in.mu.Lock()
+	defer in.mu.Unlock()
+	return slices.Clone(in.lookups), slices.Clone(in.uploads)
+}
+
 // Without a local map, a run looks the map up in Datadog with its commit
 // first; a recording run uploads its map, as plain JSON without the files'
 // sizes and times, for its commit. A fresh checkout
@@ -732,10 +765,11 @@ func TestLocalTIARemoteMap(t *testing.T) {
 	if lookups, uploads := f.intake.requests(); lookups != 1 || uploads != 1 {
 		t.Fatalf("%d lookups and %d uploads, want 1 and 1", lookups, uploads)
 	}
-	if commits := f.intake.lookups[0]; len(commits) != 1 || commits[0] != head {
+	lookups, uploads := f.intake.requested()
+	if commits := lookups[0]; len(commits) != 1 || commits[0] != head {
 		t.Fatalf("lookup commits %q, want [%s]", commits, head)
 	}
-	upload := f.intake.uploads[0]
+	upload := uploads[0]
 	for key, want := range map[string]string{"repository_id": "https://example.invalid/acme/tia.git", "language": "go", "compatibility_version": "1", "git_commit_sha": head} {
 		if got := upload.query.Get(key); got != want {
 			t.Errorf("%s=%q, want %q", key, got, want)
@@ -758,10 +792,10 @@ func TestLocalTIARemoteMap(t *testing.T) {
 		t.Fatalf("uploaded map %v: %s", err, stored)
 	}
 
-	f.intake.artifact, f.intake.gzipped = upload.body, true
+	f.intake.serve(upload.body, true)
 	f.forgetMap()
 	f.expect("fresh checkout: the shared map", f.run())
-	f.intake.gzipped = false
+	f.intake.serve(upload.body, false)
 	if lookups, uploads := f.intake.requests(); lookups != 2 || uploads != 2 {
 		t.Fatalf("%d lookups and %d uploads, want 2 and 2", lookups, uploads)
 	}
@@ -793,7 +827,7 @@ func TestLocalTIARemoteMapStats(t *testing.T) {
 	}
 	// The local map, in plain JSON with its sizes and times, as the map
 	// that Datadog serves.
-	f.intake.artifact = local
+	f.intake.serve(local, false)
 	path := filepath.Join(f.dir, "lib", "value.go")
 	info, err := os.Stat(path)
 	if err != nil {
@@ -818,12 +852,13 @@ func TestLocalTIARemoteMapNullBitmap(t *testing.T) {
 	f.tests = []string{"app.TestApp", "lib.TestValue"}
 	f.expect("recording", f.run(), f.tests...)
 	var shared map[string]any
-	if err := json.Unmarshal(f.intake.uploads[0].body, &shared); err != nil {
+	_, uploads := f.intake.requested()
+	if err := json.Unmarshal(uploads[0].body, &shared); err != nil {
 		t.Fatal(err)
 	}
 	bitmaps, _ := shared["bitmaps"].([]any)
 	if len(bitmaps) == 0 {
-		t.Fatalf("no bitmaps in %s", f.intake.uploads[0].body)
+		t.Fatalf("no bitmaps in %s", uploads[0].body)
 	}
 	for i := range bitmaps {
 		bitmaps[i] = nil
@@ -832,7 +867,7 @@ func TestLocalTIARemoteMapNullBitmap(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.intake.artifact = artifact
+	f.intake.serve(artifact, false)
 	f.forgetMap()
 	f.flags, f.readOnly = nil, true
 	f.expect("a null bitmap", f.run(), f.tests...)
@@ -852,7 +887,7 @@ func TestLocalTIARemoteMapUnreadable(t *testing.T) {
 	f.tests = []string{"app.TestApp", "lib.TestValue"}
 	for i, artifact := range [][]byte{[]byte("not a map"), gzipBytes([]byte(`{"version":1,"files":[{"p":"lib/value.go"}]}`)), {0x1f, 0x8b, 0},
 		[]byte(`{"version":1,"files":{"paths":["a.go"],"sizes":[1],"hashes":["h"],"decls":["d"]},"packages":{}}`)} {
-		f.intake.artifact = artifact
+		f.intake.serve(artifact, false)
 		f.forgetMap()
 		f.expect(fmt.Sprintf("unreadable map %d", i), f.run(), f.tests...)
 		if lookups, uploads := f.intake.requests(); lookups != i+1 || uploads != i+1 {
@@ -895,9 +930,9 @@ func TestLocalTIARemoteMapShallowClone(t *testing.T) {
 			f.env = append(slices.Clone(f.env), "DD_TRACE_DEBUG=true")
 			run := f.run()
 			f.expect("shallow clone without a map", run, f.tests...)
-			lookups, _ := f.intake.requests()
-			if lookups != 1 || len(f.intake.lookups[0]) != 4 || f.intake.lookups[0][0] != head {
-				t.Fatalf("lookups %q, want HEAD and its 3 ancestors", f.intake.lookups)
+			lookups, _ := f.intake.requested()
+			if len(lookups) != 1 || len(lookups[0]) != 4 || lookups[0][0] != head {
+				t.Fatalf("lookups %q, want HEAD and its 3 ancestors", lookups)
 			}
 			for _, line := range strings.Split(run.output, "\n") {
 				if i := strings.Index(line, "local tia unshallow"); i >= 0 {

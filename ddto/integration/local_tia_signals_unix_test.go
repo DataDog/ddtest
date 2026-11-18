@@ -46,14 +46,15 @@ func TestLocalTIARemoteMapSignals(t *testing.T) {
 		t.Run(phase, func(t *testing.T) {
 			f := newTIAFixture(t, false, localTIASignalFixture, "-cover", "-covermode=atomic", "-coverpkg=./...")
 			arrived := make(chan string, 4)
+			release := make(chan struct{})
 			f.intake.mu.Lock()
-			f.intake.arrived, f.intake.release = arrived, make(chan struct{})
-			// Before the intake closes, which waits for its requests.
-			t.Cleanup(func() { close(f.intake.release) })
+			f.intake.arrived, f.intake.release = arrived, release
 			if phase != "go test" {
 				f.intake.block = phase
 			}
 			f.intake.mu.Unlock()
+			// Before the intake closes, which waits for its requests.
+			t.Cleanup(func() { close(release) })
 			env := append([]string{}, f.env...)
 			// The test's connection, which closing releases the test.
 			connected := make(chan net.Conn, 1)
