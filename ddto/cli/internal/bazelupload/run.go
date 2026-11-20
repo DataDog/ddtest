@@ -418,7 +418,7 @@ func (work *worker) loadTest(index int) (Object, []any, int, string, error) {
 		return payload, nil, len(raw), "", nil
 	}
 	if err := enrich(payload, source, work.plan, work.contexts[source.Context], &work.owners); err != nil {
-		return nil, nil, 0, "reporting_service_identity_mismatch", err
+		return nil, nil, 0, "reporting_service_invalid", err
 	}
 	return payload, events, len(raw), "", nil
 }
