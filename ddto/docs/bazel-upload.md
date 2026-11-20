@@ -99,13 +99,15 @@ again. A source leaves memory once its requests are encoded, so at most four
 sources per worker are decoded at once, or eight per worker plus 64 with
 batching, whatever the intake latency.
 
-A source is deleted when all its requests are acknowledged. After a partial
-upload, the command retains the rejected events or the prepared telemetry
-request for replay. Pass the retained telemetry source to the same command to
-retry that request without applying its plan directives again.
-`--keep-payloads` retains the original files. The JSON report records each
-source's outcome in plan order. The command exits nonzero when any source fails
-or is cancelled.
+A source is deleted when all its requests are acknowledged. Bazel can leave its
+output trees read-only: when deleting or replacing a source fails, the command
+makes the source and its directory writable once and tries again, as the rules
+uploader does. After a partial upload, the command retains the rejected events
+or the prepared telemetry request for replay. Pass the retained telemetry source
+to the same command to retry that request without applying its plan directives
+again. `--keep-payloads` retains the original files. The JSON report records
+each source's outcome in plan order. The command exits nonzero when any source
+fails or is cancelled.
 
 The embedded CITESTCYCLE schema is copied from
 [the Python uploader's schema at 3f387af](https://github.com/DataDog/rules_test_optimization/blob/3f387af594565e6279dca7346c793da92aea032b/tools/core/schemas/agentless-schema.json).

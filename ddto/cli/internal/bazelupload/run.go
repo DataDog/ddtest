@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -417,7 +418,7 @@ func (work *worker) loadTest(index int) (Object, []any, int, string, error) {
 		return payload, nil, len(raw), "", nil
 	}
 	if err := enrich(payload, source, work.plan, work.contexts[source.Context], &work.owners); err != nil {
-		return nil, nil, 0, "reporting_service_identity_mismatch", err
+		return nil, nil, 0, "reporting_service_invalid", err
 	}
 	return payload, events, len(raw), "", nil
 }
@@ -628,13 +629,28 @@ func (work *worker) finish(index int) {
 	}
 	dir, name, err := work.directory(index)
 	if err == nil {
-		err = dir.Remove(name)
+		err = writable(dir, name, func() error { return dir.Remove(name) })
 	}
 	if err != nil {
 		result.warn("source_cleanup_failed")
 		return
 	}
 	result.Deleted = true
+}
+
+// writable runs an operation that changes a source in dir. If it fails, it
+// makes the source and dir writable once and runs it again: Bazel can leave
+// its output trees read-only, and the rules uploader repairs them so too.
+func writable(dir *os.Root, name string, operation func() error) error {
+	if err := operation(); err == nil || errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	for _, target := range []string{name, "."} {
+		if info, err := dir.Lstat(target); err == nil {
+			_ = dir.Chmod(target, info.Mode().Perm()|0o200)
+		}
+	}
+	return operation()
 }
 
 func (work *worker) unchanged(index int) bool {
@@ -656,6 +672,11 @@ func (work *worker) replace(index int, data []byte) error {
 	if err != nil {
 		return err
 	}
+	return writable(dir, target, func() error { return work.writeReplay(index, dir, target, data) })
+}
+
+// writeReplay writes data beside the source and renames it over the source.
+func (work *worker) writeReplay(index int, dir *os.Root, target string, data []byte) error {
 	file := ".ddtest-replay-" + rand.Text()
 	out, err := dir.OpenFile(file, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
