@@ -400,6 +400,7 @@ of `releases/latest/download/` in the URL.
 
 - [Running DDTest](docs/running.md)
 - [Go tests with ddtest instrument](ddto/README.md)
+- [Upload Bazel test payloads](ddto/docs/bazel-upload.md)
 - [Settings](docs/settings.md)
 - [Onboarding usage telemetry](docs/usage-telemetry.md)
 - [Plan file layout](docs/layout.md)
