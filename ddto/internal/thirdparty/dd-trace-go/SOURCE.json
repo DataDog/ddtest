@@ -11,7 +11,7 @@
   "files": [
     {
       "path": "ADAPTATIONS.md",
-      "sha256": "918822ce5bfd1e1e81656d87d35be78d5ee251221662568c5a214c0418a6f948",
+      "sha256": "585d27bb570076bb93fc5c1d20c011a3628d59c4a98f4230b6b3f7a9b275bb35",
       "role": "local"
     },
     {
@@ -1215,7 +1215,7 @@
     },
     {
       "path": "civisibility/utils/codeownership/codeowners.go",
-      "sha256": "1ae3c1009bf88e1ab36e76fb015e82898414e0f186f1414cbd617828dd3d3dd6",
+      "sha256": "51f12363b4a91e72fe7d323f57c0b85e2d826ca64830b857682018632151c4cb",
       "role": "local"
     },
     {
