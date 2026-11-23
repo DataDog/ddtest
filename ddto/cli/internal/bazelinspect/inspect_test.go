@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -99,9 +100,10 @@ func TestALinkedPayloadsDirectoryIsListed(t *testing.T) {
 	}
 }
 
-// A requested path keeps its meaning on disk: link/.. leaves the link's
-// target, as the doctor's os.scandir does, while lexical cleaning would read
-// a sibling target's output instead.
+// A requested path keeps its meaning on disk, as for the doctor's os.scandir.
+// On POSIX, link/.. leaves the link's target, where lexical cleaning would
+// read a sibling target's output; Windows resolves .. before links, for
+// Python too, so there it is the sibling.
 func TestPathsAreNotCleanedBeforeTheFilesystemResolvesThem(t *testing.T) {
 	root := t.TempDir()
 	requested := filepath.Join(root, "real", "test.outputs")
@@ -117,10 +119,14 @@ func TestPathsAreNotCleanedBeforeTheFilesystemResolvesThem(t *testing.T) {
 	symlink(t, filepath.Join(root, "real", "deep"), filepath.Join(root, "pkg", "link"))
 
 	path := filepath.Join(root, "pkg", "link") + string(os.PathSeparator) + ".." + string(os.PathSeparator) + "test.outputs"
+	payload, events, target := "payloads/tests/a.json", 1, `{"bazel.target":"//real:a"}`
+	if runtime.GOOS == "windows" {
+		payload, events, target = "payloads/tests/b.json", 2, `{"bazel.target":"//pkg:b"}`
+	}
 	got := Inspect([]string{path}, 1).Outputs[0]
-	if got.Path != path || len(got.JSONPayloads) != 1 || got.JSONPayloads[0].Path != "payloads/tests/a.json" ||
-		got.JSONPayloads[0].TestEvents != 1 || len(got.Metadata) != 1 || string(got.Metadata[0].Document) != `{"bazel.target":"//real:a"}` {
-		t.Fatalf("the link's target was not inspected: %+v", got)
+	if got.Path != path || len(got.JSONPayloads) != 1 || got.JSONPayloads[0].Path != payload ||
+		got.JSONPayloads[0].TestEvents != events || len(got.Metadata) != 1 || string(got.Metadata[0].Document) != target {
+		t.Fatalf("the output that the filesystem resolves was not inspected: %+v", got)
 	}
 }
 
