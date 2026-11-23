@@ -88,3 +88,19 @@ Sources are the regular `.json` and `.msgpack` files, compared without case, of
 and by name. A payload directory must be real and resolve inside its output: a
 link, or on Windows a junction, below the output is refused with
 `payload_symlink_skipped`, as is a linked source file.
+
+The doctor also passes the roots of the targets that it expects, as
+`target_roots`. The report then lists, in the same order, whether each root
+exists and the outputs below it, found as above except that the root itself is
+never an output, as the doctor's `find_test_output_directories(root,
+root_is_target=True)` finds them. Target roots are walked in parallel with one
+another and add no sources:
+
+```json
+{"schema_version": 1, "scan_roots": [], "max_depth": 0, "staged_output_keys": [], "target_roots": ["/abs/bazel-testlogs/pkg/target.topt"]}
+```
+
+```json
+{"schema_version": 1, "outputs": [], "sources": [], "warnings": [],
+ "targets": [{"root": "/abs/bazel-testlogs/pkg/target.topt", "exists": true, "outputs": ["/abs/bazel-testlogs/pkg/target.topt/test.outputs"]}]}
+```

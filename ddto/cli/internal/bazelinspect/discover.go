@@ -11,12 +11,14 @@ import (
 )
 
 // DiscoverRequest lists the testlogs roots that the rules_test_optimization
-// uploader scans, after it resolved and deduplicated them.
+// uploader scans, after it resolved and deduplicated them, and the target
+// roots of the targets that its doctor expects.
 type DiscoverRequest struct {
 	Version          int        `json:"schema_version"`
 	ScanRoots        []ScanRoot `json:"scan_roots"`
 	MaxDepth         int        `json:"max_depth"`
 	StagedOutputKeys []string   `json:"staged_output_keys"`
+	TargetRoots      []string   `json:"target_roots,omitempty"`
 }
 
 // ScanRoot is a local testlogs tree, or one that BEP artifact staging wrote.
@@ -33,6 +35,17 @@ type Discovery struct {
 	Outputs  []DiscoveredOutput `json:"outputs"`
 	Sources  []DiscoveredSource `json:"sources"`
 	Warnings []string           `json:"warnings"`
+	// Targets follow the request's target roots, in its order.
+	Targets []DiscoveredTarget `json:"targets,omitempty"`
+}
+
+// DiscoveredTarget lists the outputs below one target root, as the doctor's
+// find_test_output_directories(root, root_is_target=True) does: the root
+// itself is never an output. Exists is Path.exists() for the root.
+type DiscoveredTarget struct {
+	Root    string   `json:"root"`
+	Exists  bool     `json:"exists"`
+	Outputs []string `json:"outputs"`
 }
 
 // DiscoveredOutput is one selected test.outputs directory.
@@ -66,7 +79,7 @@ func Discover(request DiscoverRequest, workers int) Discovery {
 	discovery := Discovery{Version: 1, Outputs: []DiscoveredOutput{}, Sources: []DiscoveredSource{}, Warnings: []string{}}
 	byKey := map[string][]DiscoveredOutput{}
 	for _, root := range request.ScanRoots {
-		for _, output := range findTestOutputDirectories(root.Path, request.MaxDepth, workers) {
+		for _, output := range findTestOutputDirectories(root.Path, request.MaxDepth, workers, false) {
 			key := canonicalOutputKey(relativeKey(root.Path, output))
 			byKey[key] = append(byKey[key], DiscoveredOutput{Path: output, OutputKey: key, ScanRoot: root.Path, Staged: root.Staged})
 		}
@@ -122,6 +135,20 @@ func Discover(request DiscoverRequest, workers int) Discovery {
 			discovery.Warnings = append(discovery.Warnings, warning)
 		}
 	}
+	if len(request.TargetRoots) > 0 {
+		discovery.Targets = make([]DiscoveredTarget, len(request.TargetRoots))
+		// Target roots are small, so each walk is serial and the roots run
+		// in parallel.
+		parallelFor(len(request.TargetRoots), workers, func(index int) {
+			root := request.TargetRoots[index]
+			_, err := os.Stat(root)
+			outputs := []string{}
+			if err == nil {
+				outputs = append(outputs, findTestOutputDirectories(root, request.MaxDepth, 1, true)...)
+			}
+			discovery.Targets[index] = DiscoveredTarget{Root: root, Exists: err == nil, Outputs: outputs}
+		})
+	}
 	return discovery
 }
 
@@ -130,8 +157,8 @@ func Discover(request DiscoverRequest, workers int) Discovery {
 // ends the descent; otherwise a test.outputs directory, or a retry output with
 // payloads, is a candidate unless it holds another. It never enters linked
 // directories, but lists them, as os.walk does, and walks directories in
-// parallel.
-func findTestOutputDirectories(root string, maxDepth, workers int) []string {
+// parallel. A target root is never an output itself.
+func findTestOutputDirectories(root string, maxDepth, workers int, rootIsTarget bool) []string {
 	var mu sync.Mutex
 	marked, payloadRoots, unmarked := map[string]bool{}, map[string]bool{}, map[string]bool{}
 	var pending sync.WaitGroup
@@ -164,7 +191,7 @@ func findTestOutputDirectories(root string, maxDepth, workers int) []string {
 		name := filepath.Base(directory)
 		retryRoot := filepath.Base(filepath.Dir(directory)) == "test_attempts" && retryOutputDirectory.MatchString(name) &&
 			(hasMarker || hasPayloads)
-		if name == "test.outputs" || retryRoot {
+		if (directory != root || !rootIsTarget) && (name == "test.outputs" || retryRoot) {
 			mu.Lock()
 			switch {
 			case hasMarker:

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -139,5 +140,36 @@ func TestDiscoverCommand(t *testing.T) {
 		if status := DiscoverCommand("ddtest", nil, strings.NewReader(input), &stdout, &stderr); status != 1 {
 			t.Fatalf("%s: status %d", input, status)
 		}
+	}
+}
+
+// A target root lists its outputs as the doctor's per-target lookup does: the
+// root is never an output, even when it is named like one, and a missing or
+// file root has none.
+func TestDiscoverListsTheOutputsOfTargetRoots(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "pkg", "t")
+	write(t, filepath.Join(target, "test.outputs", metadataName), "{}")
+	write(t, filepath.Join(target, "test_attempts", "attempt_1.outputs", "payloads", "tests", "r.json"), "{}")
+	named := filepath.Join(root, "pkg", "test.outputs")
+	write(t, filepath.Join(named, metadataName), "{}")
+	write(t, filepath.Join(named, "inner", "test.outputs", "payloads", "tests", "a.json"), "{}")
+	file := filepath.Join(root, "pkg", "file")
+	write(t, file, "x")
+	missing := filepath.Join(root, "pkg", "missing")
+
+	got := Discover(DiscoverRequest{Version: 1, TargetRoots: []string{target, named, file, missing}}, 2)
+	want := []DiscoveredTarget{
+		{Root: target, Exists: true, Outputs: []string{filepath.Join(target, "test.outputs"),
+			filepath.Join(target, "test_attempts", "attempt_1.outputs")}},
+		{Root: named, Exists: true, Outputs: []string{filepath.Join(named, "inner", "test.outputs")}},
+		{Root: file, Exists: true, Outputs: []string{}},
+		{Root: missing, Exists: false, Outputs: []string{}},
+	}
+	if !reflect.DeepEqual(want, got.Targets) {
+		t.Fatalf("targets:\n got %+v\nwant %+v", got.Targets, want)
+	}
+	if len(got.Outputs) != 0 || len(got.Sources) != 0 {
+		t.Fatalf("target roots must not add outputs or sources: %+v", got)
 	}
 }
