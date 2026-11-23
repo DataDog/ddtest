@@ -25,7 +25,43 @@ type Plan struct {
 	CodeownersDialect string            `json:"codeowners_dialect,omitempty"`
 	Codeowners        string            `json:"codeowners,omitempty"`
 	Contexts          map[string]Object `json:"contexts,omitempty"`
-	Sources           []Source          `json:"sources"`
+	// ContextSelection chooses the context of each source that names its
+	// output directory; see readSidecars.
+	ContextSelection *ContextSelection `json:"context_selection,omitempty"`
+	Sources          []Source          `json:"sources"`
+}
+
+// ContextSelection is the rules uploader's ContextPlan.select: a source gets
+// the primary context, or the context of the repository that its sidecar
+// names when the plan has several repositories or requires a match.
+type ContextSelection struct {
+	Primary          string        `json:"primary,omitempty"`
+	ByRepo           []RepoContext `json:"by_repo,omitempty"`
+	Override         bool          `json:"override,omitempty"`
+	RequireRepoMatch bool          `json:"require_repo_match,omitempty"`
+}
+
+// RepoContext names the context of one repository.
+type RepoContext struct {
+	Repo    string `json:"repo"`
+	Context string `json:"context"`
+}
+
+// choose returns a context name for a sidecar's repository name, or a
+// warning code, as ContextPlan.select does.
+func (selection ContextSelection) choose(repo string) (string, string) {
+	if selection.Override || !selection.RequireRepoMatch && len(selection.ByRepo) <= 1 {
+		return selection.Primary, ""
+	}
+	if repo == "" {
+		return "", "context_repo_metadata_missing"
+	}
+	for _, entry := range selection.ByRepo {
+		if entry.Repo == repo {
+			return entry.Context, ""
+		}
+	}
+	return "", "context_repo_not_found"
 }
 
 type Object = map[string]any
@@ -36,6 +72,10 @@ type Source struct {
 	Kind     Kind   `json:"kind"`
 	Context  string `json:"context,omitempty"`
 	Metadata Object `json:"bazel_metadata,omitempty"`
+	// Output is a test source's test.outputs directory. ddtest reads its
+	// bazel_target_metadata.json and selects the context instead of taking
+	// bazel_metadata and context from the plan.
+	Output string `json:"output,omitempty"`
 	// The consumer decides which original telemetry envelope owns replay facts.
 	Telemetry *TelemetryDirective `json:"telemetry,omitempty"`
 }
@@ -81,6 +121,13 @@ func readPlan(reader io.Reader) (Plan, error) {
 	if err := validateSources(&plan); err != nil {
 		return Plan{}, err
 	}
+	if selection := plan.ContextSelection; selection != nil {
+		for _, name := range append([]string{selection.Primary}, contextNames(selection.ByRepo)...) {
+			if name != "" && plan.Contexts[name] == nil {
+				return Plan{}, fmt.Errorf("context_selection names an unknown context")
+			}
+		}
+	}
 	return plan, nil
 }
 
@@ -99,12 +146,28 @@ func validateSources(plan *Plan) error {
 		if source.Context != "" && plan.Contexts[source.Context] == nil {
 			return fmt.Errorf("source %d names an unknown context", index+1)
 		}
+		if source.Output != "" {
+			if source.Kind != Test || source.Context != "" || source.Metadata != nil || plan.ContextSelection == nil ||
+				!filepath.IsLocal(source.Output) {
+				return fmt.Errorf("source %d with an output directory must be a test source without context or "+
+					"bazel_metadata, in a plan with a context_selection, and the directory must be relative to the upload root", index+1)
+			}
+			source.Output = filepath.Clean(source.Output)
+		}
 		if (source.Kind != Test && source.Kind != Coverage && source.Kind != Telemetry) ||
 			(source.Telemetry != nil && source.Kind != Telemetry) {
 			return fmt.Errorf("source %d has invalid payload type or telemetry directives", index+1)
 		}
 	}
 	return nil
+}
+
+func contextNames(entries []RepoContext) []string {
+	names := make([]string, len(entries))
+	for i, entry := range entries {
+		names[i] = entry.Context
+	}
+	return names
 }
 
 func object(value any) Object {
