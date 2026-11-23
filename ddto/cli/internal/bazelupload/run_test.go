@@ -253,7 +253,7 @@ func TestDryRunAndEnrichmentFailures(t *testing.T) {
 	defer server.Close()
 	report := runFixture(t, directory, plan, Options{DryRun: true, AgentlessURL: server.URL})
 	if report.Result != "partial_failure" || report.Requests.Planned != 2 || report.Requests.Attempted != 0 ||
-		report.Files.Deleted != 0 || report.Sources[1].Failure != "reporting_service_identity_mismatch" ||
+		report.Files.Deleted != 0 || report.Sources[1].Failure != "reporting_service_invalid" ||
 		report.Warnings["schema_validation_failed"] != 1 {
 		t.Fatalf("unexpected dry-run report: %+v", report)
 	}
