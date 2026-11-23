@@ -37,3 +37,20 @@ func TestBazelUpload(t *testing.T) {
 		t.Fatalf("bazel without upload no longer reaches RunBazel: exit %d, %q", code, stderr.String())
 	}
 }
+
+// The word inspect hands the remaining arguments to the output inspector,
+// which the bazel help also names.
+func TestBazelInspect(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	if code := bazel("ddtest instrument", []string{"--help"}, &stdout, &stderr); code != 0 || !strings.Contains(stdout.String(), "bazel inspect [--workers N]") {
+		t.Fatalf("bazel --help: exit %d, %q", code, stdout.String())
+	}
+	stdout.Reset()
+	if code := bazel("ddtest instrument", []string{"inspect", "--help"}, &stdout, &stderr); code != 0 || !strings.Contains(stdout.String(), "standard output") {
+		t.Fatalf("bazel inspect --help: exit %d, %q", code, stdout.String())
+	}
+	stderr.Reset()
+	if code := bazel("ddtest instrument", []string{"inspect", "unexpected"}, &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), "standard input") {
+		t.Fatalf("bazel inspect with an argument: exit %d, %q", code, stderr.String())
+	}
+}
