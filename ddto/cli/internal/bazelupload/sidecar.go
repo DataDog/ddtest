@@ -2,6 +2,7 @@ package bazelupload
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -21,8 +22,9 @@ const sidecarName = "bazel_target_metadata.json"
 // readSidecars fills the metadata and context of each source that names its
 // output directory, reading the sidecars in parallel. It follows the rules
 // uploader's read_bazel_metadata and ContextPlan.select, and records their
-// warnings on the source.
-func readSidecars(root *os.Root, plan *Plan, results []FileResult, workers int) {
+// warnings on the source. It stops reading once ctx is cancelled: the upload
+// then prepares no further source, and reports the rest as cancelled.
+func readSidecars(ctx context.Context, root *os.Root, plan *Plan, results []FileResult, workers int) {
 	indexes := make(chan int)
 	var group sync.WaitGroup
 	for range max(1, workers) {
@@ -43,9 +45,18 @@ func readSidecars(root *os.Root, plan *Plan, results []FileResult, workers int) 
 			}
 		})
 	}
+schedule:
 	for index, source := range plan.Sources {
-		if source.Output != "" {
-			indexes <- index
+		if source.Output == "" {
+			continue
+		}
+		if ctx.Err() != nil {
+			break
+		}
+		select {
+		case indexes <- index:
+		case <-ctx.Done():
+			break schedule
 		}
 	}
 	close(indexes)

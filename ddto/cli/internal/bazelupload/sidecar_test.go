@@ -2,6 +2,7 @@ package bazelupload
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -192,6 +193,36 @@ func TestSidecarWarningsReachTheReport(t *testing.T) {
 	report := runFixture(t, directory, plan, Options{DryRun: true, AgentlessURL: "http://127.0.0.1:1"})
 	if got := strings.Join(report.Sources[0].Warnings, ","); !strings.HasPrefix(got, "bazel_metadata_invalid,context_repo_metadata_missing") {
 		t.Fatalf("warnings %q", got)
+	}
+}
+
+// A cancelled upload reads no further sidecar and reports the sources as
+// cancelled.
+func TestACancelledUploadStopsReadingSidecars(t *testing.T) {
+	directory := t.TempDir()
+	writeFixture(t, directory, "CODEOWNERS", "")
+	if err := os.MkdirAll(filepath.Join(directory, "out"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFixture(t, filepath.Join(directory, "out"), "test.json", inputPayload)
+	writeFixture(t, filepath.Join(directory, "out"), sidecarName, "{")
+	plan := testPlan(Source{ID: "test", Path: "out/test.json", Kind: Test, Output: "out"})
+	plan.ContextSelection = &ContextSelection{Primary: "ctx"}
+	results := []FileResult{{ID: "test", Status: statusCancelled}}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	readSidecars(ctx, openRoot(t, directory), &plan, results, 4)
+	if len(results[0].Warnings) != 0 || plan.Sources[0].Context != "" {
+		t.Fatalf("read a sidecar after cancellation: %+v %+v", results[0], plan.Sources[0])
+	}
+
+	root := openRoot(t, directory)
+	report, err := upload(ctx, root, plan, Options{DryRun: true, AgentlessURL: "http://127.0.0.1:1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Sources[0].Status != statusCancelled {
+		t.Fatalf("status %s", report.Sources[0].Status)
 	}
 }
 

@@ -95,7 +95,7 @@ func upload(ctx context.Context, root *os.Root, plan Plan, options Options) (Rep
 		results[index] = FileResult{ID: source.ID, Path: filepath.ToSlash(source.Path), Kind: source.Kind, Status: statusCancelled}
 	}
 	if plan.ContextSelection != nil {
-		readSidecars(root, &plan, results, workers)
+		readSidecars(ctx, root, &plan, results, workers)
 	}
 	inv := &invocation{
 		root: root, plan: plan, contexts: contexts, options: options, urls: urls,
