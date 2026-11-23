@@ -44,6 +44,8 @@ type invocation struct {
 	schema      *schemaNode
 	send        sender
 	results     []FileResult
+	batchMu     sync.Mutex
+	batches     []BatchRequest
 	files       []os.FileInfo
 	directories *directories
 	// held is each source's directory, from its read to its cleanup.
@@ -110,7 +112,8 @@ func upload(ctx context.Context, root *os.Root, plan Plan, options Options) (Rep
 		}
 	})
 
-	report := Report{Version: 1, Mode: "upload", Workers: workers, Sources: results, ElapsedSeconds: time.Since(start).Seconds()}
+	report := Report{Version: 1, Mode: "upload", Workers: workers, Sources: results, BatchRequests: inv.batches,
+		ElapsedSeconds: time.Since(start).Seconds()}
 	if options.DryRun {
 		report.Mode = "dry-run"
 	}
@@ -503,7 +506,7 @@ func (work *worker) uploadTest(ctx context.Context, index int, test *preparedTes
 	for i := range chunks {
 		delivery := work.send.post(ctx, work.testRequest(chunks[i].body, headers), work.compressor)
 		chunks[i].body = nil
-		result.record(delivery)
+		work.recordTest([]int{index}, delivery)
 		if delivery.Err != nil {
 			work.failDelivery(result, delivery)
 			result.ChunksFailed++

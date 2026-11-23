@@ -3,6 +3,7 @@ package bazelupload
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"maps"
 	"slices"
 	"strings"
@@ -149,6 +150,41 @@ func (work *worker) batchBody(batch []batchEntry) ([]byte, bool) {
 	return body, err == nil && len(body) <= testRequestLimit && work.schema.accepts(doc)
 }
 
+// recordTest records a test request for the sources at indexes. With
+// batching, as in the rules uploader's Python batches, the report lists each
+// request once and each of its sources counts it, so that a failed batch still
+// shows that every source reached delivery. Without batching, a source counts
+// its own requests.
+func (work *worker) recordTest(indexes []int, delivery delivery) {
+	if !work.options.Batch {
+		work.results[indexes[0]].record(delivery)
+		return
+	}
+	request := BatchRequest{Attempts: delivery.Attempts}
+	if delivery.Attempts != 0 {
+		request.Succeeded = &delivery.Success
+	}
+	for _, index := range indexes {
+		request.Sources = append(request.Sources, work.plan.Sources[index].ID)
+	}
+	work.batchMu.Lock()
+	request.ID = fmt.Sprintf("batch-%d", len(work.batches)+1)
+	work.batches = append(work.batches, request)
+	work.batchMu.Unlock()
+	for i, index := range indexes {
+		result := &work.results[index]
+		result.Requests.add(delivery)
+		result.batch.add(delivery)
+		result.RequestIDs = append(result.RequestIDs, request.ID)
+		if i == 0 {
+			result.PreparedBytes += delivery.Bytes
+			if len(indexes) > 1 {
+				result.SharedRequests++
+			}
+		}
+	}
+}
+
 func (work *worker) flushBatch(ctx context.Context, batch []batchEntry, encoded func()) {
 	if len(batch) == 0 {
 		return
@@ -173,9 +209,11 @@ func (work *worker) flushBatch(ctx context.Context, batch []batchEntry, encoded 
 	}
 	encoded()
 	delivery := work.send.post(ctx, work.testRequest(body, headers), work.compressor)
-	first := &work.results[batch[0].index]
-	first.record(delivery)
-	first.SharedRequests++
+	indexes := make([]int, len(batch))
+	for i, entry := range batch {
+		indexes[i] = entry.index
+	}
+	work.recordTest(indexes, delivery)
 	// Only a definitive batch rejection permits replay at a source boundary.
 	if delivery.Status == 400 || delivery.Status == 413 || delivery.Status == 422 {
 		for _, entry := range batch {
