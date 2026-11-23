@@ -32,6 +32,23 @@ type FileResult struct {
 	PreparedBytes    int           `json:"prepared_body_bytes"`
 	Requests         RequestCounts `json:"requests"`
 	SharedRequests   int           `json:"shared_requests,omitempty"`
+	// RequestIDs names the test requests that carried the source when
+	// batching; Requests counts them, as the rules uploader's Python batches
+	// count theirs.
+	RequestIDs []string `json:"request_ids,omitempty"`
+	// batch is the part of Requests that came from batch requests, which the
+	// report's totals count once each.
+	batch RequestCounts
+}
+
+// BatchRequest is one test request sent with batching, for one or several
+// sources.
+type BatchRequest struct {
+	ID       string   `json:"request_id"`
+	Sources  []string `json:"source_ids"`
+	Attempts int      `json:"attempts"`
+	// Succeeded is null when nothing was sent, as in a dry run.
+	Succeeded *bool `json:"succeeded"`
 }
 
 type RequestCounts struct {
@@ -68,6 +85,7 @@ type Report struct {
 	SharedRequests int            `json:"shared_requests"`
 	Warnings       map[string]int `json:"warnings"`
 	Sources        []FileResult   `json:"sources"`
+	BatchRequests  []BatchRequest `json:"batch_requests,omitempty"`
 }
 
 func (result *FileResult) fail(code string, err error) {
@@ -82,15 +100,19 @@ func (result *FileResult) warn(code string) {
 }
 
 func (result *FileResult) record(delivery delivery) {
-	result.Requests.Planned++
-	result.Requests.Attempted += delivery.Attempts
-	result.Requests.Retries += max(0, delivery.Attempts-1)
+	result.Requests.add(delivery)
 	result.PreparedBytes += delivery.Bytes
+}
+
+func (counts *RequestCounts) add(delivery delivery) {
+	counts.Planned++
+	counts.Attempted += delivery.Attempts
+	counts.Retries += max(0, delivery.Attempts-1)
 	if delivery.Attempts != 0 {
 		if delivery.Success {
-			result.Requests.Succeeded++
+			counts.Succeeded++
 		} else {
-			result.Requests.Failed++
+			counts.Failed++
 		}
 	}
 }
@@ -114,16 +136,26 @@ func (report *Report) aggregate() {
 		if result.Deleted {
 			report.Files.Deleted++
 		}
-		report.Requests.Planned += result.Requests.Planned
-		report.Requests.Attempted += result.Requests.Attempted
-		report.Requests.Retries += result.Requests.Retries
-		report.Requests.Succeeded += result.Requests.Succeeded
-		report.Requests.Failed += result.Requests.Failed
+		report.Requests.Planned += result.Requests.Planned - result.batch.Planned
+		report.Requests.Attempted += result.Requests.Attempted - result.batch.Attempted
+		report.Requests.Retries += result.Requests.Retries - result.batch.Retries
+		report.Requests.Succeeded += result.Requests.Succeeded - result.batch.Succeeded
+		report.Requests.Failed += result.Requests.Failed - result.batch.Failed
 		report.SharedRequests += result.SharedRequests
 		report.SourceBytes += int64(result.SourceBytes)
 		report.PreparedBytes += int64(result.PreparedBytes)
 		for _, warning := range result.Warnings {
 			report.Warnings[warning]++
+		}
+	}
+	for _, request := range report.BatchRequests {
+		report.Requests.Planned++
+		report.Requests.Attempted += request.Attempts
+		report.Requests.Retries += max(0, request.Attempts-1)
+		if request.Succeeded != nil && *request.Succeeded {
+			report.Requests.Succeeded++
+		} else if request.Succeeded != nil {
+			report.Requests.Failed++
 		}
 	}
 	report.Files.Processed = report.Files.Eligible - report.Files.Cancelled

@@ -106,8 +106,14 @@ uploader does. After a partial upload, the command retains the rejected events
 or the prepared telemetry request for replay. Pass the retained telemetry source
 to the same command to retry that request without applying its plan directives
 again. `--keep-payloads` retains the original files. The JSON report records
-each source's outcome in plan order. The command exits nonzero when any source
-fails or is cancelled.
+each source's outcome in plan order. With `--batch-test-payloads`, each test
+request, whether it carries several sources or one, as after a rejected batch,
+appears once in `batch_requests` with the IDs of its sources. Each of those
+sources counts the request in its `requests` and names it in `request_ids`, as
+the rules uploader's Python batches do, so a failed batch still shows that
+every source reached delivery; the report's request totals count each request
+once.
+The command exits nonzero when any source fails or is cancelled.
 
 The embedded CITESTCYCLE schema is copied from
 [the Python uploader's schema at 3f387af](https://github.com/DataDog/rules_test_optimization/blob/3f387af594565e6279dca7346c793da92aea032b/tools/core/schemas/agentless-schema.json).
