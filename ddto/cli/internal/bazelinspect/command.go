@@ -29,6 +29,14 @@ output. The uploader writes the request and builds its tasks from the report.
   --workers N   directories listed at once (default: the available CPUs)
 `
 
+const freshnessUsage = `usage: %[1]s bazel freshness [--workers N] < request.json > freshness.json
+
+Reads the BEP JSON files in the request, parsing their events in parallel, and
+writes the freshness evidence that the rules_test_optimization doctor and
+uploader derive from them as one JSON report to standard output.
+  --workers N   lines parsed at once (default: the available CPUs)
+`
+
 // Command runs ddtest instrument bazel inspect with the arguments after the
 // word inspect and returns the exit status.
 func Command(prog string, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
@@ -61,6 +69,22 @@ func DiscoverCommand(prog string, args []string, stdin io.Reader, stdout, stderr
 				return nil, errors.New("max_depth must be non-negative")
 			}
 			return Discover(request, workers), nil
+		})
+}
+
+// FreshnessCommand runs ddtest instrument bazel freshness with the arguments
+// after the word freshness and returns the exit status.
+func FreshnessCommand(prog string, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	return run(command{name: "freshness", usage: freshnessUsage, prefix: "[dd-test-optimization-doctor]"}, prog, args, stdin,
+		stdout, stderr, func(decoder *json.Decoder, workers int) (any, error) {
+			var request BepRequest
+			if err := decoder.Decode(&request); err != nil {
+				return nil, fmt.Errorf("read freshness request: %w", err)
+			}
+			if request.Version != 1 {
+				return nil, fmt.Errorf("unsupported freshness request schema_version %d", request.Version)
+			}
+			return EvaluateBep(request, workers), nil
 		})
 }
 
