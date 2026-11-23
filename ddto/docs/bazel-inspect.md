@@ -33,8 +33,9 @@ output:
 
 Outputs keep the request's order. File paths are relative to their output
 and slash-separated, so the doctor joins them to the path it requested; the
-files of an output are in directory order. `--workers N` bounds the outputs
-inspected at once.
+files of an output are in directory order. Paths are not cleaned, so a link
+followed by `..` leads where it does on disk, as in the doctor's Python.
+`--workers N` bounds the outputs inspected at once.
 
 The listing finds what the doctor's `Path.rglob` calls found. JSON and msgpack
 payloads are the files below `payloads` named `*.json`, `*.msgpack` or

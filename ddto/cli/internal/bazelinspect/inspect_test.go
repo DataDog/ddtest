@@ -99,6 +99,31 @@ func TestALinkedPayloadsDirectoryIsListed(t *testing.T) {
 	}
 }
 
+// A requested path keeps its meaning on disk: link/.. leaves the link's
+// target, as the doctor's os.scandir does, while lexical cleaning would read
+// a sibling target's output instead.
+func TestPathsAreNotCleanedBeforeTheFilesystemResolvesThem(t *testing.T) {
+	root := t.TempDir()
+	requested := filepath.Join(root, "real", "test.outputs")
+	write(t, filepath.Join(requested, "payloads", "tests", "a.json"), `{"events":[{"type":"test","content":{}}]}`)
+	write(t, filepath.Join(requested, metadataName), `{"bazel.target":"//real:a"}`)
+	sibling := filepath.Join(root, "pkg", "test.outputs")
+	write(t, filepath.Join(sibling, "payloads", "tests", "b.json"),
+		`{"events":[{"type":"test","content":{}},{"type":"test","content":{}}]}`)
+	write(t, filepath.Join(sibling, metadataName), `{"bazel.target":"//pkg:b"}`)
+	if err := os.MkdirAll(filepath.Join(root, "real", "deep"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	symlink(t, filepath.Join(root, "real", "deep"), filepath.Join(root, "pkg", "link"))
+
+	path := filepath.Join(root, "pkg", "link") + string(os.PathSeparator) + ".." + string(os.PathSeparator) + "test.outputs"
+	got := Inspect([]string{path}, 1).Outputs[0]
+	if got.Path != path || len(got.JSONPayloads) != 1 || got.JSONPayloads[0].Path != "payloads/tests/a.json" ||
+		got.JSONPayloads[0].TestEvents != 1 || len(got.Metadata) != 1 || string(got.Metadata[0].Document) != `{"bazel.target":"//real:a"}` {
+		t.Fatalf("the link's target was not inspected: %+v", got)
+	}
+}
+
 // testFacts agrees with test_result_event_count and
 // completed_empty_test_session in topt_runtime/bep_execution.py; each case
 // records what that Python returns.

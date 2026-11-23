@@ -94,7 +94,7 @@ func Inspect(outputs []string, workers int) Report {
 
 func inspectOutput(path string) Output {
 	output := Output{Path: path, JSONPayloads: []Payload{}, MsgpackPayloads: []string{}, Metadata: []Metadata{}}
-	payloads := filepath.Join(path, "payloads")
+	payloads := join(path, "payloads")
 	if _, err := os.Stat(payloads); err == nil {
 		for _, file := range matchingFiles(payloads, isPayloadName) {
 			if hasSuffix(filepath.Base(file), ".json") {
@@ -114,13 +114,19 @@ func inspectOutput(path string) Output {
 	return output
 }
 
+// join appends a name to a directory without cleaning the result, as Python's
+// os.path.join and pathlib do. Cleaning would resolve link/.. lexically and
+// leave the link's target for another directory.
+func join(directory, name string) string {
+	if strings.HasSuffix(directory, string(os.PathSeparator)) {
+		return directory + name
+	}
+	return directory + string(os.PathSeparator) + name
+}
+
 // relative names a file below output, which the walk joined to it.
 func relative(output, file string) string {
-	name, err := filepath.Rel(output, file)
-	if err != nil {
-		return filepath.ToSlash(file)
-	}
-	return filepath.ToSlash(name)
+	return filepath.ToSlash(strings.TrimPrefix(file, join(output, "")))
 }
 
 // matchingFiles returns the files below root whose names match, as the
@@ -138,7 +144,7 @@ func matchingFiles(root string, match func(string) bool) []string {
 			continue
 		}
 		for _, entry := range entries {
-			path := filepath.Join(directory, entry.Name())
+			path := join(directory, entry.Name())
 			switch {
 			case entry.IsDir():
 				pending = append(pending, path)
