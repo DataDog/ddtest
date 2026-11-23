@@ -54,3 +54,16 @@ func TestBazelInspect(t *testing.T) {
 		t.Fatalf("bazel inspect with an argument: exit %d, %q", code, stderr.String())
 	}
 }
+
+// The word discover hands the remaining arguments to the output discovery,
+// which the bazel help also names.
+func TestBazelDiscover(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	if code := bazel("ddtest instrument", []string{"--help"}, &stdout, &stderr); code != 0 || !strings.Contains(stdout.String(), "bazel discover [--workers N]") {
+		t.Fatalf("bazel --help: exit %d, %q", code, stdout.String())
+	}
+	stdout.Reset()
+	if code := bazel("ddtest instrument", []string{"discover", "--help"}, &stdout, &stderr); code != 0 || !strings.Contains(stdout.String(), "testlogs roots") {
+		t.Fatalf("bazel discover --help: exit %d, %q", code, stdout.String())
+	}
+}

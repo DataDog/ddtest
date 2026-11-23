@@ -54,3 +54,37 @@ A file that is unreadable, is not UTF-8, or is not JSON that Go decodes has
 `"decoded": false`, or no `document`. The doctor reads it itself, so its error
 messages and its acceptance of JSON that only Python decodes, such as `NaN`,
 do not change.
+
+## Discover the uploader's payloads
+
+`ddtest instrument bazel discover` finds the `test.outputs` directories below
+the testlogs roots in its request and the payload files that the
+rules_test_optimization uploader sends from them, walking and listing
+directories in parallel. The uploader resolves and deduplicates the roots,
+passes them with its `max_depth` and the output keys that BEP staging selected,
+and builds its tasks from the report:
+
+```json
+{"schema_version": 1, "scan_roots": [{"path": "/abs/bazel-testlogs", "staged": false}], "max_depth": 0, "staged_output_keys": []}
+```
+
+```json
+{
+  "schema_version": 1,
+  "outputs": [{"path": "/abs/bazel-testlogs/pkg/target.topt/test.outputs", "output_key": "pkg/target.topt/test.outputs", "scan_root": "/abs/bazel-testlogs", "staged": false}],
+  "sources": [{"output": 0, "payload_type": "test", "directory": "tests", "name": "tests-1.json"}],
+  "warnings": []
+}
+```
+
+The report follows the uploader's `discover_file_tasks`. A
+`bazel_target_metadata.json` or `outputs.zip` marks an output and ends the
+descent; a `test.outputs` directory, or a retry `attempt_N.outputs` with
+payloads, is otherwise an output unless it holds another. A retry output's key
+ends in `/test.outputs`, like the output it replaced. Outputs are ordered by
+key, and a selected staged output replaces a local one with the same key.
+Sources are the regular `.json` and `.msgpack` files, compared without case, of
+`payloads/tests`, `payloads/coverage` and `payloads/telemetry`, in that order
+and by name. A payload directory must be real and resolve inside its output: a
+link, or on Windows a junction, below the output is refused with
+`payload_symlink_skipped`, as is a linked source file.
