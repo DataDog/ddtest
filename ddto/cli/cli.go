@@ -165,8 +165,9 @@ func Main(args []string, name string) {
 }
 
 // bazel runs ddtest instrument bazel with its arguments after the word bazel.
-// The uploader and the output inspector live outside internal so that the
-// runtime archive, whose contents key instrumented builds, does not carry them.
+// The uploader, the output inspector and the output discovery live outside
+// internal so that the runtime archive, whose contents key instrumented
+// builds, does not carry them.
 func bazel(prog string, args []string, stdout, stderr io.Writer) int {
 	if len(args) > 0 && args[0] == "upload" {
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -175,6 +176,9 @@ func bazel(prog string, args []string, stdout, stderr io.Writer) int {
 	}
 	if len(args) > 0 && args[0] == "inspect" {
 		return bazelinspect.Command(prog, args[1:], os.Stdin, stdout, stderr)
+	}
+	if len(args) > 0 && args[0] == "discover" {
+		return bazelinspect.DiscoverCommand(prog, args[1:], os.Stdin, stdout, stderr)
 	}
 	return runner.RunBazel(prog, args, stdout, stderr)
 }
