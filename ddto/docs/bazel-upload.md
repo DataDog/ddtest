@@ -44,6 +44,44 @@ CODEOWNERS parser as `ddtest instrument`. Set `codeowners_dialect` to
 `"github"` or `"gitlab"` when the file is staged under a different name or
 location. The default is GitHub except for files under `.gitlab/`.
 Each source can name one context.
+
+Instead of carrying its metadata and context, a test source can name its
+`output` directory, relative to `--root`, and let the command read them. The
+command reads `bazel_target_metadata.json` from that directory, in parallel
+with the other sources, and picks the context from the plan's
+`context_selection`:
+
+```json
+{
+  "context_selection": {
+    "primary": "example",
+    "by_repo": [{"repo": "other", "context": "other-context"}],
+    "override": false,
+    "require_repo_match": false
+  },
+  "sources": [
+    {
+      "id": "file-000001",
+      "path": "pkg/example.topt/test.outputs/payloads/tests/tests-1.json",
+      "kind": "test",
+      "output": "pkg/example.topt/test.outputs"
+    }
+  ]
+}
+```
+
+This follows the rules uploader. A missing sidecar gives no metadata. A linked
+sidecar is refused with `bazel_metadata_unsafe`, and one that is not a JSON
+object with `bazel_metadata_invalid`; the source then has no metadata. Numbers
+keep the form that Python's `json` module would write. The source uses the
+`primary` context when `override` is set, or when `by_repo` has at most one
+entry and `require_repo_match` is not set. Otherwise it uses the first
+`by_repo` entry for the sidecar's `bazel.test_optimization.repo_name`; when
+there is no such value or entry, it warns with `context_repo_metadata_missing`
+or `context_repo_not_found` and uses no context. A source with an `output`
+cannot also set `context` or `bazel_metadata`, and a plan with such a source
+must have a `context_selection` whose contexts are in `contexts`.
+
 Set `kind` to `test` for test JSON, `coverage` for coverage JSON or MessagePack,
 or `telemetry` for JSON telemetry. A telemetry source may set
 `telemetry.environment`, `telemetry.append_messages`, `telemetry.provider_suffix`
