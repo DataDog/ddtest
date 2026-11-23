@@ -29,6 +29,7 @@ var bazelCommands = map[string]bool{
 const bazelUsage = `usage: %[1]s bazel --mini [--rules-go=NAME] DIR
        %[1]s bazel --goroot=SDK --compiler=EXECUTABLE [--panic-hook] DIR
        %[1]s bazel upload --plan=FILE [options]
+       %[1]s bazel inspect [--workers N] < request.json
 
 Writes what Bazel needs to instrument Go tests with this release:
   --mini      Mini's packages as a Bazel repository, with BUILD.bazel files
@@ -37,9 +38,10 @@ Writes what Bazel needs to instrument Go tests with this release:
               release's executable for the SDK's platform; --panic-hook edits
               the runtime as ddtest instrument's --panic-hook does.
 With upload, it sends the payloads that the tests wrote instead; upload
---help lists the options.
+--help lists the options. With inspect, it lists and decodes test outputs for
+the rule's doctor; inspect --help describes the request.
 It runs no Bazel command: rules_test_optimization runs it while it fetches,
-and upload after the tests.
+and upload and inspect after the tests.
 `
 
 // RunBazel runs ddtest instrument bazel with its arguments, after the word
