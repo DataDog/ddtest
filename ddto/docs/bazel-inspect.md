@@ -104,3 +104,31 @@ another and add no sources:
 {"schema_version": 1, "outputs": [], "sources": [], "warnings": [],
  "targets": [{"root": "/abs/bazel-testlogs/pkg/target.topt", "exists": true, "outputs": ["/abs/bazel-testlogs/pkg/target.topt/test.outputs"]}]}
 ```
+
+## Evaluate BEP freshness
+
+`ddtest instrument bazel freshness` reads the Build Event Protocol JSON files
+that the rules_test_optimization doctor and uploader use to tell fresh test
+outputs from cached ones. It parses their events in parallel and reports what
+the doctor's `_parse_bep_freshness` computes from them: the fresh and cached
+output keys, the remote-only outputs, the executions, the platform-skipped
+targets and the completeness errors of `bep_topology_errors`. The caller
+resolves and deduplicates the files and checks that they exist:
+
+```json
+{"schema_version": 1, "files": ["/abs/.topt/bazel-bep.json"], "references": false}
+```
+
+With `references` set, the report lists every artifact reference, which BEP
+artifact staging reads; otherwise it counts them and lists their labels. Each
+execution names the stageable carriers whose identity the caller resolves
+against its own workspace, execroot and output base, and each document gives
+its build UUID, so that the caller can name a document without one by its
+path. The report's comments in `bep.go` describe the compact arrays.
+
+The command handles the BEP that Bazel writes. When a file holds anything that
+the Python reads in its own way, such as an invalid or unusual JSON line, text
+other than ASCII in the fields that it compares, a record that makes the
+doctor fail, or two copies of one build that differ, the report's `status` is
+`fallback` and the caller evaluates the files itself, so that its warnings and
+failures stay the same.
