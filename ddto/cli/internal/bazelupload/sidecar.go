@@ -37,7 +37,7 @@ func readSidecars(ctx context.Context, root *os.Root, plan *Plan, results []File
 				}
 				source.Metadata = metadata
 				repo, _ := metadata["bazel.test_optimization.repo_name"].(string)
-				context, selectionWarning := plan.ContextSelection.choose(repo)
+				context, selectionWarning := plan.ContextSelection.Choose(repo)
 				if selectionWarning != "" {
 					results[index].warn(selectionWarning)
 				}

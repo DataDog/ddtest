@@ -581,6 +581,17 @@ func (work *worker) prepareOther(index int) ([]outbound, bool) {
 			result.fail("invalid_telemetry_payload", err)
 			return nil, false
 		}
+		// As the Python worker: a declared reporting service must match its
+		// context, and then the source must name its application.
+		service, err := reportingService(work.plan.Contexts[source.Context], source.Metadata)
+		if err != nil {
+			result.fail("reporting_service_invalid", err)
+			return nil, false
+		}
+		if _, isObject := payload["application"].(Object); service != "" && !isObject {
+			result.fail("invalid_telemetry_metadata", errors.New("telemetry application identity is missing"))
+			return nil, false
+		}
 		requests, err = telemetryBody(raw, payload, work.plan, source, work.urls, work.apiKey)
 		if err != nil {
 			result.fail("invalid_telemetry_metadata", err)

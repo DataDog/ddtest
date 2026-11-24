@@ -198,6 +198,31 @@ func runPlan(ctx context.Context, planPath, rootPath string, options Options) (R
 	return upload(ctx, root, plan, options)
 }
 
+// Run processes the plan's sources below rootPath in this process, as ddtest
+// instrument bazel upload does with a plan file. An error means that no
+// source was processed.
+func Run(ctx context.Context, plan Plan, rootPath string, options Options) (Report, error) {
+	if err := checkPlan(&plan); err != nil {
+		return Report{}, err
+	}
+	rootPath, err := filepath.Abs(rootPath)
+	if err != nil {
+		return Report{}, err
+	}
+	root, err := os.OpenRoot(rootPath)
+	if err != nil {
+		return Report{}, fmt.Errorf("open upload root: %w", err)
+	}
+	defer func() { _ = root.Close() }()
+	return upload(ctx, root, plan, options)
+}
+
+// EnvironmentOptions sets the options that the rules uploader's variables
+// configure when no option is given: delivery settings and credentials.
+func EnvironmentOptions(options *Options) error {
+	return applyEnvironment(flag.NewFlagSet("environment", flag.ContinueOnError), options)
+}
+
 // writeReport replaces path with the report only once the report is complete.
 func writeReport(path string, report Report) error {
 	file, err := os.CreateTemp(filepath.Dir(path), ".ddtest-report-*")

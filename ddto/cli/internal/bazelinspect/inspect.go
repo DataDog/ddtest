@@ -71,6 +71,22 @@ type Metadata struct {
 // Inspect lists and decodes the outputs with up to workers at once, or one per
 // CPU when workers is not positive.
 func Inspect(outputs []string, workers int) Report {
+	return inspectAll(outputs, workers, true)
+}
+
+// List lists the outputs as Inspect does without decoding their payloads, so
+// that no payload is Decoded; a caller that decodes them elsewhere reads the
+// facts with DecodePayload or its own decoding.
+func List(outputs []string, workers int) Report {
+	return inspectAll(outputs, workers, false)
+}
+
+// DecodePayload reads one JSON payload as Inspect does.
+func DecodePayload(path string) Payload {
+	return decodePayload(path)
+}
+
+func inspectAll(outputs []string, workers int, decode bool) Report {
 	if workers <= 0 {
 		workers = runtime.GOMAXPROCS(0)
 	}
@@ -80,7 +96,7 @@ func Inspect(outputs []string, workers int) Report {
 	for range min(workers, max(len(outputs), 1)) {
 		group.Go(func() {
 			for index := range indexes {
-				report.Outputs[index] = inspectOutput(outputs[index])
+				report.Outputs[index] = inspectOutput(outputs[index], decode)
 			}
 		})
 	}
@@ -92,13 +108,16 @@ func Inspect(outputs []string, workers int) Report {
 	return report
 }
 
-func inspectOutput(path string) Output {
+func inspectOutput(path string, decode bool) Output {
 	output := Output{Path: path, JSONPayloads: []Payload{}, MsgpackPayloads: []string{}, Metadata: []Metadata{}}
 	payloads := join(path, "payloads")
 	if _, err := os.Stat(payloads); err == nil {
 		for _, file := range matchingFiles(payloads, isPayloadName) {
 			if hasSuffix(filepath.Base(file), ".json") {
-				payload := decodePayload(file)
+				payload := Payload{}
+				if decode {
+					payload = decodePayload(file)
+				}
 				payload.Path = relative(path, file)
 				output.JSONPayloads = append(output.JSONPayloads, payload)
 			} else {

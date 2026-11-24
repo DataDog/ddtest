@@ -184,6 +184,11 @@ func bazel(prog string, args []string, stdout, stderr io.Writer) int {
 	if len(args) > 0 && args[0] == "freshness" {
 		return bazelinspect.FreshnessCommand(prog, args[1:], os.Stdin, stdout, stderr)
 	}
+	if len(args) > 0 && args[0] == "post-process" {
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		return bazeldoctor.PostCommand(ctx, prog, args[1:], os.Stdin, stdout, stderr)
+	}
 	if len(args) > 0 && args[0] == "validate" {
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()

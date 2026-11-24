@@ -35,6 +35,10 @@ type output struct {
 	stdout bytes.Buffer
 	stderr bytes.Buffer
 	last   string
+	// asRuntime is the uploader's use of the doctor's code: a warning
+	// becomes the bep_runtime_warning code and info messages are dropped.
+	asRuntime bool
+	warnings  int
 }
 
 func (out *output) enabled(severity string) bool {
@@ -50,6 +54,10 @@ func (out *output) fail(message string) {
 
 // warn is _warn.
 func (out *output) warn(message string) {
+	if out.asRuntime {
+		out.warnings++
+		return
+	}
 	if out.enabled("WARN") {
 		out.stderr.WriteString(prefix + "warning: " + message + "\n")
 	}
@@ -57,7 +65,7 @@ func (out *output) warn(message string) {
 
 // info is _info.
 func (out *output) info(message string) {
-	if out.enabled("INFO") {
+	if out.enabled("INFO") && !out.asRuntime {
 		out.stderr.WriteString(prefix + message + "\n")
 	}
 }

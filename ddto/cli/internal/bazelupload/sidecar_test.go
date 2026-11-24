@@ -136,7 +136,7 @@ func TestContextSelectionFollowsTheRulesUploader(t *testing.T) {
 		{"unknown repository", ContextSelection{Primary: "main", ByRepo: two}, "three", "", "context_repo_not_found"},
 		{"required match", ContextSelection{Primary: "main", ByRepo: two[:1], RequireRepoMatch: true}, "two", "", "context_repo_not_found"},
 	} {
-		if context, warning := test.selection.choose(test.repo); context != test.context || warning != test.warning {
+		if context, warning := test.selection.Choose(test.repo); context != test.context || warning != test.warning {
 			t.Errorf("%s: %q, %q; want %q, %q", test.name, context, warning, test.context, test.warning)
 		}
 	}

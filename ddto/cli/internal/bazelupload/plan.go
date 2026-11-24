@@ -47,9 +47,9 @@ type RepoContext struct {
 	Context string `json:"context"`
 }
 
-// choose returns a context name for a sidecar's repository name, or a
+// Choose returns a context name for a sidecar's repository name, or a
 // warning code, as ContextPlan.select does.
-func (selection ContextSelection) choose(repo string) (string, string) {
+func (selection ContextSelection) Choose(repo string) (string, string) {
 	if selection.Override || !selection.RequireRepoMatch && len(selection.ByRepo) <= 1 {
 		return selection.Primary, ""
 	}
@@ -85,6 +85,12 @@ type TelemetryDirective struct {
 	AppendMessages []any  `json:"append_messages,omitempty"`
 	ProviderSuffix string `json:"provider_suffix,omitempty"`
 	Synthetic      Object `json:"synthetic,omitempty"`
+	// SyntheticMessages asks for a message-batch request beside the source,
+	// built as the rules uploader's _build_synthetic_telemetry does from the
+	// source after its service and environment changes.
+	SyntheticMessages  []any `json:"synthetic_messages,omitempty"`
+	SyntheticSeqID     int64 `json:"synthetic_seq_id,omitempty"`
+	SyntheticTimestamp int64 `json:"synthetic_timestamp,omitempty"`
 }
 
 func readPlan(reader io.Reader) (Plan, error) {
@@ -98,37 +104,45 @@ func readPlan(reader io.Reader) (Plan, error) {
 	if err := decoder.Decode(new(json.RawMessage)); err != io.EOF {
 		return Plan{}, fmt.Errorf("upload plan must contain a single JSON document")
 	}
+	if err := checkPlan(&plan); err != nil {
+		return Plan{}, err
+	}
+	return plan, nil
+}
+
+// checkPlan validates a plan and cleans its paths.
+func checkPlan(plan *Plan) error {
 	if plan.Version != 1 {
-		return Plan{}, fmt.Errorf("unsupported upload plan schema version %d", plan.Version)
+		return fmt.Errorf("unsupported upload plan schema version %d", plan.Version)
 	}
 	if plan.RulesVersion == "" || plan.RuntimeID == "" {
-		return Plan{}, fmt.Errorf("upload plan requires rules_version and runtime_id")
+		return fmt.Errorf("upload plan requires rules_version and runtime_id")
 	}
 	if plan.Sources == nil {
-		return Plan{}, fmt.Errorf("upload plan requires a sources array")
+		return fmt.Errorf("upload plan requires a sources array")
 	}
 	if plan.Codeowners != "" {
 		if !filepath.IsLocal(plan.Codeowners) {
-			return Plan{}, fmt.Errorf("codeowners path must be relative to the upload root")
+			return fmt.Errorf("codeowners path must be relative to the upload root")
 		}
 		plan.Codeowners = filepath.Clean(plan.Codeowners)
 	}
 	switch plan.CodeownersDialect {
 	case "", "github", "gitlab":
 	default:
-		return Plan{}, fmt.Errorf("codeowners_dialect must be github or gitlab")
+		return fmt.Errorf("codeowners_dialect must be github or gitlab")
 	}
-	if err := validateSources(&plan); err != nil {
-		return Plan{}, err
+	if err := validateSources(plan); err != nil {
+		return err
 	}
 	if selection := plan.ContextSelection; selection != nil {
 		for _, name := range append([]string{selection.Primary}, contextNames(selection.ByRepo)...) {
 			if name != "" && plan.Contexts[name] == nil {
-				return Plan{}, fmt.Errorf("context_selection names an unknown context")
+				return fmt.Errorf("context_selection names an unknown context")
 			}
 		}
 	}
-	return plan, nil
+	return nil
 }
 
 func validateSources(plan *Plan) error {

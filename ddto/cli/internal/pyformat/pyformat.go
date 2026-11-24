@@ -4,6 +4,7 @@
 package pyformat
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
 	"sort"
@@ -216,6 +217,8 @@ func writeJSON(builder *strings.Builder, value any, depth int) {
 		builder.WriteString(strconv.Itoa(typed))
 	case int64:
 		builder.WriteString(strconv.FormatInt(typed, 10))
+	case json.Number:
+		builder.WriteString(string(typed))
 	case float64:
 		switch {
 		case math.IsNaN(typed):
