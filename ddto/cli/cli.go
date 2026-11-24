@@ -5,10 +5,15 @@ package cli
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 
+	"github.com/DataDog/ddtest/ddto/cli/internal/bazelinspect"
+	"github.com/DataDog/ddtest/ddto/cli/internal/bazelupload"
 	"github.com/DataDog/ddtest/ddto/internal/runner"
 	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/globalconfig"
 	"github.com/DataDog/ddtest/ddto/internal/version"
@@ -70,9 +75,10 @@ func Main(args []string, name string) {
 	if len(argv) >= 3 && argv[1] == runner.GoShimExecMode {
 		os.Exit(runner.ExecWithGoShim(argv[2:]))
 	}
-	// ddtest instrument bazel writes what Bazel needs to instrument Go tests.
+	// ddtest instrument bazel writes what Bazel needs to instrument Go tests,
+	// and uploads their payloads after the tests.
 	if len(argv) >= 2 && argv[1] == "bazel" {
-		os.Exit(runner.RunBazel(prog, argv[2:], os.Stdout, os.Stderr))
+		os.Exit(bazel(prog, argv[2:], os.Stdout, os.Stderr))
 	}
 	// The Git worker that ddto test starts once per invocation.
 	if len(argv) >= 3 && len(argv) <= 5 && argv[1] == "ci-git-worker" {
@@ -118,6 +124,7 @@ func Main(args []string, name string) {
 		fmt.Fprintln(os.Stderr, "       "+prog+" gotestsum [gotestsum flags] [-- go test flags]: reports the tests of gotestsum's go test, also with go tool gotestsum or go run gotest.tools/gotestsum")
 		fmt.Fprintln(os.Stderr, "       "+prog+" --go-shim command [arguments]: reports the go test that command, or a command it starts, runs")
 		fmt.Fprintln(os.Stderr, "       "+prog+" bazel --mini DIR | --goroot=SDK --compiler=EXECUTABLE DIR: writes what Bazel needs to instrument Go tests")
+		fmt.Fprintln(os.Stderr, "       "+prog+" bazel upload --plan=FILE: uploads the payloads that Bazel tests wrote")
 		fmt.Fprintln(os.Stderr, "       "+prog+" command [arguments]: runs any other command unchanged, such as "+prog+" go build ./...")
 		fmt.Fprintln(os.Stderr, "       "+prog+" --version: prints the version")
 		if len(args) == 0 {
@@ -155,4 +162,26 @@ func Main(args []string, name string) {
 		return
 	}
 	runner.Exit(runner.RunRuntime(ctx, args, cli, os.Stdin, os.Stdout, os.Stderr))
+}
+
+// bazel runs ddtest instrument bazel with its arguments after the word bazel.
+// The uploader, the output inspector, the output discovery and the BEP
+// freshness evaluation live outside internal so that the runtime archive,
+// whose contents key instrumented builds, does not carry them.
+func bazel(prog string, args []string, stdout, stderr io.Writer) int {
+	if len(args) > 0 && args[0] == "upload" {
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		return bazelupload.Command(ctx, prog, args[1:], stdout, stderr)
+	}
+	if len(args) > 0 && args[0] == "inspect" {
+		return bazelinspect.Command(prog, args[1:], os.Stdin, stdout, stderr)
+	}
+	if len(args) > 0 && args[0] == "discover" {
+		return bazelinspect.DiscoverCommand(prog, args[1:], os.Stdin, stdout, stderr)
+	}
+	if len(args) > 0 && args[0] == "freshness" {
+		return bazelinspect.FreshnessCommand(prog, args[1:], os.Stdin, stdout, stderr)
+	}
+	return runner.RunBazel(prog, args, stdout, stderr)
 }

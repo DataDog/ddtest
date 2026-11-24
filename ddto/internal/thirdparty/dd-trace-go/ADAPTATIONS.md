@@ -2956,7 +2956,8 @@ Matching and owner classification use Go runes and standard Unicode tables.
 Section names use `strings.ToUpper`. Keep these contracts when updating the
 SDK; the package does not carry Unicode compatibility tables. Pattern and
 matching limits apply per segment. File decoding accepts BOMs and common line
-endings separately from the UTF-8 parser.
+endings separately from the UTF-8 parser. `LoadFS` lets the Bazel uploader use
+the same decoder and matcher with a file confined to its upload root.
 
 Results have private immutable state. Owner lists are deduplicated once. A
 result encodes its tag on first use, because most rules never match a test's

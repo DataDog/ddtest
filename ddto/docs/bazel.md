@@ -74,6 +74,12 @@ A change to any of them takes a new contract version.
 The command runs no Bazel command. `ddtest instrument bazel test //...`, which
 used to run Bazel unchanged, now fails with a message that says so.
 
+After the tests, `ddtest instrument bazel upload` sends the payloads that the
+rule selected; [Bazel payload upload](bazel-upload.md) describes its plan.
+The rule's doctor lists and decodes the outputs with `ddtest instrument bazel
+inspect`, and its uploader finds the payloads with `ddtest instrument bazel
+discover`; see [Bazel output inspection](bazel-inspect.md).
+
 ## The compiler
 
 rules_go runs the SDK's `compile` for every package, and for the standard

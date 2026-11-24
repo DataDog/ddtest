@@ -1,0 +1,727 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema",
+  "title": "CITESTCYCLE raw payload",
+  "description": "The payload that tracers can send to the CITESTCYCLE track",
+  "type": "object",
+  "properties": {
+    "metadata": {
+      "type": "object",
+      "description": "Attributes that appear here will be applied individually to each event type at the root level if the event doesn't already specify a value for that property",
+      "properties": {
+        "*": {
+          "type": "object",
+          "properties": {
+            "env": {
+              "type": "string"
+            },
+            "runtime-id": {
+              "type": "string"
+            },
+            "language": {
+              "type": "string"
+            },
+            "library_version": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "language",
+            "runtime-id"
+          ]
+        },
+        "test": {
+          "type": "object"
+        },
+        "test_suite_end": {
+          "type": "object"
+        },
+        "test_module_end": {
+          "type": "object"
+        },
+        "test_session_end": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "*"
+      ],
+      "additionalProperties": false
+    },
+    "version": {
+      "type": "integer",
+      "const": 1
+    },
+    "custom_ingest_timestamp": {
+      "$ref": "#/$defs/timestampMs"
+    },
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "test",
+              "test_suite_end",
+              "test_module_end",
+              "test_session_end",
+              "span"
+            ]
+          },
+          "version": {
+            "type": "integer",
+            "enum": [
+              1,
+              2
+            ]
+          },
+          "content": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "type",
+          "version",
+          "content"
+        ],
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "const": "test"
+                }
+              }
+            },
+            "then": {
+              "allOf": [
+                {
+                  "if": {
+                    "properties": {
+                      "version": {
+                        "enum": [
+                          1,
+                          2
+                        ]
+                      }
+                    }
+                  },
+                  "then": {
+                    "allOf": [
+                      {
+                        "if": {
+                          "properties": {
+                            "version": {
+                              "const": 1
+                            }
+                          }
+                        },
+                        "then": {
+                          "properties": {
+                            "content": {
+                              "properties": {
+                                "timestamp": {
+                                  "type": "string"
+                                },
+                                "trace_id": {
+                                  "$ref": "#/$defs/uint64NoZero"
+                                },
+                                "span_id": {
+                                  "$ref": "#/$defs/uint64NoZero"
+                                },
+                                "parent_id": {
+                                  "$ref": "#/$defs/uint64"
+                                },
+                                "error": {
+                                  "$ref": "#/$defs/error"
+                                },
+                                "name": {
+                                  "type": "string"
+                                },
+                                "service": {
+                                  "type": "string"
+                                },
+                                "resource": {
+                                  "type": "string"
+                                },
+                                "start": {
+                                  "$ref": "#/$defs/timestamp"
+                                },
+                                "type": {
+                                  "type": "string"
+                                },
+                                "duration": {
+                                  "$ref": "#/$defs/duration"
+                                },
+                                "meta": {
+                                  "$ref": "#/$defs/meta"
+                                },
+                                "metrics": {
+                                  "$ref": "#/$defs/metrics"
+                                }
+                              },
+                              "required": [
+                                "trace_id",
+                                "span_id",
+                                "error",
+                                "name",
+                                "resource",
+                                "start",
+                                "duration"
+                              ],
+                              "additionalProperties": false
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "if": {
+                          "properties": {
+                            "version": {
+                              "const": 2
+                            }
+                          }
+                        },
+                        "then": {
+                          "properties": {
+                            "content": {
+                              "properties": {
+                                "timestamp": {
+                                  "type": "string"
+                                },
+                                "trace_id": {
+                                  "$ref": "#/$defs/uint64NoZero"
+                                },
+                                "span_id": {
+                                  "$ref": "#/$defs/uint64NoZero"
+                                },
+                                "parent_id": {
+                                  "$ref": "#/$defs/uint64"
+                                },
+                                "test_session_id": {
+                                  "$ref": "#/$defs/uint64NoZero"
+                                },
+                                "test_module_id": {
+                                  "$ref": "#/$defs/uint64NoZero"
+                                },
+                                "test_suite_id": {
+                                  "$ref": "#/$defs/uint64NoZero"
+                                },
+                                "error": {
+                                  "$ref": "#/$defs/error"
+                                },
+                                "name": {
+                                  "type": "string"
+                                },
+                                "service": {
+                                  "type": "string"
+                                },
+                                "resource": {
+                                  "type": "string"
+                                },
+                                "start": {
+                                  "$ref": "#/$defs/timestamp"
+                                },
+                                "type": {
+                                  "type": "string"
+                                },
+                                "duration": {
+                                  "$ref": "#/$defs/duration"
+                                },
+                                "meta": {
+                                  "$ref": "#/$defs/meta"
+                                },
+                                "metrics": {
+                                  "$ref": "#/$defs/metrics"
+                                },
+                                "itr_correlation_id": {
+                                  "$ref": "#/$defs/itr_correlation_id"
+                                }
+                              },
+                              "required": [
+                                "trace_id",
+                                "span_id",
+                                "test_suite_id",
+                                "error",
+                                "name",
+                                "resource",
+                                "start",
+                                "duration"
+                              ],
+                              "anyOf": [
+                                {
+                                  "required": [
+                                    "test_session_id"
+                                  ]
+                                },
+                                {
+                                  "required": [
+                                    "test_module_id"
+                                  ]
+                                },
+                                {
+                                  "required": [
+                                    "test_session_id",
+                                    "test_module_id"
+                                  ]
+                                }
+                              ],
+                              "additionalProperties": false
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  "else": {
+                    "properties": {
+                      "content": {
+                        "additionalProperties": false
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "const": "span"
+                }
+              }
+            },
+            "then": {
+              "allOf": [
+                {
+                  "if": {
+                    "properties": {
+                      "version": {
+                        "const": 1
+                      }
+                    }
+                  },
+                  "then": {
+                    "properties": {
+                      "content": {
+                        "properties": {
+                          "trace_id": {
+                            "$ref": "#/$defs/uint64NoZero"
+                          },
+                          "span_id": {
+                            "$ref": "#/$defs/uint64NoZero"
+                          },
+                          "parent_id": {
+                            "$ref": "#/$defs/uint64"
+                          },
+                          "error": {
+                            "$ref": "#/$defs/error"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "service": {
+                            "type": "string"
+                          },
+                          "resource": {
+                            "type": "string"
+                          },
+                          "start": {
+                            "$ref": "#/$defs/timestamp"
+                          },
+                          "type": {
+                            "type": "string"
+                          },
+                          "duration": {
+                            "$ref": "#/$defs/duration"
+                          },
+                          "meta": {
+                            "$ref": "#/$defs/meta"
+                          },
+                          "metrics": {
+                            "$ref": "#/$defs/metrics"
+                          }
+                        },
+                        "required": [
+                          "trace_id",
+                          "span_id",
+                          "error",
+                          "name",
+                          "resource",
+                          "start",
+                          "duration"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "else": {
+                    "properties": {
+                      "content": {
+                        "additionalProperties": false
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "const": "test_session_end"
+                }
+              }
+            },
+            "then": {
+              "allOf": [
+                {
+                  "if": {
+                    "properties": {
+                      "version": {
+                        "const": 1
+                      }
+                    }
+                  },
+                  "then": {
+                    "properties": {
+                      "content": {
+                        "properties": {
+                          "timestamp": {
+                            "type": "string"
+                          },
+                          "test_session_id": {
+                            "$ref": "#/$defs/uint64NoZero"
+                          },
+                          "error": {
+                            "$ref": "#/$defs/error"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "service": {
+                            "type": "string"
+                          },
+                          "resource": {
+                            "type": "string"
+                          },
+                          "start": {
+                            "$ref": "#/$defs/timestamp"
+                          },
+                          "type": {
+                            "type": "string"
+                          },
+                          "duration": {
+                            "$ref": "#/$defs/duration"
+                          },
+                          "meta": {
+                            "$ref": "#/$defs/meta"
+                          },
+                          "metrics": {
+                            "$ref": "#/$defs/metrics"
+                          }
+                        },
+                        "required": [
+                          "test_session_id",
+                          "error",
+                          "name",
+                          "resource",
+                          "start",
+                          "duration"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "else": {
+                    "properties": {
+                      "content": {
+                        "additionalProperties": false
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "const": "test_suite_end"
+                }
+              }
+            },
+            "then": {
+              "allOf": [
+                {
+                  "if": {
+                    "properties": {
+                      "version": {
+                        "const": 1
+                      }
+                    }
+                  },
+                  "then": {
+                    "properties": {
+                      "content": {
+                        "properties": {
+                          "timestamp": {
+                            "type": "string"
+                          },
+                          "test_session_id": {
+                            "$ref": "#/$defs/uint64NoZero"
+                          },
+                          "test_module_id": {
+                            "$ref": "#/$defs/uint64NoZero"
+                          },
+                          "test_suite_id": {
+                            "$ref": "#/$defs/uint64NoZero"
+                          },
+                          "error": {
+                            "$ref": "#/$defs/error"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "service": {
+                            "type": "string"
+                          },
+                          "resource": {
+                            "type": "string"
+                          },
+                          "start": {
+                            "$ref": "#/$defs/timestamp"
+                          },
+                          "type": {
+                            "type": "string"
+                          },
+                          "duration": {
+                            "$ref": "#/$defs/duration"
+                          },
+                          "meta": {
+                            "$ref": "#/$defs/meta"
+                          },
+                          "metrics": {
+                            "$ref": "#/$defs/metrics"
+                          },
+                          "itr_correlation_id": {
+                            "$ref": "#/$defs/itr_correlation_id"
+                          }
+                        },
+                        "required": [
+                          "test_suite_id",
+                          "error",
+                          "name",
+                          "resource",
+                          "start",
+                          "duration"
+                        ],
+                        "anyOf": [
+                          {
+                            "required": [
+                              "test_session_id"
+                            ]
+                          },
+                          {
+                            "required": [
+                              "test_module_id"
+                            ]
+                          },
+                          {
+                            "required": [
+                              "test_session_id",
+                              "test_module_id"
+                            ]
+                          }
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "else": {
+                    "properties": {
+                      "content": {
+                        "additionalProperties": false
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "const": "test_module_end"
+                }
+              }
+            },
+            "then": {
+              "allOf": [
+                {
+                  "if": {
+                    "properties": {
+                      "version": {
+                        "const": 1
+                      }
+                    }
+                  },
+                  "then": {
+                    "properties": {
+                      "content": {
+                        "properties": {
+                          "timestamp": {
+                            "type": "string"
+                          },
+                          "test_session_id": {
+                            "$ref": "#/$defs/uint64NoZero"
+                          },
+                          "test_module_id": {
+                            "$ref": "#/$defs/uint64NoZero"
+                          },
+                          "error": {
+                            "$ref": "#/$defs/error"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "service": {
+                            "type": "string"
+                          },
+                          "resource": {
+                            "type": "string"
+                          },
+                          "start": {
+                            "$ref": "#/$defs/timestamp"
+                          },
+                          "type": {
+                            "type": "string"
+                          },
+                          "duration": {
+                            "$ref": "#/$defs/duration"
+                          },
+                          "meta": {
+                            "$ref": "#/$defs/meta"
+                          },
+                          "metrics": {
+                            "$ref": "#/$defs/metrics"
+                          }
+                        },
+                        "required": [
+                          "error",
+                          "name",
+                          "resource",
+                          "start",
+                          "duration"
+                        ],
+                        "anyOf": [
+                          {
+                            "required": [
+                              "test_module_id"
+                            ]
+                          },
+                          {
+                            "required": [
+                              "test_module_id",
+                              "test_session_id"
+                            ]
+                          }
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "else": {
+                    "properties": {
+                      "content": {
+                        "additionalProperties": false
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+  },
+  "required": [
+    "version"
+  ],
+  "$defs": {
+    "uint64NoZero": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 18446744073709551615
+    },
+    "uint64": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 18446744073709551615
+    },
+    "timestamp": {
+      "type": "integer",
+      "description": "Start time in nanosecond unix epoch format. Minimum: 01/01/2000",
+      "minimum": 946684800000000000
+    },
+    "timestampMs": {
+      "type": "integer",
+      "description": "Start time in milliseconds unix epoch format. Minimum: 01/01/2000",
+      "minimum": 946684800000
+    },
+    "duration": {
+      "type": "integer",
+      "description": "Duration in nanosecond. Maximum is ~290 years, which is INT64_MAX.",
+      "minimum": 0,
+      "maximum": 9223372036854775807
+    },
+    "error": {
+      "type": "integer",
+      "enum": [
+        0,
+        1
+      ]
+    },
+    "meta": {
+      "type": "object",
+      "patternProperties": {
+        ".*": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "$ref": "#/$defs/meta"
+            }
+          ]
+        }
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "patternProperties": {
+        ".*": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "$ref": "#/$defs/metrics"
+            }
+          ]
+        }
+      }
+    },
+    "itr_correlation_id": {
+      "type": "string",
+      "description": "The ITR correlation ID is a unique identifier for a call to the skippable tests endpoint. It is passed so that the backend can augment the test results with reasons about why the test was skipped or run."
+    }
+  }
+}

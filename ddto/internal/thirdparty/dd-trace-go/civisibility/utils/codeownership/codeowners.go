@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"io/fs"
 	"os"
 	"slices"
 	"strings"
@@ -112,6 +113,20 @@ func Load(filename string, dialect Dialect) (*CodeOwners, error) {
 		return nil, err
 	}
 	defer file.Close()
+	return loadFile(file, dialect)
+}
+
+// LoadFS reads a selected CODEOWNERS file through a caller-owned filesystem.
+func LoadFS(fsys fs.FS, filename string, dialect Dialect) (*CodeOwners, error) {
+	file, err := fsys.Open(filename)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	return loadFile(file, dialect)
+}
+
+func loadFile(file fs.File, dialect Dialect) (*CodeOwners, error) {
 	if dialect == GitHub {
 		info, err := file.Stat()
 		if err != nil {
