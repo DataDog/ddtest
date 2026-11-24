@@ -50,6 +50,7 @@ func TestRedactText(t *testing.T) {
 }
 
 func TestRedactPathsLongestFirst(t *testing.T) {
+	posixOnly(t)
 	r := newRedaction("/work/space", "/work", "/tmp/run")
 	got := r.text("/work/space/a /work/b /tmp/run/c")
 	if want := "<workspace>/a <output_base>/b <tmp>/c"; got != want {

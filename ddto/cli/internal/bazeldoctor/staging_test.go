@@ -15,8 +15,18 @@ import (
 	"testing"
 )
 
+// posixOnly skips a test of the POSIX path rules; on Windows both commands
+// leave the outputs to the Python code.
+func posixOnly(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("the Python doctor and uploader handle Windows paths")
+	}
+}
+
 func newTestDoctor(t *testing.T, args Args) *doctor {
 	t.Helper()
+	posixOnly(t)
 	workspace := t.TempDir()
 	resolved, err := filepath.EvalSymlinks(workspace)
 	if err != nil {
@@ -74,6 +84,7 @@ func writeZip(t *testing.T, path string, entries map[string]string, order []stri
 }
 
 func TestExtractOutputsZip(t *testing.T) {
+	posixOnly(t)
 	root := t.TempDir()
 	archive := filepath.Join(root, "outputs.zip")
 	writeZip(t, archive, map[string]string{"payloads/": "", "payloads/tests/a.json": "{}"},
@@ -93,6 +104,7 @@ func TestExtractOutputsZip(t *testing.T) {
 // Unsafe names are refused with Python's message, which quotes the name as
 // repr() does.
 func TestExtractOutputsZipRefusesUnsafeNames(t *testing.T) {
+	posixOnly(t)
 	for _, name := range []string{"../escape.json", "/abs.json", "C:/drive.json", "a//b.json", "./a.json", `a\..\b`} {
 		t.Run(name, func(t *testing.T) {
 			root := t.TempDir()
@@ -113,6 +125,7 @@ func TestExtractOutputsZipRefusesUnsafeNames(t *testing.T) {
 }
 
 func TestExtractOutputsZipLeavesBrokenArchivesToPython(t *testing.T) {
+	posixOnly(t)
 	root := t.TempDir()
 	archive := filepath.Join(root, "outputs.zip")
 	writeFile(t, archive, "not a zip")
@@ -123,6 +136,7 @@ func TestExtractOutputsZipLeavesBrokenArchivesToPython(t *testing.T) {
 }
 
 func TestCopyTreeContentsRefusesSymlinks(t *testing.T) {
+	posixOnly(t)
 	src := t.TempDir()
 	writeFile(t, filepath.Join(src, "payloads", "tests", "a.json"), "{}")
 	if err := copyTreeContents(src, t.TempDir()); err != nil {
@@ -139,6 +153,7 @@ func TestCopyTreeContentsRefusesSymlinks(t *testing.T) {
 }
 
 func TestDedupeReferences(t *testing.T) {
+	posixOnly(t)
 	d := newTestDoctor(t, Args{})
 	refs := []reference{
 		{label: "//b:t", outputKey: "b/t", fetchValue: "bytestream://x/2", remoteOnly: true, stageableCarrier: true},
@@ -161,6 +176,7 @@ func TestDedupeReferences(t *testing.T) {
 }
 
 func TestSmallHelpers(t *testing.T) {
+	posixOnly(t)
 	for value, want := range map[float64]string{300: "300", 0.5: "0.5", 1234567: "1.23457e+06", 1e-05: "1e-05", 2.25: "2.25"} {
 		if got := formatG(value); got != want {
 			t.Errorf("formatG(%v) = %q, want %q", value, got, want)
@@ -182,6 +198,7 @@ func TestSmallHelpers(t *testing.T) {
 // A local outputs.zip carrier is staged into an owned directory, and the
 // cleanup removes its run directory.
 func TestStageLocalCarrierAndCleanup(t *testing.T) {
+	posixOnly(t)
 	d := newTestDoctor(t, Args{RemoteArtifacts: "disabled"})
 	carrier := filepath.Join(d.workspace, "bazel-testlogs", "pkg", "t", "test.outputs", "outputs.zip")
 	writeZip(t, carrier, map[string]string{"payloads/tests/a.json": "{}"}, []string{"payloads/tests/a.json"})
@@ -210,6 +227,7 @@ func TestStageLocalCarrierAndCleanup(t *testing.T) {
 // Python warns once with the same text when a local carrier is missing, and
 // removes the empty run directory.
 func TestStageMissingLocalCarrierWarns(t *testing.T) {
+	posixOnly(t)
 	d := newTestDoctor(t, Args{RemoteArtifacts: "disabled"})
 	f := &freshness{ambiguousOutputs: map[string]bool{}, ambiguousLabels: map[string]bool{},
 		references: []reference{{label: "//pkg:t", outputKey: "pkg/t/test.outputs", fetchValue: "missing/outputs.zip",
@@ -228,9 +246,7 @@ func TestStageMissingLocalCarrierWarns(t *testing.T) {
 }
 
 func TestRunDownloader(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("POSIX shell scripts")
-	}
+	posixOnly(t)
 	d := newTestDoctor(t, Args{BepArtifactDownloaderTimeout: 5})
 	ref := reference{label: "//pkg:t", outputKey: "pkg/t/test.outputs", fetchValue: "bytestream://host/blob", name: "outputs.zip"}
 	script := func(body string) string {
@@ -261,6 +277,7 @@ func TestRunDownloader(t *testing.T) {
 }
 
 func TestDownloadHTTPRetries(t *testing.T) {
+	posixOnly(t)
 	var requests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("User-Agent") != "datadog-rules-test-optimization" || r.Header.Get("Accept-Encoding") != "" {
@@ -291,6 +308,7 @@ func TestDownloadHTTPRetries(t *testing.T) {
 
 // urllib's error text is Python's own, so a failed download falls back.
 func TestDownloadHTTPFailureFallsBack(t *testing.T) {
+	posixOnly(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 	}))
