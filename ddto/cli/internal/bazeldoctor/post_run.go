@@ -42,6 +42,8 @@ type poster struct {
 	workers   int
 	phases    []phaseTime
 	committed bool
+	// realRoots are the resolved scan roots of discovery.
+	realRoots []string
 	// sidecars holds each discovered output's sidecar, read once.
 	sidecars map[string]sidecarEntry
 }
@@ -533,6 +535,13 @@ func (p *poster) discoverPayloads(prep *preparation, noExpected bool) (postDisco
 	selected := sortedKeys(keys)
 	for _, key := range selected {
 		p.log.debugf("freshness eligible output_key=%s", key)
+	}
+	if roots, err := normalizeScanRoots(prep.scanRoots); err == nil {
+		for _, root := range roots {
+			if realPath(root.path) == root.path {
+				p.realRoots = append(p.realRoots, root.path)
+			}
+		}
 	}
 	scan := func() (postDiscovery, error) { return p.discoverTasks(prep.scanRoots, selected) }
 	if noExpected {

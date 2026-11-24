@@ -55,6 +55,32 @@ func commonRoot(paths []string) string {
 	if len(paths) == 0 {
 		return "/"
 	}
+	for _, path := range paths {
+		if !strings.HasPrefix(path, "/") || !plainPath(path) {
+			return commonRootParts(paths)
+		}
+	}
+	// Plain absolute paths: the longest common prefix, cut back to a whole
+	// component, is their common directory.
+	prefix := paths[0]
+	for _, path := range paths[1:] {
+		length := 0
+		for length < len(prefix) && length < len(path) && prefix[length] == path[length] {
+			length++
+		}
+		prefix = prefix[:length]
+	}
+	for _, path := range paths {
+		if len(path) > len(prefix) && path[len(prefix)] != '/' {
+			prefix = prefix[:strings.LastIndex(prefix, "/")+1]
+			break
+		}
+	}
+	return directoryOf(strings.TrimSuffix(prefix, "/"))
+}
+
+// commonRootParts is commonRoot by path components, for any paths.
+func commonRootParts(paths []string) string {
 	common := pathParts(paths[0])
 	for _, path := range paths[1:] {
 		parts := pathParts(path)
@@ -68,10 +94,33 @@ func commonRoot(paths []string) string {
 	if len(common) > 1 {
 		root = "/" + strings.Join(common[1:], "/")
 	}
+	return directoryOf(root)
+}
+
+// directoryOf is root when it is a directory, else its parent.
+func directoryOf(root string) string {
+	if root == "" {
+		root = "/"
+	}
 	if isDir(root) {
 		return root
 	}
 	return pathParent(root)
+}
+
+// plainPath reports whether path, after an optional single "/" root, has
+// no empty, "." or ".." component, so that no cleaning changes it.
+func plainPath(path string) bool {
+	rest := strings.TrimPrefix(path, "/")
+	if rest == "" {
+		return path == "/"
+	}
+	for part := range strings.SplitSeq(rest, "/") {
+		if part == "" || part == "." || part == ".." {
+			return false
+		}
+	}
+	return true
 }
 
 // realPath is os.path.realpath.
@@ -118,8 +167,18 @@ func (p *poster) upload(disc postDiscovery) (uploadRun, error) {
 			outputs = append(outputs, task.outputDir)
 		}
 	}
+	// Discovery's roots are resolved and it never enters a linked directory,
+	// so an output below a root is already a real path.
 	reals := make([]string, len(outputs))
-	parallelFor(p.workers, len(outputs), func(i int) { reals[i] = realPath(outputs[i]) })
+	parallelFor(p.workers, len(outputs), func(i int) {
+		for _, root := range p.realRoots {
+			if strings.HasPrefix(outputs[i], root+"/") {
+				reals[i] = outputs[i]
+				return
+			}
+		}
+		reals[i] = realPath(outputs[i])
+	})
 	for i, dir := range outputs {
 		realOutputs[dir] = reals[i]
 	}
@@ -127,13 +186,15 @@ func (p *poster) upload(disc postDiscovery) (uploadRun, error) {
 	taskWarnings := map[string][]string{}
 	for _, task := range selected {
 		source := bazelupload.Source{ID: task.id, Kind: bazelupload.Kind(task.kind)}
-		path, output := realPath(task.sourcePath), ""
-		if relative, ok := relativeTo(task.sourcePath, task.outputDir); task.outputDir != "" && ok && relative != "." {
+		path, output := "", ""
+		if relative, ok := sourceBelow(task.sourcePath, task.outputDir); task.outputDir != "" && ok && relative != "." {
 			if realOutputs[task.outputDir] == "" {
 				realOutputs[task.outputDir] = realPath(task.outputDir)
 			}
 			output = realOutputs[task.outputDir]
 			path = output + "/" + relative
+		} else {
+			path = realPath(task.sourcePath)
 		}
 		source.Path = path
 		paths = append(paths, path)
@@ -248,7 +309,29 @@ func (p *poster) finishRun(run uploadRun) uploadRun {
 	return run
 }
 
+// sourceBelow is relativeTo for a source that discovery named below its
+// output, which is a plain prefix.
+func sourceBelow(source, output string) (string, bool) {
+	if relative, ok := belowPrefix(source, output); ok {
+		return relative, true
+	}
+	return relativeTo(source, output)
+}
+
+// belowPrefix is the plain relative rest of path below root, when root is
+// a string prefix of path that ends at a separator.
+func belowPrefix(path, root string) (string, bool) {
+	if root == "" || strings.HasSuffix(root, "/") || !strings.HasPrefix(path, root+"/") {
+		return "", false
+	}
+	relative := path[len(root)+1:]
+	return relative, !strings.HasPrefix(relative, "/") && plainPath(relative)
+}
+
 func relativePath(path, root string) string {
+	if relative, ok := belowPrefix(path, root); ok && plainPath(root) {
+		return relative
+	}
 	relative, err := filepath.Rel(root, path)
 	if err != nil {
 		return path

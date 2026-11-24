@@ -294,4 +294,3 @@ func (doc *Doc) MemberList(object int) ([]string, []int) {
 	}
 	return keys, values
 }
-
