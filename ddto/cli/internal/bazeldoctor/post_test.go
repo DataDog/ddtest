@@ -157,3 +157,16 @@ func TestPostProcessFallsBackBeforeSending(t *testing.T) {
 		t.Fatalf("status %d\nstdout %q\nstderr %q\nreport %v", status, stdout, stderr, report)
 	}
 }
+
+// The doctor's Git check runs on the contexts that the uploader loaded.
+func TestPostProcessChecksContextGitMetadata(t *testing.T) {
+	f := newPostFixture(t)
+	f.request.Validation = &PostValidation{Config: json.RawMessage(`{"require_git_metadata": true,
+"require_json_payloads": true, "require_bazel_metadata": true, "allowed_payload_selections": ["module"]}`)}
+	f.request.Resources.ContextRecords = []ContextRecord{{RepoKey: "repo", Context: "context-1"}}
+	status, stdout, stderr, _ := f.run(t)
+	want := prefix + "context repo is missing required git metadata: git.branch or git.tag\n"
+	if status != 1 || !strings.Contains(stderr, want) {
+		t.Fatalf("status %d\nstdout %s\nstderr %s", status, stdout, stderr)
+	}
+}

@@ -1,8 +1,10 @@
 package bazeldoctor
 
 import (
+	"encoding/json"
 	"errors"
 	"sort"
+	"strings"
 
 	"github.com/DataDog/ddtest/ddto/cli/internal/bazelinspect"
 	"github.com/DataDog/ddtest/ddto/cli/internal/pyjson"
@@ -99,6 +101,9 @@ func (p *poster) validateOutputs(disc postDiscovery, run uploadRun) int {
 		if pyjson.Truthy(d.configGet("forbid_dd_git_test_env", false)) {
 			d.validateBazelrc()
 		}
+		if pyjson.Truthy(d.configGet("require_git_metadata", false)) {
+			p.validateContextGit()
+		}
 		if len(dirs) == 0 {
 			d.report.updateOutputSummary([]any{})
 			d.out.summary("OK: no fresh payloads require validation")
@@ -153,4 +158,47 @@ func (p *poster) validateOutputs(disc postDiscovery, run uploadRun) int {
 		}
 	}
 	return exitCode
+}
+
+// validateContextGit is the doctor's _validate_git_metadata_contexts, over
+// the contexts that the uploader loaded.
+func (p *poster) validateContextGit() {
+	resources := p.request.Resources
+	if len(resources.ContextRecords) == 0 {
+		p.d.out.fail("require_git_metadata=True but no context.json was provided in data")
+	}
+	present := func(context map[string]any, key string) bool {
+		switch value := context[key].(type) {
+		case nil:
+			return false
+		case string:
+			return value != ""
+		case bool:
+			return value
+		case []any:
+			return len(value) > 0
+		case map[string]any:
+			return len(value) > 0
+		case json.Number:
+			number, err := value.Float64()
+			return err != nil || number != 0
+		}
+		return true
+	}
+	for _, record := range resources.ContextRecords {
+		context := resources.Contexts[record.Context]
+		var missing []string
+		if !present(context, "git.repository_url") {
+			missing = append(missing, "git.repository_url")
+		}
+		if !present(context, "git.commit.sha") {
+			missing = append(missing, "git.commit.sha")
+		}
+		if !present(context, "git.branch") && !present(context, "git.tag") {
+			missing = append(missing, "git.branch or git.tag")
+		}
+		if len(missing) > 0 {
+			p.d.out.fail("context " + record.RepoKey + " is missing required git metadata: " + strings.Join(missing, ", "))
+		}
+	}
 }
