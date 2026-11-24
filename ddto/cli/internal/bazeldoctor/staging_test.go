@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // posixOnly skips a test of the POSIX path rules; on Windows both commands
@@ -317,5 +319,32 @@ func TestDownloadHTTPFailureFallsBack(t *testing.T) {
 	ref := reference{label: "//pkg:t", outputKey: "pkg/t/test.outputs", fetchValue: server.URL}
 	if _, fellBack := stopped(func() { _, _ = d.downloadHTTP(ref, t.TempDir()) }); fellBack == "" {
 		t.Fatal("no fallback")
+	}
+}
+
+// A download closes its connection instead of leaving it idle in a pool
+// that no later download uses.
+func TestDownloadHTTPClosesItsConnection(t *testing.T) {
+	posixOnly(t)
+	closed := make(chan struct{}, 1)
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("zip"))
+	}))
+	server.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+		if state == http.StateClosed {
+			closed <- struct{}{}
+		}
+	}
+	server.Start()
+	defer server.Close()
+	d := newTestDoctor(t, Args{BepArtifactDownloaderTimeout: 5})
+	ref := reference{label: "//pkg:t", outputKey: "pkg/t/test.outputs", fetchValue: server.URL}
+	if _, err := d.downloadHTTP(ref, t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-closed:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the download left its connection open")
 	}
 }

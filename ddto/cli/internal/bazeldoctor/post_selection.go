@@ -612,6 +612,10 @@ type filterResult struct {
 	skipped    []string
 	identified []string
 	ambiguous  []string
+	// checked are the outputs that the doctor's checks validate: the
+	// selected ones and those that the selection would keep but that have
+	// nothing to upload.
+	checked []postOutput
 }
 
 // recognizedTestSource is _recognized_test_source.
@@ -656,7 +660,7 @@ func filterForFreshness(disc postDiscovery, plan freshnessPlan, mode string, exp
 		}
 	}
 	strict := plan.requireTestResults || mode == "required"
-	var selected []postOutput
+	var selected, checked []postOutput
 	labelByOutput := map[string]string{}
 	var skipped []string
 	ambiguous, identified := map[string]bool{}, map[string]bool{}
@@ -703,29 +707,40 @@ func filterForFreshness(disc postDiscovery, plan freshnessPlan, mode string, exp
 			skipped = append(skipped, output.outputKey)
 			continue
 		}
-		if len(tasks) == 0 {
-			continue
+		// An output with nothing to upload is neither selected nor skipped,
+		// but the doctor still checks it when the selection would keep it.
+		uploads := len(tasks) > 0
+		keep := func() {
+			checked = append(checked, output)
+			if uploads {
+				selected = append(selected, output)
+			}
+		}
+		skip := func() {
+			if uploads {
+				skipped = append(skipped, output.outputKey)
+			}
 		}
 		if label != "" && (plan.blockedLabels[label] || plan.ambiguousLabels[label]) {
-			skipped = append(skipped, output.outputKey)
+			skip()
 			continue
 		}
 		if !plan.eligibilityEnabled {
-			selected = append(selected, output)
+			keep()
 			continue
 		}
 		if label == "" {
-			if plan.selectedSource == "bep" && strict {
+			if uploads && plan.selectedSource == "bep" && strict {
 				return filterResult{}, failRun(2, "BEP required freshness cannot authorize %s because bazel.target metadata is missing", output.path)
 			}
-			skipped = append(skipped, output.outputKey)
+			skip()
 			continue
 		}
 		if plan.eligible[pair{label, output.outputKey}] {
-			selected = append(selected, output)
+			keep()
 			continue
 		}
-		skipped = append(skipped, output.outputKey)
+		skip()
 	}
 	selectedKeys := map[string]bool{}
 	for _, output := range selected {
@@ -749,7 +764,7 @@ func filterForFreshness(disc postDiscovery, plan freshnessPlan, mode string, exp
 	for _, key := range skipped {
 		skippedSet[key] = true
 	}
-	return filterResult{filtered, sortedKeys(skippedSet), sortedKeys(identified), sortedKeys(ambiguous)}, nil
+	return filterResult{filtered, sortedKeys(skippedSet), sortedKeys(identified), sortedKeys(ambiguous), checked}, nil
 }
 
 // testEvidence is collect_test_result_evidence and

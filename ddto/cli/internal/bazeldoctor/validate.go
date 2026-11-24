@@ -68,6 +68,7 @@ func (d *doctor) validateOutputs(dirs []string, v validation) map[string]int {
 	payloadCount, metadataCount := 0, 0
 	summary := map[string]int{}
 	for _, dir := range dirs {
+		d.checkInterrupted()
 		hasTestEvents, hasEmptySession := false, false
 		outputLabel := v.targets[d.resolved(dir)]
 		files := d.outputFilesOf(dir)

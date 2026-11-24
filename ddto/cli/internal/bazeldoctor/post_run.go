@@ -271,11 +271,16 @@ func (p *poster) run() (int, error) {
 		if len(eligibleDisc.tasks) == 0 {
 			p.log.debugf("credential validation skipped: no upload tasks")
 		}
+		checkedDisc := eligibleDisc
+		if p.request.Validation != nil {
+			outputs, err := p.prepareValidation(selection.checked, expected)
+			if err != nil {
+				return err
+			}
+			checkedDisc.outputs = outputs
+		}
 		// Sending deletes payloads: the run can no longer fall back.
 		p.commit()
-		if p.request.Validation != nil {
-			p.prelistOutputs(eligibleDisc)
-		}
 		for _, message := range p.request.Resources.Messages {
 			p.log.logf(strings.ToUpper(message.Level), "%s", message.Message)
 		}
@@ -325,7 +330,10 @@ func (p *poster) run() (int, error) {
 			}
 		}
 		if p.request.Validation != nil {
-			doctorExit = p.validateOutputs(eligibleDisc, run)
+			doctorExit = p.validateOutputs(checkedDisc, run)
+			if doctorExit == 130 && report.exitCode == 0 {
+				reason = &reportReason{code: "interrupted", message: "Uploader interrupted during the doctor's checks."}
+			}
 		}
 		if len(rawDisc.tasks) == 0 {
 			if noExpected {

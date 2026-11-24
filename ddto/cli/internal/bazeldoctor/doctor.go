@@ -69,6 +69,7 @@ func Run(ctx context.Context, request Request, workers int) (result Result, err 
 	}
 	d.config = object
 	d.run()
+	d.checkInterrupted()
 	d.report.recordSuccess()
 	return d.finish(0), nil
 }
@@ -194,6 +195,7 @@ func (d *doctor) run() {
 			d.out.fail("no Test Optimization output directories found under " + d.testlogs)
 		}
 	}
+	d.checkInterrupted()
 	for _, dir := range outputDirs {
 		d.localOutputKey(dir)
 	}
@@ -216,6 +218,7 @@ func (d *doctor) run() {
 		d.out.warn("BEP freshness source was selected but no BEP JSON file was configured; skipping BEP freshness validation")
 	}
 
+	d.checkInterrupted()
 	d.updateArtifacts(stagingEnabled, stagingBase, staged)
 	if stagingEnabled && f != nil {
 		var selectedLabels map[string]bool
@@ -268,6 +271,7 @@ func (d *doctor) run() {
 			targetByDir[dir] = label
 		}
 	}
+	d.checkInterrupted()
 	expectedSet := map[string]bool{}
 	for _, label := range expectedTargets {
 		expectedSet[label] = true
@@ -320,6 +324,7 @@ func (d *doctor) run() {
 	}
 
 	d.inspect(outputDirs)
+	d.checkInterrupted()
 	d.report.updateOutputSummary(d.diagnosticEntries(outputDirs, targetByDir, staged))
 	allowed := d.configGet("allowed_payload_selections", nil)
 	var allowedList []string

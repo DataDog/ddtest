@@ -791,6 +791,9 @@ func (d *doctor) downloadHTTP(ref reference, runDir string) (string, error) {
 	display := displayArtifactReference(ref.fetchValue)
 	timeout := time.Duration(d.request.Args.BepArtifactDownloaderTimeout * float64(time.Second))
 	transport := http.DefaultTransport.(*http.Transport).Clone()
+	// Each download has its own transport, so nothing reuses its idle
+	// connections.
+	defer transport.CloseIdleConnections()
 	// urllib neither asks for compressed bodies nor decodes them.
 	transport.DisableCompression = true
 	// urllib's timeout bounds each socket operation.

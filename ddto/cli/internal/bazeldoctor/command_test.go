@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -20,6 +21,32 @@ const testConfig = `{"context_manifest_path": "", "context_manifest_short_path":
 // validate runs the command on a workspace whose testlogs hold one output
 // of //pkg:target, as the rules' doctor tests write it.
 func validate(t *testing.T, expectedTargets string, change func(*Request)) (Result, string, string, map[string]any) {
+	t.Helper()
+	request := validateRequest(t, expectedTargets, change)
+	input, err := json.Marshal(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	if status := Command(context.Background(), "ddtest", nil, bytes.NewReader(input), &stdout, &stderr); status != 0 ||
+		stderr.Len() != 0 {
+		t.Fatalf("status %d: %s", status, stderr.String())
+	}
+	var result Result
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("result %q: %v", stdout.String(), err)
+	}
+	var report map[string]any
+	if data, err := os.ReadFile(request.Args.ReportJSON); err == nil {
+		if err := json.Unmarshal(data, &report); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return result, result.Stdout, result.Stderr, report
+}
+
+// validateRequest is the request that validate sends.
+func validateRequest(t *testing.T, expectedTargets string, change func(*Request)) Request {
 	t.Helper()
 	if runtime.GOOS == "windows" {
 		t.Skip("the Python doctor validates the outputs on Windows")
@@ -44,26 +71,20 @@ func validate(t *testing.T, expectedTargets string, change func(*Request)) (Resu
 	if change != nil {
 		change(&request)
 	}
-	input, err := json.Marshal(request)
-	if err != nil {
-		t.Fatal(err)
+	return request
+}
+
+// A cancelled validation of local outputs stops instead of reporting.
+func TestValidateStopsWhenCancelled(t *testing.T) {
+	request := validateRequest(t, `["//pkg:target"]`, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if result, err := Run(ctx, request, 2); !errors.Is(err, errInterrupted) {
+		t.Fatalf("result %+v, err %v", result, err)
 	}
-	var stdout, stderr bytes.Buffer
-	if status := Command(context.Background(), "ddtest", nil, bytes.NewReader(input), &stdout, &stderr); status != 0 ||
-		stderr.Len() != 0 {
-		t.Fatalf("status %d: %s", status, stderr.String())
+	if _, err := os.Stat(request.Args.ReportJSON); !os.IsNotExist(err) {
+		t.Fatalf("a cancelled run wrote its report: %v", err)
 	}
-	var result Result
-	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
-		t.Fatalf("result %q: %v", stdout.String(), err)
-	}
-	var report map[string]any
-	if data, err := os.ReadFile(request.Args.ReportJSON); err == nil {
-		if err := json.Unmarshal(data, &report); err != nil {
-			t.Fatal(err)
-		}
-	}
-	return result, result.Stdout, result.Stderr, report
 }
 
 func TestValidateSucceeds(t *testing.T) {

@@ -167,16 +167,19 @@ fingerprint through Bazel's runfiles. It evaluates BEP or execution-log
 freshness, stages BEP artifacts, waits for the outputs to settle and discovers
 the payloads, selects the expected and fresh outputs, and sends them as
 `upload` does, telemetry included. When the request carries the doctor's
-configuration, it also applies the doctor's output checks to the selected
-outputs: they are listed before the upload deletes what it sends, and each
-payload's test facts come from the upload's own preparation, so no payload is
-read twice. That preparation streams: instead of decoding each test payload
+configuration, it also applies the doctor's output checks to the outputs that
+the standalone doctor would validate, including selected outputs with nothing
+to upload: they are listed, and their sidecars read, before the upload deletes
+what it sends, and each payload's test facts come from the upload's own
+preparation, so no payload is read twice. That preparation streams: instead of decoding each test payload
 into maps and encoding its events again, it indexes the payload's bytes once,
 writes each event in the same form with the enrichment applied, and checks the
 schema, test facts and expected tags on the written events. The request
 bodies are byte for byte those of `upload`, which keeps decoding; batched
 uploads also keep the decoding path. A failed check fails the run, with the doctor's message and
-exit status 1, but every fresh valid payload is still sent; `--dry-run` in
+exit status 1, but every fresh valid payload is still sent. Checks that cannot
+run in Go after the payloads are sent also fail the run, since the Python
+doctor can no longer check those outputs; `--dry-run` in
 the request's configuration validates and sends nothing. It then retains the
 payloads that it did not deliver, cleans its staging, and prints and writes
 the uploader's schema v1 report.
@@ -186,7 +189,7 @@ The request on standard input is `PostRequest` in
 `upload`. The command prints the uploader's messages, the doctor's when it
 checks, and the summary, and exits with the uploader's status. Before it
 sends anything, an input that the Python code reads in its own way, such as an
-unusual BEP line, makes it exit with status 75 having printed nothing, and the
+unusual BEP line or a sidecar with duplicate keys, makes it exit with status 75 having printed nothing, and the
 Python uploader runs the invocation instead; it does so on Windows too. In the
 report's performance section, `main_thread_cpu_seconds` is the process's CPU
 time, which Go measures for all its threads together.

@@ -170,3 +170,66 @@ func TestPostProcessChecksContextGitMetadata(t *testing.T) {
 		t.Fatalf("status %d\nstdout %s\nstderr %s", status, stdout, stderr)
 	}
 }
+
+// A sidecar that the doctor's reader cannot read leaves the invocation,
+// checks included, to Python before anything is sent.
+func TestPostProcessFallsBackOnUnreadableSidecar(t *testing.T) {
+	f := newPostFixture(t)
+	f.validate("module")
+	writeFile(t, filepath.Join(f.output, "bazel_target_metadata.json"),
+		`{"bazel.target": "//pkg:target", "bazel.target": "//pkg:target", "bazel.go.payload_selection": "full_bundle_no_match"}`)
+	status, stdout, stderr, report := f.run(t)
+	if status != PostFallbackExit || stdout != "" || stderr != "" || report != nil {
+		t.Fatalf("status %d\nstdout %q\nstderr %q\nreport %v", status, stdout, stderr, report)
+	}
+}
+
+// After sending, doctor checks that cannot run in Go fail the run.
+func TestPostProcessFailsWhenDoctorChecksCannotRun(t *testing.T) {
+	f := newPostFixture(t)
+	f.validate("module")
+	writeFile(t, filepath.Join(f.output, "bazel_target_metadata.json"),
+		`{"bazel.target": "//pkg:target", "bazel.go.payload_selection": ["module"]}`)
+	status, stdout, stderr, report := f.run(t)
+	if status != 1 || !strings.Contains(stderr, "doctor checks could not run: unhashable payload selection") {
+		t.Fatalf("status %d\nstdout %s\nstderr %s", status, stdout, stderr)
+	}
+	if report["exit_code"] != float64(1) {
+		t.Fatalf("report exit %v", report["exit_code"])
+	}
+}
+
+// The doctor checks every selected output, including one with nothing to
+// upload.
+func TestPostProcessValidatesOutputsWithoutPayloads(t *testing.T) {
+	f := newPostFixture(t)
+	f.validate("module")
+	empty := filepath.Join(f.testlogs, "pkg", "empty", "test.outputs")
+	writeFile(t, filepath.Join(empty, "bazel_target_metadata.json"),
+		`{"bazel.target": "//pkg:empty", "bazel.go.payload_selection": "module"}`)
+	status, stdout, stderr, _ := f.run(t)
+	if status != 1 || !strings.Contains(stderr, prefix+"missing JSON payloads under "+empty+"\n") {
+		t.Fatalf("status %d\nstdout %s\nstderr %s", status, stdout, stderr)
+	}
+}
+
+// A cancellation that arrives once the payloads are sent stops the doctor's
+// checks with the interrupted status.
+func TestPostProcessChecksStopWhenCancelled(t *testing.T) {
+	f := newPostFixture(t)
+	f.validate("module")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	var stdout, stderr bytes.Buffer
+	p := &poster{ctx: ctx, request: f.request, cfg: f.request.Config, workers: 2,
+		d: &doctor{ctx: ctx, out: &output{level: levels["INFO"]}, cache: newOutputs(), report: newReport(Args{}), workers: 2},
+		log: newPostLog("INFO", &stdout, &stderr, "")}
+	output := postOutput{path: f.output, outputKey: "pkg/target/test.outputs"}
+	outputs, err := p.prepareValidation([]postOutput{output}, nil)
+	if err != nil || len(outputs) != 1 {
+		t.Fatalf("outputs %v, err %v", outputs, err)
+	}
+	if status := p.validateOutputs(postDiscovery{outputs: outputs}, uploadRun{}); status != 130 {
+		t.Fatalf("status %d\nstdout %s\nstderr %s", status, stdout.String(), stderr.String())
+	}
+}

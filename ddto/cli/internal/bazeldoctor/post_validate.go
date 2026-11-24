@@ -23,8 +23,11 @@ func outputDirs(disc postDiscovery) []string {
 }
 
 // prelistOutputs lists the outputs' payloads and sidecars, without decoding
-// the payloads, as the doctor's inspection would list them.
-func (p *poster) prelistOutputs(disc postDiscovery) {
+// the payloads, as the doctor's inspection would list them, and reads the
+// sidecars as the doctor reads them. It runs before anything is sent: a
+// sidecar that only the Python doctor reads falls back, since its checks
+// could not run in Go once the payloads are gone.
+func (p *poster) prelistOutputs(disc postDiscovery) error {
 	dirs := outputDirs(disc)
 	report := bazelinspect.List(dirs, p.workers)
 	for i, entry := range report.Outputs {
@@ -39,17 +42,51 @@ func (p *poster) prelistOutputs(disc postDiscovery) {
 		for _, sidecar := range entry.Metadata {
 			file := joinPath(dir, sidecar.Path)
 			files.metadata = append(files.metadata, file)
-			if len(sidecar.Document) > 0 {
-				if value, err := pyjson.Parse(sidecar.Document); err == nil {
-					p.d.cache.metadata[file] = value
-				}
+			value, err := pyjson.Parse(sidecar.Document)
+			if len(sidecar.Document) == 0 || err != nil {
+				return &postFallback{"doctor input: JSON in " + file}
 			}
+			p.d.cache.metadata[file] = value
 		}
 		for _, list := range [][]string{files.json, files.msgpack, files.metadata} {
 			sort.Slice(list, func(a, b int) bool { return lessPath(list[a], list[b]) })
 		}
 		p.d.cache.files[dir] = files
 	}
+	return nil
+}
+
+// prepareValidation reads the doctor's configuration and lists the outputs
+// that its checks validate, before anything is sent, and returns those
+// outputs. An input that only the Python doctor reads falls back.
+func (p *poster) prepareValidation(checked []postOutput, expected []string) ([]postOutput, error) {
+	config, err := pyjson.Parse(p.request.Validation.Config)
+	object, isObject := config.(*pyjson.Object)
+	if err != nil || !isObject {
+		return nil, &postFallback{"doctor configuration"}
+	}
+	p.d.config = object
+	if err := p.prelistOutputs(postDiscovery{outputs: checked}); err != nil {
+		return nil, err
+	}
+	return p.doctorOutputs(checked, expected), nil
+}
+
+// doctorOutputs are the outputs that the standalone doctor would validate:
+// with expected targets, each of their outputs; otherwise only outputs that
+// hold a payload or a sidecar, as its candidate directories do.
+func (p *poster) doctorOutputs(outputs []postOutput, expected []string) []postOutput {
+	if len(expected) > 0 {
+		return outputs
+	}
+	var kept []postOutput
+	for _, output := range outputs {
+		files := p.d.cache.files[purePath(output.path)]
+		if len(files.json) > 0 || len(files.msgpack) > 0 || len(files.metadata) > 0 {
+			kept = append(kept, output)
+		}
+	}
+	return kept
 }
 
 // seedFacts gives each listed payload its test facts: the upload's when it
@@ -81,13 +118,6 @@ func (p *poster) seedFacts(disc postDiscovery, run uploadRun) {
 func (p *poster) validateOutputs(disc postDiscovery, run uploadRun) int {
 	settings := p.request.Validation
 	d := p.d
-	config, err := pyjson.Parse(settings.Config)
-	object, isObject := config.(*pyjson.Object)
-	if err != nil || !isObject {
-		p.log.warnf("doctor checks skipped: the doctor configuration is not a JSON object")
-		return 0
-	}
-	d.config = object
 	p.seedFacts(disc, run)
 	resolving := make([]string, 0, len(disc.outputs))
 	for _, output := range disc.outputs {
@@ -102,7 +132,7 @@ func (p *poster) validateOutputs(disc postDiscovery, run uploadRun) int {
 	}
 	dirs := outputDirs(disc)
 	exitCode := 0
-	err = p.doctorCall(func() {
+	err := p.doctorCall(func() {
 		if pyjson.Truthy(d.configGet("forbid_dd_git_test_env", false)) {
 			d.validateBazelrc()
 		}
@@ -149,11 +179,19 @@ func (p *poster) validateOutputs(disc postDiscovery, run uploadRun) int {
 	case errors.As(err, &failed):
 		d.report.recordFailure(failed.message)
 		exitCode = 1
-	case errors.As(err, &fallen):
-		p.log.warnf("doctor checks skipped: %s", fallen.reason)
-		return 0
+	case errors.Is(err, errPostInterrupted):
+		return 130
 	case err != nil:
-		return 0
+		// The payloads were sent, so Python cannot run the checks instead:
+		// unchecked outputs fail the run.
+		reason := err.Error()
+		if errors.As(err, &fallen) {
+			reason = fallen.reason
+		}
+		message := "doctor checks could not run: " + reason
+		p.log.errorf("%s", message)
+		d.report.recordFailure(message)
+		exitCode = 1
 	default:
 		d.report.recordSuccess()
 	}
