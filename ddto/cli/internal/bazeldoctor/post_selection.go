@@ -204,41 +204,6 @@ func (p *poster) waitForQuiescence(scan func() (postDiscovery, error)) (postDisc
 	}
 }
 
-// readBazelMetadata is read_bazel_metadata: a regular sidecar inside its
-// output, as an object.
-func readBazelMetadata(outputDir string) (*pyjson.Object, string) {
-	if outputDir == "" {
-		return nil, ""
-	}
-	file := joinPath(outputDir, "bazel_target_metadata.json")
-	if !isFile(file) {
-		return nil, ""
-	}
-	if isSymlink(file) || pathParent(resolvePath(file)) != resolvePath(outputDir) {
-		return nil, "bazel_metadata_unsafe"
-	}
-	data, err := os.ReadFile(file)
-	if err != nil {
-		return nil, "bazel_metadata_invalid"
-	}
-	value, err := pyjson.Parse([]byte(strings.TrimPrefix(string(data), "\ufeff")))
-	object, isObject := value.(*pyjson.Object)
-	if err != nil || !isObject {
-		return nil, "bazel_metadata_invalid"
-	}
-	return object, ""
-}
-
-// readTargetLabel is read_target_label.
-func readTargetLabel(outputDir string) string {
-	metadata, _ := readBazelMetadata(outputDir)
-	if metadata == nil {
-		return ""
-	}
-	label, _ := metadata.Lookup("bazel.target", nil).(string)
-	return label
-}
-
 var (
 	attemptDirectory = regexp.MustCompile(`^(?:(?:shard|run)_[0-9]+_of_[0-9]+|attempt_[0-9]+)$`)
 	retryDirectory   = regexp.MustCompile(`^attempt_[0-9]+[.]outputs$`)
@@ -295,7 +260,8 @@ func (index targetIndex) matches(outputKey string, allowRetryPairs bool) []strin
 }
 
 // selectExpectedOutputs is select_expected_outputs.
-func selectExpectedOutputs(disc postDiscovery, targets []string, allowMissing bool, bepOutputs map[pair]bool) (postDiscovery, error) {
+func selectExpectedOutputs(disc postDiscovery, targets []string, allowMissing bool, bepOutputs map[pair]bool,
+	targetLabel func(string) string) (postDiscovery, error) {
 	if len(targets) == 0 {
 		return disc, nil
 	}
@@ -324,7 +290,7 @@ func selectExpectedOutputs(disc postDiscovery, targets []string, allowMissing bo
 			return postDiscovery{}, failRun(2, "BEP output target conflicts with expected target: %s", output.outputKey)
 		}
 		if physicalRetry || len(labels) > 0 && strings.Contains(output.outputKey, "/test_attempts/") {
-			if declared := readTargetLabel(output.path); declared != "" && declared != target {
+			if declared := targetLabel(output.path); declared != "" && declared != target {
 				return postDiscovery{}, failRun(2, "bazel.target metadata conflicts with expected target: %s", output.outputKey)
 			}
 		}
@@ -655,7 +621,8 @@ func recognizedTestSource(task postTask) bool {
 }
 
 // filterForFreshness is filter_discovery_for_freshness.
-func filterForFreshness(disc postDiscovery, plan freshnessPlan, mode string, expected []string) (filterResult, error) {
+func filterForFreshness(disc postDiscovery, plan freshnessPlan, mode string, expected []string,
+	targetLabel func(string) string) (filterResult, error) {
 	tasksByOutput := map[string][]postTask{}
 	for _, task := range disc.tasks {
 		tasksByOutput[task.outputKey] = append(tasksByOutput[task.outputKey], task)
@@ -706,7 +673,7 @@ func filterForFreshness(disc postDiscovery, plan freshnessPlan, mode string, exp
 		if len(explicit) == 1 {
 			label = sortedKeys(explicit)[0]
 		} else {
-			label = readTargetLabel(output.path)
+			label = targetLabel(output.path)
 		}
 		sidecarLabel := label
 		metadata := joinPath(output.path, "bazel_target_metadata.json")

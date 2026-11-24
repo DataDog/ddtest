@@ -127,8 +127,17 @@ func (p *poster) upload(disc postDiscovery) (uploadRun, error) {
 		paths = append(paths, path)
 		switch {
 		case task.kind == "test" && output != "":
-			source.Output = output
-			paths = append(paths, output)
+			// The run read the sidecar; the upload takes its metadata and
+			// context, with the warnings that reading them gave.
+			entry := p.sidecars[task.outputDir]
+			if _, read := p.sidecars[task.outputDir]; !read {
+				p.loadSidecars([]postOutput{{path: task.outputDir}})
+				entry = p.sidecars[task.outputDir]
+			}
+			source.Metadata = entry.metadata
+			name, warning := plan.ContextSelection.Choose(repoKey(entry.metadata))
+			source.Context = name
+			taskWarnings[task.id] = uniqueCodes([]string{entry.warning, warning})
 		case task.kind == "test":
 			name, warning := plan.ContextSelection.Choose("")
 			if warning != "" {
@@ -309,7 +318,10 @@ func (p *poster) telemetryPlan(tasks []postTask) (telemetryDirectives, []string)
 	sort.SliceStable(telemetryTasks, func(a, b int) bool { return telemetryTasks[a].sourcePath < telemetryTasks[b].sourcePath })
 	var sources []telemetrySource
 	for _, task := range telemetryTasks {
-		metadata, _ := readBazelMetadataJSON(task.outputDir)
+		if _, read := p.sidecars[task.outputDir]; !read && task.outputDir != "" {
+			p.loadSidecars([]postOutput{{path: task.outputDir}})
+		}
+		metadata := p.sidecars[task.outputDir].metadata
 		name, _ := selection.Choose(repoKey(metadata))
 		plan.metadata[task.id], plan.contexts[task.id] = metadata, name
 		payload := decodeJSONFile(task.sourcePath)
@@ -552,15 +564,6 @@ func telemetryMessages(counts, distributions []any, timestamp int64) []any {
 			"payload": map[string]any{"namespace": "", "series": distributionSeries}})
 	}
 	return messages
-}
-
-// readBazelMetadataJSON is read_bazel_metadata, as decoded JSON.
-func readBazelMetadataJSON(outputDir string) (bazelupload.Object, string) {
-	object, warning := readBazelMetadata(outputDir)
-	if object == nil {
-		return nil, warning
-	}
-	return decodeJSONFile(joinPath(outputDir, "bazel_target_metadata.json")), ""
 }
 
 // repoKey is payload_repo_key.

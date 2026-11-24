@@ -63,6 +63,17 @@ schedule:
 	group.Wait()
 }
 
+// ReadSidecar reads the sidecar of the output directory dir as the upload
+// does for a source that names its output: the metadata, or a warning code.
+func ReadSidecar(dir string) (Object, string) {
+	root, err := os.OpenRoot(filepath.Dir(dir))
+	if err != nil {
+		return nil, ""
+	}
+	defer func() { _ = root.Close() }()
+	return readSidecar(root, filepath.Base(dir))
+}
+
 // readSidecar reads an output's sidecar as read_bazel_metadata does: a missing
 // one gives no metadata and no warning, a link is unsafe, and one that is not
 // a JSON object is invalid. Numbers read as Python's json module writes them

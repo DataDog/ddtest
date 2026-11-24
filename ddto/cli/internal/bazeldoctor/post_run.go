@@ -8,7 +8,10 @@ import (
 	"os"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
+
+	"github.com/DataDog/ddtest/ddto/cli/internal/bazelupload"
 )
 
 // This file is the uploader's application.py: one invocation, from the
@@ -39,6 +42,58 @@ type poster struct {
 	workers   int
 	phases    []phaseTime
 	committed bool
+	// sidecars holds each discovered output's sidecar, read once.
+	sidecars map[string]sidecarEntry
+}
+
+type sidecarEntry struct {
+	metadata bazelupload.Object
+	warning  string
+}
+
+// loadSidecars reads the sidecars of the outputs that the run has not read,
+// in parallel, as the upload reads them.
+func (p *poster) loadSidecars(outputs []postOutput) {
+	if p.sidecars == nil {
+		p.sidecars = map[string]sidecarEntry{}
+	}
+	var pending []string
+	for _, output := range outputs {
+		if _, done := p.sidecars[output.path]; !done {
+			pending = append(pending, output.path)
+			p.sidecars[output.path] = sidecarEntry{}
+		}
+	}
+	entries := make([]sidecarEntry, len(pending))
+	indexes := make(chan int)
+	var group sync.WaitGroup
+	for range min(p.workers, max(1, len(pending))) {
+		group.Go(func() {
+			for index := range indexes {
+				metadata, warning := bazelupload.ReadSidecar(pending[index])
+				entries[index] = sidecarEntry{metadata, warning}
+			}
+		})
+	}
+	for index := range pending {
+		indexes <- index
+	}
+	close(indexes)
+	group.Wait()
+	for index, path := range pending {
+		p.sidecars[path] = entries[index]
+	}
+}
+
+// targetLabel is read_target_label over the sidecars that the run read.
+func (p *poster) targetLabel(outputDir string) string {
+	entry, ok := p.sidecars[outputDir]
+	if !ok {
+		p.loadSidecars([]postOutput{{path: outputDir}})
+		entry = p.sidecars[outputDir]
+	}
+	label, _ := entry.metadata["bazel.target"].(string)
+	return label
 }
 
 // preparation is FreshnessPreparation.
@@ -173,11 +228,13 @@ func (p *poster) run() (int, error) {
 			if rawDisc, err = p.discoverPayloads(prep, noExpected); err != nil {
 				return err
 			}
-			expectedDisc, err := selectExpectedOutputs(rawDisc, expected, plan.selectedSource == "bep", plan.eligible)
+			p.loadSidecars(rawDisc.outputs)
+			expectedDisc, err := selectExpectedOutputs(rawDisc, expected, plan.selectedSource == "bep", plan.eligible,
+				p.targetLabel)
 			if err != nil {
 				return err
 			}
-			selection, err = filterForFreshness(expectedDisc, plan, p.cfg.FreshnessMode, expected)
+			selection, err = filterForFreshness(expectedDisc, plan, p.cfg.FreshnessMode, expected, p.targetLabel)
 			return err
 		}); err != nil {
 			return err
