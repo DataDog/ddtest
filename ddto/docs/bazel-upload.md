@@ -169,8 +169,13 @@ the payloads, selects the expected and fresh outputs, and sends them as
 `upload` does, telemetry included. When the request carries the doctor's
 configuration, it also applies the doctor's output checks to the selected
 outputs: they are listed before the upload deletes what it sends, and each
-payload's test facts come from the upload's own decoding, so no payload is
-decoded twice. A failed check fails the run, with the doctor's message and
+payload's test facts come from the upload's own preparation, so no payload is
+read twice. That preparation streams: instead of decoding each test payload
+into maps and encoding its events again, it indexes the payload's bytes once,
+writes each event in the same form with the enrichment applied, and checks the
+schema, test facts and expected tags on the written events. The request
+bodies are byte for byte those of `upload`, which keeps decoding; batched
+uploads also keep the decoding path. A failed check fails the run, with the doctor's message and
 exit status 1, but every fresh valid payload is still sent; `--dry-run` in
 the request's configuration validates and sends nothing. It then retains the
 payloads that it did not deliver, cleans its staging, and prints and writes

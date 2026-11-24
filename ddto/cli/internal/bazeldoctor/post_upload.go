@@ -176,6 +176,9 @@ func (p *poster) upload(disc postDiscovery) (uploadRun, error) {
 	}
 	options.DryRun, options.KeepPayloads, options.Gzip = p.cfg.DryRun, p.cfg.KeepPayloads, p.cfg.GzipPayloads
 	options.Batch = p.cfg.BatchTestPayloads
+	// Only post-process prepares test sources by streaming; upload keeps
+	// decoding them.
+	options.Streaming = true
 	if p.cfg.WorkersExplicit {
 		options.Workers = p.cfg.Workers
 	}

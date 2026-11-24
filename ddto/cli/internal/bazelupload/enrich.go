@@ -140,9 +140,42 @@ func objectField(parent Object, key string) Object {
 
 func enrich(payload Object, source Source, plan Plan, contextFields flatMetadata, owners *ownerLookup) error {
 	context := plan.Contexts[source.Context]
-	service, err := reportingService(context, source.Metadata)
+	service, err := enrichScopes(payload, source, plan)
 	if err != nil {
 		return err
+	}
+	bazelFields := flatten(source.Metadata, false)
+	events, _ := payload["events"].([]any)
+	for _, value := range events {
+		event := object(value)
+		if event == nil {
+			continue
+		}
+		content := objectField(event, "content")
+		kind := stringValue(event, "type")
+		if service != "" && (testEvent(kind) || testSpan(kind, content)) {
+			content["service"] = service
+		}
+		meta := objectField(content, "meta")
+		metrics := objectField(content, "metrics")
+		maps.Copy(meta, contextFields.meta)
+		maps.Copy(metrics, contextFields.metrics)
+		maps.Copy(meta, bazelFields.meta)
+		maps.Copy(metrics, bazelFields.metrics)
+		if kind != "span" {
+			owners.enrich(content, meta, stringValue(context, "ci.workspace_path"))
+		}
+	}
+	return nil
+}
+
+// enrichScopes authorizes the reporting service and replaces the payload's
+// metadata scopes with the invocation's, returning the service.
+func enrichScopes(payload Object, source Source, plan Plan) (string, error) {
+	context := plan.Contexts[source.Context]
+	service, err := reportingService(context, source.Metadata)
+	if err != nil {
+		return "", err
 	}
 	metadata := object(payload["metadata"])
 	global := object(metadata["*"])
@@ -167,30 +200,7 @@ func enrich(payload Object, source Source, plan Plan, contextFields flatMetadata
 		}
 	}
 	payload["metadata"] = scopes
-
-	bazelFields := flatten(source.Metadata, false)
-	events, _ := payload["events"].([]any)
-	for _, value := range events {
-		event := object(value)
-		if event == nil {
-			continue
-		}
-		content := objectField(event, "content")
-		kind := stringValue(event, "type")
-		if service != "" && (testEvent(kind) || testSpan(kind, content)) {
-			content["service"] = service
-		}
-		meta := objectField(content, "meta")
-		metrics := objectField(content, "metrics")
-		maps.Copy(meta, contextFields.meta)
-		maps.Copy(metrics, contextFields.metrics)
-		maps.Copy(meta, bazelFields.meta)
-		maps.Copy(metrics, bazelFields.metrics)
-		if kind != "span" {
-			owners.enrich(content, meta, stringValue(context, "ci.workspace_path"))
-		}
-	}
-	return nil
+	return service, nil
 }
 
 func testEvent(kind string) bool {
