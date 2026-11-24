@@ -9,6 +9,11 @@ import (
 
 func noLabels(string) string { return "" }
 
+func diskState(dir string) (bool, bool) {
+	file := joinPath(dir, "bazel_target_metadata.json")
+	return exists(file), isSymlink(file)
+}
+
 func TestExecutionOutputKey(t *testing.T) {
 	posixOnly(t)
 	for raw, want := range map[string]string{
@@ -118,7 +123,7 @@ func TestFilterForFreshness(t *testing.T) {
 	plan.eligible[pair{"//pkg:a", "pkg/a/test.outputs"}] = true
 	plan.eligible[pair{"//pkg:c", "pkg/c/test.outputs"}] = true
 	plan.blockedLabels["//pkg:c"] = true
-	result, err := filterForFreshness(disc, plan, "auto", nil, label)
+	result, err := filterForFreshness(disc, plan, "auto", nil, label, diskState)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,7 +139,7 @@ func TestFilterForFreshness(t *testing.T) {
 		t.Fatalf("warnings %v", result.discovery.warnings)
 	}
 	disabled := emptyPlan()
-	if result, err := filterForFreshness(disc, disabled, "disabled", nil, label); err != nil || len(result.discovery.outputs) != 3 {
+	if result, err := filterForFreshness(disc, disabled, "disabled", nil, label, diskState); err != nil || len(result.discovery.outputs) != 3 {
 		t.Fatalf("disabled freshness selects every output: %+v, %v", result, err)
 	}
 }
@@ -150,7 +155,7 @@ func TestFilterForFreshnessRequiresLabels(t *testing.T) {
 	plan := emptyPlan()
 	plan.selectedSource, plan.eligibilityEnabled, plan.requireTestResults = "bep", true, true
 	plan.eligible[pair{"//pkg:a", "pkg/a/test.outputs"}] = true
-	_, err := filterForFreshness(disc, plan, "required", nil, noLabels)
+	_, err := filterForFreshness(disc, plan, "required", nil, noLabels, diskState)
 	if err == nil || !strings.Contains(err.Error(), "bazel.target metadata is missing or unsafe") {
 		t.Fatalf("err %v", err)
 	}

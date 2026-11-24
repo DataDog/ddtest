@@ -1,9 +1,11 @@
 # Inspect Bazel test outputs
 
 `ddtest instrument bazel inspect` lists the payloads and target sidecars of
-Bazel `test.outputs` directories and decodes them in parallel, one output per
+Bazel `test.outputs` directories and reads them in parallel, one output per
 CPU. The rules_test_optimization doctor uses it before validating, so that it
-does not read and parse every payload on one core. The doctor keeps its checks,
+does not read and parse every payload on one core. A payload's test facts come
+from an index of its bytes, which checks its syntax as `encoding/json` does
+without decoding its values into maps. The doctor keeps its checks,
 messages and report; the command only reports what each file contains.
 
 It reads one request from standard input and writes one report to standard

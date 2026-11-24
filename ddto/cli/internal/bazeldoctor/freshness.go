@@ -119,6 +119,41 @@ func (d *doctor) freshnessFrom(files []string, evaluation bazelinspect.BepReport
 			invocations[i] = "file:" + files[i]
 		}
 	}
+	// Resolving a local carrier stats the workspace, execroot and output base
+	// candidates; distinct carriers resolve in parallel.
+	type carrierKey struct {
+		value  string
+		remote bool
+	}
+	identities := map[carrierKey]string{}
+	var pending []carrierKey
+	for _, record := range evaluation.Executions {
+		for _, carrier := range record[9].([][]any) {
+			key := carrierKey{carrier[1].(string), carrier[2].(bool)}
+			if _, seen := identities[key]; !seen && !key.remote {
+				identities[key] = ""
+				pending = append(pending, key)
+			}
+		}
+	}
+	resolved := make([]string, len(pending))
+	finished := make([]bool, len(pending))
+	parallelFor(d.workers, len(pending), func(i int) {
+		finished[i] = quietly(func() { resolved[i] = d.carrierIdentity(pending[i].value, false) })
+	})
+	for i, key := range pending {
+		if finished[i] {
+			identities[key] = resolved[i]
+		} else {
+			delete(identities, key)
+		}
+	}
+	identity := func(value string, remote bool) string {
+		if known, ok := identities[carrierKey{value, remote}]; ok && !remote {
+			return known
+		}
+		return d.carrierIdentity(value, remote)
+	}
 	for _, record := range evaluation.Executions {
 		e := execution{invocation: invocations[record[0].(int)], label: record[1].(string),
 			configuration: record[2].(string), run: record[3].(int64), shard: record[4].(int64),
@@ -126,7 +161,7 @@ func (d *doctor) freshnessFrom(files []string, evaluation bazelinspect.BepReport
 			outputKeys: record[8].([]string)}
 		for _, carrier := range record[9].([][]any) {
 			e.carriers = append(e.carriers, pair{carrier[0].(string),
-				d.carrierIdentity(carrier[1].(string), carrier[2].(bool))})
+				identity(carrier[1].(string), carrier[2].(bool))})
 		}
 		sort.Slice(e.carriers, func(a, b int) bool { return lessPair(e.carriers[a], e.carriers[b]) })
 		f.executions = append(f.executions, e)

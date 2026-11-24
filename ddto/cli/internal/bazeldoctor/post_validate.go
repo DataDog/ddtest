@@ -89,6 +89,11 @@ func (p *poster) validateOutputs(disc postDiscovery, run uploadRun) int {
 	}
 	d.config = object
 	p.seedFacts(disc, run)
+	resolving := make([]string, 0, len(disc.outputs))
+	for _, output := range disc.outputs {
+		resolving = append(resolving, purePath(output.path))
+	}
+	d.resolveAll(resolving)
 	targets := map[string]string{}
 	for _, task := range disc.tasks {
 		if task.label != "" {

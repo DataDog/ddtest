@@ -111,6 +111,18 @@ func (p *poster) upload(disc postDiscovery) (uploadRun, error) {
 		plan.ContextSelection = &bazelupload.ContextSelection{}
 	}
 	realOutputs := map[string]string{}
+	var outputs []string
+	for _, task := range selected {
+		if _, seen := realOutputs[task.outputDir]; task.outputDir != "" && !seen {
+			realOutputs[task.outputDir] = ""
+			outputs = append(outputs, task.outputDir)
+		}
+	}
+	reals := make([]string, len(outputs))
+	parallelFor(p.workers, len(outputs), func(i int) { reals[i] = realPath(outputs[i]) })
+	for i, dir := range outputs {
+		realOutputs[dir] = reals[i]
+	}
 	var paths []string
 	taskWarnings := map[string][]string{}
 	for _, task := range selected {

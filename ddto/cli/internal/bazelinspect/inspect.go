@@ -20,6 +20,8 @@ import (
 	"strings"
 	"sync"
 	"unicode/utf8"
+
+	"github.com/DataDog/ddtest/ddto/cli/internal/jsonindex"
 )
 
 const metadataName = "bazel_target_metadata.json"
@@ -226,7 +228,30 @@ func decodeMetadata(path string) Metadata {
 	return Metadata{Path: path, Document: raw}
 }
 
+// decodePayload reads a payload's test facts from an index of its bytes,
+// without decoding it; decodedPayload is the same reading by decoding, which
+// the tests compare it with.
 func decodePayload(path string) Payload {
+	raw, ok := readJSON(path)
+	if !ok {
+		return Payload{Path: path}
+	}
+	doc := indexes.Get().(*jsonindex.Doc)
+	defer indexes.Put(doc)
+	root, err := doc.Parse(raw)
+	if err != nil {
+		return Payload{Path: path}
+	}
+	payload := Payload{Path: path, Decoded: true}
+	if doc.Nodes[root].Kind == '{' {
+		payload.TestEvents, payload.EmptySession = indexedFacts(doc, root)
+	}
+	return payload
+}
+
+var indexes = sync.Pool{New: func() any { return new(jsonindex.Doc) }}
+
+func decodedPayload(path string) Payload {
 	raw, ok := readJSON(path)
 	if !ok {
 		return Payload{Path: path}
@@ -393,4 +418,71 @@ func isNumericZero(raw json.RawMessage) bool {
 		return value == 0
 	}
 	return err == nil && value == 0
+}
+
+// indexedFacts is testFacts over an indexed payload object.
+func indexedFacts(doc *jsonindex.Doc, root int) (int, bool) {
+	events := doc.Member(root, "events")
+	if events < 0 || doc.Nodes[events].Kind != '[' {
+		return 0, false
+	}
+	isString := func(index int, want string) bool {
+		value, ok := doc.String(index)
+		return ok && value == want
+	}
+	count := 0
+	for event := doc.Nodes[events].First; event >= 0; event = doc.Nodes[event].Next {
+		if doc.Nodes[event].Kind != '{' {
+			continue
+		}
+		content := doc.Member(event, "content")
+		eventType := doc.Member(event, "type")
+		if content >= 0 && doc.Nodes[content].Kind == '{' && (isString(eventType, "test") ||
+			(eventType < 0 || doc.Nodes[eventType].Kind == 'n' || isString(eventType, "span")) &&
+				isString(doc.Member(content, "type"), "test")) {
+			count++
+		}
+	}
+	if count > 0 {
+		return count, false
+	}
+	for event := doc.Nodes[events].First; event >= 0; event = doc.Nodes[event].Next {
+		if doc.Nodes[event].Kind != '{' || !isString(doc.Member(event, "type"), "test_session_end") {
+			continue
+		}
+		content := doc.Member(event, "content")
+		if content >= 0 && doc.Nodes[content].Kind == '{' && indexedEmptySession(doc, content) {
+			return 0, true
+		}
+	}
+	return 0, false
+}
+
+// indexedEmptySession is emptySession over an indexed content object.
+func indexedEmptySession(doc *jsonindex.Doc, content int) bool {
+	literal := func(index int) json.RawMessage {
+		if index < 0 {
+			return nil
+		}
+		return doc.Raw[doc.Nodes[index].Start:doc.Nodes[index].End]
+	}
+	optional := func(key string) (int, bool) {
+		index := doc.Member(content, key)
+		return index, index < 0 || doc.Nodes[index].Kind == '{'
+	}
+	meta, metaOK := optional("meta")
+	metrics, metricsOK := optional("metrics")
+	if !metaOK || !metricsOK {
+		return false
+	}
+	isString := func(index int, want string) bool {
+		value, ok := doc.String(index)
+		return ok && value == want
+	}
+	failed := literal(doc.Member(content, "error"))
+	return isString(doc.Member(meta, "test.session.empty_reason"), "zero_tests") &&
+		isString(doc.Member(meta, "test.status"), "skip") &&
+		isPositiveInteger(literal(doc.Member(content, "test_session_id"))) &&
+		isNumericZero(literal(doc.Member(metrics, "test.exit_code"))) &&
+		(isNumericZero(failed) || string(failed) == "false")
 }

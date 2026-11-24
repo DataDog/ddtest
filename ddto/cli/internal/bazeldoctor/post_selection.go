@@ -622,7 +622,7 @@ func recognizedTestSource(task postTask) bool {
 
 // filterForFreshness is filter_discovery_for_freshness.
 func filterForFreshness(disc postDiscovery, plan freshnessPlan, mode string, expected []string,
-	targetLabel func(string) string) (filterResult, error) {
+	targetLabel func(string) string, sidecarState func(string) (bool, bool)) (filterResult, error) {
 	tasksByOutput := map[string][]postTask{}
 	for _, task := range disc.tasks {
 		tasksByOutput[task.outputKey] = append(tasksByOutput[task.outputKey], task)
@@ -639,12 +639,11 @@ func filterForFreshness(disc postDiscovery, plan freshnessPlan, mode string, exp
 	for _, label := range expected {
 		knownCore[label] = true
 	}
-	metadataExists := map[string]bool{}
+	metadataExists, metadataSymlink := map[string]bool{}, map[string]bool{}
 	for _, output := range disc.outputs {
-		metadata := joinPath(output.path, "bazel_target_metadata.json")
-		metadataExists[output.outputKey] = exists(metadata)
+		metadataExists[output.outputKey], metadataSymlink[output.outputKey] = sidecarState(output.path)
 		candidates := labelsByKey[output.outputKey]
-		if plan.eligibilityEnabled && len(candidates) == 1 && !metadataExists[output.outputKey] && !isSymlink(metadata) {
+		if plan.eligibilityEnabled && len(candidates) == 1 && !metadataExists[output.outputKey] && !metadataSymlink[output.outputKey] {
 			for _, task := range tasksByOutput[output.outputKey] {
 				if task.kind == "test" && recognizedTestSource(task) {
 					coreTestKeys[output.outputKey] = true
@@ -676,8 +675,7 @@ func filterForFreshness(disc postDiscovery, plan freshnessPlan, mode string, exp
 			label = targetLabel(output.path)
 		}
 		sidecarLabel := label
-		metadata := joinPath(output.path, "bazel_target_metadata.json")
-		if plan.eligibilityEnabled && (isSymlink(metadata) || metadataExists[output.outputKey] && label == "") {
+		if plan.eligibilityEnabled && (metadataSymlink[output.outputKey] || metadataExists[output.outputKey] && label == "") {
 			if strict {
 				return filterResult{}, failRun(2, "BEP required freshness cannot authorize output because bazel.target metadata is missing or unsafe")
 			}

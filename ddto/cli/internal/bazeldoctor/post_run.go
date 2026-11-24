@@ -49,6 +49,9 @@ type poster struct {
 type sidecarEntry struct {
 	metadata bazelupload.Object
 	warning  string
+	// exists and symlink are the sidecar's Path.exists() and is_symlink(),
+	// when known is true.
+	exists, symlink, known bool
 }
 
 // loadSidecars reads the sidecars of the outputs that the run has not read,
@@ -71,7 +74,10 @@ func (p *poster) loadSidecars(outputs []postOutput) {
 		group.Go(func() {
 			for index := range indexes {
 				metadata, warning := bazelupload.ReadSidecar(pending[index])
-				entries[index] = sidecarEntry{metadata, warning}
+				entry := sidecarEntry{metadata: metadata, warning: warning}
+				file := joinPath(pending[index], "bazel_target_metadata.json")
+				entry.known = quietly(func() { entry.exists, entry.symlink = exists(file), isSymlink(file) })
+				entries[index] = entry
 			}
 		})
 	}
@@ -83,6 +89,15 @@ func (p *poster) loadSidecars(outputs []postOutput) {
 	for index, path := range pending {
 		p.sidecars[path] = entries[index]
 	}
+}
+
+// sidecarState is the sidecar's Path.exists() and is_symlink().
+func (p *poster) sidecarState(outputDir string) (bool, bool) {
+	if entry, ok := p.sidecars[outputDir]; ok && entry.known {
+		return entry.exists, entry.symlink
+	}
+	file := joinPath(outputDir, "bazel_target_metadata.json")
+	return exists(file), isSymlink(file)
 }
 
 // targetLabel is read_target_label over the sidecars that the run read.
@@ -234,7 +249,8 @@ func (p *poster) run() (int, error) {
 			if err != nil {
 				return err
 			}
-			selection, err = filterForFreshness(expectedDisc, plan, p.cfg.FreshnessMode, expected, p.targetLabel)
+			selection, err = filterForFreshness(expectedDisc, plan, p.cfg.FreshnessMode, expected, p.targetLabel,
+				p.sidecarState)
 			return err
 		}); err != nil {
 			return err
