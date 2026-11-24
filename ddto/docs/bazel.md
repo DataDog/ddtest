@@ -76,8 +76,8 @@ used to run Bazel unchanged, now fails with a message that says so.
 
 After the tests, `ddtest instrument bazel upload` sends the payloads that the
 rule selected; [Bazel payload upload](bazel-upload.md) describes its plan.
-The rule's doctor lists and decodes the outputs with `ddtest instrument bazel
-inspect`, and its uploader finds the payloads with `ddtest instrument bazel
+The rule's doctor validates the outputs with `ddtest instrument bazel
+validate`, and its uploader finds the payloads with `ddtest instrument bazel
 discover`; see [Bazel output inspection](bazel-inspect.md).
 
 ## The compiler

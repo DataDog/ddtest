@@ -28,6 +28,15 @@ func plainText(text string) bool {
 	return true
 }
 
+// StripFileURI is _strip_file_uri for callers outside this package; it
+// fails for text that the Python reads in its own way.
+func StripFileURI(value string) (string, error) {
+	if !plainText(value) {
+		return "", errUnsupported
+	}
+	return stripFileURI(value)
+}
+
 // stripFileURI is _strip_file_uri: the path of a file:// URI, as urlparse and
 // unquote give it, with a host other than localhost kept as //host.
 func stripFileURI(value string) (string, error) {
@@ -112,9 +121,9 @@ func purePosixParts(value string) (string, []string) {
 	return root, parts
 }
 
-// canonicalOutputDirectoryKey is canonical_output_directory_key in
+// CanonicalOutputDirectoryKey is canonical_output_directory_key in
 // bep_execution.py.
-func canonicalOutputDirectoryKey(value string) string {
+func CanonicalOutputDirectoryKey(value string) string {
 	root, parts := purePosixParts(strings.ReplaceAll(value, `\`, "/"))
 	posix := root + strings.Join(parts, "/")
 	if posix == "" {
@@ -131,6 +140,15 @@ func canonicalOutputDirectoryKey(value string) string {
 		return posix + "/test.outputs"
 	}
 	return posix
+}
+
+// BepTestOutputKey is _bep_test_output_key for callers outside this
+// package; it fails for text that the Python reads in its own way.
+func BepTestOutputKey(pathValue, artifactName string) (string, error) {
+	if !plainText(pathValue) || !plainText(artifactName) {
+		return "", errUnsupported
+	}
+	return bepTestOutputKey(pathValue, artifactName)
 }
 
 // bepTestOutputKey is _bep_test_output_key: the bazel-testlogs-relative
@@ -162,7 +180,7 @@ func bepTestOutputKey(pathValue, artifactName string) (string, error) {
 	if suffix, ok := strings.CutPrefix(artifactName, "test.outputs/"); ok && suffix != "" &&
 		strings.HasSuffix(normalized, "/"+suffix) {
 		root := strings.TrimRight(normalized[:len(normalized)-len(suffix)], "/")
-		if key := canonicalOutputDirectoryKey(root); strings.HasSuffix(key, "/test.outputs") {
+		if key := CanonicalOutputDirectoryKey(root); strings.HasSuffix(key, "/test.outputs") {
 			return strings.TrimLeft(key, "/"), nil
 		}
 	}
@@ -176,8 +194,8 @@ func bepTestOutputKey(pathValue, artifactName string) (string, error) {
 	case retryLog != nil:
 		normalized = normalized[:retryLog[0]] + "/test_attempts/attempt_" + normalized[retryLog[2]:retryLog[3]] +
 			".outputs/test.outputs"
-	case strings.HasSuffix(canonicalOutputDirectoryKey(normalized), "/test.outputs"):
-		normalized = canonicalOutputDirectoryKey(normalized)
+	case strings.HasSuffix(CanonicalOutputDirectoryKey(normalized), "/test.outputs"):
+		normalized = CanonicalOutputDirectoryKey(normalized)
 	case strings.Contains(normalized, marker):
 		normalized = normalized[:strings.LastIndex(normalized, marker)] + "/test.outputs"
 	case strings.HasSuffix(normalized, "/outputs.zip"):
@@ -244,7 +262,7 @@ func pathPrefixNameCandidate(file any) string {
 		return ""
 	}
 	prefix, isList := coalesced(object, "pathPrefix", "path_prefix", []any{}).([]any)
-	name, isName := object.lookup("name", nil).(string)
+	name, isName := object.Lookup("name", nil).(string)
 	if !isList || !isName || name == "" {
 		return ""
 	}
@@ -263,7 +281,7 @@ func pathPrefixNameCandidate(file any) string {
 // stringField is a non-empty string field of an object, or "".
 func stringField(file any, key string) string {
 	if object, ok := file.(*jsonObject); ok {
-		if text, ok := object.lookup(key, nil).(string); ok {
+		if text, ok := object.Lookup(key, nil).(string); ok {
 			return text
 		}
 	}
@@ -300,7 +318,7 @@ func canonicalOutputKeyCandidates(file any, candidates []string) ([]string, erro
 	}
 	if _, ok := file.(*jsonObject); ok {
 		add(pathPrefixNameCandidate(file))
-		if path, ok := file.(*jsonObject).lookup("path", nil).(string); ok {
+		if path, ok := file.(*jsonObject).Lookup("path", nil).(string); ok {
 			add(path)
 		}
 	}

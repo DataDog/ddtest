@@ -9,6 +9,8 @@ import (
 	"slices"
 	"sort"
 	"unicode/utf8"
+
+	"github.com/DataDog/ddtest/ddto/cli/internal/pyjson"
 )
 
 // BepRequest lists the BEP JSON files whose freshness the rules_test_optimization
@@ -356,11 +358,11 @@ func readEvent(line []byte, document int) (eventFacts, error) {
 		return eventFacts{}, errUnsupported
 	}
 	facts := eventFacts{}
-	if started, ok := event.lookup("started", nil).(*jsonObject); ok {
-		facts.uuid, _ = started.lookup("uuid", nil).(string)
+	if started, ok := event.Lookup("started", nil).(*jsonObject); ok {
+		facts.uuid, _ = started.Lookup("uuid", nil).(string)
 	}
-	rawID, ok := event.lookup("id", nil).(*jsonObject)
-	if !ok || len(rawID.keys) == 0 {
+	rawID, ok := event.Lookup("id", nil).(*jsonObject)
+	if !ok || len(rawID.Keys) == 0 {
 		return eventFacts{}, errUnsupported
 	}
 	if err := readTopology(event, document, &facts); err != nil {
@@ -369,9 +371,9 @@ func readEvent(line []byte, document int) (eventFacts, error) {
 
 	targetCompleted := coalesced(rawID, "targetCompleted", "target_completed", &jsonObject{})
 	if completed, ok := targetCompleted.(*jsonObject); ok {
-		if aborted, ok := event.lookup("aborted", &jsonObject{}).(*jsonObject); ok {
-			label, _ := completed.lookup("label", nil).(string)
-			if reason, ok := aborted.lookup("reason", nil).(string); ok && label != "" && reason == "SKIPPED" {
+		if aborted, ok := event.Lookup("aborted", &jsonObject{}).(*jsonObject); ok {
+			label, _ := completed.Lookup("label", nil).(string)
+			if reason, ok := aborted.Lookup("reason", nil).(string); ok && label != "" && reason == "SKIPPED" {
 				if !plainText(label) {
 					return eventFacts{}, errUnsupported
 				}
@@ -384,7 +386,7 @@ func readEvent(line []byte, document int) (eventFacts, error) {
 	if !ok {
 		return facts, nil
 	}
-	label, ok := resultID.lookup("label", nil).(string)
+	label, ok := resultID.Lookup("label", nil).(string)
 	if !ok || label == "" {
 		return facts, nil
 	}
@@ -398,7 +400,7 @@ func readEvent(line []byte, document int) (eventFacts, error) {
 		return facts, nil
 	}
 	result.result = true
-	switch status := body.lookup("status", "NO_STATUS").(type) {
+	switch status := body.Lookup("status", "NO_STATUS").(type) {
 	case string:
 		result.status = status
 	case jsonNumber:
@@ -411,8 +413,8 @@ func readEvent(line []byte, document int) (eventFacts, error) {
 		return eventFacts{}, errUnsupported
 	}
 	info := coalesced(body, "executionInfo", "execution_info", &jsonObject{})
-	result.cached = truthy(coalesced(body, "cachedLocally", "cached_locally", false)) ||
-		truthy(coalesced(info, "cachedRemotely", "cached_remotely", false))
+	result.cached = pyjson.Truthy(coalesced(body, "cachedLocally", "cached_locally", false)) ||
+		pyjson.Truthy(coalesced(info, "cachedRemotely", "cached_remotely", false))
 	outputs, _ := coalesced(body, "testActionOutput", "test_action_output", []any{}).([]any)
 	for _, output := range outputs {
 		facts, err := readOutput(output, label, result.cached)
@@ -494,12 +496,12 @@ func plainOutput(output any) bool {
 		return plainText(typed)
 	case *jsonObject:
 		for _, key := range []string{"uri", "name", "path"} {
-			if text, ok := typed.lookup(key, nil).(string); ok && !plainText(text) {
+			if text, ok := typed.Lookup(key, nil).(string); ok && !plainText(text) {
 				return false
 			}
 		}
 		for _, key := range []string{"pathPrefix", "path_prefix"} {
-			if parts, ok := typed.lookup(key, nil).([]any); ok {
+			if parts, ok := typed.Lookup(key, nil).([]any); ok {
 				for _, part := range parts {
 					if text, ok := part.(string); ok && !plainText(text) {
 						return false
@@ -515,12 +517,12 @@ func plainOutput(output any) bool {
 // makes the doctor fail is unsupported.
 func executionIdentity(id *jsonObject, document int) (identity, error) {
 	run := identity{document: document}
-	run.label, _ = id.lookup("label", "").(string)
-	configuration, ok := id.lookup("configuration", &jsonObject{}).(*jsonObject)
+	run.label, _ = id.Lookup("label", "").(string)
+	configuration, ok := id.Lookup("configuration", &jsonObject{}).(*jsonObject)
 	if !ok {
 		return identity{}, errUnsupported
 	}
-	if run.configuration, ok = configuration.lookup("id", "").(string); !ok {
+	if run.configuration, ok = configuration.Lookup("id", "").(string); !ok {
 		return identity{}, errUnsupported
 	}
 	for _, field := range []struct {
@@ -529,7 +531,7 @@ func executionIdentity(id *jsonObject, document int) (identity, error) {
 		minimum  int64
 		target   *int64
 	}{{"run", 1, 1, &run.run}, {"shard", 0, 0, &run.shard}, {"attempt", 1, 1, &run.attempt}} {
-		value, present := id.get(field.name)
+		value, present := id.Get(field.name)
 		if !present {
 			*field.target = field.fallback
 			continue
@@ -546,31 +548,31 @@ func executionIdentity(id *jsonObject, document int) (identity, error) {
 // readTopology reads what bep_topology_errors reads from an event, from the
 // fields that the doctor keeps for it.
 func readTopology(event *jsonObject, document int, facts *eventFacts) error {
-	rawID, _ := event.get("id")
+	rawID, _ := event.Get("id")
 	normalized, err := normalizedEventID(rawID)
 	if err != nil {
 		return err
 	}
 	id, ok := normalized.(*jsonObject)
-	if !ok || len(id.keys) == 0 {
+	if !ok || len(id.Keys) == 0 {
 		return errUnsupported
 	}
 	if facts.key, err = canonicalJSON(id); err != nil {
 		return err
 	}
-	_, hasStarted := id.get("started")
-	_, startedObject := event.lookup("started", nil).(*jsonObject)
+	_, hasStarted := id.Get("started")
+	_, startedObject := event.Lookup("started", nil).(*jsonObject)
 	facts.started = hasStarted && startedObject
-	_, hasFinished := id.get("build_finished")
-	_, finishedObject := event.lookup("finished", nil).(*jsonObject)
+	_, hasFinished := id.Get("build_finished")
+	_, finishedObject := event.Lookup("finished", nil).(*jsonObject)
 	facts.finished = hasFinished && finishedObject
-	last, present := event.get("lastMessage")
+	last, present := event.Get("lastMessage")
 	if !present {
-		last = event.lookup("last_message", false)
+		last = event.Lookup("last_message", false)
 	}
 	facts.last = last == true
 
-	children, ok := event.lookup("children", []any{}).([]any)
+	children, ok := event.Lookup("children", []any{}).([]any)
 	if !ok {
 		return errUnsupported
 	}
@@ -580,37 +582,37 @@ func readTopology(event *jsonObject, document int, facts *eventFacts) error {
 			return err
 		}
 		childID, ok := normalized.(*jsonObject)
-		if !ok || len(childID.keys) == 0 {
+		if !ok || len(childID.Keys) == 0 {
 			return errUnsupported
 		}
 		key, err := canonicalJSON(childID)
 		if err != nil {
 			return err
 		}
-		testID, present := childID.get("test_result")
+		testID, present := childID.Get("test_result")
 		if !present {
-			testID = childID.lookup("test_summary", &jsonObject{})
+			testID = childID.Lookup("test_summary", &jsonObject{})
 		}
 		label := ""
 		if object, ok := testID.(*jsonObject); ok {
 			var isText bool
-			if label, isText = object.lookup("label", "").(string); !isText {
+			if label, isText = object.Lookup("label", "").(string); !isText {
 				return errUnsupported
 			}
 		}
 		facts.children = append(facts.children, child{key, label})
 	}
 
-	if resultID, ok := id.lookup("test_result", nil).(*jsonObject); ok {
-		if _, labelled := resultID.lookup("label", nil).(string); labelled {
+	if resultID, ok := id.Lookup("test_result", nil).(*jsonObject); ok {
+		if _, labelled := resultID.Lookup("label", nil).(string); labelled {
 			run, err := executionIdentity(resultID, document)
 			if err != nil {
 				return err
 			}
 			facts.topologyRun = &run
-			body, present := event.get("testResult")
+			body, present := event.Get("testResult")
 			if !present {
-				body, present = event.get("test_result")
+				body, present = event.Get("test_result")
 			}
 			if object, ok := body.(*jsonObject); ok && present {
 				info := coalesced(object, "executionInfo", "execution_info", &jsonObject{})
@@ -621,16 +623,16 @@ func readTopology(event *jsonObject, document int, facts *eventFacts) error {
 			}
 		}
 	}
-	if summaryID, ok := id.lookup("test_summary", nil).(*jsonObject); ok {
-		if label, labelled := summaryID.lookup("label", nil).(string); labelled {
+	if summaryID, ok := id.Lookup("test_summary", nil).(*jsonObject); ok {
+		if label, labelled := summaryID.Lookup("label", nil).(string); labelled {
 			run, err := executionIdentity(summaryID, document)
 			if err != nil {
 				return err
 			}
 			summary := &summaryFacts{label: label, configuration: run.configuration}
-			value, present := event.get("testSummary")
+			value, present := event.Get("testSummary")
 			if !present {
-				value = event.lookup("test_summary", nil)
+				value = event.Lookup("test_summary", nil)
 			}
 			normalized, err := normalizedEventID(value)
 			if err != nil {
@@ -639,7 +641,7 @@ func readTopology(event *jsonObject, document int, facts *eventFacts) error {
 			if object, ok := normalized.(*jsonObject); ok {
 				summary.present, summary.valid = true, true
 				for i, name := range []string{"total_run_count", "run_count", "shard_count", "attempt_count"} {
-					count, isInt, err := pythonInt(object.lookup(name, jsonNumber("0")))
+					count, isInt, err := pythonInt(object.Lookup(name, jsonNumber("0")))
 					if err != nil {
 						return err
 					}
