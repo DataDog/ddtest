@@ -100,6 +100,8 @@ type LogMessage struct {
 // PostValidation is the doctor's configuration, for its output checks.
 type PostValidation struct {
 	Config json.RawMessage `json:"config"`
+	// ConfigPath is the configuration's file, which the report records.
+	ConfigPath string `json:"config_path,omitempty"`
 	// ReportJSON receives the doctor's report of the checks.
 	ReportJSON string `json:"report_json"`
 }

@@ -222,7 +222,7 @@ func TestPostProcessChecksStopWhenCancelled(t *testing.T) {
 	cancel()
 	var stdout, stderr bytes.Buffer
 	p := &poster{ctx: ctx, request: f.request, cfg: f.request.Config, workers: 2,
-		d: &doctor{ctx: ctx, out: &output{level: levels["INFO"]}, cache: newOutputs(), report: newReport(Args{}), workers: 2},
+		d:   &doctor{ctx: ctx, out: &output{level: levels["INFO"]}, cache: newOutputs(), report: newReport(Args{}), workers: 2},
 		log: newPostLog("INFO", &stdout, &stderr, "")}
 	output := postOutput{path: f.output, outputKey: "pkg/target/test.outputs"}
 	outputs, err := p.prepareValidation([]postOutput{output}, nil)
@@ -231,5 +231,51 @@ func TestPostProcessChecksStopWhenCancelled(t *testing.T) {
 	}
 	if status := p.validateOutputs(postDiscovery{outputs: outputs}, uploadRun{}); status != 130 {
 		t.Fatalf("status %d\nstdout %s\nstderr %s", status, stdout.String(), stderr.String())
+	}
+}
+
+// The doctor's report that post-process writes accounts for the expected
+// targets and the BEP as the standalone doctor's report does.
+func TestPostProcessDoctorReportAccountsForBep(t *testing.T) {
+	f := newPostFixture(t)
+	f.validate("module")
+	data, err := os.ReadFile(filepath.Join("testdata", "bep-fresh.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	bep := filepath.Join(f.root, "bep.json")
+	writeFile(t, bep, strings.ReplaceAll(string(data), "/ROOTPLACEHOLDER", f.root))
+	f.request.Config.BepJSONFiles = []string{bep}
+	f.request.Config.FreshnessSource, f.request.Config.FreshnessMode = "bep", "required"
+	f.request.Config.FreshnessDisabledExplicitly = false
+	f.request.Config.ExpectedTargets = []string{"//pkg:target"}
+	f.request.Validation.ConfigPath = filepath.Join(f.root, "doctor.config.json")
+	if status, stdout, stderr, _ := f.run(t); status != 0 {
+		t.Fatalf("status %d\nstdout %s\nstderr %s", status, stdout, stderr)
+	}
+	var report struct {
+		Config  map[string]any      `json:"config"`
+		Targets map[string][]string `json:"targets"`
+		Bep     map[string]any      `json:"bep"`
+		Summary map[string]any      `json:"summary"`
+		Result  map[string]any      `json:"result"`
+	}
+	text, err := os.ReadFile(f.doctorReport)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(text, &report); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"//pkg:target"}
+	for _, name := range []string{"expected", "seen_in_bep", "fresh"} {
+		if strings.Join(report.Targets[name], ",") != strings.Join(want, ",") {
+			t.Errorf("targets.%s = %v, want %v", name, report.Targets[name], want)
+		}
+	}
+	if report.Bep["eligible_outputs"] != float64(1) || report.Config["expected_targets_source"] != "uploader" ||
+		report.Config["config_path"] != filepath.Join(f.root, "doctor.config.json") ||
+		report.Summary["expected_targets"] != float64(1) || report.Result["status"] != "ok" {
+		t.Fatalf("report %s", text)
 	}
 }

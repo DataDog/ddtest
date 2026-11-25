@@ -112,6 +112,28 @@ func (p *poster) seedFacts(disc postDiscovery, run uploadRun) {
 	}
 }
 
+// reportDoctorContext records in the doctor's report what the standalone
+// doctor records before its checks: the expected targets, the BEP's targets
+// and outputs, and the staged artifacts. The uploader resolved the expected
+// targets, so their source is "uploader".
+func (p *poster) reportDoctorContext(prep *preparation, expected []string) {
+	d := p.d
+	config := d.report.section("config")
+	config["config_path"] = p.request.Validation.ConfigPath
+	config["workspace"] = p.cfg.Workspace
+	config["testlogs_dir"] = prep.localRoot
+	config["expected_targets"] = reportList(expected)
+	if len(expected) > 0 {
+		config["expected_targets_source"] = "uploader"
+	}
+	d.report.section("summary")["expected_targets"] = len(expected)
+	d.report.section("bep")["files"] = reportList(prep.bepFiles)
+	d.report.section("artifacts")["staging_requested"] = prep.stagingRequested
+	d.report.section("targets")["expected"] = reportList(expected)
+	d.updateBep(prep.freshness, prep.selectedArtifacts, prep.blockedArtifacts)
+	d.updateArtifacts(prep.stagingRequested && prep.freshness != nil, prep.stagingBase, prep.staged)
+}
+
 // validateOutputs applies the doctor's output checks to the selected
 // outputs and returns the doctor's exit status. The payloads were sent
 // whatever it finds.

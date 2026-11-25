@@ -179,7 +179,10 @@ bodies are byte for byte those of `upload`, which keeps decoding; batched
 uploads also keep the decoding path. A failed check fails the run, with the doctor's message and
 exit status 1, but every fresh valid payload is still sent. Checks that cannot
 run in Go after the payloads are sent also fail the run, since the Python
-doctor can no longer check those outputs; `--dry-run` in
+doctor can no longer check those outputs. The doctor's report, written to the
+validation's `report_json`, records the expected targets, the BEP's targets and
+outputs and the staged artifacts as the standalone doctor's report does, with
+`uploader` as the expected targets' source; `--dry-run` in
 the request's configuration validates and sends nothing. It then retains the
 payloads that it did not deliver, cleans its staging, and prints and writes
 the uploader's schema v1 report.
