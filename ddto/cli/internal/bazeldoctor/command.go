@@ -28,7 +28,15 @@ func Command(ctx context.Context, prog string, args []string, stdin io.Reader, s
 		prog, args, stdin, stdout, stderr, func(ctx context.Context, decoder *json.Decoder, workers int) (any, error) {
 			var request Request
 			if err := decoder.Decode(&request); err != nil {
+				// Newer rules send a field that this ddtest does not know:
+				// the Python doctor validates instead.
+				if field, newer := unknownRequestField(err); newer {
+					return Result{Status: "fallback", Reason: "request field " + field + " is newer than this ddtest"}, nil
+				}
 				return nil, fmt.Errorf("read validation request: %w", err)
+			}
+			if request.Version > 1 {
+				return Result{Status: "fallback", Reason: fmt.Sprintf("request schema_version %d is newer than this ddtest", request.Version)}, nil
 			}
 			if request.Version != 1 {
 				return nil, fmt.Errorf("unsupported validation request schema_version %d", request.Version)

@@ -2,6 +2,7 @@ package bazeldoctor
 
 import (
 	"encoding/json"
+	"strings"
 
 	"github.com/DataDog/ddtest/ddto/cli/internal/bazelupload"
 )
@@ -100,6 +101,15 @@ type LogMessage struct {
 // PostValidation is the doctor's configuration, for its output checks.
 type PostValidation struct {
 	Config json.RawMessage `json:"config"`
+	// ConfigPath is the configuration's file, which the report records.
+	ConfigPath string `json:"config_path,omitempty"`
 	// ReportJSON receives the doctor's report of the checks.
 	ReportJSON string `json:"report_json"`
+}
+
+// unknownRequestField reports the field that encoding/json's
+// DisallowUnknownFields rejected, when err is that rejection.
+func unknownRequestField(err error) (string, bool) {
+	field, found := strings.CutPrefix(err.Error(), "json: unknown field ")
+	return strings.Trim(field, `"`), found
 }

@@ -120,6 +120,13 @@ type preparation struct {
 	stagedRoots []string
 	staged      []stagedArtifact
 	stagingBase string
+	// What the doctor's report records about the BEP and its artifacts.
+	localRoot         string
+	bepFiles          []string
+	freshness         *freshness
+	stagingRequested  bool
+	selectedArtifacts map[pair]bool
+	blockedArtifacts  map[string]bool
 }
 
 // PostOutcome is how a post-process run ended: its exit status, or a
@@ -330,6 +337,7 @@ func (p *poster) run() (int, error) {
 			}
 		}
 		if p.request.Validation != nil {
+			p.reportDoctorContext(prep, expected)
 			doctorExit = p.validateOutputs(checkedDisc, run)
 			if doctorExit == 130 && report.exitCode == 0 {
 				reason = &reportReason{code: "interrupted", message: "Uploader interrupted during the doctor's checks."}
@@ -459,7 +467,7 @@ func (p *poster) prepareFreshness(localRoot string, expected []string) (*prepara
 			bepFiles = append(bepFiles, resolved)
 		}
 	}
-	prep := &preparation{}
+	prep := &preparation{localRoot: localRoot, bepFiles: bepFiles, stagingRequested: stagingRequested}
 	var f *freshness
 	selectedArtifacts, blocked, staged := map[pair]bool{}, map[string]bool{}, map[pair]bool{}
 	if processing {
@@ -491,6 +499,7 @@ func (p *poster) prepareFreshness(localRoot string, expected []string) (*prepara
 			staged[pair{item.label, item.outputKey}] = true
 		}
 	}
+	prep.freshness, prep.selectedArtifacts, prep.blockedArtifacts = f, selectedArtifacts, blocked
 	plan, err := p.buildPlan(source, f, selectedArtifacts, blocked, expectedSet, warnings, staged)
 	if err != nil {
 		// Finalization retains and cleans what was staged, as the uploader's

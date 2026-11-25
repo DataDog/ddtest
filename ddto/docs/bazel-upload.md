@@ -179,7 +179,10 @@ bodies are byte for byte those of `upload`, which keeps decoding; batched
 uploads also keep the decoding path. A failed check fails the run, with the doctor's message and
 exit status 1, but every fresh valid payload is still sent. Checks that cannot
 run in Go after the payloads are sent also fail the run, since the Python
-doctor can no longer check those outputs; `--dry-run` in
+doctor can no longer check those outputs. The doctor's report, written to the
+validation's `report_json`, records the expected targets, the BEP's targets and
+outputs and the staged artifacts as the standalone doctor's report does, with
+`uploader` as the expected targets' source; `--dry-run` in
 the request's configuration validates and sends nothing. It then retains the
 payloads that it did not deliver, cleans its staging, and prints and writes
 the uploader's schema v1 report.
@@ -190,6 +193,9 @@ The request on standard input is `PostRequest` in
 checks, and the summary, and exits with the uploader's status. Before it
 sends anything, an input that the Python code reads in its own way, such as an
 unusual BEP line or a sidecar with duplicate keys, makes it exit with status 75 having printed nothing, and the
-Python uploader runs the invocation instead; it does so on Windows too. In the
+Python uploader runs the invocation instead; it does so on Windows too, and for
+a request from newer rules, with a field that this ddtest does not know or a
+schema version above 1, so that the rules need not move with ddtest. Empty
+`execroot_roots` and `output_base_roots` are computed as for `validate`. In the
 report's performance section, `main_thread_cpu_seconds` is the process's CPU
 time, which Go measures for all its threads together.

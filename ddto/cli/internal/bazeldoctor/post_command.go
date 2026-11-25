@@ -58,7 +58,15 @@ func PostCommand(ctx context.Context, prog string, args []string, stdin io.Reade
 	decoder.DisallowUnknownFields()
 	var request PostRequest
 	if err := decoder.Decode(&request); err != nil {
+		// A field that this ddtest does not know comes from newer rules: the
+		// Python uploader, which reads every field, runs the invocation.
+		if _, newer := unknownRequestField(err); newer {
+			return PostFallbackExit
+		}
 		return fail(2, fmt.Errorf("read post-process request: %w", err))
+	}
+	if request.Version > 1 {
+		return PostFallbackExit
 	}
 	if request.Version != 1 {
 		return fail(2, fmt.Errorf("unsupported post-process request schema_version %d", request.Version))

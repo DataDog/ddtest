@@ -129,7 +129,8 @@ func TestValidateFallsBack(t *testing.T) {
 func TestValidateRejectsBadRequests(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	ctx := context.Background()
-	if status := Command(ctx, "ddtest", nil, strings.NewReader(`{"schema_version": 2}`), &stdout, &stderr); status != 1 {
+	// A newer schema version falls back; an older one is an error.
+	if status := Command(ctx, "ddtest", nil, strings.NewReader(`{"schema_version": 0}`), &stdout, &stderr); status != 1 {
 		t.Fatalf("status %d", status)
 	}
 	if status := Command(ctx, "ddtest", []string{"extra"}, strings.NewReader(""), &stdout, &stderr); status != 2 {
@@ -161,5 +162,23 @@ func TestStagingStopsWhenInterrupted(t *testing.T) {
 	}
 	if entries, _ := os.ReadDir(filepath.Join(base, "__runs")); len(entries) != 0 {
 		t.Fatalf("run directories remain: %v", entries)
+	}
+}
+
+// A request from newer rules leaves the validation to the Python doctor.
+func TestValidateFallsBackOnNewerRequests(t *testing.T) {
+	posixOnly(t)
+	for name, input := range map[string]string{
+		"unknown field": `{"schema_version": 1, "future": true}`,
+		"newer version": `{"schema_version": 2}`,
+	} {
+		var stdout, stderr bytes.Buffer
+		if status := Command(context.Background(), "ddtest", nil, strings.NewReader(input), &stdout, &stderr); status != 0 || stderr.Len() != 0 {
+			t.Fatalf("%s: status %d stderr %q", name, status, stderr.String())
+		}
+		var result Result
+		if err := json.Unmarshal(stdout.Bytes(), &result); err != nil || result.Status != "fallback" {
+			t.Errorf("%s: result %q, %v", name, stdout.String(), err)
+		}
 	}
 }
