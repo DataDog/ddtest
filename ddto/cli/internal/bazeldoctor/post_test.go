@@ -279,3 +279,24 @@ func TestPostProcessDoctorReportAccountsForBep(t *testing.T) {
 		t.Fatalf("report %s", text)
 	}
 }
+
+// A request from newer rules, with a field or a schema version that this
+// ddtest does not know, leaves the invocation to the Python uploader with
+// nothing printed. A malformed request still fails.
+func TestPostProcessFallsBackOnNewerRequests(t *testing.T) {
+	posixOnly(t)
+	for name, input := range map[string]string{
+		"unknown field": `{"schema_version": 1, "config": {}, "resources": {}, "future": true}`,
+		"newer version": `{"schema_version": 2, "config": {}, "resources": {}}`,
+	} {
+		var stdout, stderr bytes.Buffer
+		if status := PostCommand(context.Background(), "ddtest", nil, strings.NewReader(input), &stdout, &stderr); status != PostFallbackExit ||
+			stdout.Len() != 0 || stderr.Len() != 0 {
+			t.Errorf("%s: status %d stdout %q stderr %q", name, status, stdout.String(), stderr.String())
+		}
+	}
+	var stdout, stderr bytes.Buffer
+	if status := PostCommand(context.Background(), "ddtest", nil, strings.NewReader(`{"schema_version": "x"}`), &stdout, &stderr); status != 2 {
+		t.Errorf("malformed request: status %d", status)
+	}
+}

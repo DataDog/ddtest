@@ -320,10 +320,10 @@ func (d *doctor) resolveLocalArtifact(value string) (string, bool) {
 		candidates = append(candidates, artifact)
 	} else {
 		candidates = append(candidates, joinPath(d.workspace, artifact))
-		for _, root := range d.request.ExecrootRoots {
+		for _, root := range d.execrootRoots() {
 			candidates = append(candidates, joinPath(root, artifact))
 		}
-		for _, root := range d.request.OutputBaseRoots {
+		for _, root := range d.outputBaseRoots() {
 			candidates = append(candidates, joinPath(root, artifact))
 		}
 	}
@@ -333,4 +333,81 @@ func (d *doctor) resolveLocalArtifact(value string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// execrootRoots are the request's execroot roots or, when it names none,
+// the doctor's _execroot_roots(), which ddtest computes from the same
+// environment and working directory.
+func (d *doctor) execrootRoots() []string {
+	if len(d.request.ExecrootRoots) == 0 {
+		d.request.ExecrootRoots = defaultExecrootRoots()
+	}
+	return d.request.ExecrootRoots
+}
+
+// outputBaseRoots are the request's output base roots or, when it names
+// none, the doctor's _output_base_roots().
+func (d *doctor) outputBaseRoots() []string {
+	if len(d.request.OutputBaseRoots) == 0 {
+		d.request.OutputBaseRoots = defaultOutputBaseRoots(d.execrootRoots())
+	}
+	return d.request.OutputBaseRoots
+}
+
+// defaultExecrootRoots is _execroot_roots: DD_TEST_OPTIMIZATION_DOCTOR_EXECROOT,
+// the working directory, and the working directory or its ancestors that
+// look like an execroot.
+func defaultExecrootRoots() []string {
+	var roots []string
+	if configured := os.Getenv("DD_TEST_OPTIMIZATION_DOCTOR_EXECROOT"); configured != "" {
+		roots = append(roots, configured)
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		unsupported("working directory: " + err.Error())
+	}
+	cwd = resolvePath(cwd)
+	roots = append(roots, cwd)
+	for candidate := cwd; ; candidate = pathParent(candidate) {
+		if exists(joinPath(candidate, "external")) && exists(joinPath(candidate, "bazel-out")) {
+			roots = append(roots, candidate)
+		} else if pathName(pathParent(candidate)) == "execroot" && exists(joinPath(candidate, "external")) {
+			roots = append(roots, candidate)
+		}
+		if pathParent(candidate) == candidate {
+			break
+		}
+	}
+	return resolvedRoots(roots)
+}
+
+// defaultOutputBaseRoots is _output_base_roots: DD_TEST_OPTIMIZATION_BAZEL_OUTPUT_BASE
+// and the output base of each execroot root below an execroot directory.
+func defaultOutputBaseRoots(execroots []string) []string {
+	var roots []string
+	if configured := os.Getenv("DD_TEST_OPTIMIZATION_BAZEL_OUTPUT_BASE"); configured != "" {
+		roots = append(roots, expandUser(configured))
+	}
+	for _, root := range execroots {
+		if pathName(pathParent(root)) == "execroot" {
+			roots = append(roots, pathParent(pathParent(root)))
+		}
+	}
+	return resolvedRoots(roots)
+}
+
+// resolvedRoots resolves the roots that exist, once each, in order.
+func resolvedRoots(roots []string) []string {
+	var resolved []string
+	seen := map[string]bool{}
+	for _, root := range roots {
+		if !exists(root) {
+			continue
+		}
+		if root = resolvePath(root); !seen[root] {
+			seen[root] = true
+			resolved = append(resolved, root)
+		}
+	}
+	return resolved
 }

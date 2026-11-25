@@ -193,6 +193,9 @@ The request on standard input is `PostRequest` in
 checks, and the summary, and exits with the uploader's status. Before it
 sends anything, an input that the Python code reads in its own way, such as an
 unusual BEP line or a sidecar with duplicate keys, makes it exit with status 75 having printed nothing, and the
-Python uploader runs the invocation instead; it does so on Windows too. In the
+Python uploader runs the invocation instead; it does so on Windows too, and for
+a request from newer rules, with a field that this ddtest does not know or a
+schema version above 1, so that the rules need not move with ddtest. Empty
+`execroot_roots` and `output_base_roots` are computed as for `validate`. In the
 report's performance section, `main_thread_cpu_seconds` is the process's CPU
 time, which Go measures for all its threads together.

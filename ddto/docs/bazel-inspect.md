@@ -151,7 +151,11 @@ find through Bazel's runfiles, and writes the request:
  "execroot_roots": [], "output_base_roots": []}
 ```
 
-`Request` in `bazeldoctor/request.go` documents every field. Like the other
+`Request` in `bazeldoctor/request.go` documents every field. When
+`execroot_roots` and `output_base_roots` are empty, ddtest computes them as the
+doctor's `_execroot_roots()` and `_output_base_roots()` do, from
+`DD_TEST_OPTIMIZATION_DOCTOR_EXECROOT`, `DD_TEST_OPTIMIZATION_BAZEL_OUTPUT_BASE`
+and the working directory. Like the other
 commands, it reads the request from standard input and writes one JSON result
 to standard output: how the run ended and the messages that the doctor
 prints, such as `{"status": "done", "exit_code": 1, "stdout": "", "stderr":
@@ -163,4 +167,5 @@ operating system error whose text the doctor prints, a URL or zip member that
 Python parses in its own way, or a custom support bundle collector, the status
 is `fallback`, the messages are empty, and the doctor validates the outputs
 itself, writing its own report. The command answers `fallback` on Windows, where Python resolves paths
-differently.
+differently, and for a request from newer rules: a field that this ddtest does
+not know, or a schema version above 1.
