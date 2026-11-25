@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/DataDog/ddtest/internal/git"
+	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -162,4 +163,63 @@ func TestDescribeRuntimeOverrideAvoidsTheCommandInterpreter(t *testing.T) {
 	tags, err := describeConfigurations(context.Background(), "", []string{"missing/python", "-m", "pytest"})
 	require.NoError(t, err)
 	require.Equal(t, "3.12.9", tags["runtime.version"])
+}
+
+func TestDescribeGitLabCatalogWithoutWorkerRuntime(t *testing.T) {
+	t.Chdir(t.TempDir())
+	describeTestSettings(t)
+	viper.Set("runtime_tags", "")
+	settings.Init()
+	for _, args := range [][]string{
+		{"init", "-q"}, {"remote", "add", "origin", "https://example.com/org/repo.git"},
+		{"-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "--allow-empty", "-qm", "initial"},
+	} {
+		out, err := exec.Command("git", args...).CombinedOutput()
+		require.NoError(t, err, string(out))
+	}
+	describeTestFile(t, "tests/test_one.py", "raise RuntimeError('must not execute')\n")
+	describeTestFile(t, "ci.yml", "feature:\n  script: [scripts/run-tests -- --ddtrace]\n  variables:\n    TEST_SUITE: feature\n    TEST_ENVIRONMENTS_1: fixed\n")
+	describeTestFile(t, "envs.json", "{\"suites\":[{\"name\":\"feature\",\"venvs\":[{\"hash\":\"fixed\",\"python_version\":\"3.12\",\"command\":\"pytest {cmdargs} tests\"}]}]}")
+	describeTestFile(t, ".testoptimization/runner/parallel-runners.txt", "saved plan")
+	t.Setenv("PYTEST_ADDOPTS", "--unknown-host-option")
+	root := &cobra.Command{Use: "ddtest"}
+	root.AddCommand(newDescribeCommand())
+	var output bytes.Buffer
+	root.SetOut(&output)
+	root.SetArgs([]string{"describe", "--ci-provider", "gitlab", "--ci-config", "ci.yml", "--command-environments", "envs.json", "--output", "catalog.json"})
+	require.NoError(t, root.Execute())
+	var catalog onboard.PythonCICommandCatalog
+	require.NoError(t, json.Unmarshal(output.Bytes(), &catalog))
+	require.Len(t, catalog.Jobs, 1)
+	require.Len(t, catalog.Jobs[0].Commands, 1)
+	entry := catalog.Jobs[0].Commands[0]
+	require.Empty(t, entry.Unresolved)
+	require.Equal(t, []string{"pytest", "--ddtrace", "tests"}, entry.Argv)
+	require.Equal(t, []string{"tests/test_one.py"}, entry.CandidateTestFiles)
+	require.Equal(t, "https://example.com/org/repo.git", catalog.RepositoryURL)
+	require.Len(t, catalog.SHA, 40)
+	require.NotContains(t, output.String(), "runtime.version")
+	written, err := os.ReadFile("catalog.json")
+	require.NoError(t, err)
+	require.Equal(t, output.Bytes(), written)
+	saved, err := os.ReadFile(".testoptimization/runner/parallel-runners.txt")
+	require.NoError(t, err)
+	require.Equal(t, "saved plan", string(saved))
+}
+
+func TestDescribeRejectsIncompleteOrMixedCIFlags(t *testing.T) {
+	for _, args := range [][]string{
+		{"--ci-provider", "gitlab"},
+		{"--ci-config", "ci.yml"},
+		{"--command-environments", "envs.json"},
+		{"--ci-config", "ci.yml", "--command-environments", "envs.json", "--id", "manual"},
+		{"--ci-config", "ci.yml", "--command-environments", "envs.json", "--python", "python"},
+		{"--ci-config", "ci.yml", "--command-environments", "envs.json", "--", "pytest", "tests"},
+		{"--ci-config", "ci.yml", "--command-environments", "envs.json", "--ci-provider", "other"},
+	} {
+		root := &cobra.Command{Use: "ddtest", SilenceUsage: true, SilenceErrors: true}
+		root.AddCommand(newDescribeCommand())
+		root.SetArgs(append([]string{"describe"}, args...))
+		require.Error(t, root.Execute(), args)
+	}
 }

@@ -975,3 +975,44 @@ A complete override avoids the runtime probe. A partial override fails.
 
 JSON goes to standard output. `--output` also writes it to a file.
 The catalog makes no skip decision. Use `plan` for existing execution planning.
+
+### Catalog from expanded GitLab jobs
+
+Generate dynamic child-pipeline YAML with the repository's own generator first.
+Export the runner's environment metadata as JSON, then run:
+
+```sh
+ddtest describe --ci-provider gitlab --ci-config .gitlab/generated.yml \
+  --command-environments environments.json \
+  --output .testoptimization/commands.json
+```
+
+This mode uses the existing CI-provider parser for local includes, inheritance,
+and script references. It retains every concrete job and its declared scripts.
+It does not execute scripts or evaluate CI rules. Unsupported includes and
+unresolved jobs remain visible in the catalog.
+
+The experimental Python adapter supports jobs that declare `TEST_SUITE` and
+`TEST_ENVIRONMENTS_*`, then invoke `scripts/run-tests`.
+The metadata file uses this structure:
+
+```json
+{"suites":[{"name":"unit","venvs":[{"hash":"environment","python_version":"3.12","packages":"dependency==1","command":"pytest {cmdargs} tests/unit"}]}]}
+```
+
+Each environment must describe one test invocation. Metadata exporters that
+omit additional invocations cannot describe those commands completely.
+ddtest substitutes the runner's literal forwarded arguments for `{cmdargs}`.
+Unknown wrappers and dynamic arguments produce unresolved entries.
+Missing environments and unsupported pytest arguments also produce unresolved entries.
+
+The catalog uses schema version 3 and suite-level candidate files.
+Each command ID combines its CI job name and environment hash.
+It records the declared Python version and packages from the metadata.
+It does not probe the local interpreter or invent future workers' runtime and OS fields.
+
+Host `PYTEST_ADDOPTS` does not apply to CI catalogs. Declared job options do apply.
+Complete TIA request configurations still require the future worker's metadata.
+
+Manual command descriptions retain schema version 2 and their existing flags.
+Do not combine the two modes. Neither mode changes `plan` or decides to skip.

@@ -876,14 +876,7 @@ func (c *gitLabConfig) convert(job gitLabJob, globals map[string]string) map[str
 		}
 		return jobs // Not a job GitLab runs.
 	}
-	inherited := maps.Clone(globals)
-	policy := gitLabAlias(gitLabMembers(fields["inherit"])["variables"])
-	if gitLabScalar(policy) == "false" {
-		inherited = map[string]string{}
-	} else if policy != nil && policy.Kind == yaml.SequenceNode {
-		allowed := gitLabStrings(policy)
-		maps.DeleteFunc(inherited, func(key, _ string) bool { return !slices.Contains(allowed, key) })
-	}
+	inherited := gitLabInheritedVariables(globals, fields)
 	base := mergeEnvironment(inherited, gitLabVariables(fields["variables"]))
 	rows, err := gitLabMatrix(fields["parallel"])
 	if err != nil {
@@ -1556,4 +1549,16 @@ func gitLabImageProblem(image string, curl bool) string {
 		return "The job image " + image + " has no curl, so the Datadog setup script cannot be downloaded and its tests would run untraced. " + fallbackInstead("this job")
 	}
 	return ""
+}
+
+func gitLabInheritedVariables(globals map[string]string, fields map[string]*yaml.Node) map[string]string {
+	inherited := maps.Clone(globals)
+	policy := gitLabAlias(gitLabMembers(fields["inherit"])["variables"])
+	if gitLabScalar(policy) == "false" {
+		inherited = map[string]string{}
+	} else if policy != nil && policy.Kind == yaml.SequenceNode {
+		allowed := gitLabStrings(policy)
+		maps.DeleteFunc(inherited, func(key, _ string) bool { return !slices.Contains(allowed, key) })
+	}
+	return inherited
 }

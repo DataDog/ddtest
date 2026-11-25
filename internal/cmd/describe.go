@@ -6,16 +6,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 
-	"github.com/DataDog/ddtest/internal/discovery"
 	"github.com/DataDog/ddtest/internal/framework"
 	"github.com/DataDog/ddtest/internal/git"
 	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/settings"
-	"github.com/DataDog/ddtest/internal/utils"
-	"github.com/kballard/go-shellquote"
 	"github.com/spf13/cobra"
 )
 
@@ -43,19 +39,44 @@ type describedRequest struct {
 }
 
 func newDescribeCommand() *cobra.Command {
-	var id, output, interpreter string
+	var id, output, interpreter, ciProvider, ciConfig, environments string
 	var roots []string
 	command := &cobra.Command{
-		Use:   "describe --id ID --test-root DIRECTORY [--test-root DIRECTORY ...] -- pytest [arguments ...]",
+		Use:   "describe [options] [-- pytest arguments ...]",
 		Short: "Export an experimental pytest command catalog without running tests",
-		Long:  "Temporary exploration command. Exports candidate pytest files and the TIA request context as JSON. It does not collect tests, contact Datadog, or change a saved plan. Run it from the repository root. The format is experimental.",
+		Long:  "Temporary exploration command. Exports a manual pytest command or a catalog from expanded GitLab jobs as JSON. It does not collect tests, contact Datadog, or change a saved plan. Run it from the repository root. The format is experimental.",
 		Args: func(cmd *cobra.Command, args []string) error {
+			if ciConfig != "" {
+				if len(args) != 0 || id != "" || len(roots) != 0 || interpreter != "" {
+					return fmt.Errorf("CI discovery cannot be combined with a manual command")
+				}
+				if environments == "" {
+					return fmt.Errorf("CI discovery requires --command-environments")
+				}
+				return nil
+			}
+			if ciProvider != "" || environments != "" {
+				return fmt.Errorf("CI discovery requires --ci-config")
+			}
+			if id == "" || len(roots) == 0 {
+				return fmt.Errorf("supply --id and --test-root for a manual command")
+			}
 			if cmd.ArgsLenAtDash() != 0 || len(args) == 0 {
 				return fmt.Errorf("supply the test command after --")
 			}
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if ciConfig != "" {
+				if cmd.Flags().Changed("test-skipping-mode") && settings.GetTestSkippingLevel() != settings.TestSkippingLevelSuite {
+					return fmt.Errorf("CI catalog discovery supports suite level only")
+				}
+				catalog, err := describeCI(cmd, ciProvider, ciConfig, environments)
+				if err != nil {
+					return err
+				}
+				return writeDescription(cmd, output, catalog)
+			}
 			if strings.TrimSpace(id) == "" {
 				return fmt.Errorf("command ID must not be empty")
 			}
@@ -73,24 +94,9 @@ func newDescribeCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			metadata, err := git.GetLocalGitData()
-			if err != nil {
-				return fmt.Errorf("read checkout metadata: %w", err)
-			}
-			cwd, err := os.Getwd()
+			metadata, err := describeCheckout()
 			if err != nil {
 				return err
-			}
-			sourceRoot, err := filepath.EvalSymlinks(metadata.SourceRoot)
-			if err != nil {
-				return err
-			}
-			cwd, err = filepath.EvalSymlinks(cwd)
-			if err != nil {
-				return err
-			}
-			if cwd != sourceRoot {
-				return fmt.Errorf("run describe from the repository root")
 			}
 			configurations, err := describeConfigurations(cmd.Context(), interpreter, args)
 			if err != nil {
@@ -117,96 +123,24 @@ func newDescribeCommand() *cobra.Command {
 					TestLevel: level, Configurations: configurations},
 				CandidateTestFiles: files,
 			}
-			data, err := json.MarshalIndent(description, "", "  ")
-			if err != nil {
-				return err
-			}
-			data = append(data, '\n')
-			if output != "" {
-				if err := os.MkdirAll(filepath.Dir(output), 0755); err != nil {
-					return err
-				}
-				if err := os.WriteFile(output, data, 0644); err != nil {
-					return err
-				}
-			}
-			_, err = cmd.OutOrStdout().Write(data)
-			return err
+			return writeDescription(cmd, output, description)
 		},
 	}
 	command.Flags().StringVar(&id, "id", "", "Caller-provided command and environment ID")
 	command.Flags().StringArrayVar(&roots, "test-root", nil, "Candidate directory relative to the repository root (repeatable)")
 	command.Flags().StringVar(&interpreter, "python", "", "Worker Python interpreter for pytest entry points (or supply complete --runtime-tags)")
 	command.Flags().StringVar(&output, "output", "", "Also write the JSON catalog to this file")
-	_ = command.MarkFlagRequired("id")
-	_ = command.MarkFlagRequired("test-root")
+	command.Flags().StringVar(&ciProvider, "ci-provider", "", "CI provider for catalog discovery (gitlab)")
+	command.Flags().StringVar(&ciConfig, "ci-config", "", "Expanded CI configuration inside this repository")
+	command.Flags().StringVar(&environments, "command-environments", "", "Repository-exported environment-to-command metadata")
 	return command
 }
 
 func describePytestArgv(args []string, addopts string) ([]string, error) {
-	if len(args) == 0 {
-		return nil, fmt.Errorf("describe requires one pytest invocation")
-	}
-	insert := 1
-	if filepath.Base(args[0]) != "pytest" {
-		if len(args) < 3 || (filepath.Base(args[0]) != "python" && filepath.Base(args[0]) != "python3") || args[1] != "-m" || args[2] != "pytest" {
-			return nil, fmt.Errorf("describe requires one pytest or python -m pytest invocation")
-		}
-		insert = 3
-	}
-	for _, arg := range args {
-		if slices.Contains([]string{"&&", "||", ";", "|", ">", "<"}, arg) {
-			return nil, fmt.Errorf("describe requires one pytest invocation")
-		}
-	}
-	options, err := shellquote.Split(addopts)
-	if err != nil {
-		return nil, fmt.Errorf("parse PYTEST_ADDOPTS: %w", err)
-	}
-	argv := slices.Clone(args[:insert])
-	argv = append(argv, options...)
-	return append(argv, args[insert:]...), nil
+	return framework.PytestCommandArguments(args, addopts)
 }
-
 func describePytestFiles(ctx context.Context, roots []string) ([]string, []string, error) {
-	var normalizedRoots []string
-	for _, root := range roots {
-		if root == "" || !filepath.IsLocal(root) {
-			return nil, nil, fmt.Errorf("test roots must be directories inside the repository")
-		}
-		root = filepath.Clean(root)
-		info, err := os.Stat(root)
-		if err != nil {
-			return nil, nil, err
-		}
-		if !info.IsDir() {
-			return nil, nil, fmt.Errorf("test root %q is not a directory", root)
-		}
-		normalizedRoots = append(normalizedRoots, filepath.ToSlash(root))
-	}
-	fw := framework.NewPytest(platform.NewPython())
-	matcher, err := utils.NewPathMatcher(fw.TestPatternForRoots(normalizedRoots))
-	if err != nil {
-		return nil, nil, err
-	}
-	var files []string
-	for _, root := range normalizedRoots {
-		discovered, err := fw.DiscoverTestFiles(ctx, discovery.TestFileSet{Pattern: filepath.ToSlash(filepath.Join(root, "**", "*.py"))})
-		if err != nil {
-			return nil, nil, err
-		}
-		for _, file := range discovered {
-			if matcher.Match(file) {
-				files = append(files, file)
-			}
-		}
-	}
-	slices.Sort(files)
-	files = slices.Compact(files)
-	if len(files) == 0 {
-		return nil, nil, fmt.Errorf("the candidate test file inventory is empty")
-	}
-	return files, normalizedRoots, nil
+	return framework.NewPytest(platform.NewPython()).CandidateFiles(ctx, roots)
 }
 
 func describeConfigurations(ctx context.Context, interpreter string, argv []string) (map[string]string, error) {
@@ -234,4 +168,46 @@ func describeConfigurations(ctx context.Context, interpreter string, argv []stri
 		configurations[key] = tags[key]
 	}
 	return configurations, nil
+}
+
+func describeCheckout() (git.LocalGitData, error) {
+	metadata, err := git.GetLocalGitData()
+	if err != nil {
+		return git.LocalGitData{}, fmt.Errorf("read checkout metadata: %w", err)
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return git.LocalGitData{}, err
+	}
+	sourceRoot, err := filepath.EvalSymlinks(metadata.SourceRoot)
+	if err != nil {
+		return git.LocalGitData{}, err
+	}
+	cwd, err = filepath.EvalSymlinks(cwd)
+	if err != nil {
+		return git.LocalGitData{}, err
+	}
+	if cwd != sourceRoot {
+		return git.LocalGitData{}, fmt.Errorf("run describe from the repository root")
+	}
+
+	return metadata, nil
+}
+
+func writeDescription(cmd *cobra.Command, output string, description any) error {
+	data, err := json.MarshalIndent(description, "", "  ")
+	if err != nil {
+		return err
+	}
+	data = append(data, '\n')
+	if output != "" {
+		if err := os.MkdirAll(filepath.Dir(output), 0755); err != nil {
+			return err
+		}
+		if err := os.WriteFile(output, data, 0644); err != nil {
+			return err
+		}
+	}
+	_, err = cmd.OutOrStdout().Write(data)
+	return err
 }
