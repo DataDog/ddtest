@@ -2,6 +2,7 @@ package bazelinspect
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -40,8 +41,8 @@ uploader derive from them as one JSON report to standard output.
 // Command runs ddtest instrument bazel inspect with the arguments after the
 // word inspect and returns the exit status.
 func Command(prog string, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
-	return run(command{name: "inspect", usage: usage, prefix: "[dd-test-optimization-doctor]"}, prog, args, stdin, stdout, stderr,
-		func(decoder *json.Decoder, workers int) (any, error) {
+	return RunCommand(context.Background(), CommandSpec{Name: "inspect", Usage: usage, Prefix: "[dd-test-optimization-doctor]"},
+		prog, args, stdin, stdout, stderr, func(_ context.Context, decoder *json.Decoder, workers int) (any, error) {
 			var request Request
 			if err := decoder.Decode(&request); err != nil {
 				return nil, fmt.Errorf("read inspection request: %w", err)
@@ -56,8 +57,8 @@ func Command(prog string, args []string, stdin io.Reader, stdout, stderr io.Writ
 // DiscoverCommand runs ddtest instrument bazel discover with the arguments
 // after the word discover and returns the exit status.
 func DiscoverCommand(prog string, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
-	return run(command{name: "discover", usage: discoverUsage, prefix: "[dd-uploader]"}, prog, args, stdin, stdout, stderr,
-		func(decoder *json.Decoder, workers int) (any, error) {
+	return RunCommand(context.Background(), CommandSpec{Name: "discover", Usage: discoverUsage, Prefix: "[dd-uploader]"},
+		prog, args, stdin, stdout, stderr, func(_ context.Context, decoder *json.Decoder, workers int) (any, error) {
 			var request DiscoverRequest
 			if err := decoder.Decode(&request); err != nil {
 				return nil, fmt.Errorf("read discovery request: %w", err)
@@ -75,8 +76,9 @@ func DiscoverCommand(prog string, args []string, stdin io.Reader, stdout, stderr
 // FreshnessCommand runs ddtest instrument bazel freshness with the arguments
 // after the word freshness and returns the exit status.
 func FreshnessCommand(prog string, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
-	return run(command{name: "freshness", usage: freshnessUsage, prefix: "[dd-test-optimization-doctor]"}, prog, args, stdin,
-		stdout, stderr, func(decoder *json.Decoder, workers int) (any, error) {
+	return RunCommand(context.Background(), CommandSpec{Name: "freshness", Usage: freshnessUsage,
+		Prefix: "[dd-test-optimization-doctor]"}, prog, args, stdin, stdout, stderr,
+		func(_ context.Context, decoder *json.Decoder, workers int) (any, error) {
 			var request BepRequest
 			if err := decoder.Decode(&request); err != nil {
 				return nil, fmt.Errorf("read freshness request: %w", err)
@@ -88,27 +90,29 @@ func FreshnessCommand(prog string, args []string, stdin io.Reader, stdout, stder
 		})
 }
 
-type command struct {
-	name, usage, prefix string
+// CommandSpec names a request command and its usage and message prefix.
+type CommandSpec struct {
+	Name, Usage, Prefix string
 }
 
-// run parses --workers, reads one JSON request from stdin with handle, and
-// writes the result to stdout as JSON.
-func run(cmd command, prog string, args []string, stdin io.Reader, stdout, stderr io.Writer,
-	handle func(*json.Decoder, int) (any, error)) int {
+// RunCommand runs a request command of ddtest instrument bazel: it parses
+// --workers, reads one JSON request from stdin with handle, and writes the
+// result to stdout as JSON.
+func RunCommand(ctx context.Context, cmd CommandSpec, prog string, args []string, stdin io.Reader, stdout, stderr io.Writer,
+	handle func(context.Context, *json.Decoder, int) (any, error)) int {
 	fail := func(status int, err error) int {
-		fmt.Fprintln(stderr, cmd.prefix, "ERROR:", err)
+		fmt.Fprintln(stderr, cmd.Prefix, "ERROR:", err)
 		if status == 2 {
-			fmt.Fprintf(stderr, cmd.usage, prog)
+			fmt.Fprintf(stderr, cmd.Usage, prog)
 		}
 		return status
 	}
-	flags := flag.NewFlagSet(prog+" bazel "+cmd.name, flag.ContinueOnError)
+	flags := flag.NewFlagSet(prog+" bazel "+cmd.Name, flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	workers := flags.Int("workers", 0, "")
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
-			fmt.Fprintf(stdout, cmd.usage, prog)
+			fmt.Fprintf(stdout, cmd.Usage, prog)
 			return 0
 		}
 		return fail(2, err)
@@ -123,7 +127,7 @@ func run(cmd command, prog string, args []string, stdin io.Reader, stdout, stder
 	if os.Getenv("GOGC") == "" {
 		debug.SetGCPercent(200)
 	}
-	result, err := handle(decoder, *workers)
+	result, err := handle(ctx, decoder, *workers)
 	if err != nil {
 		return fail(1, err)
 	}
@@ -131,10 +135,10 @@ func run(cmd command, prog string, args []string, stdin io.Reader, stdout, stder
 	encoder := json.NewEncoder(output)
 	encoder.SetEscapeHTML(false)
 	if err := encoder.Encode(result); err != nil {
-		return fail(1, fmt.Errorf("write %s report: %w", cmd.name, err))
+		return fail(1, fmt.Errorf("write %s report: %w", cmd.Name, err))
 	}
 	if err := output.Flush(); err != nil {
-		return fail(1, fmt.Errorf("write %s report: %w", cmd.name, err))
+		return fail(1, fmt.Errorf("write %s report: %w", cmd.Name, err))
 	}
 	return 0
 }

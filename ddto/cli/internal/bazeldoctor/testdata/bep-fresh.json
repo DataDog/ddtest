@@ -1,0 +1,5 @@
+{"id": {"started": {}}, "started": {"uuid": "b0e1cc3c76cfa4fd88f1b6185bcdcca39c1c7153653b720eda68c6f4df9461c3"}, "children": [{"targetCompleted": {"label": "//pkg:target", "configuration": {}}}, {"buildFinished": {}}]}
+{"id": {"targetCompleted": {"label": "//pkg:target", "configuration": {}}}, "completed": {"success": true}, "children": [{"testResult": {"label": "//pkg:target", "run": 1, "shard": 1, "attempt": 1}}, {"testSummary": {"label": "//pkg:target", "configuration": {}}}]}
+{"id": {"testResult": {"label": "//pkg:target", "run": 1, "shard": 1, "attempt": 1}}, "testResult": {"status": "PASSED", "testActionOutput": [{"name": "test.outputs", "uri": "file:///ROOTPLACEHOLDER/bazel-out/k8-fastbuild/testlogs/pkg/target/test.outputs"}]}}
+{"id": {"testSummary": {"label": "//pkg:target", "configuration": {}}}, "testSummary": {"totalRunCount": 1, "runCount": 1, "shardCount": 1}}
+{"id": {"buildFinished": {}}, "finished": {"overallSuccess": true}, "lastMessage": true}

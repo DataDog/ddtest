@@ -37,7 +37,7 @@ func readSidecars(ctx context.Context, root *os.Root, plan *Plan, results []File
 				}
 				source.Metadata = metadata
 				repo, _ := metadata["bazel.test_optimization.repo_name"].(string)
-				context, selectionWarning := plan.ContextSelection.choose(repo)
+				context, selectionWarning := plan.ContextSelection.Choose(repo)
 				if selectionWarning != "" {
 					results[index].warn(selectionWarning)
 				}
@@ -61,6 +61,17 @@ schedule:
 	}
 	close(indexes)
 	group.Wait()
+}
+
+// ReadSidecar reads the sidecar of the output directory dir as the upload
+// does for a source that names its output: the metadata, or a warning code.
+func ReadSidecar(dir string) (Object, string) {
+	root, err := os.OpenRoot(filepath.Dir(dir))
+	if err != nil {
+		return nil, ""
+	}
+	defer func() { _ = root.Close() }()
+	return readSidecar(root, filepath.Base(dir))
 }
 
 // readSidecar reads an output's sidecar as read_bazel_metadata does: a missing

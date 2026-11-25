@@ -1,9 +1,11 @@
 # Inspect Bazel test outputs
 
 `ddtest instrument bazel inspect` lists the payloads and target sidecars of
-Bazel `test.outputs` directories and decodes them in parallel, one output per
+Bazel `test.outputs` directories and reads them in parallel, one output per
 CPU. The rules_test_optimization doctor uses it before validating, so that it
-does not read and parse every payload on one core. The doctor keeps its checks,
+does not read and parse every payload on one core. A payload's test facts come
+from an index of its bytes, which checks its syntax as `encoding/json` does
+without decoding its values into maps. The doctor keeps its checks,
 messages and report; the command only reports what each file contains.
 
 It reads one request from standard input and writes one report to standard
@@ -132,3 +134,33 @@ other than ASCII in the fields that it compares, a record that makes the
 doctor fail, or two copies of one build that differ, the report's `status` is
 `fallback` and the caller evaluates the files itself, so that its warnings and
 failures stay the same.
+
+## Validate the outputs
+
+`ddtest instrument bazel validate` runs the rules_test_optimization doctor's
+checks in one process: it finds the expected targets' outputs, evaluates BEP
+freshness, stages BEP artifacts, inspects the outputs and validates them, and
+writes the doctor's report and support bundle. The doctor still parses its
+arguments, loads its configuration and resolves the paths that only it can
+find through Bazel's runfiles, and writes the request:
+
+```json
+{"schema_version": 1, "args": {"freshness_mode": "required", "...": "..."},
+ "config_path": "/abs/doctor.config.json", "config": {"expected_targets": []},
+ "bep_files": ["/abs/.topt/bazel-bep.json"], "expected_targets_file": "",
+ "execroot_roots": [], "output_base_roots": []}
+```
+
+`Request` in `bazeldoctor/request.go` documents every field. Like the other
+commands, it reads the request from standard input and writes one JSON result
+to standard output: how the run ended and the messages that the doctor
+prints, such as `{"status": "done", "exit_code": 1, "stdout": "", "stderr":
+"[dd-test-optimization-doctor] ..."}`. Like `upload`, it stops on SIGINT or
+SIGTERM, after removing what it staged.
+
+When an input needs the Python doctor's own reading, such as invalid JSON, an
+operating system error whose text the doctor prints, a URL or zip member that
+Python parses in its own way, or a custom support bundle collector, the status
+is `fallback`, the messages are empty, and the doctor validates the outputs
+itself, writing its own report. The command answers `fallback` on Windows, where Python resolves paths
+differently.

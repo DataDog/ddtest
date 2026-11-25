@@ -67,8 +67,8 @@ func TestBepReferenceHelpersFollowTheDoctor(t *testing.T) {
 		"a/test_attempts/attempt_1.outputs": "a/test_attempts/attempt_1.outputs/test.outputs", "//a/b/": "//a/b",
 		"/a/./b": "/a/b", "": ".", ".": ".", `a\b`: "a/b", "///x": "/x",
 	} {
-		if got := canonicalOutputDirectoryKey(directory); got != want {
-			t.Errorf("canonicalOutputDirectoryKey(%q) = %q, want %q", directory, got, want)
+		if got := CanonicalOutputDirectoryKey(directory); got != want {
+			t.Errorf("CanonicalOutputDirectoryKey(%q) = %q, want %q", directory, got, want)
 		}
 	}
 	// urlsplit raises for an unbalanced IPv6 host, and decoded text other

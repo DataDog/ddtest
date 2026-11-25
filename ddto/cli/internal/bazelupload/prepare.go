@@ -172,6 +172,18 @@ func telemetryBody(raw []byte, payload Object, plan Plan, source Source, urls en
 		return nil, err
 	}
 	requests := []outbound{primary}
+	if directive != nil && directive.Synthetic == nil && len(directive.SyntheticMessages) != 0 {
+		if app := object(payload["application"]); app != nil {
+			synthetic := Object{"api_version": payload["api_version"], "request_type": "message-batch",
+				"runtime_id": payload["runtime_id"], "seq_id": directive.SyntheticSeqID,
+				"tracer_time": directive.SyntheticTimestamp, "application": deepCopy(app),
+				"host": deepCopy(payload["host"]), "payload": deepCopy(directive.SyntheticMessages)}
+			if debug, ok := payload["debug"]; ok {
+				synthetic["debug"] = deepCopy(debug)
+			}
+			directive = &TelemetryDirective{ProviderSuffix: directive.ProviderSuffix, Synthetic: synthetic}
+		}
+	}
 	if directive != nil && directive.Synthetic != nil {
 		// The caller supplies the already selected and resolved replay envelope.
 		synthetic := directive.Synthetic
@@ -242,4 +254,24 @@ func withoutEvents(payload Object) Object {
 	envelope := maps.Clone(payload)
 	delete(envelope, "events")
 	return envelope
+}
+
+// deepCopy copies decoded JSON, so a synthetic request shares nothing with
+// the source that it copies.
+func deepCopy(value any) any {
+	switch typed := value.(type) {
+	case Object:
+		copied := make(Object, len(typed))
+		for key, child := range typed {
+			copied[key] = deepCopy(child)
+		}
+		return copied
+	case []any:
+		copied := make([]any, len(typed))
+		for i, child := range typed {
+			copied[i] = deepCopy(child)
+		}
+		return copied
+	}
+	return value
 }

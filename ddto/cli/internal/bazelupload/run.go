@@ -21,6 +21,9 @@ import (
 
 // Options are the command's settings for one invocation.
 type Options struct {
+	// Streaming prepares unbatched test sources without decoding their
+	// events, with the same request bodies; see stream.go.
+	Streaming    bool
 	DryRun       bool
 	KeepPayloads bool
 	Batch        bool
@@ -57,6 +60,9 @@ type worker struct {
 	owners     ownerLookup
 	compressor *gzip.Writer
 	encoder    *jsonEncoder
+	// stream and written index a source and its written events when
+	// streaming.
+	stream, written jdoc
 }
 
 // upload processes the plan's sources, which root contains, and reports each
@@ -331,7 +337,11 @@ func (work *worker) prepare(index int, slot *prepared) {
 		slot.requests, slot.ok = work.prepareOther(index)
 		return
 	}
-	test, ok := work.readTest(index)
+	read := work.readTest
+	if work.options.Streaming && !work.options.Batch {
+		read = work.streamTest
+	}
+	test, ok := read(index)
 	if !ok {
 		return
 	}
@@ -579,6 +589,17 @@ func (work *worker) prepareOther(index int) ([]outbound, bool) {
 		payload, err := decodeObject(raw)
 		if err != nil {
 			result.fail("invalid_telemetry_payload", err)
+			return nil, false
+		}
+		// As the Python worker: a declared reporting service must match its
+		// context, and then the source must name its application.
+		service, err := reportingService(work.plan.Contexts[source.Context], source.Metadata)
+		if err != nil {
+			result.fail("reporting_service_invalid", err)
+			return nil, false
+		}
+		if _, isObject := payload["application"].(Object); service != "" && !isObject {
+			result.fail("invalid_telemetry_metadata", errors.New("telemetry application identity is missing"))
 			return nil, false
 		}
 		requests, err = telemetryBody(raw, payload, work.plan, source, work.urls, work.apiKey)

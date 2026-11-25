@@ -157,3 +157,39 @@ The embedded CITESTCYCLE schema is copied from
 [the Python uploader's schema at 3f387af](https://github.com/DataDog/rules_test_optimization/blob/3f387af594565e6279dca7346c793da92aea032b/tools/core/schemas/agentless-schema.json).
 When changing the wire contract, compare both engines against the same test
 payloads and check the event and metadata values received at intake.
+
+## Run the whole uploader
+
+`ddtest instrument bazel post-process` runs the rules uploader's invocation in
+one process, after the Python uploader acquires its workspace lock and loads
+its configuration, expected targets, contexts, CODEOWNERS file and API key
+fingerprint through Bazel's runfiles. It evaluates BEP or execution-log
+freshness, stages BEP artifacts, waits for the outputs to settle and discovers
+the payloads, selects the expected and fresh outputs, and sends them as
+`upload` does, telemetry included. When the request carries the doctor's
+configuration, it also applies the doctor's output checks to the outputs that
+the standalone doctor would validate, including selected outputs with nothing
+to upload: they are listed, and their sidecars read, before the upload deletes
+what it sends, and each payload's test facts come from the upload's own
+preparation, so no payload is read twice. That preparation streams: instead of decoding each test payload
+into maps and encoding its events again, it indexes the payload's bytes once,
+writes each event in the same form with the enrichment applied, and checks the
+schema, test facts and expected tags on the written events. The request
+bodies are byte for byte those of `upload`, which keeps decoding; batched
+uploads also keep the decoding path. A failed check fails the run, with the doctor's message and
+exit status 1, but every fresh valid payload is still sent. Checks that cannot
+run in Go after the payloads are sent also fail the run, since the Python
+doctor can no longer check those outputs; `--dry-run` in
+the request's configuration validates and sends nothing. It then retains the
+payloads that it did not deliver, cleans its staging, and prints and writes
+the uploader's schema v1 report.
+
+The request on standard input is `PostRequest` in
+`bazeldoctor/post_request.go`. Credentials come from the environment, as for
+`upload`. The command prints the uploader's messages, the doctor's when it
+checks, and the summary, and exits with the uploader's status. Before it
+sends anything, an input that the Python code reads in its own way, such as an
+unusual BEP line or a sidecar with duplicate keys, makes it exit with status 75 having printed nothing, and the
+Python uploader runs the invocation instead; it does so on Windows too. In the
+report's performance section, `main_thread_cpu_seconds` is the process's CPU
+time, which Go measures for all its threads together.

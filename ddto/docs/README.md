@@ -39,8 +39,8 @@ lists the other names that changed. The optimization plan and backlog keep the
 | Choose a focused performance change | [Optimization backlog](optimization-backlog.md) |
 | See what the October 2026 optimization phases measured and changed | [Optimization plan](optimization-plan.md) |
 | Instrument Go tests in Bazel with rules_test_optimization | [Bazel](bazel.md) |
-| Upload the payloads of Bazel tests | [Bazel payload upload](bazel-upload.md) |
-| List and decode Bazel test outputs for the rule's doctor, and find its uploader's payloads | [Bazel output inspection](bazel-inspect.md) |
+| Upload the payloads of Bazel tests, or run the whole rules uploader | [Bazel payload upload](bazel-upload.md) |
+| Validate Bazel test outputs for the rule's doctor, and find its uploader's payloads | [Bazel output inspection](bazel-inspect.md) |
 | Read the retained measurements | [Build, runtime and memory comparison](benchmarks.md) |
 | Collect builds or regenerate tables | [Benchmark runner](build-benchmarks.md) |
 | Compare Go's counters with experimental file coverage | [Per-test coverage modes](https://github.com/tonyredondo/dd-ci-testing-poc/blob/8cc70ca41bdf7f2f5ed276a691ea582f6f15250e/docs/results/file-coverage-20261017-linux-go1.27/README.md) |

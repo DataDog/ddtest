@@ -152,6 +152,12 @@ func Discover(request DiscoverRequest, workers int) Discovery {
 	return discovery
 }
 
+// FindTestOutputDirectories is find_test_output_directories(root,
+// max_depth=maxDepth, root_is_target=rootIsTarget), for the rules' doctor.
+func FindTestOutputDirectories(root string, maxDepth, workers int, rootIsTarget bool) []string {
+	return findTestOutputDirectories(root, maxDepth, max(1, workers), rootIsTarget)
+}
+
 // findTestOutputDirectories follows find_test_output_directories in
 // topt_runtime/bep_execution.py: a sidecar or outputs.zip marks an output and
 // ends the descent; otherwise a test.outputs directory, or a retry output with
