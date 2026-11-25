@@ -932,3 +932,46 @@ for a fresh final response. `--report --detail plan` inspects resolved commands
 without running them. `onboard --apply --yes` adds recognized setup first. See
 [agent coordination](onboarding.md#agent-coordination-and-fresh-results) for
 bounded resume, setup facts, services, exclusions and freshness guarantees.
+
+## Experimental command catalog
+
+The temporary `describe` command exports a pytest command catalog as JSON.
+It does not collect tests, contact Datadog, or change a saved execution plan.
+The output format can change during exploration.
+
+Run this command from the repository root:
+
+```sh
+ddtest describe --id unit/python312 --test-root tests/unit --python python \
+  --output .testoptimization/command.json -- pytest tests/unit
+```
+
+The caller supplies the command ID and its candidate test directories.
+Repeat `--test-root` for multiple directories.
+The command accepts `pytest` and `python -m pytest` invocations.
+It includes `PYTEST_ADDOPTS` in the exported arguments.
+Filters such as `-k` remain arguments. The inventory contains candidate files,
+not the exact cases that those filters select.
+
+The catalog contains the command, candidate files, and TIA request context.
+Its command ID groups work in CI. It does not replace test or suite identities.
+The request context uses the checkout URL and SHA, `DD_SERVICE`, `DD_ENV`,
+the test level, and five runtime and OS fields.
+
+If `_CI_DD_ENV` is set, its value overrides `DD_ENV`.
+The test level follows `_DD_CIVISIBILITY_ITR_SUITE_MODE` when present.
+An explicit `--test-skipping-mode` takes precedence.
+
+File discovery uses the existing pytest file names and exclusions without importing tests.
+Explicit roots override configured `testpaths`.
+The command rejects missing directories and an empty inventory.
+For `pytest` entry points, `--python` names the worker interpreter to probe.
+For `python -m pytest`, the command interpreter supplies the runtime by default.
+The probe uses the existing runtime helper.
+
+To describe a future worker, supply all five fields through `--runtime-tags`:
+`runtime.name`, `runtime.version`, `os.platform`, `os.architecture`, and `os.version`.
+A complete override avoids the runtime probe. A partial override fails.
+
+JSON goes to standard output. `--output` also writes it to a file.
+The catalog makes no skip decision. Use `plan` for existing execution planning.

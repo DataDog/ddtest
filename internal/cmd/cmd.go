@@ -165,6 +165,7 @@ func init() {
 		os.Exit(1)
 	}
 
+	rootCmd.AddCommand(newDescribeCommand())
 	rootCmd.AddCommand(planCmd)
 	rootCmd.AddCommand(runCmd)
 	rootCmd.AddCommand(onboardCmd)

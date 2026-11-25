@@ -116,6 +116,11 @@ func (p *Python) baseEnv() map[string]string {
 }
 
 func (p *Python) CreateTagsMap(ctx context.Context) (map[string]string, error) {
+	return p.CreateTagsMapForInterpreter(ctx, "python")
+}
+
+// CreateTagsMapForInterpreter probes the supplied Python interpreter.
+func (p *Python) CreateTagsMapForInterpreter(ctx context.Context, interpreter string) (map[string]string, error) {
 	tags := make(map[string]string)
 	tags["language"] = p.Name()
 
@@ -130,7 +135,7 @@ func (p *Python) CreateTagsMap(ctx context.Context) (map[string]string, error) {
 
 	// Execute the embedded Python script to get runtime tags
 	args := []string{"-c", pythonEnvScript, tempFile}
-	if output, err := p.executor.CombinedOutput(ctx, "python", args, nil); err != nil {
+	if output, err := p.executor.CombinedOutput(ctx, interpreter, args, nil); err != nil {
 		return nil, runtimeTagProbeError("failed to execute Python script", output, err)
 	}
 
