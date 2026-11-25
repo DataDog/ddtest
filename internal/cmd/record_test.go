@@ -139,3 +139,28 @@ func TestRunCommandRecordsPayloadsOnlyWhenAsked(t *testing.T) {
 
 	assert.Equal(t, dir, settings.GetRecordPayloads())
 }
+
+func TestRunCommandNamesTheRecordersAgentVariable(t *testing.T) {
+	flag := runCmd.PersistentFlags().Lookup("record-payloads-agent-env")
+	require.NotNil(t, flag, "ddtest run should have --record-payloads-agent-env")
+	assert.Empty(t, flag.DefValue, "left out, the setting is the default, which the settings report leaves out")
+	t.Cleanup(func() {
+		_ = flag.Value.Set(flag.DefValue)
+		flag.Changed = false
+		viper.Reset()
+		settings.Init()
+	})
+	viper.Reset()
+	require.NoError(t, bindPersistentFlags(runCmd, runPersistentFlagBindings))
+	settings.Init()
+	assert.Equal(t, "DD_TRACE_AGENT_URL", settings.GetRecordPayloadsAgentEnv())
+	assert.Empty(t, settings.Get().RecordPayloadsAgentEnv)
+
+	// As ddtest reads its settings once, after its flags.
+	require.NoError(t, runCmd.PersistentFlags().Set("record-payloads-agent-env", "_CI_DD_AGENT_URL"))
+	viper.Reset()
+	require.NoError(t, bindPersistentFlags(runCmd, runPersistentFlagBindings))
+	settings.Init()
+
+	assert.Equal(t, "_CI_DD_AGENT_URL", settings.GetRecordPayloadsAgentEnv())
+}

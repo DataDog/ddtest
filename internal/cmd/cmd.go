@@ -184,7 +184,7 @@ func init() {
 
 	runCmd.PersistentFlags().String("record-payloads", "", "Save the workers' Test Optimization payloads as files in this directory instead of sending them to Datadog (see ddtest record)")
 	runCmd.PersistentFlags().String("record-payloads-transport", string(settings.PayloadsTransportAuto), "With --record-payloads, how the workers reach the recording agent: tcp (a local port), unix (a Unix domain socket), or auto, a Unix domain socket for the languages whose tracing libraries reach an agent on one (JavaScript and Java) and TCP for the others")
-	runCmd.PersistentFlags().String("record-payloads-agent-env", settings.DefaultRecordPayloadsAgentEnv, "With --record-payloads, the environment variable that gives the workers' Test Optimization client the recording agent's URL: DD_TRACE_AGENT_URL, or another its library reads first, such as dd-trace-py's _CI_DD_AGENT_URL, which leaves DD_TRACE_AGENT_URL to the code the tests exercise")
+	runCmd.PersistentFlags().String("record-payloads-agent-env", "", "With --record-payloads, the environment variable that gives the workers' Test Optimization client the recording agent's URL: "+settings.DefaultRecordPayloadsAgentEnv+" when left out, or another its library reads first, such as dd-trace-py's _CI_DD_AGENT_URL, which leaves "+settings.DefaultRecordPayloadsAgentEnv+" to the code the tests exercise")
 	if err := bindPersistentFlags(runCmd, runPersistentFlagBindings); err != nil {
 		fmt.Fprintf(os.Stderr, "Error binding CLI flags: %v\n", err)
 		os.Exit(1)
