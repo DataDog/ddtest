@@ -982,6 +982,20 @@ func TestParseCiNodeSpeedup(t *testing.T) {
 	}
 }
 
+func TestParseRecordPayloadsAgentEnv(t *testing.T) {
+	for value, want := range map[string]string{"": "", " _CI_DD_AGENT_URL ": "_CI_DD_AGENT_URL", "DD_TRACE_AGENT_URL": "DD_TRACE_AGENT_URL"} {
+		got, err := ParseRecordPayloadsAgentEnv(value)
+		if err != nil || got != want {
+			t.Errorf("ParseRecordPayloadsAgentEnv(%q) = %q, %v; want %q", value, got, err, want)
+		}
+	}
+	for _, value := range []string{"1AGENT", "DD-TRACE", "A B"} {
+		if got, err := ParseRecordPayloadsAgentEnv(value); err == nil {
+			t.Errorf("ParseRecordPayloadsAgentEnv(%q) = %q, want an error", value, got)
+		}
+	}
+}
+
 func TestParseRecordPayloadsTransport(t *testing.T) {
 	tests := []struct {
 		name      string

@@ -56,9 +56,12 @@ func startPayloadRecorder(payloadsDir string, unixSocket bool) (*payloadRecorder
 }
 
 // pointWorkers sends the workers' payloads to the recorder instead of
-// Datadog, whatever the environment says.
-func (r *payloadRecorder) pointWorkers(workerEnv map[string]string) {
-	workerEnv["DD_TRACE_AGENT_URL"] = r.server.URL()
+// Datadog, whatever the environment says: the recorder's URL in agentEnv,
+// DD_TRACE_AGENT_URL unless a library reads another first, such as
+// dd-trace-py's _CI_DD_AGENT_URL, which leaves DD_TRACE_AGENT_URL as the
+// environment has it, for the agent the code under test talks to.
+func (r *payloadRecorder) pointWorkers(workerEnv map[string]string, agentEnv string) {
+	workerEnv[agentEnv] = r.server.URL()
 	workerEnv[constants.TestOptimizationAgentlessEnabledEnvironmentVariable] = "false"
 }
 

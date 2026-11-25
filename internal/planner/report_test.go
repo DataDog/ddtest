@@ -590,6 +590,7 @@ func TestPrintDDTestSettingsReport_AllSupportedSettings(t *testing.T) {
 	config.ReportEnabled = false
 	config.RecordPayloads = "/tmp/payloads"
 	config.PayloadsTransport = settings.PayloadsTransportUnix
+	config.RecordPayloadsAgentEnv = "_CI_DD_AGENT_URL"
 	config.DurationsFile = "/tmp/durations.json"
 	config.TestDurationsFile = "/tmp/test-durations.json"
 	config.SplitFilesOver = 30 * time.Second
@@ -636,6 +637,7 @@ func TestPrintDDTestSettingsReport_AllSupportedSettings(t *testing.T) {
 		"Report enabled",
 		"Record payloads",
 		"Record payloads transport",
+		"Record payloads agent env",
 		"Durations file",
 		"Test durations file",
 		"Split files over",

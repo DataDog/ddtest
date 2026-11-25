@@ -106,7 +106,7 @@ func (tr *TestRunner) Run(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		recorder.pointWorkers(workerEnvMap)
+		recorder.pointWorkers(workerEnvMap, settings.GetRecordPayloadsAgentEnv())
 	}
 	slog.Info("Worker environment variables", "workerEnvKeys", workerEnvKeys(workerEnvMap))
 

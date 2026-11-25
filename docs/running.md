@@ -236,7 +236,8 @@ ddtest run --ci-node 3 --record-payloads /tmp/payloads
 
 DDTest serves the local stand-in for the Datadog Agent that
 [`ddtest record`](../README.md#ddtest-record) runs, on a free `127.0.0.1` port
-or a Unix domain socket (below), and sets `DD_TRACE_AGENT_URL` to it and
+or a Unix domain socket (below), and sets `DD_TRACE_AGENT_URL`, or the variable
+`--record-payloads-agent-env` names (below), to it and
 `DD_CIVISIBILITY_AGENTLESS_ENABLED` to `false` for every worker, overriding
 `--worker-env` and the environment.
 Configuration requests are answered from the plan's HTTP cache. After the
@@ -261,6 +262,17 @@ others and on Windows:
 | Ruby | `tcp` | datadog-ci 1.42.0 connects to the agent over TCP only, and the run fails with a `unix://` URL; fixed in DataDog/datadog-ci-rb#678 |
 
 With `unix`, `DD_TRACE_AGENT_URL` is `unix://` and the socket's path.
+
+`--record-payloads-agent-env` (or
+`DD_TEST_OPTIMIZATION_RUNNER_RECORD_PAYLOADS_AGENT_ENV`) names the variable
+that gets the recorder's URL, `DD_TRACE_AGENT_URL` by default. A test suite
+whose own code talks to an agent through `DD_TRACE_AGENT_URL` needs that
+variable left alone. dd-trace-py's suites are one: the tracer they test
+reports their results too. dd-trace-py's Test Optimization client reads
+`_CI_DD_AGENT_URL` before `DD_TRACE_AGENT_URL`, so with
+`--record-payloads-agent-env _CI_DD_AGENT_URL` the results go to the
+recorder and the tests keep the `DD_TRACE_AGENT_URL` their environment sets.
+`DD_CIVISIBILITY_AGENTLESS_ENABLED` is `false` either way.
 
 ## Custom Commands
 

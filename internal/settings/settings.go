@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -154,6 +155,7 @@ type Config struct {
 	ReportEnabled          bool              `mapstructure:"report_enabled"`
 	RecordPayloads         string            `mapstructure:"record_payloads"`
 	PayloadsTransport      PayloadsTransport `mapstructure:"record_payloads_transport"`
+	RecordPayloadsAgentEnv string            `mapstructure:"record_payloads_agent_env"`
 	DurationsFile          string            `mapstructure:"durations_file"`
 	TestDurationsFile      string            `mapstructure:"test_durations_file"`
 	SplitFilesOver         time.Duration     `mapstructure:"split_files_over"`
@@ -257,6 +259,12 @@ func Init() {
 		os.Exit(1)
 	}
 	viper.Set("record_payloads_transport", recordPayloadsTransport)
+	recordPayloadsAgentEnv, err := ParseRecordPayloadsAgentEnv(viper.GetString("record_payloads_agent_env"))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
+		os.Exit(1)
+	}
+	viper.Set("record_payloads_agent_env", recordPayloadsAgentEnv)
 
 	config = &Config{}
 	if err := viper.Unmarshal(config); err != nil {
@@ -289,6 +297,7 @@ func setDefaults() {
 	viper.SetDefault("report_enabled", true)
 	viper.SetDefault("record_payloads", "")
 	viper.SetDefault("record_payloads_transport", string(PayloadsTransportAuto))
+	viper.SetDefault("record_payloads_agent_env", "")
 	viper.SetDefault("durations_file", "")
 	viper.SetDefault("test_durations_file", "")
 	viper.SetDefault("split_files_over", "0s")
@@ -320,6 +329,24 @@ func ParseRecordPayloadsTransport(value string) (PayloadsTransport, error) {
 	default:
 		return "", fmt.Errorf("record_payloads_transport must be auto, tcp or unix, got %q", value)
 	}
+}
+
+// DefaultRecordPayloadsAgentEnv is the variable that gives the workers the
+// recording agent's URL unless record_payloads_agent_env names another.
+const DefaultRecordPayloadsAgentEnv = "DD_TRACE_AGENT_URL"
+
+// recordPayloadsAgentEnvName is an environment variable's name.
+var recordPayloadsAgentEnvName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// ParseRecordPayloadsAgentEnv resolves the record_payloads_agent_env
+// setting: a variable's name, or empty for DefaultRecordPayloadsAgentEnv,
+// which the settings report then leaves out as the default.
+func ParseRecordPayloadsAgentEnv(value string) (string, error) {
+	name := strings.TrimSpace(value)
+	if name != "" && !recordPayloadsAgentEnvName.MatchString(name) {
+		return "", fmt.Errorf("record_payloads_agent_env must be an environment variable's name, got %q", value)
+	}
+	return name, nil
 }
 
 // ParseNonNegativeDurationSetting resolves a duration setting from a Go
@@ -486,6 +513,15 @@ func GetRecordPayloads() string {
 // that records their payloads.
 func GetRecordPayloadsTransport() PayloadsTransport {
 	return Get().PayloadsTransport
+}
+
+// GetRecordPayloadsAgentEnv is the environment variable that gives ddtest
+// run's workers the recording agent's URL.
+func GetRecordPayloadsAgentEnv() string {
+	if name := Get().RecordPayloadsAgentEnv; name != "" {
+		return name
+	}
+	return DefaultRecordPayloadsAgentEnv
 }
 
 // GetDurationsFile is a JSON file of suite durations that planning uses

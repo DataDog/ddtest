@@ -19,18 +19,24 @@ import (
 )
 
 // sendingFramework sends one test cycle payload to the agent in its
-// environment while it runs tests, as a tracing library would.
+// environment while it runs tests, as a tracing library would: the one
+// agentEnv names, DD_TRACE_AGENT_URL when it is empty.
 type sendingFramework struct {
 	*MockFramework
-	t      *testing.T
-	status int
+	t        *testing.T
+	status   int
+	agentEnv string
 }
 
 func (f *sendingFramework) RunTests(ctx context.Context, testFiles []string, envMap map[string]string) error {
 	payload := msgp.AppendMapHeader(nil, 1)
 	payload = msgp.AppendString(payload, "version")
 	payload = msgp.AppendInt(payload, 1)
-	agentURL, client := envMap["DD_TRACE_AGENT_URL"], http.DefaultClient
+	agentEnv := f.agentEnv
+	if agentEnv == "" {
+		agentEnv = "DD_TRACE_AGENT_URL"
+	}
+	agentURL, client := envMap[agentEnv], http.DefaultClient
 	if socket, ok := strings.CutPrefix(agentURL, "unix://"); ok {
 		agentURL = "http://agent"
 		client = &http.Client{Transport: &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
@@ -75,6 +81,29 @@ func TestRunRecordsTheWorkersPayloadsWhenAsked(t *testing.T) {
 	assert.Equal(t, "false", calls[0].EnvMap["DD_CIVISIBILITY_AGENTLESS_ENABLED"])
 	_, err = http.Get(agentURL + "/info")
 	assert.Error(t, err, "the recorder still answers after the run")
+}
+
+func TestRunRecordsThroughTheAgentVariableItIsGiven(t *testing.T) {
+	payloadsDir := filepath.Join(t.TempDir(), "payloads")
+	t.Setenv("DD_TEST_OPTIMIZATION_RUNNER_RECORD_PAYLOADS", payloadsDir)
+	t.Setenv("DD_TEST_OPTIMIZATION_RUNNER_RECORD_PAYLOADS_AGENT_ENV", "_CI_DD_AGENT_URL")
+	t.Setenv("DD_TEST_OPTIMIZATION_RUNNER_WORKER_ENV", "DD_TRACE_AGENT_URL=http://localhost:8126")
+	withRunnerTestSettings(t)
+	prepareSequentialRun(t)
+	framework := &sendingFramework{MockFramework: &MockFramework{FrameworkName: "pytest"}, t: t, agentEnv: "_CI_DD_AGENT_URL"}
+	platform := &MockPlatform{PlatformName: "python", Framework: framework}
+
+	require.NoError(t, NewWithDependencies(platform, framework, &fakePlanner{}).Run(context.Background()))
+
+	assert.Equal(t, http.StatusAccepted, framework.status)
+	saved, err := os.ReadDir(filepath.Join(payloadsDir, "tests"))
+	require.NoError(t, err)
+	assert.Len(t, saved, 1)
+	calls := framework.GetRunTestsCalls()
+	require.Len(t, calls, 1)
+	assert.Regexp(t, `^http://127\.0\.0\.1:\d+$`, calls[0].EnvMap["_CI_DD_AGENT_URL"])
+	assert.Equal(t, "http://localhost:8126", calls[0].EnvMap["DD_TRACE_AGENT_URL"], "the tests' own agent is left as given")
+	assert.Equal(t, "false", calls[0].EnvMap["DD_CIVISIBILITY_AGENTLESS_ENABLED"])
 }
 
 func TestRunRecordsOverAUnixSocketWhenAsked(t *testing.T) {
