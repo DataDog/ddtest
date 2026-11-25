@@ -262,6 +262,39 @@ others and on Windows:
 
 With `unix`, `DD_TRACE_AGENT_URL` is `unix://` and the socket's path.
 
+The tests themselves may talk to an agent through the same variable, such as
+a Datadog Agent their CI job runs beside them, or a tracing library's own
+test suite, whose code under test sends its traces there. The recorder
+forwards that agent every request that isn't Test Optimization's: the tests'
+traces, stats, telemetry and remote configuration requests, and other EVP
+proxy requests. It records the Test Optimization payloads alone, and answers
+the libraries' configuration and git requests itself, as without an agent.
+Its `/info` is the agent's, with `/evp_proxy/v2/` and `/evp_proxy/v4/` added
+when the agent lists neither, so that the reporting library still finds
+where to send its payloads; the telemetry it records is forwarded too, since
+the reporting library's and the tests' come the same way. The agent is,
+unless `--record-payloads-upstream` (or
+`DD_TEST_OPTIMIZATION_RUNNER_RECORD_PAYLOADS_UPSTREAM`) names another:
+
+1. the `DD_TRACE_AGENT_URL` the workers would have had, from `--worker-env`
+   or the environment;
+2. otherwise `DD_AGENT_HOST` and `DD_TRACE_AGENT_PORT`, `localhost` and
+   `8126` for the one left out, when either is set;
+3. otherwise none: the recorder answers everything itself and turns down
+   what isn't Test Optimization's, as before.
+
+`--record-payloads-upstream none` forwards nothing; a URL, `http://host:port`
+or `unix://` and a socket's absolute path, forwards to that agent. A forwarded
+request goes as the tests sent it, its `Host` the agent's; an agent that
+doesn't answer leaves the tests' requests with `502 Bad Gateway`, as an
+agent that is down would, while `/info` is then the recorder's own and the
+payloads are still recorded. The workers' `DD_TRACE_AGENT_URL` is the
+recorder's either way, so a test that checks that variable's value sees the
+recorder's URL. A library that reads another variable before
+`DD_TRACE_AGENT_URL` for its Test Optimization client, such as dd-trace-py's
+internal `_CI_DD_AGENT_URL`, would send its payloads past the recorder if
+the environment set it.
+
 ## Custom Commands
 
 Use `--command` to override the framework's default base test command where

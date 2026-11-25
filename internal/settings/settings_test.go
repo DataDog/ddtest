@@ -1211,3 +1211,17 @@ func TestGetWorkerEnvMap(t *testing.T) {
 		}
 	})
 }
+
+func TestParseRecordPayloadsUpstream(t *testing.T) {
+	for value, want := range map[string]string{"": "", " none ": RecordPayloadsNoUpstream, "http://localhost:8126": "http://localhost:8126", "unix:///var/run/datadog/apm.socket": "unix:///var/run/datadog/apm.socket"} {
+		got, err := ParseRecordPayloadsUpstream(value)
+		if err != nil || got != want {
+			t.Errorf("ParseRecordPayloadsUpstream(%q) = %q, %v; want %q", value, got, err, want)
+		}
+	}
+	for _, value := range []string{"localhost:8126", "ftp://agent", "unix://relative"} {
+		if _, err := ParseRecordPayloadsUpstream(value); err == nil {
+			t.Errorf("ParseRecordPayloadsUpstream(%q) succeeded, want an error", value)
+		}
+	}
+}

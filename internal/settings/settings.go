@@ -12,6 +12,8 @@ import (
 
 	"github.com/klauspost/cpuid/v2"
 	"github.com/spf13/viper"
+
+	"github.com/DataDog/ddtest/internal/offlineagent"
 )
 
 const (
@@ -154,6 +156,7 @@ type Config struct {
 	ReportEnabled          bool              `mapstructure:"report_enabled"`
 	RecordPayloads         string            `mapstructure:"record_payloads"`
 	PayloadsTransport      PayloadsTransport `mapstructure:"record_payloads_transport"`
+	RecordPayloadsUpstream string            `mapstructure:"record_payloads_upstream"`
 	DurationsFile          string            `mapstructure:"durations_file"`
 	TestDurationsFile      string            `mapstructure:"test_durations_file"`
 	SplitFilesOver         time.Duration     `mapstructure:"split_files_over"`
@@ -257,6 +260,12 @@ func Init() {
 		os.Exit(1)
 	}
 	viper.Set("record_payloads_transport", recordPayloadsTransport)
+	recordPayloadsUpstream, err := ParseRecordPayloadsUpstream(viper.GetString("record_payloads_upstream"))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
+		os.Exit(1)
+	}
+	viper.Set("record_payloads_upstream", recordPayloadsUpstream)
 
 	config = &Config{}
 	if err := viper.Unmarshal(config); err != nil {
@@ -289,6 +298,7 @@ func setDefaults() {
 	viper.SetDefault("report_enabled", true)
 	viper.SetDefault("record_payloads", "")
 	viper.SetDefault("record_payloads_transport", string(PayloadsTransportAuto))
+	viper.SetDefault("record_payloads_upstream", "")
 	viper.SetDefault("durations_file", "")
 	viper.SetDefault("test_durations_file", "")
 	viper.SetDefault("split_files_over", "0s")
@@ -486,6 +496,33 @@ func GetRecordPayloads() string {
 // that records their payloads.
 func GetRecordPayloadsTransport() PayloadsTransport {
 	return Get().PayloadsTransport
+}
+
+// RecordPayloadsNoUpstream is the record_payloads_upstream that forwards
+// nothing, whatever agent the workers' environment names.
+const RecordPayloadsNoUpstream = "none"
+
+// ParseRecordPayloadsUpstream resolves the record_payloads_upstream
+// setting: empty, the agent the workers' environment names, if any;
+// RecordPayloadsNoUpstream; or an agent's URL, as DD_TRACE_AGENT_URL takes
+// one (offlineagent.ParseUpstream).
+func ParseRecordPayloadsUpstream(value string) (string, error) {
+	switch upstream := strings.TrimSpace(value); upstream {
+	case "", RecordPayloadsNoUpstream:
+		return upstream, nil
+	default:
+		if _, err := offlineagent.ParseUpstream(upstream); err != nil {
+			return "", fmt.Errorf("record_payloads_upstream must be none or an agent's URL: %w", err)
+		}
+		return upstream, nil
+	}
+}
+
+// GetRecordPayloadsUpstream is the agent ddtest run's recorder forwards the
+// workers' other requests to: empty for the one their environment names,
+// RecordPayloadsNoUpstream, or a URL.
+func GetRecordPayloadsUpstream() string {
+	return Get().RecordPayloadsUpstream
 }
 
 // GetDurationsFile is a JSON file of suite durations that planning uses

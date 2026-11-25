@@ -5,6 +5,7 @@ import (
 	"context"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -172,4 +173,74 @@ func TestRunFailsBeforeTestsWhenThePayloadsDirectoryCannotBeCreated(t *testing.T
 	require.Error(t, err)
 	assert.Equal(t, errcode.RunPayloadRecorderFailed, errcode.CodeOf(err))
 	assert.Zero(t, framework.GetRunTestsCallsCount(), "tests ran without a place to save their payloads")
+}
+
+// forwardingFramework sends a trace to the agent in its environment, as the
+// code under test would, besides the test cycle payload its tracing library
+// sends there.
+type forwardingFramework struct {
+	*sendingFramework
+	traceStatus int
+}
+
+func (f *forwardingFramework) RunTests(ctx context.Context, testFiles []string, envMap map[string]string) error {
+	request, err := http.NewRequestWithContext(ctx, http.MethodPut, envMap["DD_TRACE_AGENT_URL"]+"/v0.4/traces", strings.NewReader("[]"))
+	require.NoError(f.t, err)
+	response, err := http.DefaultClient.Do(request)
+	require.NoError(f.t, err)
+	f.traceStatus = response.StatusCode
+	require.NoError(f.t, response.Body.Close())
+	return f.sendingFramework.RunTests(ctx, testFiles, envMap)
+}
+
+func TestRunForwardsTheWorkersOtherRequestsToTheAgentTheirEnvironmentNamed(t *testing.T) {
+	var forwarded []string
+	agent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		forwarded = append(forwarded, r.Method+" "+r.URL.Path)
+	}))
+	t.Cleanup(agent.Close)
+	payloadsDir := filepath.Join(t.TempDir(), "payloads")
+	t.Setenv("DD_TEST_OPTIMIZATION_RUNNER_RECORD_PAYLOADS", payloadsDir)
+	t.Setenv("DD_TRACE_AGENT_URL", agent.URL)
+	withRunnerTestSettings(t)
+	prepareSequentialRun(t)
+	framework := &forwardingFramework{sendingFramework: &sendingFramework{MockFramework: &MockFramework{FrameworkName: "pytest"}, t: t}}
+	platform := &MockPlatform{PlatformName: "python", Framework: framework}
+
+	require.NoError(t, NewWithDependencies(platform, framework, &fakePlanner{}).Run(context.Background()))
+
+	assert.Equal(t, http.StatusOK, framework.traceStatus)
+	assert.Equal(t, []string{"PUT /v0.4/traces"}, forwarded, "the trace reached the agent, the test cycle payload didn't")
+	assert.Equal(t, http.StatusAccepted, framework.status)
+	saved, err := os.ReadDir(filepath.Join(payloadsDir, "tests"))
+	require.NoError(t, err)
+	assert.Len(t, saved, 1)
+	calls := framework.GetRunTestsCalls()
+	require.Len(t, calls, 1)
+	assert.NotEqual(t, agent.URL, calls[0].EnvMap["DD_TRACE_AGENT_URL"], "the workers reach the recorder")
+}
+
+func TestPayloadsUpstream(t *testing.T) {
+	for _, name := range []string{"DD_TRACE_AGENT_URL", "DD_AGENT_HOST", "DD_TRACE_AGENT_PORT"} {
+		t.Setenv(name, "")
+	}
+	upstream := func(setting string, workerEnv map[string]string) string {
+		t.Helper()
+		u := payloadsUpstream(setting, workerEnv)
+		if u == nil {
+			return ""
+		}
+		return u.String()
+	}
+	assert.Equal(t, "", upstream("", nil), "an environment that names no agent forwards nothing")
+	assert.Equal(t, "http://agent:9126", upstream("http://agent:9126", map[string]string{"DD_TRACE_AGENT_URL": "http://other:8126"}))
+	t.Setenv("DD_TRACE_AGENT_URL", "http://localhost:8126")
+	assert.Equal(t, "http://localhost:8126", upstream("", nil))
+	assert.Equal(t, "", upstream("none", nil))
+	assert.Equal(t, "unix:///var/run/datadog/apm.socket", upstream("", map[string]string{"DD_TRACE_AGENT_URL": "unix:///var/run/datadog/apm.socket"}), "--worker-env's over the process's")
+	assert.Equal(t, "", upstream("", map[string]string{"DD_TRACE_AGENT_URL": "localhost:8126"}), "a URL no library takes")
+	t.Setenv("DD_TRACE_AGENT_URL", "")
+	assert.Equal(t, "http://ddagent:8126", upstream("", map[string]string{"DD_AGENT_HOST": "ddagent"}))
+	assert.Equal(t, "http://localhost:9126", upstream("", map[string]string{"DD_TRACE_AGENT_PORT": "9126"}))
+	assert.Equal(t, "http://[::1]:8126", upstream("", map[string]string{"DD_AGENT_HOST": "::1"}))
 }
