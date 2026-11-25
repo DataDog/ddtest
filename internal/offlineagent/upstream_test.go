@@ -257,7 +257,9 @@ func TestParseUpstream(t *testing.T) {
 	}
 	_, err := ParseUpstream("http://localhost:8126/")
 	assert.NoError(t, err, "a trailing slash")
-	_, err = ParseUpstream("http://alice:secret@agent:8126")
-	require.Error(t, err)
-	assert.NotContains(t, err.Error(), "secret", "the error repeats no credential")
+	for _, value := range []string{"http://alice:secret@agent:8126", "http:alice:secret@agent:8126", "http:/alice:secret@agent:8126", "unix:alice:secret@x", "ftp://alice:secret@x"} {
+		_, err = ParseUpstream(value)
+		require.Error(t, err, value)
+		assert.NotContains(t, err.Error(), "secret", "the error repeats no credential of %s", value)
+	}
 }

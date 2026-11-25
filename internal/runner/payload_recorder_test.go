@@ -224,24 +224,37 @@ func TestPayloadsUpstream(t *testing.T) {
 	for _, name := range []string{"DD_TRACE_AGENT_URL", "DD_AGENT_HOST", "DD_TRACE_AGENT_PORT"} {
 		t.Setenv(name, "")
 	}
-	upstream := func(setting string, workerEnv map[string]string) string {
+	one := [][2]int{{0, 0}}
+	upstream := func(setting string, workerEnv map[string]string, workers [][2]int) string {
 		t.Helper()
-		u := payloadsUpstream(setting, workerEnv)
+		u := payloadsUpstream(setting, workerEnv, workers)
 		if u == nil {
 			return ""
 		}
 		return u.String()
 	}
-	assert.Equal(t, "", upstream("", nil), "an environment that names no agent forwards nothing")
-	assert.Equal(t, "http://agent:9126", upstream("http://agent:9126", map[string]string{"DD_TRACE_AGENT_URL": "http://other:8126"}))
+	assert.Equal(t, "", upstream("", nil, one), "an environment that names no agent forwards nothing")
+	assert.Equal(t, "http://agent:9126", upstream("http://agent:9126", map[string]string{"DD_TRACE_AGENT_URL": "http://other:8126"}, one))
 	t.Setenv("DD_TRACE_AGENT_URL", "http://localhost:8126")
-	assert.Equal(t, "http://localhost:8126", upstream("", nil))
-	assert.Equal(t, "", upstream("none", nil))
-	assert.Equal(t, "unix:///var/run/datadog/apm.socket", upstream("", map[string]string{"DD_TRACE_AGENT_URL": "unix:///var/run/datadog/apm.socket"}), "--worker-env's over the process's")
-	assert.Equal(t, "", upstream("", map[string]string{"DD_TRACE_AGENT_URL": "localhost:8126"}), "a URL no library takes")
-	assert.Equal(t, "", upstream("", map[string]string{"DD_TRACE_AGENT_URL": "http://agent-{{workerIndex}}:8126"}), "an agent per worker")
+	assert.Equal(t, "http://localhost:8126", upstream("", nil, one))
+	assert.Equal(t, "", upstream("none", nil, one))
+	assert.Equal(t, "unix:///var/run/datadog/apm.socket", upstream("", map[string]string{"DD_TRACE_AGENT_URL": "unix:///var/run/datadog/apm.socket"}, one), "--worker-env's over the process's")
+	assert.Equal(t, "", upstream("", map[string]string{"DD_TRACE_AGENT_URL": "localhost:8126"}, one), "a URL no library takes")
+	// --worker-env's placeholders, filled for each of the run's workers: one agent for all of them is forwarded to.
+	perWorker := map[string]string{"DD_TRACE_AGENT_URL": "http://agent-{{workerIndex}}:8126"}
+	assert.Equal(t, "http://agent-0:8126", upstream("", perWorker, runWorkers(-1, 1, 1)), "a sequential run's one worker")
+	assert.Equal(t, "", upstream("", perWorker, runWorkers(-1, 1, 2)), "an agent per worker")
+	perNode := map[string]string{"DD_TRACE_AGENT_URL": "http://agent-{{nodeIndex}}:8126"}
+	assert.Equal(t, "http://agent-3:8126", upstream("", perNode, runWorkers(3, 2, 1)), "a CI node's workers, one node")
 	t.Setenv("DD_TRACE_AGENT_URL", "")
-	assert.Equal(t, "http://ddagent:8126", upstream("", map[string]string{"DD_AGENT_HOST": "ddagent"}))
-	assert.Equal(t, "http://localhost:9126", upstream("", map[string]string{"DD_TRACE_AGENT_PORT": "9126"}))
-	assert.Equal(t, "http://[::1]:8126", upstream("", map[string]string{"DD_AGENT_HOST": "::1"}))
+	assert.Equal(t, "http://ddagent:8126", upstream("", map[string]string{"DD_AGENT_HOST": "ddagent"}, one))
+	assert.Equal(t, "http://localhost:9126", upstream("", map[string]string{"DD_TRACE_AGENT_PORT": "9126"}, one))
+	assert.Equal(t, "http://[::1]:8126", upstream("", map[string]string{"DD_AGENT_HOST": "::1"}, one))
+}
+
+func TestRunWorkers(t *testing.T) {
+	assert.Equal(t, [][2]int{{0, 0}}, runWorkers(-1, 1, 1), "sequential")
+	assert.Equal(t, [][2]int{{0, 0}, {0, 1}, {0, 2}}, runWorkers(-1, 1, 3), "parallel")
+	assert.Equal(t, [][2]int{{4, 0}, {4, 1}}, runWorkers(4, 2, 8), "a CI node's workers")
+	assert.Equal(t, [][2]int{{4, 0}}, runWorkers(4, 0, 8), "a CI node of one worker")
 }

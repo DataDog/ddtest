@@ -74,13 +74,12 @@ const (
 // payloadsUpstream is the agent the recorder forwards the workers' other
 // requests to: setting's URL, nothing for settings.RecordPayloadsNoUpstream,
 // and otherwise the agent the workers would have reached without the
-// recorder, from their environment, --worker-env's over the process's:
-// DD_TRACE_AGENT_URL, or DD_AGENT_HOST and DD_TRACE_AGENT_PORT, localhost
-// and 8126 for the one left out; none when neither is set, as before the
-// recorder forwarded anything. A URL the environment gives that no tracing
-// library could take, or one with --worker-env's index placeholders, an
-// agent per worker, is said and not forwarded to.
-func payloadsUpstream(setting string, workerEnv map[string]string) *url.URL {
+// recorder (workerAgent), the same for each worker of the run, whose node's
+// and worker's indices are workers, --worker-env's placeholders filled for
+// each; none when no worker's environment names one, as before the
+// recorder forwarded anything, or when they name different agents, which
+// one recorder for every worker can't forward to.
+func payloadsUpstream(setting string, workerEnv map[string]string, workers [][2]int) *url.URL {
 	if setting == settings.RecordPayloadsNoUpstream {
 		return nil
 	}
@@ -89,6 +88,25 @@ func payloadsUpstream(setting string, workerEnv map[string]string) *url.URL {
 		upstream, _ := offlineagent.ParseUpstream(setting)
 		return upstream
 	}
+	var upstream *url.URL
+	for i, w := range workers {
+		agent := workerAgent(replaceIndexPlaceholders(workerEnv, w[0], w[1]))
+		switch {
+		case i == 0:
+			upstream = agent
+		case (agent == nil) != (upstream == nil) || agent != nil && agent.String() != upstream.String():
+			slog.Warn("The workers' environment names a different agent for each worker; the recorder forwards nothing")
+			return nil
+		}
+	}
+	return upstream
+}
+
+// workerAgent is the agent a worker's environment names, --worker-env's
+// over the process's: DD_TRACE_AGENT_URL, or DD_AGENT_HOST and
+// DD_TRACE_AGENT_PORT, localhost and 8126 for the one left out; nil when
+// neither is set, or for a URL no tracing library could take, which it says.
+func workerAgent(workerEnv map[string]string) *url.URL {
 	lookup := func(name string) string {
 		if value, ok := workerEnv[name]; ok {
 			return strings.TrimSpace(value)
@@ -96,11 +114,6 @@ func payloadsUpstream(setting string, workerEnv map[string]string) *url.URL {
 		return strings.TrimSpace(os.Getenv(name))
 	}
 	if value := lookup(agentURLEnv); value != "" {
-		if strings.Contains(value, "{{") {
-			// One recorder for every worker can't forward to an agent of each.
-			slog.Warn("The workers' DD_TRACE_AGENT_URL names an agent per worker; the recorder forwards nothing")
-			return nil
-		}
 		upstream, err := offlineagent.ParseUpstream(value)
 		if err != nil {
 			slog.Warn("The workers' agent isn't one the recorder can forward to; it forwards nothing", "error", err)
@@ -124,6 +137,24 @@ func payloadsUpstream(setting string, workerEnv map[string]string) *url.URL {
 		return nil
 	}
 	return upstream
+}
+
+// runWorkers are the node's and worker's indices of every worker a run
+// starts, as its executor numbers them: a CI node's workers, a parallel
+// run's, or a sequential run's one.
+func runWorkers(ciNode, ciNodeWorkers, parallelRunners int) [][2]int {
+	node, count := 0, 1
+	switch {
+	case ciNode >= 0:
+		node, count = ciNode, max(ciNodeWorkers, 1)
+	case parallelRunners > 1:
+		count = parallelRunners
+	}
+	workers := make([][2]int, count)
+	for i := range workers {
+		workers[i] = [2]int{node, i}
+	}
+	return workers
 }
 
 // pointWorkers sends the workers' payloads to the recorder instead of

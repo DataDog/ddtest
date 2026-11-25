@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -36,29 +35,30 @@ type upstream struct {
 // DD_TRACE_AGENT_URL: http://host:port or https://host:port, a trailing /
 // aside, or unix:// and a socket's absolute path. A URL with credentials, a
 // base path, a query or a fragment is refused, since an agent takes none and
-// the recorder would forward without them; its errors don't repeat it.
+// the recorder would forward without them; no error repeats the URL, which
+// may hold a credential in a form url.URL.Redacted doesn't recognize.
 func ParseUpstream(value string) (*url.URL, error) {
 	u, err := url.Parse(strings.TrimSpace(value))
 	if err != nil {
 		return nil, errors.New("the upstream agent's URL doesn't parse")
 	}
-	if u.User != nil || u.RawQuery != "" || u.Fragment != "" {
-		return nil, errors.New("the upstream agent's URL has credentials, a query or a fragment, which an agent's URL doesn't take")
+	if u.User != nil || u.Opaque != "" || u.RawQuery != "" || u.Fragment != "" {
+		return nil, errors.New("the upstream agent's URL has credentials, a query, a fragment or no //, which an agent's URL doesn't take")
 	}
 	switch u.Scheme {
 	case "http", "https":
 		if u.Host == "" {
-			return nil, fmt.Errorf("the upstream agent %s has no host", u.Redacted())
+			return nil, errors.New("the upstream agent's URL has no host")
 		}
 		if u.Path != "" && u.Path != "/" {
-			return nil, fmt.Errorf("the upstream agent %s has a path, which an agent's URL doesn't take", u.Redacted())
+			return nil, errors.New("the upstream agent's URL has a path, which an agent's URL doesn't take")
 		}
 	case "unix":
 		if !strings.HasPrefix(u.Path, "/") {
-			return nil, fmt.Errorf("the upstream agent %s names no socket's absolute path", u.Redacted())
+			return nil, errors.New("the upstream agent's unix:// URL names no socket's absolute path")
 		}
 	default:
-		return nil, fmt.Errorf("the upstream agent %s: want http://, https:// or unix://", u.Redacted())
+		return nil, errors.New("the upstream agent's URL isn't http://, https:// or unix://")
 	}
 	return u, nil
 }
