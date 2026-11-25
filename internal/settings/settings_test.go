@@ -1219,9 +1219,10 @@ func TestParseRecordPayloadsUpstream(t *testing.T) {
 			t.Errorf("ParseRecordPayloadsUpstream(%q) = %q, %v; want %q", value, got, err, want)
 		}
 	}
-	for _, value := range []string{"localhost:8126", "ftp://agent", "unix://relative"} {
-		if _, err := ParseRecordPayloadsUpstream(value); err == nil {
-			t.Errorf("ParseRecordPayloadsUpstream(%q) succeeded, want an error", value)
+	for _, value := range []string{"localhost:8126", "ftp://agent", "unix://relative", "http://alice:secret@agent:8126"} {
+		_, err := ParseRecordPayloadsUpstream(value)
+		if err == nil || strings.Contains(err.Error(), "secret") {
+			t.Errorf("ParseRecordPayloadsUpstream(%q) = %v, want an error that repeats no credential", value, err)
 		}
 	}
 }

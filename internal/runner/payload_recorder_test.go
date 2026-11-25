@@ -239,6 +239,7 @@ func TestPayloadsUpstream(t *testing.T) {
 	assert.Equal(t, "", upstream("none", nil))
 	assert.Equal(t, "unix:///var/run/datadog/apm.socket", upstream("", map[string]string{"DD_TRACE_AGENT_URL": "unix:///var/run/datadog/apm.socket"}), "--worker-env's over the process's")
 	assert.Equal(t, "", upstream("", map[string]string{"DD_TRACE_AGENT_URL": "localhost:8126"}), "a URL no library takes")
+	assert.Equal(t, "", upstream("", map[string]string{"DD_TRACE_AGENT_URL": "http://agent-{{workerIndex}}:8126"}), "an agent per worker")
 	t.Setenv("DD_TRACE_AGENT_URL", "")
 	assert.Equal(t, "http://ddagent:8126", upstream("", map[string]string{"DD_AGENT_HOST": "ddagent"}))
 	assert.Equal(t, "http://localhost:9126", upstream("", map[string]string{"DD_TRACE_AGENT_PORT": "9126"}))

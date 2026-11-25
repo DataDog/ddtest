@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -32,24 +33,32 @@ type upstream struct {
 }
 
 // ParseUpstream reads an agent URL as tracing libraries take
-// DD_TRACE_AGENT_URL: http://host:port, https://host:port, or unix:// and a
-// socket's absolute path.
+// DD_TRACE_AGENT_URL: http://host:port or https://host:port, a trailing /
+// aside, or unix:// and a socket's absolute path. A URL with credentials, a
+// base path, a query or a fragment is refused, since an agent takes none and
+// the recorder would forward without them; its errors don't repeat it.
 func ParseUpstream(value string) (*url.URL, error) {
 	u, err := url.Parse(strings.TrimSpace(value))
 	if err != nil {
-		return nil, fmt.Errorf("the upstream agent %q: %w", value, err)
+		return nil, errors.New("the upstream agent's URL doesn't parse")
+	}
+	if u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return nil, errors.New("the upstream agent's URL has credentials, a query or a fragment, which an agent's URL doesn't take")
 	}
 	switch u.Scheme {
 	case "http", "https":
 		if u.Host == "" {
-			return nil, fmt.Errorf("the upstream agent %q has no host", value)
+			return nil, fmt.Errorf("the upstream agent %s has no host", u.Redacted())
+		}
+		if u.Path != "" && u.Path != "/" {
+			return nil, fmt.Errorf("the upstream agent %s has a path, which an agent's URL doesn't take", u.Redacted())
 		}
 	case "unix":
 		if !strings.HasPrefix(u.Path, "/") {
-			return nil, fmt.Errorf("the upstream agent %q names no socket's absolute path", value)
+			return nil, fmt.Errorf("the upstream agent %s names no socket's absolute path", u.Redacted())
 		}
 	default:
-		return nil, fmt.Errorf("the upstream agent %q: want http://, https:// or unix://", value)
+		return nil, fmt.Errorf("the upstream agent %s: want http://, https:// or unix://", u.Redacted())
 	}
 	return u, nil
 }
@@ -76,7 +85,11 @@ func newUpstream(target *url.URL) *upstream {
 			http.Error(w, "the upstream agent is unreachable: "+err.Error(), http.StatusBadGateway)
 		},
 	}
-	return &upstream{proxy: proxy, client: &http.Client{Transport: transport, Timeout: upstreamInfoTimeout}, target: base}
+	// The agent's own answer, a redirect included, as the reverse proxy
+	// gives it.
+	client := &http.Client{Transport: transport, Timeout: upstreamInfoTimeout,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	return &upstream{proxy: proxy, client: client, target: base}
 }
 
 // forward sends r to the upstream agent as it came, and its answer back.
@@ -114,6 +127,9 @@ func (u *upstream) info(r *http.Request) (http.Header, []byte) {
 		return nil, nil
 	}
 	request.Header = r.Header.Clone()
+	// The answer decoded by the transport, which then asks for gzip itself:
+	// the merge reads it, and the library gets it uncompressed.
+	request.Header.Del("Accept-Encoding")
 	response, err := u.client.Do(request)
 	if err != nil {
 		slog.Debug("Offline agent could not read the upstream agent's /info", "error", err)
@@ -126,8 +142,8 @@ func (u *upstream) info(r *http.Request) (http.Header, []byte) {
 		return nil, nil
 	}
 	var answer map[string]json.RawMessage
-	if err := json.Unmarshal(body, &answer); err != nil {
-		slog.Debug("Offline agent could not read the upstream agent's /info", "error", err)
+	if err := json.Unmarshal(body, &answer); err != nil || answer == nil {
+		slog.Debug("Offline agent could not read the upstream agent's /info as a JSON object", "error", err)
 		return nil, nil
 	}
 	var endpoints []string
@@ -144,6 +160,7 @@ func (u *upstream) info(r *http.Request) (http.Header, []byte) {
 	}
 	header := response.Header.Clone()
 	header.Del("Content-Length")
+	header.Del("Content-Encoding")
 	return header, body
 }
 

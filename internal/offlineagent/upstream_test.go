@@ -1,6 +1,7 @@
 package offlineagent
 
 import (
+	"compress/gzip"
 	"context"
 	"io"
 	"net"
@@ -9,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -22,6 +24,7 @@ type fakeUpstream struct {
 	mu       sync.Mutex
 	requests []upstreamRequest
 	info     string
+	redirect string
 }
 
 type upstreamRequest struct {
@@ -38,7 +41,19 @@ func (f *fakeUpstream) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path == "/info" {
 		w.Header().Set("Datadog-Agent-State", "state-1")
 		w.Header().Set("Content-Type", "application/json")
+		if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+			// An agent that compresses what a client accepts compressed.
+			w.Header().Set("Content-Encoding", "gzip")
+			zipped := gzip.NewWriter(w)
+			_, _ = io.WriteString(zipped, f.info)
+			_ = zipped.Close()
+			return
+		}
 		_, _ = io.WriteString(w, f.info)
+		return
+	}
+	if r.URL.Path == "/telemetry/proxy/api/v2/apmtelemetry" && f.redirect != "" {
+		http.Redirect(w, r, f.redirect, http.StatusFound)
 		return
 	}
 	w.Header().Set("X-Upstream", "yes")
@@ -127,6 +142,44 @@ func TestInfoIsTheUpstreamsWithTheEVPProxyItHandles(t *testing.T) {
 	assert.Equal(t, own, string(body))
 }
 
+func TestInfoOfAnAgentThatCompressesOrAnswersNull(t *testing.T) {
+	// The library accepts gzip: the merge still reads the agent's answer, and gives it uncompressed.
+	server, _, _, _ := newProxyAgent(t, `{"version":"7.40.1","endpoints":["/v0.4/traces"]}`)
+	request, err := http.NewRequest(http.MethodGet, server.URL+"/info", nil)
+	require.NoError(t, err)
+	request.Header.Set("Accept-Encoding", "gzip")
+	response, err := (&http.Client{Transport: &http.Transport{DisableCompression: true}}).Do(request)
+	require.NoError(t, err)
+	body, err := io.ReadAll(response.Body)
+	require.NoError(t, err)
+	require.NoError(t, response.Body.Close())
+	assert.Empty(t, response.Header.Get("Content-Encoding"))
+	assert.JSONEq(t, `{"version":"7.40.1","endpoints":["/v0.4/traces","/evp_proxy/v2/","/evp_proxy/v4/"]}`, string(body))
+
+	// An answer that isn't a JSON object, null here, gets the recorder's own.
+	server, _, _, _ = newProxyAgent(t, `null`)
+	response, err = server.Client().Get(server.URL + "/info")
+	require.NoError(t, err)
+	body, err = io.ReadAll(response.Body)
+	require.NoError(t, err)
+	require.NoError(t, response.Body.Close())
+	assert.Contains(t, string(body), `"version":"ddtest-offline-agent"`)
+}
+
+func TestTelemetryGetsTheUpstreamsRedirectAsItIs(t *testing.T) {
+	server, payloadsDir, fake, _ := newProxyAgent(t, `{}`)
+	fake.redirect = "/elsewhere"
+	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	response, err := client.Post(server.URL+"/telemetry/proxy/api/v2/apmtelemetry", "application/json", strings.NewReader(`{"seq_id":1}`))
+	require.NoError(t, err)
+	require.NoError(t, response.Body.Close())
+
+	assert.Equal(t, http.StatusFound, response.StatusCode)
+	assert.Equal(t, "/elsewhere", response.Header.Get("Location"))
+	require.Len(t, fake.got(), 1, "the recorder didn't follow the redirect itself")
+	assert.Len(t, savedFiles(t, payloadsDir, kindTelemetry), 1)
+}
+
 func TestTelemetryIsRecordedAndForwarded(t *testing.T) {
 	server, payloadsDir, fake, _ := newProxyAgent(t, `{}`)
 	compressed := gzipped(t, []byte(`{"seq_id":1}`))
@@ -197,8 +250,14 @@ func TestParseUpstream(t *testing.T) {
 		_, err := ParseUpstream(value)
 		assert.NoError(t, err, value)
 	}
-	for _, value := range []string{"", "localhost:8126", "ftp://agent", "http://", "unix://relative.sock", "unix:"} {
+	for _, value := range []string{"", "localhost:8126", "ftp://agent", "http://", "unix://relative.sock", "unix:",
+		"http://gateway:8126/agent", "http://agent:8126?x=1", "http://agent:8126#f"} {
 		_, err := ParseUpstream(value)
 		assert.Error(t, err, value)
 	}
+	_, err := ParseUpstream("http://localhost:8126/")
+	assert.NoError(t, err, "a trailing slash")
+	_, err = ParseUpstream("http://alice:secret@agent:8126")
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "secret", "the error repeats no credential")
 }

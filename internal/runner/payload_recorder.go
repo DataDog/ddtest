@@ -78,7 +78,8 @@ const (
 // DD_TRACE_AGENT_URL, or DD_AGENT_HOST and DD_TRACE_AGENT_PORT, localhost
 // and 8126 for the one left out; none when neither is set, as before the
 // recorder forwarded anything. A URL the environment gives that no tracing
-// library could take is said and not forwarded to.
+// library could take, or one with --worker-env's index placeholders, an
+// agent per worker, is said and not forwarded to.
 func payloadsUpstream(setting string, workerEnv map[string]string) *url.URL {
 	if setting == settings.RecordPayloadsNoUpstream {
 		return nil
@@ -95,6 +96,11 @@ func payloadsUpstream(setting string, workerEnv map[string]string) *url.URL {
 		return strings.TrimSpace(os.Getenv(name))
 	}
 	if value := lookup(agentURLEnv); value != "" {
+		if strings.Contains(value, "{{") {
+			// One recorder for every worker can't forward to an agent of each.
+			slog.Warn("The workers' DD_TRACE_AGENT_URL names an agent per worker; the recorder forwards nothing")
+			return nil
+		}
 		upstream, err := offlineagent.ParseUpstream(value)
 		if err != nil {
 			slog.Warn("The workers' agent isn't one the recorder can forward to; it forwards nothing", "error", err)

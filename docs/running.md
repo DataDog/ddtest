@@ -284,7 +284,11 @@ unless `--record-payloads-upstream` (or
    what isn't Test Optimization's, as before.
 
 `--record-payloads-upstream none` forwards nothing; a URL, `http://host:port`
-or `unix://` and a socket's absolute path, forwards to that agent. A forwarded
+or `unix://` and a socket's absolute path, forwards to that agent. A URL with
+credentials, a path, a query or a fragment is refused, since an agent takes
+none; one from the environment is then said in the log and not forwarded to,
+and so is a `--worker-env` `DD_TRACE_AGENT_URL` with index placeholders, an
+agent per worker, which one recorder for every worker can't forward to. A forwarded
 request goes as the tests sent it, its `Host` the agent's; an agent that
 doesn't answer leaves the tests' requests with `502 Bad Gateway`, as an
 agent that is down would, while `/info` is then the recorder's own and the
