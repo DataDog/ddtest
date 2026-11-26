@@ -88,18 +88,21 @@ var listen = net.Listen
 // localhostTries bounds listenLocalhost's ports.
 const localhostTries = 10
 
-// wsaAddressInUse is Windows' WSAEADDRINUSE, which Go's syscall.EADDRINUSE
-// isn't there.
-const wsaAddressInUse = syscall.Errno(10048)
+// Windows' WSAEADDRINUSE, which Go's syscall.EADDRINUSE isn't there, and
+// WSAEACCES, which a bind gets beside another process's exclusive listener.
+const (
+	wsaAddressInUse = syscall.Errno(10048)
+	wsaAccess       = syscall.Errno(10013)
+)
 
-// addressInUse says whether err is a listen's address in use on goos:
-// EADDRINUSE, or Windows' own WSAEADDRINUSE.
+// addressInUse says whether err is a listen's address taken on goos:
+// EADDRINUSE, or on Windows WSAEADDRINUSE or WSAEACCES.
 func addressInUse(err error, goos string) bool {
 	if errors.Is(err, syscall.EADDRINUSE) {
 		return true
 	}
 	var errno syscall.Errno
-	return goos == "windows" && errors.As(err, &errno) && errno == wsaAddressInUse
+	return goos == "windows" && errors.As(err, &errno) && (errno == wsaAddressInUse || errno == wsaAccess)
 }
 
 // isLocalhost says whether upstream is http://localhost:<port>: the workers
