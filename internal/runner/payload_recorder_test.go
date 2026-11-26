@@ -220,6 +220,34 @@ func TestRunForwardsTheWorkersOtherRequestsToTheAgentTheirEnvironmentNamed(t *te
 	assert.NotEqual(t, agent.URL, calls[0].EnvMap["DD_TRACE_AGENT_URL"], "the workers reach the recorder")
 }
 
+// TestRunGivesTheWorkersLocalhostWhenTheirAgentIsThere: an agent at
+// http://localhost:<port> gets the workers http://localhost and the
+// recorder's port, which the recorder answers, so a test that derives
+// another endpoint from the agent's host sees localhost as without it.
+func TestRunGivesTheWorkersLocalhostWhenTheirAgentIsThere(t *testing.T) {
+	var forwarded []string
+	agent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		forwarded = append(forwarded, r.Method+" "+r.URL.Path)
+	}))
+	t.Cleanup(agent.Close)
+	t.Setenv("DD_TEST_OPTIMIZATION_RUNNER_RECORD_PAYLOADS", filepath.Join(t.TempDir(), "payloads"))
+	t.Setenv("DD_TRACE_AGENT_URL", strings.Replace(agent.URL, "127.0.0.1", "localhost", 1))
+	withRunnerTestSettings(t)
+	prepareSequentialRun(t)
+	framework := &forwardingFramework{sendingFramework: &sendingFramework{MockFramework: &MockFramework{FrameworkName: "pytest"}, t: t}}
+	platform := &MockPlatform{PlatformName: "python", Framework: framework}
+
+	require.NoError(t, NewWithDependencies(platform, framework, &fakePlanner{}).Run(context.Background()))
+
+	calls := framework.GetRunTestsCalls()
+	require.Len(t, calls, 1)
+	assert.Regexp(t, `^http://localhost:\d+$`, calls[0].EnvMap["DD_TRACE_AGENT_URL"])
+	assert.NotEqual(t, strings.Replace(agent.URL, "127.0.0.1", "localhost", 1), calls[0].EnvMap["DD_TRACE_AGENT_URL"])
+	assert.Equal(t, http.StatusOK, framework.traceStatus)
+	assert.Equal(t, []string{"PUT /v0.4/traces"}, forwarded)
+	assert.Equal(t, http.StatusAccepted, framework.status)
+}
+
 func TestPayloadsUpstream(t *testing.T) {
 	for _, name := range []string{"DD_TRACE_AGENT_URL", "DD_AGENT_HOST", "DD_TRACE_AGENT_PORT"} {
 		t.Setenv(name, "")

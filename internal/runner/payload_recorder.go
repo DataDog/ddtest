@@ -27,6 +27,9 @@ const payloadRecorderStopTimeout = 30 * time.Second
 type payloadRecorder struct {
 	server    *offlineagent.Server
 	socketDir string
+	// url is the workers' DD_TRACE_AGENT_URL, the server's own unless the
+	// upstream agent's host is localhost (localURL).
+	url string
 }
 
 // startPayloadRecorder serves the agent on a Unix domain socket, in a
@@ -53,13 +56,43 @@ func startPayloadRecorder(payloadsDir string, unixSocket bool, upstream *url.URL
 		recorder.removeSocketDir()
 		return nil, errcode.WithCode(errcode.RunPayloadRecorderFailed, fmt.Errorf("listen for the workers' payloads: %w", err))
 	}
-	recorder.server = offlineagent.Serve(listener, offlineagent.Config{PayloadsDir: payloadsDir, HTTPCacheDir: constants.HTTPCacheDir, Upstream: upstream})
+	var more []net.Listener
+	if local, ok := localURL(listener, upstream); ok {
+		// The tests' agent at localhost: the workers get localhost too, on
+		// IPv6's loopback as well when the port is free there, since a
+		// client may try ::1 alone.
+		recorder.url = local
+		if ipv6, err := net.Listen("tcp", net.JoinHostPort("::1", localPort(listener))); err == nil {
+			more = append(more, ipv6)
+		}
+	}
+	recorder.server = offlineagent.Serve(listener, offlineagent.Config{PayloadsDir: payloadsDir, HTTPCacheDir: constants.HTTPCacheDir, Upstream: upstream}, more...)
+	if recorder.url == "" {
+		recorder.url = recorder.server.URL()
+	}
 	forwarding := "none"
 	if upstream != nil {
 		forwarding = upstream.Redacted()
 	}
-	slog.Info("Recording Test Optimization payloads as files", "payloads_dir", payloadsDir, "agent_url", recorder.server.URL(), "upstream", forwarding)
+	slog.Info("Recording Test Optimization payloads as files", "payloads_dir", payloadsDir, "agent_url", recorder.url, "upstream", forwarding)
 	return recorder, nil
+}
+
+// localURL is the workers' agent URL when the upstream agent's is
+// http://localhost:<port>: http://localhost and listener's port, so that a
+// test that derives another endpoint from the agent's host, such as an
+// OTLP one, gets localhost as without the recorder; only the port differs.
+func localURL(listener net.Listener, upstream *url.URL) (string, bool) {
+	if upstream == nil || upstream.Scheme != "http" || upstream.Hostname() != "localhost" || listener.Addr().Network() != "tcp" {
+		return "", false
+	}
+	return "http://" + net.JoinHostPort("localhost", localPort(listener)), true
+}
+
+// localPort is a TCP listener's port.
+func localPort(listener net.Listener) string {
+	_, port, _ := net.SplitHostPort(listener.Addr().String())
+	return port
 }
 
 // The variables a tracing library takes its agent from, in the order it
@@ -162,7 +195,7 @@ func runWorkers(ciNode, ciNodeWorkers, parallelRunners int) [][2]int {
 // recorder's, which forwards what isn't Test Optimization's to the agent
 // that variable named before, if any (payloadsUpstream).
 func (r *payloadRecorder) pointWorkers(workerEnv map[string]string) {
-	workerEnv[agentURLEnv] = r.server.URL()
+	workerEnv[agentURLEnv] = r.url
 	workerEnv[constants.TestOptimizationAgentlessEnabledEnvironmentVariable] = "false"
 }
 
