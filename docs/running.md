@@ -292,8 +292,8 @@ one agent for all of them is forwarded to, and an agent per worker, which one
 recorder for every worker can't forward to, is said in the log and not. A forwarded
 request goes as the tests sent it, its `Host` the agent's; an agent that
 doesn't answer leaves the tests' requests with `502 Bad Gateway`, as an
-agent that is down would, while `/info` is then the recorder's own and the
-payloads are still recorded. The workers' `DD_TRACE_AGENT_URL` is the
+agent that is down would, while `/info` is then the recorder's own, the
+payloads are still recorded, and the telemetry, recorded too, gets `202`. The workers' `DD_TRACE_AGENT_URL` is the
 recorder's either way, so a test that checks that variable's value sees the
 recorder's port; when the agent's is `http://localhost:<port>`, the workers'
 is `http://localhost` too, the recorder listening on `127.0.0.1` and on `::1`
