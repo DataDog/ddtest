@@ -80,7 +80,7 @@ var planCmd = &cobra.Command{
 		constants.TestFilesOutputPath,
 		constants.SkippablePercentageOutputPath,
 	),
-	Args: usePositionalTestPatterns,
+	Args: validatePlanArguments,
 	Run:  runPlanCommand,
 }
 
@@ -166,6 +166,7 @@ func init() {
 	}
 
 	rootCmd.AddCommand(newDescribeCommand())
+	addCatalogPlanFlags(planCmd)
 	rootCmd.AddCommand(planCmd)
 	rootCmd.AddCommand(runCmd)
 	rootCmd.AddCommand(onboardCmd)
@@ -225,6 +226,9 @@ func gitAvailabilityTelemetryContext(cmd *cobra.Command) (telemetry.CLICommandTy
 func runPlanCommand(cmd *cobra.Command, args []string) {
 	ctx := commandContext(cmd)
 	err := runWithTelemetry(ctx, telemetry.CLICommandPlan, func(telemetryClient telemetry.Client) error {
+		if isCatalogPlan(cmd) {
+			return runCatalogPlan(cmd, telemetryClient)
+		}
 		return planCommand(ctx, telemetryClient)
 	})
 	if err != nil {

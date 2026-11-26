@@ -34,17 +34,19 @@ type PythonCIJob struct {
 }
 type PythonCICommand struct {
 	PythonCatalogCommand
-	EnvironmentHash    string   `json:"environment_hash"`
-	PythonVersion      string   `json:"python_version"`
-	Packages           string   `json:"packages"`
-	CandidateTestFiles []string `json:"candidate_test_files"`
-	Unresolved         string   `json:"unresolved,omitempty"`
+	Configurations     map[string]string `json:"configurations,omitempty"`
+	EnvironmentHash    string            `json:"environment_hash"`
+	PythonVersion      string            `json:"python_version"`
+	Packages           string            `json:"packages"`
+	CandidateTestFiles []string          `json:"candidate_test_files"`
+	Unresolved         string            `json:"unresolved,omitempty"`
 }
 type ciEnvironment struct {
-	Hash          string `json:"hash"`
-	PythonVersion string `json:"python_version"`
-	Packages      string `json:"packages"`
-	Command       string `json:"command"`
+	Configurations map[string]string `json:"configurations,omitempty"`
+	Hash           string            `json:"hash"`
+	PythonVersion  string            `json:"python_version"`
+	Packages       string            `json:"packages"`
+	Command        string            `json:"command"`
 }
 
 type PythonCatalogCommand struct {
@@ -123,6 +125,7 @@ func DescribePythonGitLabCatalog(ctx context.Context, root, file, metadataFile s
 					entry.Unresolved = forwardErr.Error()
 				default:
 					entry.PythonVersion, entry.Packages = env.PythonVersion, env.Packages
+					entry.Configurations = env.Configurations
 					argv, err := shellquote.Split(strings.ReplaceAll(env.Command, "{cmdargs}", shellquote.Join(forwarded...)))
 					if err == nil {
 						argv, err = framework.PytestCommandArguments(argv, job.Variables["PYTEST_ADDOPTS"])

@@ -37,6 +37,68 @@ ddtest plan --runtime-tags '{"os.platform":"linux","os.architecture":"x86_64","o
 Use values from the environment that will execute the tests. Framework discovery
 may still need that framework and its runtime installed in the planning job.
 
+## Plan CI commands before test setup
+
+Expanded GitLab jobs can use suite-level TIA before workers install test dependencies.
+The current Python adapter reads jobs with `TEST_SUITE` and `TEST_ENVIRONMENTS_*` variables.
+The repository exports the commands for those environments as JSON.
+
+Each environment can include `configurations` with the target worker's full runtime and OS tags.
+For example, a job with `TEST_SUITE: feature` and `TEST_ENVIRONMENTS_1: python312` uses this metadata:
+
+```json
+{
+  "suites": [{
+    "name": "feature",
+    "venvs": [{
+      "hash": "python312",
+      "python_version": "3.12",
+      "packages": "dependency==1",
+      "command": "pytest tests/feature {cmdargs}",
+      "configurations": {
+        "runtime.name": "CPython",
+        "runtime.version": "3.12.9",
+        "os.platform": "Linux",
+        "os.architecture": "x86_64",
+        "os.version": "6.8.0"
+      }
+    }]
+  }]
+}
+```
+
+After the repository generates its expanded CI YAML and exports `environments.json`, run:
+
+```bash
+ddtest plan \
+  --ci-provider gitlab \
+  --ci-config .gitlab/tests-gen.yml \
+  --command-environments environments.json \
+  --output selection.json
+```
+
+The command discovers current test files and requests suite-level TIA decisions for each configured worker.
+It does not start Python, collect tests with pytest, or change an existing worker plan.
+The output contains a `commands` array with each command's ID, decision, reason, and runnable files.
+The `jobs` array preserves CI scripts and lists each job's command IDs and aggregate decision.
+A job can skip only when all its commands can skip and the job has no unresolved entries.
+
+Missing worker configurations, mismatched Python versions, unresolved commands, and unavailable skipping data keep commands runnable.
+New suites and suites marked unskippable remain runnable.
+The static marker check also keeps suites runnable when an ancestor conftest contains the unskippable marker.
+Unresolved support jobs remain runnable, and catalog gaps remain in the output.
+
+Supply custom identity tags as `test.configuration.<name>` keys in each environment's `configurations` map.
+Worker tags replace the planner host's runtime and custom tags for these requests.
+Service and environment use the command's usual `DD_SERVICE` and `DD_ENV` values.
+Jobs with different identity overrides remain runnable.
+A missing configuration never causes a local interpreter probe.
+
+The CI scheduler can use the decisions to create workers only for runnable commands.
+Those workers install dependencies and execute their existing test commands.
+This mode produces selection decisions rather than a shared `.testoptimization/` worker plan.
+The JSON format is experimental.
+
 ## Single CI Node
 
 ```bash
