@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -10,6 +11,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/DataDog/ddtest/internal/constants"
@@ -28,7 +30,7 @@ type payloadRecorder struct {
 	server    *offlineagent.Server
 	socketDir string
 	// url is the workers' DD_TRACE_AGENT_URL, the server's own unless the
-	// upstream agent's host is localhost (localURL).
+	// upstream agent's host is localhost (isLocalhost).
 	url string
 }
 
@@ -51,20 +53,22 @@ func startPayloadRecorder(payloadsDir string, unixSocket bool, upstream *url.URL
 		recorder.socketDir = socketDir
 		network, address = "unix", filepath.Join(socketDir, "agent.sock")
 	}
-	listener, err := net.Listen(network, address)
+	var listener net.Listener
+	var more []net.Listener
+	var err error
+	if network == "tcp" && isLocalhost(upstream) {
+		// The tests' agent at localhost: the workers get localhost too
+		// (isLocalhost), so both loopbacks answer at one port.
+		listener, more, err = listenLocalhost()
+		if err == nil {
+			recorder.url = "http://" + net.JoinHostPort("localhost", localPort(listener))
+		}
+	} else {
+		listener, err = listen(network, address)
+	}
 	if err != nil {
 		recorder.removeSocketDir()
 		return nil, errcode.WithCode(errcode.RunPayloadRecorderFailed, fmt.Errorf("listen for the workers' payloads: %w", err))
-	}
-	var more []net.Listener
-	if local, ok := localURL(listener, upstream); ok {
-		// The tests' agent at localhost: the workers get localhost too, on
-		// IPv6's loopback as well when the port is free there, since a
-		// client may try ::1 alone.
-		recorder.url = local
-		if ipv6, err := net.Listen("tcp", net.JoinHostPort("::1", localPort(listener))); err == nil {
-			more = append(more, ipv6)
-		}
 	}
 	recorder.server = offlineagent.Serve(listener, offlineagent.Config{PayloadsDir: payloadsDir, HTTPCacheDir: constants.HTTPCacheDir, Upstream: upstream}, more...)
 	if recorder.url == "" {
@@ -78,15 +82,45 @@ func startPayloadRecorder(payloadsDir string, unixSocket bool, upstream *url.URL
 	return recorder, nil
 }
 
-// localURL is the workers' agent URL when the upstream agent's is
-// http://localhost:<port>: http://localhost and listener's port, so that a
-// test that derives another endpoint from the agent's host, such as an
-// OTLP one, gets localhost as without the recorder; only the port differs.
-func localURL(listener net.Listener, upstream *url.URL) (string, bool) {
-	if upstream == nil || upstream.Scheme != "http" || upstream.Hostname() != "localhost" || listener.Addr().Network() != "tcp" {
-		return "", false
+// listen is net.Listen; tests replace it.
+var listen = net.Listen
+
+// localhostTries bounds listenLocalhost's ports.
+const localhostTries = 10
+
+// isLocalhost says whether upstream is http://localhost:<port>: the workers
+// then get http://localhost and the recorder's port, so that a test that
+// derives another endpoint from the agent's host, such as an OTLP one, gets
+// localhost as without the recorder; only the port differs.
+func isLocalhost(upstream *url.URL) bool {
+	return upstream != nil && upstream.Scheme == "http" && upstream.Hostname() == "localhost"
+}
+
+// listenLocalhost listens on a free port of 127.0.0.1 and on the same port
+// of ::1, since a client may try either address of localhost alone, with
+// another port when ::1's is taken; on 127.0.0.1 alone when the host has no
+// IPv6 loopback, which then no client can try.
+func listenLocalhost() (net.Listener, []net.Listener, error) {
+	var lastErr error
+	for range localhostTries {
+		ipv4, err := listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			return nil, nil, err
+		}
+		ipv6, err := listen("tcp", net.JoinHostPort("::1", localPort(ipv4)))
+		switch {
+		case err == nil:
+			return ipv4, []net.Listener{ipv6}, nil
+		case errors.Is(err, syscall.EADDRINUSE):
+			// Another process at that port of ::1, where a worker could go.
+			lastErr = err
+			_ = ipv4.Close()
+		default:
+			slog.Debug("No IPv6 loopback for the recorder; it listens on 127.0.0.1 alone", "error", err)
+			return ipv4, nil, nil
+		}
 	}
-	return "http://" + net.JoinHostPort("localhost", localPort(listener)), true
+	return nil, nil, fmt.Errorf("no port free on both 127.0.0.1 and ::1 in %d tries: %w", localhostTries, lastErr)
 }
 
 // localPort is a TCP listener's port.

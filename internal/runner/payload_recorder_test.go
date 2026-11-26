@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/DataDog/ddtest/internal/constants"
@@ -285,4 +286,52 @@ func TestRunWorkers(t *testing.T) {
 	assert.Equal(t, [][2]int{{0, 0}, {0, 1}, {0, 2}}, runWorkers(-1, 1, 3), "parallel")
 	assert.Equal(t, [][2]int{{4, 0}, {4, 1}}, runWorkers(4, 2, 8), "a CI node's workers")
 	assert.Equal(t, [][2]int{{4, 0}}, runWorkers(4, 0, 8), "a CI node of one worker")
+}
+
+// TestListenLocalhostSkipsAPortTakenOnIPv6: a port another process holds on
+// ::1 is given up and another one taken, so that no worker reaches that
+// process at localhost; without an IPv6 loopback, 127.0.0.1 alone.
+func TestListenLocalhostSkipsAPortTakenOnIPv6(t *testing.T) {
+	saved := listen
+	t.Cleanup(func() { listen = saved })
+	var ipv4Ports, ipv6Asks []string
+	taken := true
+	listen = func(network, address string) (net.Listener, error) {
+		if strings.HasPrefix(address, "[::1]:") {
+			ipv6Asks = append(ipv6Asks, address)
+			if taken {
+				taken = false
+				return nil, &net.OpError{Op: "listen", Net: network, Err: os.NewSyscallError("bind", syscall.EADDRINUSE)}
+			}
+			return saved("tcp", "127.0.0.1:0") // stands for ::1, which the test's host may lack
+		}
+		l, err := saved(network, address)
+		if err == nil {
+			ipv4Ports = append(ipv4Ports, localPort(l))
+		}
+		return l, err
+	}
+	ipv4, more, err := listenLocalhost()
+	require.NoError(t, err)
+	require.Len(t, more, 1)
+	first, second := ipv4, more[0]
+	t.Cleanup(func() { _ = first.Close(); _ = second.Close() })
+	require.Len(t, ipv4Ports, 2, "a second port after ::1's first was taken")
+	assert.Equal(t, ipv4Ports[1], localPort(ipv4))
+	assert.Equal(t, []string{"[::1]:" + ipv4Ports[0], "[::1]:" + ipv4Ports[1]}, ipv6Asks)
+	reopened, err := saved("tcp", "127.0.0.1:"+ipv4Ports[0])
+	require.NoError(t, err, "the first port's listener was closed")
+	require.NoError(t, reopened.Close())
+
+	// No IPv6 loopback: 127.0.0.1 alone.
+	listen = func(network, address string) (net.Listener, error) {
+		if strings.HasPrefix(address, "[::1]:") {
+			return nil, &net.OpError{Op: "listen", Net: network, Err: os.NewSyscallError("bind", syscall.EADDRNOTAVAIL)}
+		}
+		return saved(network, address)
+	}
+	alone, none, err := listenLocalhost()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = alone.Close() })
+	assert.Empty(t, none)
 }
