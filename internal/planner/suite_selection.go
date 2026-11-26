@@ -56,7 +56,7 @@ func selectSuiteFiles(ctx context.Context, files []string, fw framework.Framewor
 		return SuiteFileSelection{}, err
 	}
 	return SuiteFileSelection{
-		RunnableFiles:     slices.Sorted(maps.Keys(tp.calculateFileWeights())),
+		RunnableFiles:     append([]string{}, slices.Sorted(maps.Keys(tp.calculateFileWeights()))...),
 		UnskippableSuites: tp.reportStats.unskippableMarkerSuitesForced,
 	}, nil
 }

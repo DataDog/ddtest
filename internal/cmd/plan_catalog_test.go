@@ -125,6 +125,7 @@ support:
 	require.Len(t, result.Commands, 4)
 	require.Equal(t, "skip", result.Commands[0].Decision)
 	require.Empty(t, result.Commands[0].RunnableFiles)
+	require.NotNil(t, result.Commands[0].RunnableFiles)
 	require.Equal(t, "run", result.Commands[1].Decision)
 	require.Equal(t, []string{"tests/feature/test_case.py"}, result.Commands[1].RunnableFiles)
 	require.Contains(t, result.Commands[2].Reason, "missing worker configuration")
