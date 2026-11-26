@@ -13,6 +13,14 @@
 //
 // Libraries that write payload files themselves and libraries that send them
 // here produce the same files, so one uploader handles both.
+//
+// With an upstream agent (Config.Upstream), the agent the tests themselves
+// talk to, it records the Test Optimization requests alone and forwards
+// every other one there, the tests' traces, stats and configuration
+// requests among them: its /info is the upstream's, with the EVP proxy
+// added when the upstream lists none, and the telemetry it records is
+// forwarded too. Without one, it answers everything itself and turns down
+// what isn't Test Optimization's.
 package offlineagent
 
 import (
@@ -26,6 +34,7 @@ import (
 	"mime"
 	"mime/multipart"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -73,31 +82,61 @@ type Config struct {
 	// HTTPCacheDir is a plan's HTTP cache, .testoptimization/cache/http. Empty,
 	// or a missing file, means the responses that turn every feature off.
 	HTTPCacheDir string
+	// Upstream, when set, is the agent the tests talk to (ParseUpstream),
+	// which every request that isn't Test Optimization's goes to.
+	Upstream *url.URL
 }
 
 // NewHandler returns the agent's HTTP handler.
 func NewHandler(config Config) http.Handler {
 	agent := &agent{config: config, files: newPayloadFiles(config.PayloadsDir)}
+	if config.Upstream != nil {
+		agent.upstream = newUpstream(config.Upstream)
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /info", agent.info)
 	mux.HandleFunc("POST /evp_proxy/", agent.evp)
 	mux.HandleFunc("POST /telemetry/proxy/api/v2/apmtelemetry", agent.telemetry)
+	mux.HandleFunc("/", agent.other)
 	return mux
 }
 
 type agent struct {
-	config Config
-	files  *payloadFiles
+	config   Config
+	files    *payloadFiles
+	upstream *upstream
 }
 
-func (a *agent) info(w http.ResponseWriter, _ *http.Request) {
+func (a *agent) info(w http.ResponseWriter, r *http.Request) {
+	if a.upstream != nil {
+		if header, body := a.upstream.info(r); body != nil {
+			copyHeader(w.Header(), header)
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(body)
+			return
+		}
+		// The library reports through the recorder whether or not the
+		// tests' agent answers.
+		slog.Warn("Offline agent answers /info itself: the upstream agent didn't", "upstream", a.config.Upstream.Redacted())
+	}
 	writeJSON(w, http.StatusOK, `{"version":"ddtest-offline-agent","endpoints":["/evp_proxy/v2/","/evp_proxy/v4/","/telemetry/proxy/"]}`)
+}
+
+// other is every request that isn't Test Optimization's: the upstream
+// agent's, or turned down without one.
+func (a *agent) other(w http.ResponseWriter, r *http.Request) {
+	if a.upstream != nil {
+		a.upstream.forward(w, r)
+		return
+	}
+	slog.Debug("Offline agent ignored a request", "method", r.Method, "path", r.URL.Path)
+	http.NotFound(w, r)
 }
 
 func (a *agent) evp(w http.ResponseWriter, r *http.Request) {
 	match := evpPath.FindStringSubmatch(r.URL.Path)
 	if match == nil {
-		http.NotFound(w, r)
+		a.other(w, r)
 		return
 	}
 	path := match[2]
@@ -110,13 +149,35 @@ func (a *agent) evp(w http.ResponseWriter, r *http.Request) {
 		a.store(w, r, func(body []byte) error {
 			return a.writeCoverage(r.Header.Get("Content-Type"), body)
 		})
-	case subdomain == "api":
+	case subdomain == "api" && a.isTestOptimizationAPI(path):
 		a.api(w, r, path)
 	default:
+		if a.upstream != nil {
+			a.upstream.forward(w, r)
+			return
+		}
 		slog.Debug("Offline agent ignored an EVP request", "subdomain", subdomain, "path", path)
 		http.NotFound(w, r)
 	}
 }
+
+// isTestOptimizationAPI says whether path is an API request of Test
+// Optimization's, which the agent answers itself: the libraries'
+// configuration and their git uploads. Without an upstream agent, every
+// API request is, the unknown ones turned down.
+func (a *agent) isTestOptimizationAPI(path string) bool {
+	if a.upstream == nil {
+		return true
+	}
+	_, cached := cachedResponses[path]
+	return cached || path == searchCommitsPath || path == packfilePath
+}
+
+// The git uploads' API paths.
+const (
+	searchCommitsPath = "/api/v2/git/repository/search_commits"
+	packfilePath      = "/api/v2/git/repository/packfile"
+)
 
 func (a *agent) api(w http.ResponseWriter, r *http.Request, path string) {
 	if cached, ok := cachedResponses[path]; ok {
@@ -124,7 +185,7 @@ func (a *agent) api(w http.ResponseWriter, r *http.Request, path string) {
 		return
 	}
 	switch path {
-	case "/api/v2/git/repository/search_commits":
+	case searchCommitsPath:
 		// Answer that Datadog already has every commit, so libraries upload
 		// no git data from here.
 		body, err := readBody(w, r)
@@ -140,7 +201,7 @@ func (a *agent) api(w http.ResponseWriter, r *http.Request, path string) {
 			return
 		}
 		writeJSON(w, http.StatusOK, fmt.Sprintf(`{"data":%s}`, request.Data))
-	case "/api/v2/git/repository/packfile":
+	case packfilePath:
 		w.WriteHeader(http.StatusNoContent)
 	default:
 		slog.Debug("Offline agent ignored an API request", "path", path)
@@ -148,10 +209,34 @@ func (a *agent) api(w http.ResponseWriter, r *http.Request, path string) {
 	}
 }
 
+// telemetry records the libraries' telemetry, and with an upstream agent
+// also forwards it there, answering as the upstream does: the reporting
+// library's and the tests' own telemetry come the same way, and the agent
+// can't tell them apart.
 func (a *agent) telemetry(w http.ResponseWriter, r *http.Request) {
-	a.store(w, r, func(body []byte) error {
-		return a.files.writeTelemetry(body)
-	})
+	if a.upstream == nil {
+		a.store(w, r, func(body []byte) error {
+			return a.files.writeTelemetry(body)
+		})
+		return
+	}
+	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxRequestBytes))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	body, err := decodeBody(r.Header, raw)
+	if err == nil {
+		err = a.files.writeTelemetry(body)
+	}
+	if err != nil {
+		slog.Error("Offline agent could not save a payload", "path", r.URL.Path, "error", err)
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if !a.upstream.forwardBody(w, r, raw) {
+		writeJSON(w, http.StatusAccepted, `{}`)
+	}
 }
 
 // store reads a payload request and answers as the intake does once write
@@ -229,16 +314,25 @@ func (a *agent) cachedResponse(file, fallback string) string {
 // readBody reads a request body, gunzipping it when the library compressed
 // it.
 func readBody(w http.ResponseWriter, r *http.Request) ([]byte, error) {
-	var body io.Reader = http.MaxBytesReader(w, r.Body, maxRequestBytes)
-	if strings.EqualFold(r.Header.Get("Content-Encoding"), "gzip") {
-		unzipped, err := gzip.NewReader(body)
-		if err != nil {
-			return nil, fmt.Errorf("gunzip request body: %w", err)
-		}
-		defer func() { _ = unzipped.Close() }()
-		body = io.LimitReader(unzipped, maxRequestBytes+1)
+	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxRequestBytes))
+	if err != nil {
+		return nil, fmt.Errorf("read request body: %w", err)
 	}
-	data, err := io.ReadAll(body)
+	return decodeBody(r.Header, raw)
+}
+
+// decodeBody is a request body as read, gunzipped when the library
+// compressed it.
+func decodeBody(header http.Header, raw []byte) ([]byte, error) {
+	if !strings.EqualFold(header.Get("Content-Encoding"), "gzip") {
+		return raw, nil
+	}
+	unzipped, err := gzip.NewReader(bytes.NewReader(raw))
+	if err != nil {
+		return nil, fmt.Errorf("gunzip request body: %w", err)
+	}
+	defer func() { _ = unzipped.Close() }()
+	data, err := io.ReadAll(io.LimitReader(unzipped, maxRequestBytes+1))
 	if err != nil {
 		return nil, fmt.Errorf("read request body: %w", err)
 	}

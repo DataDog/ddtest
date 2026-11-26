@@ -262,6 +262,52 @@ others and on Windows:
 
 With `unix`, `DD_TRACE_AGENT_URL` is `unix://` and the socket's path.
 
+The tests themselves may talk to an agent through the same variable, such as
+a Datadog Agent their CI job runs beside them, or a tracing library's own
+test suite, whose code under test sends its traces there. The recorder
+forwards that agent every request that isn't Test Optimization's: the tests'
+traces, stats, telemetry and remote configuration requests, and other EVP
+proxy requests. It records the Test Optimization payloads alone, and answers
+the libraries' configuration and git requests itself, as without an agent.
+Its `/info` is the agent's, with `/evp_proxy/v2/` and `/evp_proxy/v4/` added
+when the agent lists neither, so that the reporting library still finds
+where to send its payloads; the telemetry it records is forwarded too, since
+the reporting library's and the tests' come the same way. The agent is,
+unless `--record-payloads-upstream` (or
+`DD_TEST_OPTIMIZATION_RUNNER_RECORD_PAYLOADS_UPSTREAM`) names another:
+
+1. the `DD_TRACE_AGENT_URL` the workers would have had, from `--worker-env`
+   or the environment;
+2. otherwise `DD_AGENT_HOST` and `DD_TRACE_AGENT_PORT`, `localhost` and
+   `8126` for the one left out, when either is set;
+3. otherwise none: the recorder answers everything itself and turns down
+   what isn't Test Optimization's, as before.
+
+`--record-payloads-upstream none` forwards nothing; a URL, `http://host:port`
+or `unix://` and a socket's absolute path, forwards to that agent. A URL with
+credentials, a path, a query or a fragment is refused, since an agent takes
+none; one from the environment is then said in the log and not forwarded to.
+`--worker-env`'s index placeholders are filled for each of the run's workers:
+one agent for all of them is forwarded to, and an agent per worker, which one
+recorder for every worker can't forward to, is said in the log and not. A forwarded
+request goes as the tests sent it, its `Host` the agent's; an agent that
+doesn't answer leaves the tests' requests with `502 Bad Gateway`, as an
+agent that is down would, while `/info` is then the recorder's own, the
+payloads are still recorded, and the telemetry, recorded too, gets `202`. The workers' `DD_TRACE_AGENT_URL` is the
+recorder's either way, so a test that checks that variable's value sees the
+recorder's port. Over TCP, when the agent's is `http://localhost:<port>`, the
+workers' is `http://localhost` too, the recorder listening on `127.0.0.1` and on `::1`
+when the port is free there, so that a test that derives another endpoint
+from the agent's host, such as an OTLP one, gets `localhost` as without the
+recorder; over a Unix domain socket, `auto`'s for JavaScript and Java, it is
+`unix://` and the socket's path, so such a suite needs
+`--record-payloads-transport tcp`. Placeholders are filled for every worker the run may start, those
+of a CI node's `--ci-node-workers` that get no file included, so a run whose
+workers name an agent each forwards nothing even when one of them runs. A library that reads another variable before
+`DD_TRACE_AGENT_URL` for its Test Optimization client, such as dd-trace-py's
+internal `_CI_DD_AGENT_URL`, would send its payloads past the recorder if
+the environment set it.
+
 ## Custom Commands
 
 Use `--command` to override the framework's default base test command where

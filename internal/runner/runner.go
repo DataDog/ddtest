@@ -102,7 +102,9 @@ func (tr *TestRunner) Run(ctx context.Context) error {
 	workerEnvMap := settings.GetWorkerEnvMap()
 	var recorder *payloadRecorder
 	if payloadsDir := settings.GetRecordPayloads(); payloadsDir != "" {
-		recorder, err = startPayloadRecorder(payloadsDir, recordOnUnixSocket(settings.GetRecordPayloadsTransport(), tr.platform))
+		workers := runWorkers(settings.GetCiNode(), settings.GetCiNodeWorkers(), parallelRunners)
+		upstream := payloadsUpstream(settings.GetRecordPayloadsUpstream(), workerEnvMap, workers)
+		recorder, err = startPayloadRecorder(payloadsDir, recordOnUnixSocket(settings.GetRecordPayloadsTransport(), tr.platform), upstream)
 		if err != nil {
 			return err
 		}
