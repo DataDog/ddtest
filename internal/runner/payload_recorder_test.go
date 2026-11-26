@@ -335,3 +335,15 @@ func TestListenLocalhostSkipsAPortTakenOnIPv6(t *testing.T) {
 	t.Cleanup(func() { _ = alone.Close() })
 	assert.Empty(t, none)
 }
+
+// TestAddressInUse: EADDRINUSE, and on Windows its own WSAEADDRINUSE, which
+// Go's syscall.EADDRINUSE isn't there; nothing else.
+func TestAddressInUse(t *testing.T) {
+	wrap := func(errno syscall.Errno) error {
+		return &net.OpError{Op: "listen", Net: "tcp", Err: os.NewSyscallError("bind", errno)}
+	}
+	assert.True(t, addressInUse(wrap(syscall.EADDRINUSE), "linux"))
+	assert.True(t, addressInUse(wrap(syscall.Errno(10048)), "windows"))
+	assert.False(t, addressInUse(wrap(syscall.Errno(10048)), "linux"))
+	assert.False(t, addressInUse(wrap(syscall.EADDRNOTAVAIL), "linux"))
+}

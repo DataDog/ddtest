@@ -88,6 +88,20 @@ var listen = net.Listen
 // localhostTries bounds listenLocalhost's ports.
 const localhostTries = 10
 
+// wsaAddressInUse is Windows' WSAEADDRINUSE, which Go's syscall.EADDRINUSE
+// isn't there.
+const wsaAddressInUse = syscall.Errno(10048)
+
+// addressInUse says whether err is a listen's address in use on goos:
+// EADDRINUSE, or Windows' own WSAEADDRINUSE.
+func addressInUse(err error, goos string) bool {
+	if errors.Is(err, syscall.EADDRINUSE) {
+		return true
+	}
+	var errno syscall.Errno
+	return goos == "windows" && errors.As(err, &errno) && errno == wsaAddressInUse
+}
+
 // isLocalhost says whether upstream is http://localhost:<port>: the workers
 // then get http://localhost and the recorder's port, so that a test that
 // derives another endpoint from the agent's host, such as an OTLP one, gets
@@ -111,7 +125,7 @@ func listenLocalhost() (net.Listener, []net.Listener, error) {
 		switch {
 		case err == nil:
 			return ipv4, []net.Listener{ipv6}, nil
-		case errors.Is(err, syscall.EADDRINUSE):
+		case addressInUse(err, runtime.GOOS):
 			// Another process at that port of ::1, where a worker could go.
 			lastErr = err
 			_ = ipv4.Close()
