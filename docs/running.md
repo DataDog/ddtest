@@ -295,11 +295,13 @@ doesn't answer leaves the tests' requests with `502 Bad Gateway`, as an
 agent that is down would, while `/info` is then the recorder's own, the
 payloads are still recorded, and the telemetry, recorded too, gets `202`. The workers' `DD_TRACE_AGENT_URL` is the
 recorder's either way, so a test that checks that variable's value sees the
-recorder's port; when the agent's is `http://localhost:<port>`, the workers'
-is `http://localhost` too, the recorder listening on `127.0.0.1` and on `::1`
+recorder's port. Over TCP, when the agent's is `http://localhost:<port>`, the
+workers' is `http://localhost` too, the recorder listening on `127.0.0.1` and on `::1`
 when the port is free there, so that a test that derives another endpoint
 from the agent's host, such as an OTLP one, gets `localhost` as without the
-recorder. Placeholders are filled for every worker the run may start, those
+recorder; over a Unix domain socket, `auto`'s for JavaScript and Java, it is
+`unix://` and the socket's path, so such a suite needs
+`--record-payloads-transport tcp`. Placeholders are filled for every worker the run may start, those
 of a CI node's `--ci-node-workers` that get no file included, so a run whose
 workers name an agent each forwards nothing even when one of them runs. A library that reads another variable before
 `DD_TRACE_AGENT_URL` for its Test Optimization client, such as dd-trace-py's
