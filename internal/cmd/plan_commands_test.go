@@ -38,7 +38,7 @@ func describedFixture(t *testing.T, id, service, sha string, files ...string) co
 	require.NoError(t, json.Unmarshal([]byte(describeRuntimeTags), &tags))
 	return commandDescription{SchemaVersion: 2,
 		Command:            describedCommand{ID: id, Argv: []string{"python", "-m", "pytest"}, Cwd: ".", TestRoots: []string{"tests"}},
-		TIARequest:         describedRequest{Service: service, Env: "ci", SHA: sha, TestLevel: settings.TestSkippingLevelSuite, Configurations: tags},
+		TIARequest:         describedRequest{Service: service, Env: "ci", RepositoryURL: "https://example.com/org/repo.git", SHA: sha, TestLevel: settings.TestSkippingLevelSuite, Configurations: tags},
 		CandidateTestFiles: files}
 }
 
@@ -136,4 +136,23 @@ func TestFilterTestsLocation(t *testing.T) {
 	require.Error(t, err)
 	_, err = filterTestsLocation(files, "tests/[")
 	require.Error(t, err)
+}
+
+func TestCommandSetRejectsAnotherRepositoryAtSameCommit(t *testing.T) {
+	sha := commandSetFixture(t)
+	description := describedFixture(t, "unit", "svc", sha, "tests/test_case.py")
+	description.TIARequest.RepositoryURL = "https://example.com/other/fork.git"
+	writeCommandSet(t, map[string][]commandDescription{"unit": {description}}, "unit")
+	_, err := loadCommandSet("commands.json")
+	require.ErrorContains(t, err, "another repository")
+}
+
+func TestCommandRepositoryIdentity(t *testing.T) {
+	for _, remote := range []string{"https://example.com/org/repo.git", "git@example.com:org/repo.git", "ssh://git@example.com/org/repo", "https://user:secret@example.com/org/repo/"} {
+		require.True(t, sameCommandRepository(remote, "https://example.com/org/repo.git"), remote)
+	}
+	require.True(t, sameCommandRepository("git@github.com:Example/Repo.git", "https://github.com/example/repo"))
+	for _, remote := range []string{"", "https://elsewhere.com/org/repo", "https://example.com/other/repo", "https://example.com/Org/repo", "https://example.com:8443/org/repo", "https://%invalid"} {
+		require.False(t, sameCommandRepository(remote, "https://example.com/org/repo.git"), remote)
+	}
 }

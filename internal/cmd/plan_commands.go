@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"strings"
 
@@ -71,6 +72,9 @@ func loadCommandSet(path string) (onboard.PythonCICommandCatalog, error) {
 			if d.TIARequest.SHA != checkout.CommitSha {
 				return onboard.PythonCICommandCatalog{}, fmt.Errorf("command %q was described at %s, not the checkout %s", d.Command.ID, d.TIARequest.SHA, checkout.CommitSha)
 			}
+			if !sameCommandRepository(d.TIARequest.RepositoryURL, checkout.RepositoryURL) {
+				return onboard.PythonCICommandCatalog{}, fmt.Errorf("command %q describes another repository", d.Command.ID)
+			}
 			command := onboard.PythonCICommand{
 				PythonCatalogCommand: onboard.PythonCatalogCommand{ID: d.Command.ID, Argv: d.Command.Argv, Cwd: d.Command.Cwd, TestRoots: d.Command.TestRoots},
 				Configurations:       d.TIARequest.Configurations,
@@ -100,4 +104,32 @@ func majorMinor(version string) string {
 		return version
 	}
 	return parts[0] + "." + parts[1]
+}
+
+func sameCommandRepository(described, checkout string) bool {
+	if described == "" || checkout == "" {
+		return false
+	}
+	if described == checkout {
+		return true
+	}
+	normalize := func(value string) string {
+		if !strings.Contains(value, "://") {
+			if host, path, ok := strings.Cut(value, ":"); ok {
+				value = "ssh://" + host + "/" + path
+			}
+		}
+		parsed, err := url.Parse(value)
+		if err != nil || parsed.Host == "" {
+			return ""
+		}
+		host := strings.ToLower(parsed.Host)
+		path := strings.TrimSuffix(strings.TrimRight(parsed.EscapedPath(), "/"), ".git")
+		if strings.EqualFold(parsed.Hostname(), "github.com") {
+			path = strings.ToLower(path)
+		}
+		return host + path
+	}
+	identity := normalize(described)
+	return identity != "" && identity == normalize(checkout)
 }
