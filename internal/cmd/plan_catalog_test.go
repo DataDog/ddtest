@@ -187,3 +187,18 @@ func TestCatalogRequiresDeclaredCustomConfigurations(t *testing.T) {
 	tags["test.configuration.variant"] = "worker"
 	require.Empty(t, commandPlanningGap(job, command))
 }
+
+func TestCatalogKeepsExplicitEmptyWorkerIdentityRunnable(t *testing.T) {
+	tags := map[string]string{}
+	require.NoError(t, json.Unmarshal([]byte(describeRuntimeTags), &tags))
+	command := onboard.PythonCICommand{PythonCatalogCommand: onboard.PythonCatalogCommand{Cwd: "."}, PythonVersion: "3.12", CandidateTestFiles: []string{"tests/test_case.py"}, Configurations: tags}
+	for _, key := range []string{"DD_SERVICE", "DD_ENV", "DD_TAGS"} {
+		t.Run(key, func(t *testing.T) {
+			t.Setenv(key, "planner")
+			job := onboard.PythonCIJob{CICommandJob: onboard.CICommandJob{Variables: map[string]string{key: ""}}}
+			require.Contains(t, commandPlanningGap(job, command), "worker identity override")
+			delete(job.Variables, key)
+			require.Empty(t, commandPlanningGap(job, command))
+		})
+	}
+}

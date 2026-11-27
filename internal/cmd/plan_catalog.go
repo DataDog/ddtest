@@ -193,7 +193,7 @@ func commandPlanningGap(job onboard.PythonCIJob, command onboard.PythonCICommand
 		}
 	}
 	for _, key := range []string{"DD_SERVICE", "DD_ENV", "DD_TAGS"} {
-		if value := job.Variables[key]; value != "" && value != os.Getenv(key) {
+		if value, declared := job.Variables[key]; declared && value != os.Getenv(key) {
 			return "worker identity override requires separate planning: " + key
 		}
 	}
