@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/DataDog/ddtest/internal/constants"
@@ -43,10 +44,14 @@ func (r runExecutionReport) failure(err error) runExecutionResult {
 	return runExecutionResult{report: r, err: err}
 }
 
-// runBatch executes an already selected batch of test files in one worker.
-func (e testExecutor) runBatch(testFiles []string, nodeIndex int, workerIndex int) error {
+// runBatch executes an already selected batch of test files in one worker;
+// partial says whether the batch is only part of the suite's files.
+func (e testExecutor) runBatch(testFiles []string, nodeIndex int, workerIndex int, partial bool) error {
 	workerEnv := createWorkerEnv(e.workerEnvMap, nodeIndex, workerIndex)
 	workerEnv[constants.TestParallelizationEnabledEnvVar] = "true"
+	if partial {
+		workerEnv[constants.TestRunPartialEnvVar] = "true"
+	}
 
 	slog.Info("Running tests in worker", "nodeIndex", nodeIndex, "workerIndex", workerIndex, "testFilesCount", len(testFiles), "workerEnvKeys", workerEnvKeys(workerEnv))
 	return e.framework.RunTests(e.ctx, testFiles, workerEnv)
@@ -54,6 +59,24 @@ func (e testExecutor) runBatch(testFiles []string, nodeIndex int, workerIndex in
 
 // loadTestBatch reads a file containing test file paths (one per line)
 // and returns them as a slice of strings.
+// otherRunnersHaveTests reports whether a runner file of the plan other than
+// name lists tests, so that the batches of name are only part of the suite.
+func otherRunnersHaveTests(name string) bool {
+	entries, err := os.ReadDir(constants.TestsSplitDir)
+	if err != nil {
+		return false
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || entry.Name() == name {
+			continue
+		}
+		if files, err := loadTestBatch(filepath.Join(constants.TestsSplitDir, entry.Name())); err == nil && len(files) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 func loadTestBatch(filePath string) ([]string, error) {
 	data, err := os.ReadFile(filePath)
 	if err != nil {
