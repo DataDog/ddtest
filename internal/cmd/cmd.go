@@ -139,6 +139,13 @@ var rootPersistentFlagBindings = []persistentFlagBinding{
 	{configKey: "runtime_tags", flagName: "runtime-tags"},
 }
 
+// runPersistentFlagBindings are the flags only ddtest run has.
+var runPersistentFlagBindings = []persistentFlagBinding{
+	{configKey: "record_payloads", flagName: "record-payloads"},
+	{configKey: "record_payloads_transport", flagName: "record-payloads-transport"},
+	{configKey: "record_payloads_upstream", flagName: "record-payloads-upstream"},
+}
+
 func init() {
 	rootCmd.SetVersionTemplate("{{ .Version }}\n")
 
@@ -165,11 +172,20 @@ func init() {
 		os.Exit(1)
 	}
 
+	runCmd.PersistentFlags().String("record-payloads", "", "Save the workers' Test Optimization payloads as files in this directory instead of sending them to Datadog (see ddtest record)")
+	runCmd.PersistentFlags().String("record-payloads-transport", string(settings.PayloadsTransportAuto), "With --record-payloads, how the workers reach the recording agent: tcp (a local port), unix (a Unix domain socket), or auto, a Unix domain socket for the languages whose tracing libraries reach an agent on one (JavaScript and Java) and TCP for the others")
+	runCmd.PersistentFlags().String("record-payloads-upstream", "", "With --record-payloads, the agent the tests themselves talk to, which the recorder forwards every request that isn't Test Optimization's: by default the one the workers' environment names, DD_TRACE_AGENT_URL or DD_AGENT_HOST and DD_TRACE_AGENT_PORT, if any; none forwards nothing; or an agent's URL, http://host:port or unix:///path")
+	if err := bindPersistentFlags(runCmd, runPersistentFlagBindings); err != nil {
+		fmt.Fprintf(os.Stderr, "Error binding CLI flags: %v\n", err)
+		os.Exit(1)
+	}
+
 	rootCmd.AddCommand(planCmd)
 	rootCmd.AddCommand(runCmd)
 	rootCmd.AddCommand(onboardCmd)
 	rootCmd.AddCommand(testdriveCmd)
 	rootCmd.AddCommand(instrumentCmd)
+	rootCmd.AddCommand(recordCmd)
 
 	cobra.OnInitialize(settings.Init)
 }

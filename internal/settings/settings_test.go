@@ -936,6 +936,40 @@ func TestParseCiNodeWorkers(t *testing.T) {
 	}
 }
 
+func TestParseRecordPayloadsTransport(t *testing.T) {
+	tests := []struct {
+		name      string
+		value     string
+		expected  PayloadsTransport
+		expectErr bool
+	}{
+		{name: "empty value is auto", value: "", expected: PayloadsTransportAuto},
+		{name: "auto", value: "auto", expected: PayloadsTransportAuto},
+		{name: "tcp", value: "tcp", expected: PayloadsTransportTCP},
+		{name: "unix", value: "unix", expected: PayloadsTransportUnix},
+		{name: "trims whitespace and case", value: " UNIX ", expected: PayloadsTransportUnix},
+		{name: "rejects anything else", value: "uds", expectErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := ParseRecordPayloadsTransport(tt.value)
+			if tt.expectErr {
+				if err == nil {
+					t.Fatalf("expected error, got %v", result)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("expected no error, got %v", err)
+			}
+			if result != tt.expected {
+				t.Errorf("expected %v, got %v", tt.expected, result)
+			}
+		})
+	}
+}
+
 func TestParseNonNegativeDurationSetting(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -1130,4 +1164,19 @@ func TestGetWorkerEnvMap(t *testing.T) {
 			t.Errorf("expected only KEY=good, got %v", result)
 		}
 	})
+}
+
+func TestParseRecordPayloadsUpstream(t *testing.T) {
+	for value, want := range map[string]string{"": "", " none ": RecordPayloadsNoUpstream, "http://localhost:8126": "http://localhost:8126", "unix:///var/run/datadog/apm.socket": "unix:///var/run/datadog/apm.socket"} {
+		got, err := ParseRecordPayloadsUpstream(value)
+		if err != nil || got != want {
+			t.Errorf("ParseRecordPayloadsUpstream(%q) = %q, %v; want %q", value, got, err, want)
+		}
+	}
+	for _, value := range []string{"localhost:8126", "ftp://agent", "unix://relative", "http://alice:secret@agent:8126"} {
+		_, err := ParseRecordPayloadsUpstream(value)
+		if err == nil || strings.Contains(err.Error(), "secret") {
+			t.Errorf("ParseRecordPayloadsUpstream(%q) = %v, want an error that repeats no credential", value, err)
+		}
+	}
 }

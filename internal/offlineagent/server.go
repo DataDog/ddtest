@@ -1,0 +1,76 @@
+package offlineagent
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net"
+	"net/http"
+	"time"
+)
+
+// Server serves the agent on a listener until Stop.
+type Server struct {
+	agent   *agent
+	server  *http.Server
+	network string
+	address string
+	done    chan struct{}
+	err     error
+}
+
+// Serve starts serving the agent on listener, and on each of more, such as
+// the same port on another loopback address; URL and Done are listener's.
+func Serve(listener net.Listener, config Config, more ...net.Listener) *Server {
+	agent := buildAgent(config)
+	s := &Server{
+		agent:   agent,
+		server:  &http.Server{Handler: agent.handler(), ReadHeaderTimeout: 10 * time.Second},
+		network: listener.Addr().Network(),
+		address: listener.Addr().String(),
+		done:    make(chan struct{}),
+	}
+	for _, l := range more {
+		// Stop closes them with listener's; their Serve ends then.
+		go func() { _ = s.server.Serve(l) }()
+	}
+	go func() {
+		s.err = s.server.Serve(listener)
+		close(s.done)
+	}()
+	return s
+}
+
+// URL is the agent URL for tracing libraries, such as DD_TRACE_AGENT_URL:
+// unix:// and the socket's path for a Unix domain socket.
+func (s *Server) URL() string {
+	if s.network == "unix" {
+		return "unix://" + s.address
+	}
+	return "http://" + s.address
+}
+
+// Done is closed when the server stops, either because of Stop or because
+// serving failed; Err then reports why.
+func (s *Server) Done() <-chan struct{} {
+	return s.done
+}
+
+// Err is the reason the server stopped, once Done is closed.
+func (s *Server) Err() error {
+	return s.err
+}
+
+// Stop stops accepting requests and waits, until ctx is done, for the
+// requests in progress, so every payload a library sent is saved. A
+// payload it could not save is an error too.
+func (s *Server) Stop(ctx context.Context) error {
+	if err := s.server.Shutdown(ctx); err != nil {
+		return errors.Join(fmt.Errorf("stop the offline agent: %w", err), s.agent.files.lost())
+	}
+	<-s.done
+	if !errors.Is(s.err, http.ErrServerClosed) {
+		return errors.Join(fmt.Errorf("offline agent stopped: %w", s.err), s.agent.files.lost())
+	}
+	return s.agent.files.lost()
+}

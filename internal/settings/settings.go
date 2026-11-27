@@ -11,6 +11,8 @@ import (
 
 	"github.com/klauspost/cpuid/v2"
 	"github.com/spf13/viper"
+
+	"github.com/DataDog/ddtest/internal/offlineagent"
 )
 
 const (
@@ -47,6 +49,18 @@ type TestSkippingLevel string
 const (
 	TestSkippingLevelTest  TestSkippingLevel = "test"
 	TestSkippingLevelSuite TestSkippingLevel = "suite"
+)
+
+// PayloadsTransport is how ddtest run's workers reach the agent that
+// records their payloads with --record-payloads.
+type PayloadsTransport string
+
+const (
+	// PayloadsTransportAuto uses a Unix domain socket when the
+	// platform's tracing library reaches an agent on one, and TCP otherwise.
+	PayloadsTransportAuto PayloadsTransport = "auto"
+	PayloadsTransportTCP  PayloadsTransport = "tcp"
+	PayloadsTransportUnix PayloadsTransport = "unix"
 )
 
 // DefaultParallelism returns the default parallelism value.
@@ -134,6 +148,9 @@ type Config struct {
 	StrictDiscovery        bool              `mapstructure:"strict_discovery"`
 	RuntimeTags            string            `mapstructure:"runtime_tags"`
 	ReportEnabled          bool              `mapstructure:"report_enabled"`
+	RecordPayloads         string            `mapstructure:"record_payloads"`
+	PayloadsTransport      PayloadsTransport `mapstructure:"record_payloads_transport"`
+	RecordPayloadsUpstream string            `mapstructure:"record_payloads_upstream"`
 }
 
 var (
@@ -210,6 +227,18 @@ func Init() {
 	}
 	viper.Set("target_time", targetTime)
 	viper.Set("test_skipping_mode", NormalizeTestSkippingLevel(TestSkippingLevel(viper.GetString("test_skipping_mode"))))
+	recordPayloadsTransport, err := ParseRecordPayloadsTransport(viper.GetString("record_payloads_transport"))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
+		os.Exit(1)
+	}
+	viper.Set("record_payloads_transport", recordPayloadsTransport)
+	recordPayloadsUpstream, err := ParseRecordPayloadsUpstream(viper.GetString("record_payloads_upstream"))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
+		os.Exit(1)
+	}
+	viper.Set("record_payloads_upstream", recordPayloadsUpstream)
 
 	config = &Config{}
 	if err := viper.Unmarshal(config); err != nil {
@@ -238,6 +267,9 @@ func setDefaults() {
 	viper.SetDefault("strict_discovery", false)
 	viper.SetDefault("runtime_tags", "")
 	viper.SetDefault("report_enabled", true)
+	viper.SetDefault("record_payloads", "")
+	viper.SetDefault("record_payloads_transport", string(PayloadsTransportAuto))
+	viper.SetDefault("record_payloads_upstream", "")
 }
 
 // NormalizeTestSkippingLevel accepts only the backend-supported TIA skipping modes.
@@ -253,6 +285,19 @@ func NormalizeTestSkippingLevel(level TestSkippingLevel) TestSkippingLevel {
 
 func (level TestSkippingLevel) String() string {
 	return string(level)
+}
+
+// ParseRecordPayloadsTransport resolves the record_payloads_transport
+// setting: auto, tcp or unix, auto when empty.
+func ParseRecordPayloadsTransport(value string) (PayloadsTransport, error) {
+	switch transport := PayloadsTransport(strings.ToLower(strings.TrimSpace(value))); transport {
+	case "":
+		return PayloadsTransportAuto, nil
+	case PayloadsTransportAuto, PayloadsTransportTCP, PayloadsTransportUnix:
+		return transport, nil
+	default:
+		return "", fmt.Errorf("record_payloads_transport must be auto, tcp or unix, got %q", value)
+	}
 }
 
 // ParseNonNegativeDurationSetting resolves a duration setting from a Go
@@ -379,6 +424,46 @@ func GetRuntimeTags() string {
 
 func GetReportEnabled() bool {
 	return Get().ReportEnabled
+}
+
+// GetRecordPayloads is the directory where ddtest run saves the workers' Test
+// Optimization payloads as files, or empty when the workers send them to
+// Datadog as usual.
+func GetRecordPayloads() string {
+	return Get().RecordPayloads
+}
+
+// GetRecordPayloadsTransport is how ddtest run's workers reach the agent
+// that records their payloads.
+func GetRecordPayloadsTransport() PayloadsTransport {
+	return Get().PayloadsTransport
+}
+
+// RecordPayloadsNoUpstream is the record_payloads_upstream that forwards
+// nothing, whatever agent the workers' environment names.
+const RecordPayloadsNoUpstream = "none"
+
+// ParseRecordPayloadsUpstream resolves the record_payloads_upstream
+// setting: empty, the agent the workers' environment names, if any;
+// RecordPayloadsNoUpstream; or an agent's URL, as DD_TRACE_AGENT_URL takes
+// one (offlineagent.ParseUpstream).
+func ParseRecordPayloadsUpstream(value string) (string, error) {
+	switch upstream := strings.TrimSpace(value); upstream {
+	case "", RecordPayloadsNoUpstream:
+		return upstream, nil
+	default:
+		if _, err := offlineagent.ParseUpstream(upstream); err != nil {
+			return "", fmt.Errorf("record_payloads_upstream must be none or an agent's URL: %w", err)
+		}
+		return upstream, nil
+	}
+}
+
+// GetRecordPayloadsUpstream is the agent ddtest run's recorder forwards the
+// workers' other requests to: empty for the one their environment names,
+// RecordPayloadsNoUpstream, or a URL.
+func GetRecordPayloadsUpstream() string {
+	return Get().RecordPayloadsUpstream
 }
 
 // GetRuntimeTagsMap parses the runtime_tags setting as JSON and returns it as a map.

@@ -299,6 +299,35 @@ ddtest run --platform javascript --framework cucumber
 For CI-node mode, worker environment variables, custom commands, and
 parallelism details, see [Running DDTest](docs/running.md).
 
+#### ddtest record
+
+Stands in for the Datadog Agent while tests run on a machine that can't reach
+Datadog, and saves the Test Optimization payloads as files:
+
+```bash
+ddtest record --payloads-dir /tmp/payloads &
+DD_TRACE_AGENT_URL=http://127.0.0.1:8126 DD_CIVISIBILITY_AGENTLESS_ENABLED=false <test command>
+kill %1   # stops after saving the payloads it is receiving
+```
+
+ddtest exits with an error if a payload could not be saved.
+
+The tracing library sends its payloads through what it takes for the Agent's
+EVP proxy. ddtest writes them as JSON under `tests/`, `coverage/` and
+`telemetry/`, in the same layout as the libraries' Bazel payload-files mode
+(`DD_TEST_OPTIMIZATION_PAYLOADS_IN_FILES`), so the same uploader handles both.
+Configuration requests are answered from the plan's HTTP cache in
+`.testoptimization/cache/http/` (change it with `--plan-dir`), or with every
+feature off when there is no cache, and git uploads are answered as if Datadog
+already had the commits. `--listen unix:///path/to/agent.sock` listens on a
+Unix domain socket instead (`DD_TRACE_AGENT_URL=unix:///path/to/agent.sock`),
+for the tracing libraries that reach an agent on one (see
+[docs/running.md](docs/running.md)).
+
+To record the payloads of `ddtest run`'s own workers, pass
+`--record-payloads <dir>` to `ddtest run` instead; see
+[Recording payloads as files](docs/running.md#recording-payloads-as-files).
+
 ### Common settings
 
 | CLI flag | What it does |

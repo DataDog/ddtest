@@ -1,0 +1,369 @@
+package runner
+
+import (
+	"bytes"
+	"context"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"syscall"
+	"testing"
+
+	"github.com/DataDog/ddtest/internal/constants"
+	"github.com/DataDog/ddtest/internal/errcode"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"github.com/tinylib/msgp/msgp"
+)
+
+// sendingFramework sends one test cycle payload to the agent in its
+// environment while it runs tests, as a tracing library would.
+type sendingFramework struct {
+	*MockFramework
+	t      *testing.T
+	status int
+}
+
+func (f *sendingFramework) RunTests(ctx context.Context, testFiles []string, envMap map[string]string) error {
+	payload := msgp.AppendMapHeader(nil, 1)
+	payload = msgp.AppendString(payload, "version")
+	payload = msgp.AppendInt(payload, 1)
+	agentURL, client := envMap["DD_TRACE_AGENT_URL"], http.DefaultClient
+	if socket, ok := strings.CutPrefix(agentURL, "unix://"); ok {
+		agentURL = "http://agent"
+		client = &http.Client{Transport: &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, "unix", socket)
+		}}}
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, agentURL+"/evp_proxy/v4/api/v2/citestcycle", bytes.NewReader(payload))
+	require.NoError(f.t, err)
+	request.Header.Set("X-Datadog-EVP-Subdomain", "citestcycle-intake")
+	response, err := client.Do(request)
+	require.NoError(f.t, err)
+	f.status = response.StatusCode
+	require.NoError(f.t, response.Body.Close())
+	return f.MockFramework.RunTests(ctx, testFiles, envMap)
+}
+
+func prepareSequentialRun(t *testing.T) {
+	t.Helper()
+	chdirTemp(t)
+	writeRunnerTestFile(t, constants.ParallelRunnersOutputPath, "1")
+	writeRunnerTestFile(t, constants.TestFilesOutputPath, "spec/a_spec.rb\n")
+}
+
+func TestRunRecordsTheWorkersPayloadsWhenAsked(t *testing.T) {
+	payloadsDir := filepath.Join(t.TempDir(), "payloads")
+	t.Setenv("DD_TEST_OPTIMIZATION_RUNNER_RECORD_PAYLOADS", payloadsDir)
+	withRunnerTestSettings(t)
+	prepareSequentialRun(t)
+	framework := &sendingFramework{MockFramework: &MockFramework{FrameworkName: "rspec"}, t: t}
+	platform := &MockPlatform{PlatformName: "ruby", Framework: framework}
+
+	require.NoError(t, NewWithDependencies(platform, framework, &fakePlanner{}).Run(context.Background()))
+
+	assert.Equal(t, http.StatusAccepted, framework.status)
+	saved, err := os.ReadDir(filepath.Join(payloadsDir, "tests"))
+	require.NoError(t, err)
+	assert.Len(t, saved, 1)
+	calls := framework.GetRunTestsCalls()
+	require.Len(t, calls, 1)
+	agentURL := calls[0].EnvMap["DD_TRACE_AGENT_URL"]
+	assert.Regexp(t, `^http://127\.0\.0\.1:\d+$`, agentURL)
+	assert.Equal(t, "false", calls[0].EnvMap["DD_CIVISIBILITY_AGENTLESS_ENABLED"])
+	_, err = http.Get(agentURL + "/info")
+	assert.Error(t, err, "the recorder still answers after the run")
+}
+
+func TestRunRecordsOverAUnixSocketWhenAsked(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix domain socket URLs aren't checked on Windows")
+	}
+	assertRunRecordsOverAUnixSocket(t, "unix", false)
+}
+
+func TestRunRecordsOverAUnixSocketWhenThePlatformsTracerReachesOne(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("auto stays on TCP on Windows")
+	}
+	assertRunRecordsOverAUnixSocket(t, "auto", true)
+}
+
+func TestRunRecordsOverTCPWhenAsked(t *testing.T) {
+	t.Setenv("DD_TEST_OPTIMIZATION_RUNNER_RECORD_PAYLOADS", t.TempDir())
+	t.Setenv("DD_TEST_OPTIMIZATION_RUNNER_RECORD_PAYLOADS_TRANSPORT", "tcp")
+	withRunnerTestSettings(t)
+	prepareSequentialRun(t)
+	framework := &sendingFramework{MockFramework: &MockFramework{FrameworkName: "jest"}, t: t}
+	platform := &MockPlatform{PlatformName: "javascript", Framework: framework, UnixSocket: true}
+
+	require.NoError(t, NewWithDependencies(platform, framework, &fakePlanner{}).Run(context.Background()))
+
+	assert.Equal(t, http.StatusAccepted, framework.status)
+	calls := framework.GetRunTestsCalls()
+	require.Len(t, calls, 1)
+	assert.Regexp(t, `^http://127\.0\.0\.1:\d+$`, calls[0].EnvMap["DD_TRACE_AGENT_URL"])
+}
+
+func assertRunRecordsOverAUnixSocket(t *testing.T, transport string, platformReachesUnixSocket bool) {
+	t.Helper()
+	payloadsDir := filepath.Join(t.TempDir(), "payloads")
+	t.Setenv("DD_TEST_OPTIMIZATION_RUNNER_RECORD_PAYLOADS", payloadsDir)
+	t.Setenv("DD_TEST_OPTIMIZATION_RUNNER_RECORD_PAYLOADS_TRANSPORT", transport)
+	withRunnerTestSettings(t)
+	prepareSequentialRun(t)
+	framework := &sendingFramework{MockFramework: &MockFramework{FrameworkName: "rspec"}, t: t}
+	platform := &MockPlatform{PlatformName: "ruby", Framework: framework, UnixSocket: platformReachesUnixSocket}
+
+	require.NoError(t, NewWithDependencies(platform, framework, &fakePlanner{}).Run(context.Background()))
+
+	assert.Equal(t, http.StatusAccepted, framework.status)
+	saved, err := os.ReadDir(filepath.Join(payloadsDir, "tests"))
+	require.NoError(t, err)
+	assert.Len(t, saved, 1)
+	calls := framework.GetRunTestsCalls()
+	require.Len(t, calls, 1)
+	agentURL := calls[0].EnvMap["DD_TRACE_AGENT_URL"]
+	assert.Regexp(t, `^unix:///.+/agent\.sock$`, agentURL)
+	_, err = os.Stat(filepath.Dir(strings.TrimPrefix(agentURL, "unix://")))
+	assert.ErrorIs(t, err, os.ErrNotExist, "the socket's directory outlives the run")
+}
+
+func TestRunOverridesAgentlessModeWhenRecording(t *testing.T) {
+	t.Setenv("DD_TEST_OPTIMIZATION_RUNNER_RECORD_PAYLOADS", t.TempDir())
+	t.Setenv("DD_TEST_OPTIMIZATION_RUNNER_WORKER_ENV", "DD_CIVISIBILITY_AGENTLESS_ENABLED=true;DD_TRACE_AGENT_URL=http://agent:8126")
+	withRunnerTestSettings(t)
+	prepareSequentialRun(t)
+	framework := &MockFramework{FrameworkName: "rspec"}
+	platform := &MockPlatform{PlatformName: "ruby", Framework: framework}
+
+	require.NoError(t, NewWithDependencies(platform, framework, &fakePlanner{}).Run(context.Background()))
+
+	calls := framework.GetRunTestsCalls()
+	require.Len(t, calls, 1)
+	assert.Equal(t, "false", calls[0].EnvMap["DD_CIVISIBILITY_AGENTLESS_ENABLED"])
+	assert.NotEqual(t, "http://agent:8126", calls[0].EnvMap["DD_TRACE_AGENT_URL"])
+}
+
+func TestRunLeavesTheWorkersAloneByDefault(t *testing.T) {
+	withRunnerTestSettings(t)
+	prepareSequentialRun(t)
+	framework := &MockFramework{FrameworkName: "rspec"}
+	platform := &MockPlatform{PlatformName: "ruby", Framework: framework}
+
+	require.NoError(t, NewWithDependencies(platform, framework, &fakePlanner{}).Run(context.Background()))
+
+	calls := framework.GetRunTestsCalls()
+	require.Len(t, calls, 1)
+	assert.NotContains(t, calls[0].EnvMap, "DD_TRACE_AGENT_URL")
+	assert.NotContains(t, calls[0].EnvMap, "DD_CIVISIBILITY_AGENTLESS_ENABLED")
+}
+
+func TestRunFailsBeforeTestsWhenThePayloadsDirectoryCannotBeCreated(t *testing.T) {
+	blocker := filepath.Join(t.TempDir(), "file")
+	require.NoError(t, os.WriteFile(blocker, nil, 0o600))
+	t.Setenv("DD_TEST_OPTIMIZATION_RUNNER_RECORD_PAYLOADS", filepath.Join(blocker, "payloads"))
+	withRunnerTestSettings(t)
+	prepareSequentialRun(t)
+	framework := &MockFramework{FrameworkName: "rspec"}
+	platform := &MockPlatform{PlatformName: "ruby", Framework: framework}
+
+	err := NewWithDependencies(platform, framework, &fakePlanner{}).Run(context.Background())
+
+	require.Error(t, err)
+	assert.Equal(t, errcode.RunPayloadRecorderFailed, errcode.CodeOf(err))
+	assert.Zero(t, framework.GetRunTestsCallsCount(), "tests ran without a place to save their payloads")
+}
+
+func TestRunFailsBeforeTestsWhenAPayloadsDirectoryIsInTheWay(t *testing.T) {
+	payloadsDir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(payloadsDir, "tests"), nil, 0o600))
+	t.Setenv("DD_TEST_OPTIMIZATION_RUNNER_RECORD_PAYLOADS", payloadsDir)
+	withRunnerTestSettings(t)
+	prepareSequentialRun(t)
+	framework := &MockFramework{FrameworkName: "rspec"}
+	platform := &MockPlatform{PlatformName: "ruby", Framework: framework}
+
+	err := NewWithDependencies(platform, framework, &fakePlanner{}).Run(context.Background())
+
+	require.Error(t, err)
+	assert.Equal(t, errcode.RunPayloadRecorderFailed, errcode.CodeOf(err))
+	assert.Zero(t, framework.GetRunTestsCallsCount(), "tests ran without a place to save their payloads")
+}
+
+// forwardingFramework sends a trace to the agent in its environment, as the
+// code under test would, besides the test cycle payload its tracing library
+// sends there.
+type forwardingFramework struct {
+	*sendingFramework
+	traceStatus int
+}
+
+func (f *forwardingFramework) RunTests(ctx context.Context, testFiles []string, envMap map[string]string) error {
+	request, err := http.NewRequestWithContext(ctx, http.MethodPut, envMap["DD_TRACE_AGENT_URL"]+"/v0.4/traces", strings.NewReader("[]"))
+	require.NoError(f.t, err)
+	response, err := http.DefaultClient.Do(request)
+	require.NoError(f.t, err)
+	f.traceStatus = response.StatusCode
+	require.NoError(f.t, response.Body.Close())
+	return f.sendingFramework.RunTests(ctx, testFiles, envMap)
+}
+
+func TestRunForwardsTheWorkersOtherRequestsToTheAgentTheirEnvironmentNamed(t *testing.T) {
+	var forwarded []string
+	agent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		forwarded = append(forwarded, r.Method+" "+r.URL.Path)
+	}))
+	t.Cleanup(agent.Close)
+	payloadsDir := filepath.Join(t.TempDir(), "payloads")
+	t.Setenv("DD_TEST_OPTIMIZATION_RUNNER_RECORD_PAYLOADS", payloadsDir)
+	t.Setenv("DD_TRACE_AGENT_URL", agent.URL)
+	withRunnerTestSettings(t)
+	prepareSequentialRun(t)
+	framework := &forwardingFramework{sendingFramework: &sendingFramework{MockFramework: &MockFramework{FrameworkName: "pytest"}, t: t}}
+	platform := &MockPlatform{PlatformName: "python", Framework: framework}
+
+	require.NoError(t, NewWithDependencies(platform, framework, &fakePlanner{}).Run(context.Background()))
+
+	assert.Equal(t, http.StatusOK, framework.traceStatus)
+	assert.Equal(t, []string{"PUT /v0.4/traces"}, forwarded, "the trace reached the agent, the test cycle payload didn't")
+	assert.Equal(t, http.StatusAccepted, framework.status)
+	saved, err := os.ReadDir(filepath.Join(payloadsDir, "tests"))
+	require.NoError(t, err)
+	assert.Len(t, saved, 1)
+	calls := framework.GetRunTestsCalls()
+	require.Len(t, calls, 1)
+	assert.NotEqual(t, agent.URL, calls[0].EnvMap["DD_TRACE_AGENT_URL"], "the workers reach the recorder")
+}
+
+// TestRunGivesTheWorkersLocalhostWhenTheirAgentIsThere: an agent at
+// http://localhost:<port> gets the workers http://localhost and the
+// recorder's port, which the recorder answers, so a test that derives
+// another endpoint from the agent's host sees localhost as without it.
+func TestRunGivesTheWorkersLocalhostWhenTheirAgentIsThere(t *testing.T) {
+	var forwarded []string
+	agent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		forwarded = append(forwarded, r.Method+" "+r.URL.Path)
+	}))
+	t.Cleanup(agent.Close)
+	t.Setenv("DD_TEST_OPTIMIZATION_RUNNER_RECORD_PAYLOADS", filepath.Join(t.TempDir(), "payloads"))
+	t.Setenv("DD_TRACE_AGENT_URL", strings.Replace(agent.URL, "127.0.0.1", "localhost", 1))
+	withRunnerTestSettings(t)
+	prepareSequentialRun(t)
+	framework := &forwardingFramework{sendingFramework: &sendingFramework{MockFramework: &MockFramework{FrameworkName: "pytest"}, t: t}}
+	platform := &MockPlatform{PlatformName: "python", Framework: framework}
+
+	require.NoError(t, NewWithDependencies(platform, framework, &fakePlanner{}).Run(context.Background()))
+
+	calls := framework.GetRunTestsCalls()
+	require.Len(t, calls, 1)
+	assert.Regexp(t, `^http://localhost:\d+$`, calls[0].EnvMap["DD_TRACE_AGENT_URL"])
+	assert.NotEqual(t, strings.Replace(agent.URL, "127.0.0.1", "localhost", 1), calls[0].EnvMap["DD_TRACE_AGENT_URL"])
+	assert.Equal(t, http.StatusOK, framework.traceStatus)
+	assert.Equal(t, []string{"PUT /v0.4/traces"}, forwarded)
+	assert.Equal(t, http.StatusAccepted, framework.status)
+}
+
+func TestPayloadsUpstream(t *testing.T) {
+	for _, name := range []string{"DD_TRACE_AGENT_URL", "DD_AGENT_HOST", "DD_TRACE_AGENT_PORT"} {
+		t.Setenv(name, "")
+	}
+	one := [][2]int{{0, 0}}
+	upstream := func(setting string, workerEnv map[string]string, workers [][2]int) string {
+		t.Helper()
+		u := payloadsUpstream(setting, workerEnv, workers)
+		if u == nil {
+			return ""
+		}
+		return u.String()
+	}
+	assert.Equal(t, "", upstream("", nil, one), "an environment that names no agent forwards nothing")
+	assert.Equal(t, "http://agent:9126", upstream("http://agent:9126", map[string]string{"DD_TRACE_AGENT_URL": "http://other:8126"}, one))
+	t.Setenv("DD_TRACE_AGENT_URL", "http://localhost:8126")
+	assert.Equal(t, "http://localhost:8126", upstream("", nil, one))
+	assert.Equal(t, "", upstream("none", nil, one))
+	assert.Equal(t, "unix:///var/run/datadog/apm.socket", upstream("", map[string]string{"DD_TRACE_AGENT_URL": "unix:///var/run/datadog/apm.socket"}, one), "--worker-env's over the process's")
+	assert.Equal(t, "", upstream("", map[string]string{"DD_TRACE_AGENT_URL": "localhost:8126"}, one), "a URL no library takes")
+	// --worker-env's placeholders, filled for each of the run's workers: one agent for all of them is forwarded to.
+	perWorker := map[string]string{"DD_TRACE_AGENT_URL": "http://agent-{{workerIndex}}:8126"}
+	assert.Equal(t, "http://agent-0:8126", upstream("", perWorker, runWorkers(-1, 1, 1)), "a sequential run's one worker")
+	assert.Equal(t, "", upstream("", perWorker, runWorkers(-1, 1, 2)), "an agent per worker")
+	perNode := map[string]string{"DD_TRACE_AGENT_URL": "http://agent-{{nodeIndex}}:8126"}
+	assert.Equal(t, "http://agent-3:8126", upstream("", perNode, runWorkers(3, 2, 1)), "a CI node's workers, one node")
+	t.Setenv("DD_TRACE_AGENT_URL", "")
+	assert.Equal(t, "http://ddagent:8126", upstream("", map[string]string{"DD_AGENT_HOST": "ddagent"}, one))
+	assert.Equal(t, "http://localhost:9126", upstream("", map[string]string{"DD_TRACE_AGENT_PORT": "9126"}, one))
+	assert.Equal(t, "http://[::1]:8126", upstream("", map[string]string{"DD_AGENT_HOST": "::1"}, one))
+}
+
+func TestRunWorkers(t *testing.T) {
+	assert.Equal(t, [][2]int{{0, 0}}, runWorkers(-1, 1, 1), "sequential")
+	assert.Equal(t, [][2]int{{0, 0}, {0, 1}, {0, 2}}, runWorkers(-1, 1, 3), "parallel")
+	assert.Equal(t, [][2]int{{4, 0}, {4, 1}}, runWorkers(4, 2, 8), "a CI node's workers")
+	assert.Equal(t, [][2]int{{4, 0}}, runWorkers(4, 0, 8), "a CI node of one worker")
+}
+
+// TestListenLocalhostSkipsAPortTakenOnIPv6: a port another process holds on
+// ::1 is given up and another one taken, so that no worker reaches that
+// process at localhost; without an IPv6 loopback, 127.0.0.1 alone.
+func TestListenLocalhostSkipsAPortTakenOnIPv6(t *testing.T) {
+	saved := listen
+	t.Cleanup(func() { listen = saved })
+	var ipv4Ports, ipv6Asks []string
+	taken := true
+	listen = func(network, address string) (net.Listener, error) {
+		if strings.HasPrefix(address, "[::1]:") {
+			ipv6Asks = append(ipv6Asks, address)
+			if taken {
+				taken = false
+				return nil, &net.OpError{Op: "listen", Net: network, Err: os.NewSyscallError("bind", syscall.EADDRINUSE)}
+			}
+			return saved("tcp", "127.0.0.1:0") // stands for ::1, which the test's host may lack
+		}
+		l, err := saved(network, address)
+		if err == nil {
+			ipv4Ports = append(ipv4Ports, localPort(l))
+		}
+		return l, err
+	}
+	ipv4, more, err := listenLocalhost()
+	require.NoError(t, err)
+	require.Len(t, more, 1)
+	first, second := ipv4, more[0]
+	t.Cleanup(func() { _ = first.Close(); _ = second.Close() })
+	require.Len(t, ipv4Ports, 2, "a second port after ::1's first was taken")
+	assert.Equal(t, ipv4Ports[1], localPort(ipv4))
+	assert.Equal(t, []string{"[::1]:" + ipv4Ports[0], "[::1]:" + ipv4Ports[1]}, ipv6Asks)
+	reopened, err := saved("tcp", "127.0.0.1:"+ipv4Ports[0])
+	require.NoError(t, err, "the first port's listener was closed")
+	require.NoError(t, reopened.Close())
+
+	// No IPv6 loopback: 127.0.0.1 alone.
+	listen = func(network, address string) (net.Listener, error) {
+		if strings.HasPrefix(address, "[::1]:") {
+			return nil, &net.OpError{Op: "listen", Net: network, Err: os.NewSyscallError("bind", syscall.EADDRNOTAVAIL)}
+		}
+		return saved(network, address)
+	}
+	alone, none, err := listenLocalhost()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = alone.Close() })
+	assert.Empty(t, none)
+}
+
+// TestAddressInUse: EADDRINUSE, and on Windows its own WSAEADDRINUSE, which
+// Go's syscall.EADDRINUSE isn't there, and WSAEACCES; nothing else.
+func TestAddressInUse(t *testing.T) {
+	wrap := func(errno syscall.Errno) error {
+		return &net.OpError{Op: "listen", Net: "tcp", Err: os.NewSyscallError("bind", errno)}
+	}
+	assert.True(t, addressInUse(wrap(syscall.EADDRINUSE), "linux"))
+	assert.True(t, addressInUse(wrap(syscall.Errno(10048)), "windows"))
+	assert.True(t, addressInUse(wrap(syscall.Errno(10013)), "windows"), "beside an exclusive listener")
+	assert.False(t, addressInUse(wrap(syscall.Errno(10048)), "linux"))
+	assert.False(t, addressInUse(wrap(syscall.EADDRNOTAVAIL), "linux"))
+}

@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -99,6 +100,16 @@ func (tr *TestRunner) Run(ctx context.Context) error {
 
 	// Parse worker environment variables if provided in settings
 	workerEnvMap := settings.GetWorkerEnvMap()
+	var recorder *payloadRecorder
+	if payloadsDir := settings.GetRecordPayloads(); payloadsDir != "" {
+		workers := runWorkers(settings.GetCiNode(), settings.GetCiNodeWorkers(), parallelRunners)
+		upstream := payloadsUpstream(settings.GetRecordPayloadsUpstream(), workerEnvMap, workers)
+		recorder, err = startPayloadRecorder(payloadsDir, recordOnUnixSocket(settings.GetRecordPayloadsTransport(), tr.platform), upstream)
+		if err != nil {
+			return err
+		}
+		recorder.pointWorkers(workerEnvMap)
+	}
 	slog.Info("Worker environment variables", "workerEnvKeys", workerEnvKeys(workerEnvMap))
 
 	detectedPlatform, framework := tr.platform, tr.framework
@@ -122,6 +133,9 @@ func (tr *TestRunner) Run(ctx context.Context) error {
 		executionResult = executor.runParallel()
 	} else {
 		executionResult = executor.runSequential()
+	}
+	if recorder != nil {
+		executionResult.err = errors.Join(executionResult.err, recorder.stop(ctx))
 	}
 
 	if settings.GetReportEnabled() {
