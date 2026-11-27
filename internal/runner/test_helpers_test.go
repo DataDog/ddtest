@@ -35,6 +35,7 @@ type MockPlatform struct {
 	TagsErr      error
 	Framework    framework.Framework
 	TestLevel    settings.TestSkippingLevel
+	UnixSocket   bool
 }
 
 func (m *MockPlatform) Name() string {
@@ -62,6 +63,10 @@ func (m *MockPlatform) TestSkippingLevel() settings.TestSkippingLevel {
 		return settings.TestSkippingLevelTest
 	}
 	return m.TestLevel
+}
+
+func (m *MockPlatform) ReachesAgentOnUnixSocket() bool {
+	return m.UnixSocket
 }
 
 type MockFramework struct {

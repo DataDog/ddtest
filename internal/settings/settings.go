@@ -49,6 +49,18 @@ const (
 	TestSkippingLevelSuite TestSkippingLevel = "suite"
 )
 
+// PayloadsTransport is how ddtest run's workers reach the agent that
+// records their payloads with --record-payloads.
+type PayloadsTransport string
+
+const (
+	// PayloadsTransportAuto uses a Unix domain socket when the
+	// platform's tracing library reaches an agent on one, and TCP otherwise.
+	PayloadsTransportAuto PayloadsTransport = "auto"
+	PayloadsTransportTCP  PayloadsTransport = "tcp"
+	PayloadsTransportUnix PayloadsTransport = "unix"
+)
+
 // DefaultParallelism returns the default parallelism value.
 func DefaultParallelism() int {
 	return PhysicalCPUCount()
@@ -135,6 +147,7 @@ type Config struct {
 	RuntimeTags            string            `mapstructure:"runtime_tags"`
 	ReportEnabled          bool              `mapstructure:"report_enabled"`
 	RecordPayloads         string            `mapstructure:"record_payloads"`
+	PayloadsTransport      PayloadsTransport `mapstructure:"record_payloads_transport"`
 }
 
 var (
@@ -211,6 +224,12 @@ func Init() {
 	}
 	viper.Set("target_time", targetTime)
 	viper.Set("test_skipping_mode", NormalizeTestSkippingLevel(TestSkippingLevel(viper.GetString("test_skipping_mode"))))
+	recordPayloadsTransport, err := ParseRecordPayloadsTransport(viper.GetString("record_payloads_transport"))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
+		os.Exit(1)
+	}
+	viper.Set("record_payloads_transport", recordPayloadsTransport)
 
 	config = &Config{}
 	if err := viper.Unmarshal(config); err != nil {
@@ -240,6 +259,7 @@ func setDefaults() {
 	viper.SetDefault("runtime_tags", "")
 	viper.SetDefault("report_enabled", true)
 	viper.SetDefault("record_payloads", "")
+	viper.SetDefault("record_payloads_transport", string(PayloadsTransportAuto))
 }
 
 // NormalizeTestSkippingLevel accepts only the backend-supported TIA skipping modes.
@@ -255,6 +275,19 @@ func NormalizeTestSkippingLevel(level TestSkippingLevel) TestSkippingLevel {
 
 func (level TestSkippingLevel) String() string {
 	return string(level)
+}
+
+// ParseRecordPayloadsTransport resolves the record_payloads_transport
+// setting: auto, tcp or unix, auto when empty.
+func ParseRecordPayloadsTransport(value string) (PayloadsTransport, error) {
+	switch transport := PayloadsTransport(strings.ToLower(strings.TrimSpace(value))); transport {
+	case "":
+		return PayloadsTransportAuto, nil
+	case PayloadsTransportAuto, PayloadsTransportTCP, PayloadsTransportUnix:
+		return transport, nil
+	default:
+		return "", fmt.Errorf("record_payloads_transport must be auto, tcp or unix, got %q", value)
+	}
 }
 
 // ParseNonNegativeDurationSetting resolves a duration setting from a Go
@@ -388,6 +421,12 @@ func GetReportEnabled() bool {
 // Datadog as usual.
 func GetRecordPayloads() string {
 	return Get().RecordPayloads
+}
+
+// GetRecordPayloadsTransport is how ddtest run's workers reach the agent
+// that records their payloads.
+func GetRecordPayloadsTransport() PayloadsTransport {
+	return Get().PayloadsTransport
 }
 
 // GetRuntimeTagsMap parses the runtime_tags setting as JSON and returns it as a map.

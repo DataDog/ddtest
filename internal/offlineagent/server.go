@@ -12,6 +12,7 @@ import (
 // Server serves the agent on a listener until Stop.
 type Server struct {
 	server  *http.Server
+	network string
 	address string
 	done    chan struct{}
 	err     error
@@ -21,6 +22,7 @@ type Server struct {
 func Serve(listener net.Listener, config Config) *Server {
 	s := &Server{
 		server:  &http.Server{Handler: NewHandler(config), ReadHeaderTimeout: 10 * time.Second},
+		network: listener.Addr().Network(),
 		address: listener.Addr().String(),
 		done:    make(chan struct{}),
 	}
@@ -31,8 +33,12 @@ func Serve(listener net.Listener, config Config) *Server {
 	return s
 }
 
-// URL is the agent URL for tracing libraries, such as DD_TRACE_AGENT_URL.
+// URL is the agent URL for tracing libraries, such as DD_TRACE_AGENT_URL:
+// unix:// and the socket's path for a Unix domain socket.
 func (s *Server) URL() string {
+	if s.network == "unix" {
+		return "unix://" + s.address
+	}
 	return "http://" + s.address
 }
 

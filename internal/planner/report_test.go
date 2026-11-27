@@ -583,6 +583,7 @@ func TestPrintDDTestSettingsReport_AllSupportedSettings(t *testing.T) {
 	config.RuntimeTags = `{"runtime.version":"3.3.4"}`
 	config.ReportEnabled = false
 	config.RecordPayloads = "/tmp/payloads"
+	config.PayloadsTransport = settings.PayloadsTransportUnix
 
 	var output strings.Builder
 	printDDTestSettingsReport(&output, &config)
@@ -623,6 +624,7 @@ func TestPrintDDTestSettingsReport_AllSupportedSettings(t *testing.T) {
 		"Runtime tags",
 		"Report enabled",
 		"Record payloads",
+		"Record payloads transport",
 	}
 	if !reflect.DeepEqual(names, expectedNames) {
 		t.Fatalf("unexpected changed setting names:\ngot:  %v\nwant: %v", names, expectedNames)
