@@ -3,9 +3,11 @@ package offlineagent
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
 	"encoding/json"
 	"io"
 	"mime/multipart"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/textproto"
@@ -300,4 +302,37 @@ func TestUnknownRequestsAreRejected(t *testing.T) {
 		assert.Equal(t, http.StatusNotFound, status, "%s with subdomain %q", request.path, request.subdomain)
 	}
 	assert.Empty(t, savedFiles(t, payloadsDir, kindTests))
+}
+
+// A payload the agent can't save is said when the agent stops, so that a run
+// doesn't pass with payloads missing.
+func TestAPayloadThatCannotBeSavedFailsTheStop(t *testing.T) {
+	payloadsDir := t.TempDir()
+	require.NoError(t, PreparePayloadsDir(payloadsDir))
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	server := Serve(listener, Config{PayloadsDir: payloadsDir})
+	// The tests directory becomes a file while the agent runs, as a full or
+	// broken disk would refuse the write.
+	require.NoError(t, os.RemoveAll(filepath.Join(payloadsDir, string(kindTests))))
+	require.NoError(t, os.WriteFile(filepath.Join(payloadsDir, string(kindTests)), nil, 0o600))
+	request, err := http.NewRequest(http.MethodPost, server.URL()+"/evp_proxy/v2/api/v2/citestcycle", bytes.NewReader(testCyclePayload()))
+	require.NoError(t, err)
+	request.Header.Set(evpSubdomainHeader, "citestcycle-intake")
+	request.Header.Set("Content-Type", "application/msgpack")
+	response, err := http.DefaultClient.Do(request)
+	require.NoError(t, err)
+	require.NoError(t, response.Body.Close())
+	assert.Equal(t, http.StatusBadRequest, response.StatusCode)
+
+	err = server.Stop(context.Background())
+
+	assert.ErrorContains(t, err, "1 Test Optimization payloads could not be saved")
+}
+
+func TestPreparePayloadsDirRefusesAPathInTheWay(t *testing.T) {
+	payloadsDir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(payloadsDir, string(kindCoverage)), nil, 0o600))
+
+	assert.Error(t, PreparePayloadsDir(payloadsDir))
 }

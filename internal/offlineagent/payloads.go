@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -22,12 +23,49 @@ const (
 )
 
 // payloadFiles writes payload files with the names the libraries' Bazel
-// payload-files mode uses.
+// payload-files mode uses, and counts the payloads it could not save.
 type payloadFiles struct {
 	dir string
 	pid int
 	now func() time.Time
 	seq atomic.Uint64
+
+	mu        sync.Mutex
+	lostCount int
+	firstLost error
+}
+
+// PreparePayloadsDir creates the payloads directory and its tests, coverage
+// and telemetry directories, so that a path in the way fails before any test
+// runs rather than losing every payload.
+func PreparePayloadsDir(dir string) error {
+	for _, kind := range []payloadKind{kindTests, kindCoverage, kindTelemetry} {
+		if err := os.MkdirAll(filepath.Join(dir, string(kind)), 0o755); err != nil {
+			return fmt.Errorf("create the payloads directory: %w", err)
+		}
+	}
+	return nil
+}
+
+// lose records a payload that could not be saved.
+func (f *payloadFiles) lose(err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.lostCount++
+	if f.firstLost == nil {
+		f.firstLost = err
+	}
+}
+
+// lost is nil when every payload was saved, and otherwise says how many
+// were not and why the first one wasn't.
+func (f *payloadFiles) lost() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.lostCount == 0 {
+		return nil
+	}
+	return fmt.Errorf("%d Test Optimization payloads could not be saved; the first: %w", f.lostCount, f.firstLost)
 }
 
 func newPayloadFiles(dir string) *payloadFiles {

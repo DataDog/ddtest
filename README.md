@@ -310,6 +310,8 @@ DD_TRACE_AGENT_URL=http://127.0.0.1:8126 DD_CIVISIBILITY_AGENTLESS_ENABLED=false
 kill %1   # stops after saving the payloads it is receiving
 ```
 
+ddtest exits with an error if a payload could not be saved.
+
 The tracing library sends its payloads through what it takes for the Agent's
 EVP proxy. ddtest writes them as JSON under `tests/`, `coverage/` and
 `telemetry/`, in the same layout as the libraries' Bazel payload-files mode

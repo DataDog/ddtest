@@ -89,10 +89,18 @@ type Config struct {
 
 // NewHandler returns the agent's HTTP handler.
 func NewHandler(config Config) http.Handler {
+	return buildAgent(config).handler()
+}
+
+func buildAgent(config Config) *agent {
 	agent := &agent{config: config, files: newPayloadFiles(config.PayloadsDir)}
 	if config.Upstream != nil {
 		agent.upstream = newUpstream(config.Upstream)
 	}
+	return agent
+}
+
+func (agent *agent) handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /info", agent.info)
 	mux.HandleFunc("POST /evp_proxy/", agent.evp)
@@ -231,6 +239,7 @@ func (a *agent) telemetry(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		slog.Error("Offline agent could not save a payload", "path", r.URL.Path, "error", err)
+		a.files.lose(err)
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -248,6 +257,7 @@ func (a *agent) store(w http.ResponseWriter, r *http.Request, write func([]byte)
 	}
 	if err != nil {
 		slog.Error("Offline agent could not save a payload", "path", r.URL.Path, "error", err)
+		a.files.lose(err)
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}

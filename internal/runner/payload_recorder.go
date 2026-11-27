@@ -40,8 +40,8 @@ type payloadRecorder struct {
 // every request that isn't Test Optimization's.
 func startPayloadRecorder(payloadsDir string, unixSocket bool, upstream *url.URL) (*payloadRecorder, error) {
 	// Fail before running any test, rather than lose every payload.
-	if err := os.MkdirAll(payloadsDir, 0o755); err != nil {
-		return nil, errcode.WithCode(errcode.RunPayloadRecorderFailed, fmt.Errorf("create the payloads directory: %w", err))
+	if err := offlineagent.PreparePayloadsDir(payloadsDir); err != nil {
+		return nil, errcode.WithCode(errcode.RunPayloadRecorderFailed, err)
 	}
 	recorder := &payloadRecorder{}
 	network, address := "tcp", "127.0.0.1:0"

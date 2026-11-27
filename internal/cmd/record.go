@@ -45,6 +45,9 @@ ddtest stops on SIGINT or SIGTERM, after saving the payloads it is receiving.`,
 		PersistentPreRunE: func(*cobra.Command, []string) error { return nil },
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cmd.SilenceUsage = true
+			if err := offlineagent.PreparePayloadsDir(payloadsDir); err != nil {
+				return err
+			}
 			listener, err := agentListener(listen)
 			if err != nil {
 				return fmt.Errorf("listen on %s: %w", listen, err)

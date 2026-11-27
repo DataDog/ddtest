@@ -242,7 +242,7 @@ or a Unix domain socket (below), and sets `DD_TRACE_AGENT_URL` to it and
 Configuration requests are answered from the plan's HTTP cache. After the
 workers finish, DDTest waits for the payloads in progress, so the directory
 holds every payload the libraries sent. If the directory can't be created,
-DDTest stops with `run_payload_recorder_failed` before running any test.
+DDTest stops with `run_payload_recorder_failed` before running any test. If a payload the workers send can't be saved, such as on a full disk, the run fails with `run_payload_recorder_failed` once the workers finish, so that it never passes with payloads missing.
 Without the flag, workers send their payloads as usual.
 
 A Unix domain socket takes no port, and goes in a directory of its own under

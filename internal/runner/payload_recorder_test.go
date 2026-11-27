@@ -176,6 +176,22 @@ func TestRunFailsBeforeTestsWhenThePayloadsDirectoryCannotBeCreated(t *testing.T
 	assert.Zero(t, framework.GetRunTestsCallsCount(), "tests ran without a place to save their payloads")
 }
 
+func TestRunFailsBeforeTestsWhenAPayloadsDirectoryIsInTheWay(t *testing.T) {
+	payloadsDir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(payloadsDir, "tests"), nil, 0o600))
+	t.Setenv("DD_TEST_OPTIMIZATION_RUNNER_RECORD_PAYLOADS", payloadsDir)
+	withRunnerTestSettings(t)
+	prepareSequentialRun(t)
+	framework := &MockFramework{FrameworkName: "rspec"}
+	platform := &MockPlatform{PlatformName: "ruby", Framework: framework}
+
+	err := NewWithDependencies(platform, framework, &fakePlanner{}).Run(context.Background())
+
+	require.Error(t, err)
+	assert.Equal(t, errcode.RunPayloadRecorderFailed, errcode.CodeOf(err))
+	assert.Zero(t, framework.GetRunTestsCallsCount(), "tests ran without a place to save their payloads")
+}
+
 // forwardingFramework sends a trace to the agent in its environment, as the
 // code under test would, besides the test cycle payload its tracing library
 // sends there.
