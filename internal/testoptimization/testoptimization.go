@@ -1,6 +1,7 @@
 package testoptimization
 
 import (
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -166,8 +167,19 @@ func (c *TestOptimizationClient) GetDisabledTests() map[string]bool {
 	return disabledTestsFromTestManagementData(c.GetTestManagementTestsData())
 }
 
+// GetTestSuiteDurations returns the suite durations from the durations file
+// when one is set, and otherwise fetches them from Datadog.
 func (c *TestOptimizationClient) GetTestSuiteDurations() *api.TestSuiteDurationsResponseData {
 	if c.testSuiteDurations != nil {
+		return c.testSuiteDurations
+	}
+	if path := settings.GetDurationsFile(); path != "" {
+		durations, err := ReadTestSuiteDurationsFile(path)
+		if err != nil {
+			slog.Error("Suite durations file unusable, planning without durations", "error", err)
+			durations = &api.TestSuiteDurationsResponseData{TestSuites: map[string]map[string]api.TestSuiteDurationInfo{}}
+		}
+		c.testSuiteDurations = durations
 		return c.testSuiteDurations
 	}
 
@@ -180,6 +192,25 @@ func (c *TestOptimizationClient) GetTestSuiteDurations() *api.TestSuiteDurations
 	}
 	c.testSuiteDurations = testOptimizationTransport.GetTestSuiteDurations()
 	return c.testSuiteDurations
+}
+
+// ReadTestSuiteDurationsFile reads suite durations in the shape the durations
+// endpoint returns: {"test_suites": {module: {suite: {"source_file": path,
+// "duration": {"p50": nanoseconds, "p90": nanoseconds}}}}}, with the
+// nanoseconds as strings.
+func ReadTestSuiteDurationsFile(path string) (*api.TestSuiteDurationsResponseData, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read suite durations: %w", err)
+	}
+	var durations api.TestSuiteDurationsResponseData
+	if err := json.Unmarshal(data, &durations); err != nil {
+		return nil, fmt.Errorf("parse suite durations in %s: %w", path, err)
+	}
+	if durations.TestSuites == nil {
+		return nil, fmt.Errorf("suite durations in %s have no test_suites", path)
+	}
+	return &durations, nil
 }
 
 func (c *TestOptimizationClient) BackendRequestTimings() BackendRequestTimings {

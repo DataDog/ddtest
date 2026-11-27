@@ -134,6 +134,7 @@ type Config struct {
 	StrictDiscovery        bool              `mapstructure:"strict_discovery"`
 	RuntimeTags            string            `mapstructure:"runtime_tags"`
 	ReportEnabled          bool              `mapstructure:"report_enabled"`
+	DurationsFile          string            `mapstructure:"durations_file"`
 }
 
 var (
@@ -238,6 +239,7 @@ func setDefaults() {
 	viper.SetDefault("strict_discovery", false)
 	viper.SetDefault("runtime_tags", "")
 	viper.SetDefault("report_enabled", true)
+	viper.SetDefault("durations_file", "")
 }
 
 // NormalizeTestSkippingLevel accepts only the backend-supported TIA skipping modes.
@@ -379,6 +381,12 @@ func GetRuntimeTags() string {
 
 func GetReportEnabled() bool {
 	return Get().ReportEnabled
+}
+
+// GetDurationsFile is a JSON file of suite durations that planning uses
+// instead of fetching them from Datadog, or empty to fetch them as usual.
+func GetDurationsFile() string {
+	return Get().DurationsFile
 }
 
 // GetRuntimeTagsMap parses the runtime_tags setting as JSON and returns it as a map.

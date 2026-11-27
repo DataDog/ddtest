@@ -55,6 +55,7 @@ func TestFatalCodesAreUnique(t *testing.T) {
 		PlanPlatformDetectionFailed,
 		PlanPlatformTagsCreationFailed,
 		PlanRuntimeTagsInvalid,
+		PlanDurationsFileInvalid,
 		PlanFrameworkDetectionFailed,
 		PlanOptimizationClientCreationFailed,
 		PlanTestFilesResolutionFailed,
