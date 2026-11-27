@@ -93,6 +93,12 @@ type TestPlanner struct {
 	telemetryClient         telemetry.Client
 	reportWriter            io.Writer
 	tiaSkippingEnabled      bool
+	// splitLines maps the parts of long files split by test
+	// (--split-files-over) to the test IDs their runner gets.
+	splitLines map[string][]string
+	// splitListed maps each split pytest file to the test IDs of its parts
+	// but the last (see lastPartComplement).
+	splitListed map[string][]string
 }
 
 const (
@@ -226,19 +232,25 @@ func (tp *TestPlanner) Plan(ctx context.Context) error {
 	if err := writeTestFilesArtifact(tp.testFileWeights); err != nil {
 		return errcode.WithCode(errcode.PlanTestFilesWriteFailed, err)
 	}
+	// The artifact and the plan cache keep whole files; the split and the
+	// report see the parts of long files.
+	if err := tp.splitLongTestFiles(); err != nil {
+		return err
+	}
 
 	percentageContent := fmt.Sprintf("%.2f", tp.skippablePercentage)
 	if err := writePlanFile(constants.SkippablePercentageOutputPath, []byte(percentageContent)); err != nil {
 		return errcode.WithCode(errcode.PlanSkippablePercentageWriteFailed, fmt.Errorf("failed to write skippable percentage: %w", err))
 	}
 
-	parallelRunnerSelection := calculateParallelRunnerSplitSelection(
+	parallelRunnerSelection := calculateNodeSplitSelection(
 		tp.testFileWeights,
 		settings.GetMinParallelism(),
 		settings.GetMaxParallelism(),
 		settings.GetParallelRunnerOverhead(),
 		settings.GetTargetTime(),
 		tp.basenameAffinityEnabled(),
+		nodeModel{speedup: settings.GetCiNodeSpeedup(), fileOverhead: settings.GetCiNodeFileOverhead()},
 	)
 	parallelRunnerSplit := parallelRunnerSelection.selected
 	parallelRunners := parallelRunnerSplit.parallelRunners
@@ -280,6 +292,11 @@ func (tp *TestPlanner) PreparePlanningData(ctx context.Context) error {
 	overrideTags, err := settings.GetRuntimeTagsMap()
 	if err != nil {
 		return errcode.WithCode(errcode.PlanRuntimeTagsInvalid, fmt.Errorf("failed to parse runtime tags override: %w", err))
+	}
+	if path := settings.GetTestDurationsFile(); path != "" {
+		if _, err := readTestDurationsFile(path); err != nil {
+			return errcode.WithCode(errcode.PlanTestDurationsFileInvalid, err)
+		}
 	}
 
 	// A complete supplied configuration can plan for a separate execution
@@ -558,10 +575,7 @@ func (tp *TestPlanner) recordPlanningTelemetry(selection splitSelection) {
 		}
 	}
 
-	fullySkippedTestFiles := len(tp.testFiles) - len(tp.testFileWeights)
-	if fullySkippedTestFiles < 0 {
-		fullySkippedTestFiles = 0
-	}
+	fullySkippedTestFiles := tp.fullySkippedTestFiles()
 
 	telemetry.Planning(tp.telemetryClient, telemetry.PlanningMetrics{
 		Attributes: telemetry.PlanningAttributes{
@@ -571,10 +585,10 @@ func (tp *TestPlanner) recordPlanningTelemetry(selection splitSelection) {
 			DiscoveryMode:    telemetry.TestDiscoveryMode(tp.reportStats.discoveryMode),
 			TIAEnabled:       tp.tiaSkippingEnabled,
 		},
-		DecisionReason:            planningDecisionReason(selection, len(tp.testFileWeights)),
+		DecisionReason:            planningDecisionReason(selection, countTestFiles(tp.testFileWeights)),
 		TargetStatus:              planningTargetStatus(selection),
 		DiscoveredTestFiles:       len(tp.testFiles),
-		RunnableTestFiles:         len(tp.testFileWeights),
+		RunnableTestFiles:         countTestFiles(tp.testFileWeights),
 		FullySkippedTestFiles:     fullySkippedTestFiles,
 		BackendDurationTestFiles:  backendDurationTestFiles,
 		DefaultDurationTestFiles:  defaultDurationTestFiles,

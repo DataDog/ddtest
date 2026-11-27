@@ -15,6 +15,8 @@ platforms or frameworks require explicit selection.
 | `--min-parallelism` | `DD_TEST_OPTIMIZATION_RUNNER_MIN_PARALLELISM` | | physical CPU count | Minimum count DDTest considers when planning. Interpret it as CI nodes in CI-node mode, or workers in a single-node run. |
 | `--max-parallelism` | `DD_TEST_OPTIMIZATION_RUNNER_MAX_PARALLELISM` | | physical CPU count | Maximum count DDTest considers when planning. Interpret it as CI nodes in CI-node mode, or workers in a single-node run. |
 | `--ci-job-overhead` | `DD_TEST_OPTIMIZATION_RUNNER_CI_JOB_OVERHEAD` | | `25s` | Modeled overhead for adding one more CI node. Accepts durations such as `25s`, `1m`, `1500ms`, or `0s` to disable this bias. Increase it to use fewer CI nodes; decrease it to prefer faster wall time. |
+| `--ci-node-speedup` | `DD_TEST_OPTIMIZATION_RUNNER_CI_NODE_SPEEDUP` | | `1` | How many times faster than one test process a CI node runs its files, as with pytest-xdist workers in `--command`, such as `1.5`. Planning divides a node's test time by it, so the expected wall time matches what the node takes. Use the speedup the nodes really get, not their process count: two pytest-xdist workers on two vCPUs ran about 1.5 times as fast as one process. |
+| `--ci-node-file-overhead` | `DD_TEST_OPTIMIZATION_RUNNER_CI_NODE_FILE_OVERHEAD` | | `0s` | Modeled time a CI node spends on each test file it gets, such as collecting it, added to the node's expected time. With it, planning prefers more nodes when fewer would give each one many files to collect. The parts of a split file on one node count as one file. |
 | `--target-time` | `DD_TEST_OPTIMIZATION_RUNNER_TARGET_TIME` | | `0s` | Target wall time for the selected split. Accepts durations such as `10m`, `300s`, `1500ms`, or `0s` to disable the target. DDTest first considers splits at or below this wall time; if none are possible within the min/max parallelism range, it warns and selects the split with the lowest expected wall time, ignoring CI job overhead, to get as close as possible to the target. |
 | `--ci-node` | `DD_TEST_OPTIMIZATION_RUNNER_CI_NODE` | | `-1` (off) | Restrict this run to files assigned to CI node **N** (0-indexed). |
 | `--ci-node-workers` | `DD_TEST_OPTIMIZATION_RUNNER_CI_NODE_WORKERS` | | `1` | Number of workers to start on this CI node. Use a positive integer, or `ncpu` to use the node's available physical CPU cores. |
@@ -22,6 +24,8 @@ platforms or frameworks require explicit selection.
 | `--tests-location` | `DD_TEST_OPTIMIZATION_RUNNER_TESTS_LOCATION` | `KNAPSACK_PRO_TEST_FILE_PATTERN` | `""` | Custom glob pattern to filter discovered test files, such as `--tests-location "custom/spec/**/*_spec.rb"`, `--tests-location "tests/**/*_test.py"`, or `--tests-location "packages/**/__tests__/**/*.test.ts"`. Defaults to `spec/**/*_spec.rb` for RSpec, `test/**/*_test.rb` for Minitest, pytest config or `**/{test_*,*_test}.py` for pytest, and each JavaScript framework's configured/default test matching for Cucumber, Cypress, Jest, Mocha, Playwright, and Vitest. |
 | `--tests-exclude-pattern` | `DD_TEST_OPTIMIZATION_RUNNER_TESTS_EXCLUDE_PATTERN` | `KNAPSACK_PRO_TEST_FILE_EXCLUDE_PATTERN` | `""` | Glob pattern to exclude test files from discovery, such as `--tests-exclude-pattern "spec/system/**/*_spec.rb"`. |
 | `--test-discovery-cache` | `DD_TEST_OPTIMIZATION_RUNNER_TEST_DISCOVERY_CACHE` | | `""` | Path to a restored test discovery cache file. DDTest imports it before planning and refreshes the internal discovery cache after successful full discovery. |
+| `--test-durations-file` | `DD_TEST_OPTIMIZATION_RUNNER_TEST_DURATIONS_FILE` | | `""` | Path to a JSON file of per-test durations, `{"files": {path: {test name: nanoseconds}}}`, where a test name is what follows the file path and `::` in a test ID, such as a pytest function name, which selects all its parameters. For pytest, the last part of a split file runs the file minus the tests of its other parts, so a test the file leaves out, such as a new one, still runs once, and a listed test that no longer exists is ignored; each file's tests must be listed at one level, never a test together with a class or function it lies under, such as `test_f` and `test_f[1]`, or `TestC` and `TestC::test_m`. A file that can't be read or parsed, or pytest durations at two levels, stop planning with `plan_test_durations_file_invalid`. |
+| `--split-files-over` | `DD_TEST_OPTIMIZATION_RUNNER_SPLIT_FILES_OVER` | | `0s` | Split each test file expected to take longer than this, and that `--test-durations-file` lists, into parts of its tests, as many as bring each part under it and at most one per test, balanced by the tests' durations. Only pytest files are split; for other frameworks planning logs a warning and keeps whole files. Parts are planned like files, named after the file with their number, such as `tests/test_a.py[2/3]`. A runner gets the file of each of its parts, and a plugin ddtest loads through `PYTEST_PLUGINS` and `PYTHONPATH` keeps the part's tests, matched by exact name or as a parametrization or a method of a named function or class, unlike `--deselect`, which matches prefixes; a run in which the plugin did not load fails, and so does one whose pytest arguments lack a file the plugin filters. `0s` disables splitting. |
 | `--test-skipping-mode` | `DD_TESTOPTIMIZATION_TIA_TEST_SKIPPING_MODE` | | `test` | TIA skipping granularity for Ruby and Python: `test` or `suite`. Python suite mode discovers test files without running pytest collection. Invalid values fall back to `test`. JavaScript uses suite mode. |
 | `--force-full-test-discovery` | `DD_TEST_OPTIMIZATION_RUNNER_FORCE_FULL_TEST_DISCOVERY` | | `false` | Force full test discovery when the framework supports it, including in suite-level skipping mode and when TIA or test skipping is disabled, so the discovery cache is still written for later runs. |
 | `--strict-discovery` | `DD_TEST_OPTIMIZATION_RUNNER_STRICT_DISCOVERY` | | `false` | Fail planning when full test discovery fails. Cancelled full discovery still uses fast test file discovery fallback. |
@@ -97,13 +101,23 @@ diagnostics or refreshing a discovery cache. `--strict-discovery` alone does not
 force collection. To opt out, unset the environment variable or select
 `--test-skipping-mode test` and regenerate the plan.
 
-Python test files sharing a basename are assigned to separate runners when
-there are enough runners. If a group has more files than runners, DDTest keeps
-all files in the plan and warns that pytest import collisions remain possible.
-This also applies to a single runner. Splitting does not resolve collisions
-during full test collection, which runs before distribution. Add `__init__.py`
-packages, rename the files, or configure pytest's `--import-mode=importlib` to
-resolve collisions that runner distribution cannot avoid.
+Python test files that pytest's default import mode would import under the
+same module name are assigned to separate runners when there are enough
+runners. A file outside packages gets its basename as module name, so files
+sharing a basename collide; a file inside packages (directories with an
+`__init__.py` whose name is a Python identifier, unlike `tests-unit`) gets its
+dotted path from above its outermost package, so
+same-basename files in different packages, such as `tests/a/test_init.py` and
+`tests/b/test_init.py` with `__init__.py` files, don't constrain distribution.
+A part of a split file (`--split-files-over`) is its file: it gets the file's
+module name, so it stays apart from the other files of that name, and a file's
+own parts don't constrain each other. If a group has more files than runners,
+DDTest keeps all files in the plan and warns that pytest import collisions
+remain possible. This also applies to a single runner. Splitting does not
+resolve collisions during full test collection, which runs before
+distribution. Add `__init__.py` packages, rename
+the files, or configure pytest's `--import-mode=importlib` to resolve
+collisions that runner distribution cannot avoid.
 
 ## Testdrive-only configuration check
 

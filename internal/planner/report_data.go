@@ -288,10 +288,7 @@ func (tp *TestPlanner) recordDiscoveryReport(mode discoveryMode, cache discovery
 }
 
 func (tp *TestPlanner) newPlanningReport() planningReport {
-	fullySkippedFiles := len(tp.testFiles) - len(tp.testFileWeights)
-	if fullySkippedFiles < 0 {
-		fullySkippedFiles = 0
-	}
+	fullySkippedFiles := tp.fullySkippedTestFiles()
 	discoveredSuites := 0
 	discoveredTests := 0
 	mode := tp.reportStats.discoveryMode
@@ -327,7 +324,7 @@ func (tp *TestPlanner) newPlanningReport() planningReport {
 			UnskippableMarkerSuitesForced: tp.reportStats.unskippableMarkerSuitesForced,
 			FullySkippedFiles:             fullySkippedFiles,
 		},
-		TestFilesToRun:     len(tp.testFileWeights),
+		TestFilesToRun:     countTestFiles(tp.testFileWeights),
 		EstimatedTimeSaved: tp.skippablePercentage,
 	}
 }
@@ -556,4 +553,20 @@ func (tp *TestPlanner) filesWithMixedDurationsCount() int {
 		}
 	}
 	return count
+}
+
+// countTestFiles counts the test files of units, the parts of a split file
+// as one.
+func countTestFiles(units map[string]int) int {
+	files := make(map[string]struct{}, len(units))
+	for unit := range units {
+		files[splitPartFile(unit)] = struct{}{}
+	}
+	return len(files)
+}
+
+// fullySkippedTestFiles counts the discovered test files that have nothing to
+// run.
+func (tp *TestPlanner) fullySkippedTestFiles() int {
+	return max(len(tp.testFiles)-countTestFiles(tp.testFileWeights), 0)
 }

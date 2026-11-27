@@ -5,13 +5,16 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/DataDog/ddtest/internal/constants"
+	"golang.org/x/text/unicode/norm"
 )
 
 // DistributeTestFiles distributes test files using weights loaded into this planner.
@@ -31,9 +34,9 @@ func (tp *TestPlanner) DistributeTestFiles(testFiles []string, parallelRunners i
 }
 
 // DistributeWeightedTestFiles distributes test files across parallel runners using weighted list scheduling.
-// For Python projects, files sharing a basename are kept on distinct runners when possible:
-// pytest's default import mode derives module names from basenames, so two
-// same-basename files collected in one worker fail with an import file mismatch.
+// For Python projects, files that pytest would import under the same module
+// name are kept on distinct runners when possible: two such files collected in
+// one worker fail with an import file mismatch (see pytestModuleName).
 func (tp *TestPlanner) DistributeWeightedTestFiles(testFiles map[string]int, parallelRunners int) [][]string {
 	builder := newTestSplitBuilder(parallelRunners)
 	return builder.distributeFiles(testFiles, tp.basenameAffinityEnabled())
@@ -46,31 +49,125 @@ func (tp *TestPlanner) basenameAffinityEnabled() bool {
 	return tp.planMetadata.Platform == "python"
 }
 
-// hasDuplicateBasenames reports whether any two files share a basename.
-func hasDuplicateBasenames(testFiles map[string]int) bool {
-	basenames := make(map[string]int, len(testFiles))
-	for path := range testFiles {
-		basenames[filepath.Base(path)]++
+// pytestModuleName is the module name pytest's default import mode (prepend)
+// gives a test file: its basename without the extension when its directory
+// isn't a package, and otherwise its dotted path from the directory above its
+// outermost package, the closest ancestor directories that have an
+// __init__.py. Two files only collide in one pytest process when their module
+// names are equal, so test files in packages, as in most large projects, don't
+// collide however many share a basename. A part of a split file, such as
+// "tests/test_a.py[2/3]", is its file, and takes the file's name. Package
+// lookups are cached per directory, since many files share each one.
+type pytestModuleNamer struct {
+	isPackage map[string]bool
+}
+
+func newPytestModuleNamer() *pytestModuleNamer {
+	return &pytestModuleNamer{isPackage: make(map[string]bool)}
+}
+
+func (n *pytestModuleNamer) pytestModuleName(path string) string {
+	path = splitPartFile(path)
+	name := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+	for directory := filepath.Dir(path); n.directoryIsPackage(directory); directory = filepath.Dir(directory) {
+		name = filepath.Base(directory) + "." + name
+		if parent := filepath.Dir(directory); parent == directory {
+			break
+		}
 	}
-	for _, count := range basenames {
-		if count > 1 {
+	return name
+}
+
+func (n *pytestModuleNamer) directoryIsPackage(directory string) bool {
+	if directory == "." || directory == string(filepath.Separator) || filepath.Dir(directory) == directory {
+		return false
+	}
+	if isPackage, ok := n.isPackage[directory]; ok {
+		return isPackage
+	}
+	// pytest stops at a directory whose name isn't a Python identifier, such
+	// as tests-unit, even when it has an __init__.py.
+	_, err := os.Stat(filepath.Join(directory, "__init__.py"))
+	isPackage := err == nil && isPythonIdentifier(filepath.Base(directory))
+	n.isPackage[directory] = isPackage
+	return isPackage
+}
+
+// isPythonIdentifier reports whether name is a Python identifier, as
+// str.isidentifier does: an XID_Start character or an underscore, then
+// XID_Continue characters. XID_Start is a letter or letter number, and
+// XID_Continue adds marks, digits and connector punctuation, each without
+// pattern syntax or white space and whose NFKC form keeps those properties,
+// which excludes such characters as U+037A. Checked against Python 3.14 over
+// every character of its Unicode version.
+func isPythonIdentifier(name string) bool {
+	for i, r := range name {
+		if !isIdentifierRune(r, i == 0) {
+			return false
+		}
+	}
+	return name != ""
+}
+
+func isIdentifierRune(r rune, first bool) bool {
+	allowed := isIdentifierContinue
+	if first {
+		allowed = isIdentifierStart
+	}
+	if !allowed(r) {
+		return false
+	}
+	for i, n := range norm.NFKC.String(string(r)) {
+		if !allowed(n) && (i == 0 || !isIdentifierContinue(n)) {
+			return false
+		}
+	}
+	return true
+}
+
+func isIdentifierStart(r rune) bool {
+	return r == '_' || unicode.In(r, unicode.L, unicode.Nl, unicode.Other_ID_Start) &&
+		!unicode.In(r, unicode.Pattern_Syntax, unicode.Pattern_White_Space)
+}
+
+func isIdentifierContinue(r rune) bool {
+	return isIdentifierStart(r) || unicode.In(r, unicode.Mn, unicode.Mc, unicode.Nd, unicode.Pc, unicode.Other_ID_Continue) &&
+		!unicode.In(r, unicode.Pattern_Syntax, unicode.Pattern_White_Space)
+}
+
+// hasDuplicateBasenames reports whether any two files would get the same
+// pytest module name (see pytestModuleName). The parts of one split file are
+// that file, which pytest imports once, so they don't collide with each other.
+func hasDuplicateBasenames(testFiles map[string]int) bool {
+	namer := newPytestModuleNamer()
+	fileOf := make(map[string]string, len(testFiles)) // module name → a file of that name
+	for path := range testFiles {
+		file := splitPartFile(path)
+		name := namer.pytestModuleName(file)
+		if other, ok := fileOf[name]; ok && other != file {
 			return true
 		}
+		fileOf[name] = file
 	}
 	return false
 }
 
-// basenameCollisionGroups groups files that share a basename with at least
-// one other file. Groups are ordered by total weight (desc) and each group's
-// members by weight (desc) for deterministic, reasonably balanced placement.
+// basenameCollisionGroups groups files that share a pytest module name (see
+// pytestModuleName) with at least one other file, a split file with all its
+// parts; a split file's parts alone aren't a group. Groups are ordered by
+// total weight (desc) and each group's members by weight (desc) for
+// deterministic, reasonably balanced placement.
 func basenameCollisionGroups(testFiles map[string]int) [][]weightedTestFile {
+	namer := newPytestModuleNamer()
 	byBasename := make(map[string][]weightedTestFile, len(testFiles))
 	for path, weight := range testFiles {
-		byBasename[filepath.Base(path)] = append(byBasename[filepath.Base(path)], weightedTestFile{path: path, weight: weight})
+		name := namer.pytestModuleName(path)
+		byBasename[name] = append(byBasename[name], weightedTestFile{path: path, weight: weight})
 	}
 	groups := make([][]weightedTestFile, 0)
 	for _, files := range byBasename {
-		if len(files) > 1 {
+		first := splitPartFile(files[0].path)
+		if slices.ContainsFunc(files, func(f weightedTestFile) bool { return splitPartFile(f.path) != first }) {
 			sortWeightedFilesDesc(files)
 			groups = append(groups, files)
 		}
@@ -142,18 +239,25 @@ func (tp *TestPlanner) CreateTestSplits(testFiles map[string]int, parallelRunner
 			for _, file := range group {
 				files = append(files, file.path)
 			}
-			slog.Warn("Same-basename test files share a single runner; pytest import collisions cannot be avoided",
+			slog.Warn("Test files with the same pytest module name share a single runner; pytest import collisions cannot be avoided",
 				"basename", filepath.Base(files[0]), "files", files,
 				"hint", "use more parallel runners, add __init__.py packages, or rename files")
 		}
 	}
 	if parallelRunners > 1 {
 		// Distribute test files across parallel runners using weighted list scheduling.
-		distribution := tp.DistributeWeightedTestFiles(testFiles, parallelRunners)
+		distribution := expandSplitUnits(tp.DistributeWeightedTestFiles(testFiles, parallelRunners), tp.splitLines)
 		if err := writeDistributedTestSplits(distribution, constants.TestsSplitDir); err != nil {
 			return err
 		}
+		if err := writeSplitFileTests(tp.splitListed); err != nil {
+			return err
+		}
 	} else {
+		// The single runner gets test-files.txt, whose files are whole.
+		if err := writeSplitFileTests(nil); err != nil {
+			return err
+		}
 		// For single runner, copy test-files.txt to runner-0
 		testFilesData, err := os.ReadFile(testFilesOutputPath)
 		if err != nil {
@@ -265,9 +369,35 @@ func scoreRunnerSplit(testFiles map[string]int, parallelRunners int, basenameAff
 // scorePreparedRunnerSplit scores a candidate against already prepared files
 // without building runner file lists, so wide parallelism ranges stay cheap.
 func scorePreparedRunnerSplit(prepared preparedSplitFiles, parallelRunners int) splitScore {
+	return scorePreparedNodeSplit(prepared, parallelRunners, defaultNodeModel)
+}
+
+func scorePreparedNodeSplit(prepared preparedSplitFiles, parallelRunners int, model nodeModel) splitScore {
 	builder := newTestSplitBuilder(parallelRunners)
 	builder.placePreparedFiles(prepared, nil)
-	return builder.score()
+	return builder.scoreNodes(model)
+}
+
+// nodeModel is how long a CI node takes for the files it gets. Each file's
+// weight is its duration in one test process; a node runs its load speedup
+// times faster, as when it runs its files with several processes such as
+// pytest-xdist workers, and pays fileOverhead for every file, collecting it.
+// The speedup is what the node really gets, not its process count: two
+// pytest-xdist workers on two vCPUs ran sympy's tests about 1.5 times as fast
+// as one process, and four workers on four vCPUs about 2.6 times.
+type nodeModel struct {
+	speedup      float64
+	fileOverhead time.Duration
+}
+
+// defaultNodeModel is one test process per node and no cost per file.
+var defaultNodeModel = nodeModel{speedup: 1}
+
+// nodeTime returns the modeled milliseconds of a node with load milliseconds
+// of tests in files files.
+func (m nodeModel) nodeTime(load, files int) int {
+	speedup := max(m.speedup, 1)
+	return int(math.Ceil(float64(load)/speedup)) + files*int(m.fileOverhead/time.Millisecond)
 }
 
 type testSplitBuilder struct {
@@ -286,9 +416,10 @@ func newTestSplitBuilder(parallelRunners int) testSplitBuilder {
 	}
 }
 
-func (b *testSplitBuilder) addFile(weight int) int {
+func (b *testSplitBuilder) addFile(path string, weight int) int {
 	lightestRunner := heap.Pop(&b.loads).(runnerLoad)
 	lightestRunner.load += weight
+	lightestRunner.addSource(path)
 	heap.Push(&b.loads, lightestRunner)
 	return lightestRunner.index
 }
@@ -296,7 +427,7 @@ func (b *testSplitBuilder) addFile(weight int) int {
 func (b *testSplitBuilder) distributeFiles(testFiles map[string]int, basenameAffinity bool) [][]string {
 	result, unavoidableCollisions := b.placeFiles(testFiles, basenameAffinity)
 	for basename, files := range unavoidableCollisions {
-		slog.Warn("Same-basename test files exceed the runner count; pytest import collisions cannot be avoided",
+		slog.Warn("Test files with the same pytest module name exceed the runner count; pytest import collisions cannot be avoided",
 			"basename", basename, "files", files, "parallelRunners", b.parallelRunners)
 	}
 	return result
@@ -340,23 +471,37 @@ func (b *testSplitBuilder) placePrepared(prepared preparedSplitFiles) ([][]strin
 func (b *testSplitBuilder) placePreparedFiles(prepared preparedSplitFiles, assignments []int) map[string][]string {
 	var collisions map[string][]string
 	for _, group := range prepared.collisionGroups {
-		usedRunners := make(map[int]bool, len(group))
+		// The group's files on each runner: a unit goes where no other file
+		// of the group is, and a split file's next part goes beside its other
+		// parts when a runner free of the group's files must stay free for
+		// each of the group's files not placed yet.
+		held := make(map[int][]string, len(group))
+		waiting := make(map[string]bool, len(group))
 		for _, fileIndex := range group {
-			weight := prepared.sortedFiles[fileIndex].weight
-			runnerIndex, ok := b.lightestUnusedRunner(usedRunners)
+			waiting[splitPartFile(prepared.sortedFiles[fileIndex].path)] = true
+		}
+		for _, fileIndex := range group {
+			unit := prepared.sortedFiles[fileIndex]
+			file := splitPartFile(unit.path)
+			first := waiting[file]
+			delete(waiting, file)
+			free := b.parallelRunners - len(held)
+			runnerIndex, ok := b.lightestRunnerFor(held, file, first || free > len(waiting))
 			if !ok {
 				// More same-basename files than runners: the collision cannot
 				// be avoided; place the rest for balance and report it.
 				if collisions == nil {
 					collisions = make(map[string][]string)
 				}
-				basename := filepath.Base(prepared.sortedFiles[fileIndex].path)
-				collisions[basename] = append(collisions[basename], prepared.sortedFiles[fileIndex].path)
-				runnerIndex = b.addFile(weight)
+				basename := filepath.Base(file)
+				collisions[basename] = append(collisions[basename], unit.path)
+				runnerIndex = b.addFile(unit.path, unit.weight)
 			} else {
-				b.addLoadToRunner(runnerIndex, weight)
+				b.addLoadToRunner(runnerIndex, unit.path, unit.weight)
 			}
-			usedRunners[runnerIndex] = true
+			if !slices.Contains(held[runnerIndex], file) {
+				held[runnerIndex] = append(held[runnerIndex], file)
+			}
 			if assignments != nil {
 				assignments[fileIndex] = runnerIndex
 			}
@@ -366,7 +511,7 @@ func (b *testSplitBuilder) placePreparedFiles(prepared preparedSplitFiles, assig
 		if prepared.inCollisionGroup[i] {
 			continue
 		}
-		runnerIndex := b.addFile(file.weight)
+		runnerIndex := b.addFile(file.path, file.weight)
 		if assignments != nil {
 			assignments[i] = runnerIndex
 		}
@@ -374,13 +519,16 @@ func (b *testSplitBuilder) placePreparedFiles(prepared preparedSplitFiles, assig
 	return collisions
 }
 
-// lightestUnusedRunner returns the least-loaded runner whose index is not in
-// used, preferring lower runner indexes on ties.
-func (b *testSplitBuilder) lightestUnusedRunner(used map[int]bool) (int, bool) {
+// lightestRunnerFor returns the least-loaded runner for a unit of file, one
+// of a collision group whose files each runner holds in held: one that holds
+// only file's other parts, or, with takeFree, one that holds none of the
+// group's files. It prefers lower runner indexes on ties.
+func (b *testSplitBuilder) lightestRunnerFor(held map[int][]string, file string, takeFree bool) (int, bool) {
 	best := -1
 	bestLoad := 0
 	for _, load := range b.loads {
-		if used[load.index] {
+		files := held[load.index]
+		if !slices.Equal(files, []string{file}) && (!takeFree || len(files) > 0) {
 			continue
 		}
 		if best == -1 || load.load < bestLoad || (load.load == bestLoad && load.index < best) {
@@ -391,11 +539,13 @@ func (b *testSplitBuilder) lightestUnusedRunner(used map[int]bool) (int, bool) {
 	return best, best != -1
 }
 
-// addLoadToRunner adds weight to a runner by index, keeping the heap valid.
-func (b *testSplitBuilder) addLoadToRunner(index int, weight int) {
+// addLoadToRunner adds a file of weight to a runner by index, keeping the
+// heap valid.
+func (b *testSplitBuilder) addLoadToRunner(index int, path string, weight int) {
 	for i := range b.loads {
 		if b.loads[i].index == index {
 			b.loads[i].load += weight
+			b.loads[i].addSource(path)
 			heap.Fix(&b.loads, i)
 			return
 		}
@@ -403,11 +553,25 @@ func (b *testSplitBuilder) addLoadToRunner(index int, weight int) {
 }
 
 func (b testSplitBuilder) score() splitScore {
-	minLoad, maxLoad, totalLoad := loadStats(b.loads)
+	return b.scoreNodes(defaultNodeModel)
+}
+
+// scoreNodes times each runner with model: the wall time and imbalance are
+// in modeled node time, the total runtime is the files' weights.
+func (b testSplitBuilder) scoreNodes(model nodeModel) splitScore {
+	_, _, totalLoad := loadStats(b.loads)
+	minTime, maxTime := -1, 0
+	for _, load := range b.loads {
+		t := model.nodeTime(load.load, load.files)
+		if minTime == -1 || t < minTime {
+			minTime = t
+		}
+		maxTime = max(maxTime, t)
+	}
 	return splitScore{
 		parallelRunners: b.parallelRunners,
-		wallTime:        maxLoad,
-		imbalance:       maxLoad - minLoad,
+		wallTime:        maxTime,
+		imbalance:       maxTime - minTime,
 		totalRuntime:    totalLoad,
 	}
 }
@@ -415,6 +579,22 @@ func (b testSplitBuilder) score() splitScore {
 type runnerLoad struct {
 	index int
 	load  int
+	// files counts the distinct test files of the runner's units: the parts
+	// of a split file are one file to collect.
+	files   int
+	sources map[string]struct{}
+}
+
+// addSource counts the file of a unit, a test file or a part of one.
+func (l *runnerLoad) addSource(path string) {
+	file := splitPartFile(path)
+	if l.sources == nil {
+		l.sources = make(map[string]struct{})
+	}
+	if _, ok := l.sources[file]; !ok {
+		l.sources[file] = struct{}{}
+		l.files++
+	}
 }
 
 type minLoadHeap []runnerLoad

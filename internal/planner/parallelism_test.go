@@ -399,3 +399,70 @@ func TestCalculateParallelRunnerSplit_BasenameAffinityScoresSplitCreation(t *tes
 		}
 	}
 }
+
+func TestNodeSplitScoreDividesBySpeedupAndAddsFileOverhead(t *testing.T) {
+	weights := map[string]int{"a.py": 9000, "b.py": 3000, "c.py": 3000}
+
+	single := scoreRunnerSplit(weights, 2, false)
+	model := nodeModel{speedup: 2, fileOverhead: 100 * time.Millisecond}
+	modeled := scorePreparedNodeSplit(prepareSplitFiles(weights, false), 2, model)
+
+	// Runner loads are 9,000 ms in 1 file and 6,000 ms in 2 files.
+	if single.wallTime != 9000 {
+		t.Fatalf("single-process wall = %d, want 9000", single.wallTime)
+	}
+	if modeled.wallTime != 4600 || modeled.imbalance != 4600-3200 || modeled.totalRuntime != 15000 {
+		t.Errorf("modeled score = %+v, want wall 4600 (9000/2+100), imbalance 1400 against 3200 (6000/2+2*100), total 15000", modeled)
+	}
+}
+
+func TestNodeSplitSelectionWeighsTheFilesEachNodeCollects(t *testing.T) {
+	// Like sympy: one file far bigger than any node's share, which xdist
+	// splits within its node, and many small files.
+	weights := map[string]int{"big_test.py": 82700}
+	for i := range 600 {
+		weights[fmt.Sprintf("small_%03d_test.py", i)] = 2000
+	}
+	overhead := 300 * time.Millisecond
+
+	withoutFiles := calculateNodeSplitSelection(weights, 1, 32, overhead, 0, false, nodeModel{speedup: 2})
+	withFiles := calculateNodeSplitSelection(weights, 1, 32, overhead, 0, false, nodeModel{speedup: 2, fileOverhead: 150 * time.Millisecond})
+
+	if got := withoutFiles.selected; got.parallelRunners != 16 || got.wallTime != 41350 {
+		t.Errorf("without a file cost: %+v, want 16 runners at 41,350 ms, where the big file sets the floor", got)
+	}
+	if got := withFiles.selected; got.parallelRunners <= 16 {
+		t.Errorf("with a file cost: %d runners, want more than 16: fewer runners give each node more files to collect", got.parallelRunners)
+	}
+}
+
+func TestNodeFileOverheadCountsASplitFileOnce(t *testing.T) {
+	b := newTestSplitBuilder(1)
+	b.addFile("tests/test_a.py[1/2]", 1000)
+	b.addFile("tests/test_a.py[2/2]", 1000)
+	b.addFile("tests/test_b.py", 1000)
+
+	score := b.scoreNodes(nodeModel{speedup: 1, fileOverhead: 5 * time.Second})
+
+	// Two files to collect, test_a.py once for both its parts.
+	if score.wallTime != 3000+2*5000 {
+		t.Errorf("wall time = %dms, want 13000ms", score.wallTime)
+	}
+}
+
+func TestCountTestFilesCountsASplitFileOnce(t *testing.T) {
+	units := map[string]int{"tests/test_a.py[1/2]": 1, "tests/test_a.py[2/2]": 1, "tests/test_b.py": 1}
+	if got := countTestFiles(units); got != 2 {
+		t.Errorf("countTestFiles = %d, want 2", got)
+	}
+}
+
+func TestFullySkippedTestFilesCountsASplitFileAsRun(t *testing.T) {
+	tp := &TestPlanner{
+		testFiles:       map[string]struct{}{"tests/test_a.py": {}, "tests/test_b.py": {}, "tests/test_skipped.py": {}},
+		testFileWeights: map[string]int{"tests/test_a.py[1/2]": 1, "tests/test_a.py[2/2]": 1, "tests/test_b.py": 1},
+	}
+	if got := tp.fullySkippedTestFiles(); got != 1 {
+		t.Errorf("fullySkippedTestFiles = %d, want 1", got)
+	}
+}
