@@ -97,8 +97,15 @@ diagnostics or refreshing a discovery cache. `--strict-discovery` alone does not
 force collection. To opt out, unset the environment variable or select
 `--test-skipping-mode test` and regenerate the plan.
 
-Python test files sharing a basename are assigned to separate runners when
-there are enough runners. If a group has more files than runners, DDTest keeps
+Python test files that pytest's default import mode would import under the
+same module name are assigned to separate runners when there are enough
+runners. A file outside packages gets its basename as module name, so files
+sharing a basename collide; a file inside packages (directories with an
+`__init__.py` whose name is a Python identifier, unlike `tests-unit`) gets its
+dotted path from above its outermost package, so
+same-basename files in different packages, such as `tests/a/test_init.py` and
+`tests/b/test_init.py` with `__init__.py` files, don't constrain distribution.
+If a group has more files than runners, DDTest keeps
 all files in the plan and warns that pytest import collisions remain possible.
 This also applies to a single runner. Splitting does not resolve collisions
 during full test collection, which runs before distribution. Add `__init__.py`
