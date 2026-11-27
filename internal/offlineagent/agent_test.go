@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"mime/multipart"
 	"net"
@@ -329,6 +330,26 @@ func TestAPayloadThatCannotBeSavedFailsTheStop(t *testing.T) {
 
 	assert.ErrorContains(t, err, "1 Test Optimization payloads could not be saved")
 }
+
+func TestForwardedTelemetryThatCannotBeReadIsALostPayload(t *testing.T) {
+	upstream, err := ParseUpstream("http://127.0.0.1:1")
+	require.NoError(t, err)
+	payloadsDir := t.TempDir()
+	require.NoError(t, PreparePayloadsDir(payloadsDir))
+	agent := buildAgent(Config{PayloadsDir: payloadsDir, Upstream: upstream})
+	request := httptest.NewRequest(http.MethodPost, "/telemetry/proxy/api/v2/apmtelemetry", io.MultiReader(strings.NewReader(`{"seq`), failingReader{}))
+	response := httptest.NewRecorder()
+
+	agent.handler().ServeHTTP(response, request)
+
+	assert.Equal(t, http.StatusBadRequest, response.Code)
+	assert.ErrorContains(t, agent.files.lost(), "1 Test Optimization payloads could not be saved")
+}
+
+// failingReader fails every read, as a connection that breaks mid-request.
+type failingReader struct{}
+
+func (failingReader) Read([]byte) (int, error) { return 0, errors.New("connection reset") }
 
 func TestPreparePayloadsDirRefusesAPathInTheWay(t *testing.T) {
 	payloadsDir := t.TempDir()

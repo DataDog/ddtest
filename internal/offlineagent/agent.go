@@ -229,11 +229,12 @@ func (a *agent) telemetry(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxRequestBytes))
+	var body []byte
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
+		err = fmt.Errorf("read request body: %w", err)
+	} else {
+		body, err = decodeBody(r.Header, raw)
 	}
-	body, err := decodeBody(r.Header, raw)
 	if err == nil {
 		err = a.files.writeTelemetry(body)
 	}
