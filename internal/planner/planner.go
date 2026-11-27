@@ -575,10 +575,7 @@ func (tp *TestPlanner) recordPlanningTelemetry(selection splitSelection) {
 		}
 	}
 
-	fullySkippedTestFiles := len(tp.testFiles) - len(tp.testFileWeights)
-	if fullySkippedTestFiles < 0 {
-		fullySkippedTestFiles = 0
-	}
+	fullySkippedTestFiles := tp.fullySkippedTestFiles()
 
 	telemetry.Planning(tp.telemetryClient, telemetry.PlanningMetrics{
 		Attributes: telemetry.PlanningAttributes{
@@ -588,10 +585,10 @@ func (tp *TestPlanner) recordPlanningTelemetry(selection splitSelection) {
 			DiscoveryMode:    telemetry.TestDiscoveryMode(tp.reportStats.discoveryMode),
 			TIAEnabled:       tp.tiaSkippingEnabled,
 		},
-		DecisionReason:            planningDecisionReason(selection, len(tp.testFileWeights)),
+		DecisionReason:            planningDecisionReason(selection, countTestFiles(tp.testFileWeights)),
 		TargetStatus:              planningTargetStatus(selection),
 		DiscoveredTestFiles:       len(tp.testFiles),
-		RunnableTestFiles:         len(tp.testFileWeights),
+		RunnableTestFiles:         countTestFiles(tp.testFileWeights),
 		FullySkippedTestFiles:     fullySkippedTestFiles,
 		BackendDurationTestFiles:  backendDurationTestFiles,
 		DefaultDurationTestFiles:  defaultDurationTestFiles,

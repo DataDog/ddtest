@@ -74,6 +74,63 @@ func TestSplitLongFilesMakesAtMostOnePartPerTest(t *testing.T) {
 	}
 }
 
+func TestSplitLongFilesAddsPartsUntilEachIsUnderTheThreshold(t *testing.T) {
+	second := int64(time.Second)
+	durations := testDurationsFile{Files: map[string]map[string]int64{
+		"tests/test_three.py": {"test_a": 6 * second, "test_b": 6 * second, "test_c": 6 * second},
+	}}
+
+	// 18s under 10s makes two parts by count, but three tests of 6s can't
+	// be balanced into two parts under 10s.
+	split, _, _ := splitLongFiles(map[string]int{"tests/test_three.py": 18_000}, durations, 10*time.Second, lastPartComplement)
+
+	if len(split) != 3 {
+		t.Fatalf("split = %v, want three parts of 6s", split)
+	}
+	for unit, weight := range split {
+		if weight > 10_000 {
+			t.Errorf("%s weighs %dms, over the 10s threshold", unit, weight)
+		}
+	}
+}
+
+func TestSplitLongFilesLeavesALongTestAPartOfItsOwn(t *testing.T) {
+	second := int64(time.Second)
+	tests := map[string]int64{"test_long": 60 * second}
+	for i := range 100 {
+		tests[fmt.Sprintf("test_%03d", i)] = second / 10
+	}
+	durations := testDurationsFile{Files: map[string]map[string]int64{"tests/test_big.py": tests}}
+
+	// 70s under 30s: the 60s test can't go under it, and doesn't make every
+	// other test a part of its own either.
+	split, _, _ := splitLongFiles(map[string]int{"tests/test_big.py": 70_000}, durations, 30*time.Second, lastPartComplement)
+
+	if len(split) != 3 {
+		t.Errorf("split into %d parts, want 3: the long test alone and the rest in two", len(split))
+	}
+}
+
+func TestSplitLongFilesFindsThePartCountQuickly(t *testing.T) {
+	// 10,000 tests of 60ms under 100ms: every count below 10,000 pairs two
+	// tests somewhere, so a part per test is the answer.
+	tests := make(map[string]int64, 10_000)
+	for i := range 10_000 {
+		tests[fmt.Sprintf("test_%05d", i)] = int64(60 * time.Millisecond)
+	}
+	durations := testDurationsFile{Files: map[string]map[string]int64{"tests/test_many.py": tests}}
+	start := time.Now()
+
+	split, _, _ := splitLongFiles(map[string]int{"tests/test_many.py": 600_000}, durations, 100*time.Millisecond, lastPartComplement)
+
+	if len(split) != 10_000 {
+		t.Errorf("split into %d parts, want 10000", len(split))
+	}
+	if elapsed := time.Since(start); elapsed > 10*time.Second {
+		t.Errorf("splitting took %s", elapsed)
+	}
+}
+
 func TestSplitLongFilesDoesNothingWithoutAThreshold(t *testing.T) {
 	weights := map[string]int{"tests/test_long.py": 90_000}
 	durations := testDurationsFile{Files: map[string]map[string]int64{"tests/test_long.py": {"a": 1, "b": 1}}}
@@ -114,7 +171,7 @@ func TestReadTestDurationsFileRejectsAFileWithoutFiles(t *testing.T) {
 	}
 }
 
-func TestTestPlanner_Plan_GivesRunnersTheTestsOfSplitFiles(t *testing.T) {
+func TestTestPlanner_Plan_SplitsOnlyPytestFiles(t *testing.T) {
 	tempDir := t.TempDir()
 	t.Chdir(tempDir)
 	durationsPath := filepath.Join(tempDir, "test-durations.json")
@@ -169,9 +226,9 @@ func TestTestPlanner_Plan_GivesRunnersTheTestsOfSplitFiles(t *testing.T) {
 		lines = append(lines, strings.Fields(strings.ReplaceAll(string(data), " ", "_"))...)
 	}
 	slices.Sort(lines)
-	want := []string{"src/long.test.js::quick", "src/long.test.js::slow_one", "src/long.test.js::slow_two", "src/short.test.js"}
+	want := []string{"src/long.test.js", "src/short.test.js"}
 	if !slices.Equal(lines, want) {
-		t.Errorf("runner lines = %v, want the long file's tests and the short file, each once", lines)
+		t.Errorf("runner lines = %v, want whole files: Jest's runner can't take a part's test IDs", lines)
 	}
 }
 

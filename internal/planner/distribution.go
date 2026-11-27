@@ -416,10 +416,10 @@ func newTestSplitBuilder(parallelRunners int) testSplitBuilder {
 	}
 }
 
-func (b *testSplitBuilder) addFile(weight int) int {
+func (b *testSplitBuilder) addFile(path string, weight int) int {
 	lightestRunner := heap.Pop(&b.loads).(runnerLoad)
 	lightestRunner.load += weight
-	lightestRunner.files++
+	lightestRunner.addSource(path)
 	heap.Push(&b.loads, lightestRunner)
 	return lightestRunner.index
 }
@@ -495,9 +495,9 @@ func (b *testSplitBuilder) placePreparedFiles(prepared preparedSplitFiles, assig
 				}
 				basename := filepath.Base(file)
 				collisions[basename] = append(collisions[basename], unit.path)
-				runnerIndex = b.addFile(unit.weight)
+				runnerIndex = b.addFile(unit.path, unit.weight)
 			} else {
-				b.addLoadToRunner(runnerIndex, unit.weight)
+				b.addLoadToRunner(runnerIndex, unit.path, unit.weight)
 			}
 			if !slices.Contains(held[runnerIndex], file) {
 				held[runnerIndex] = append(held[runnerIndex], file)
@@ -511,7 +511,7 @@ func (b *testSplitBuilder) placePreparedFiles(prepared preparedSplitFiles, assig
 		if prepared.inCollisionGroup[i] {
 			continue
 		}
-		runnerIndex := b.addFile(file.weight)
+		runnerIndex := b.addFile(file.path, file.weight)
 		if assignments != nil {
 			assignments[i] = runnerIndex
 		}
@@ -541,11 +541,11 @@ func (b *testSplitBuilder) lightestRunnerFor(held map[int][]string, file string,
 
 // addLoadToRunner adds a file of weight to a runner by index, keeping the
 // heap valid.
-func (b *testSplitBuilder) addLoadToRunner(index int, weight int) {
+func (b *testSplitBuilder) addLoadToRunner(index int, path string, weight int) {
 	for i := range b.loads {
 		if b.loads[i].index == index {
 			b.loads[i].load += weight
-			b.loads[i].files++
+			b.loads[i].addSource(path)
 			heap.Fix(&b.loads, i)
 			return
 		}
@@ -579,7 +579,22 @@ func (b testSplitBuilder) scoreNodes(model nodeModel) splitScore {
 type runnerLoad struct {
 	index int
 	load  int
-	files int
+	// files counts the distinct test files of the runner's units: the parts
+	// of a split file are one file to collect.
+	files   int
+	sources map[string]struct{}
+}
+
+// addSource counts the file of a unit, a test file or a part of one.
+func (l *runnerLoad) addSource(path string) {
+	file := splitPartFile(path)
+	if l.sources == nil {
+		l.sources = make(map[string]struct{})
+	}
+	if _, ok := l.sources[file]; !ok {
+		l.sources[file] = struct{}{}
+		l.files++
+	}
 }
 
 type minLoadHeap []runnerLoad

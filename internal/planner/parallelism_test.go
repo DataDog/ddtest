@@ -435,3 +435,34 @@ func TestNodeSplitSelectionWeighsTheFilesEachNodeCollects(t *testing.T) {
 		t.Errorf("with a file cost: %d runners, want more than 16: fewer runners give each node more files to collect", got.parallelRunners)
 	}
 }
+
+func TestNodeFileOverheadCountsASplitFileOnce(t *testing.T) {
+	b := newTestSplitBuilder(1)
+	b.addFile("tests/test_a.py[1/2]", 1000)
+	b.addFile("tests/test_a.py[2/2]", 1000)
+	b.addFile("tests/test_b.py", 1000)
+
+	score := b.scoreNodes(nodeModel{speedup: 1, fileOverhead: 5 * time.Second})
+
+	// Two files to collect, test_a.py once for both its parts.
+	if score.wallTime != 3000+2*5000 {
+		t.Errorf("wall time = %dms, want 13000ms", score.wallTime)
+	}
+}
+
+func TestCountTestFilesCountsASplitFileOnce(t *testing.T) {
+	units := map[string]int{"tests/test_a.py[1/2]": 1, "tests/test_a.py[2/2]": 1, "tests/test_b.py": 1}
+	if got := countTestFiles(units); got != 2 {
+		t.Errorf("countTestFiles = %d, want 2", got)
+	}
+}
+
+func TestFullySkippedTestFilesCountsASplitFileAsRun(t *testing.T) {
+	tp := &TestPlanner{
+		testFiles:       map[string]struct{}{"tests/test_a.py": {}, "tests/test_b.py": {}, "tests/test_skipped.py": {}},
+		testFileWeights: map[string]int{"tests/test_a.py[1/2]": 1, "tests/test_a.py[2/2]": 1, "tests/test_b.py": 1},
+	}
+	if got := tp.fullySkippedTestFiles(); got != 1 {
+		t.Errorf("fullySkippedTestFiles = %d, want 1", got)
+	}
+}

@@ -2,6 +2,7 @@ package planner
 
 import (
 	"cmp"
+	"container/heap"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -127,7 +128,29 @@ func splitLongFiles(weights map[string]int, durations testDurationsFile, thresho
 			split[file] = weight
 			continue
 		}
-		for i, part := range partitionTests(tests, parts) {
+		// Balancing by duration can leave a part over the threshold, such as
+		// three tests of 6s in two parts of 12s and 6s under 10s: add parts
+		// until each is under it or has one test: a test longer than the
+		// threshold makes a part of its own.
+		overweight := func(partition []testPart) bool {
+			return slices.ContainsFunc(partition, func(p testPart) bool { return len(p.names) > 1 && p.weight(weight) > thresholdMillis })
+		}
+		partition := partitionTests(tests, parts)
+		if overweight(partition) {
+			// One part per test is never overweight: search the fewest
+			// parts above parts that aren't.
+			low, high, best := parts+1, len(tests), partitionTests(tests, len(tests))
+			for low <= high {
+				mid := low + (high-low)/2
+				if candidate := partitionTests(tests, mid); overweight(candidate) {
+					low = mid + 1
+				} else {
+					high, best = mid-1, candidate
+				}
+			}
+			partition, parts = best, len(best)
+		}
+		for i, part := range partition {
 			unit := splitPartName(file, i+1, parts)
 			split[unit] = part.weight(weight)
 			if last == lastPartComplement && i == parts-1 {
@@ -195,16 +218,16 @@ func partitionTests(tests map[string]int64, parts int) []testPart {
 		return cmp.Or(cmp.Compare(tests[b], tests[a]), cmp.Compare(a, b))
 	})
 	split := make([]testPart, parts)
+	lightest := &partHeap{parts: split, order: make([]int, parts)}
+	for i := range lightest.order {
+		lightest.order[i] = i
+	}
+	heap.Init(lightest)
 	for _, name := range names {
-		lightest := 0
-		for i := range split {
-			if split[i].duration < split[lightest].duration ||
-				(split[i].duration == split[lightest].duration && len(split[i].names) < len(split[lightest].names)) {
-				lightest = i
-			}
-		}
-		split[lightest].names = append(split[lightest].names, name)
-		split[lightest].duration += max(tests[name], 0)
+		i := lightest.order[0]
+		split[i].names = append(split[i].names, name)
+		split[i].duration += max(tests[name], 0)
+		heap.Fix(lightest, 0)
 	}
 	for i := range split {
 		slices.Sort(split[i].names)
@@ -228,14 +251,20 @@ func (tp *TestPlanner) splitLongTestFiles() error {
 	if err != nil {
 		return errcode.WithCode(errcode.PlanTestDurationsFileInvalid, err)
 	}
-	last := lastPartListed
-	if tp.framework != nil && tp.framework.Name() == "pytest" {
-		last = lastPartComplement
-		if err := checkOneGranularity(durations); err != nil {
-			return errcode.WithCode(errcode.PlanTestDurationsFileInvalid, err)
+	// Only pytest's runs take the parts of a split file (see the split filter
+	// plugin): other frameworks' runners would get test IDs as paths.
+	if tp.framework == nil || tp.framework.Name() != "pytest" {
+		framework := ""
+		if tp.framework != nil {
+			framework = tp.framework.Name()
 		}
+		slog.Warn("Only pytest runs parts of split test files; planning whole files", "framework", framework)
+		return nil
 	}
-	tp.testFileWeights, tp.splitLines, tp.splitListed = splitLongFiles(tp.testFileWeights, durations, threshold, last)
+	if err := checkOneGranularity(durations); err != nil {
+		return errcode.WithCode(errcode.PlanTestDurationsFileInvalid, err)
+	}
+	tp.testFileWeights, tp.splitLines, tp.splitListed = splitLongFiles(tp.testFileWeights, durations, threshold, lastPartComplement)
 	for unit, ids := range tp.splitLines {
 		slog.Info("Split a long test file by test", "part", unit, "tests", len(ids), "estimatedRuntime", time.Duration(tp.testFileWeights[unit])*time.Millisecond)
 	}
@@ -281,4 +310,28 @@ func writeSplitFileTests(listed map[string][]string) error {
 		return fmt.Errorf("encode split file tests: %w", err)
 	}
 	return writePlanFile(constants.SplitFileTestsPath, data)
+}
+
+// partHeap orders the parts being dealt, the lightest first: by duration,
+// then by number of tests, then by index.
+type partHeap struct {
+	parts []testPart
+	order []int
+}
+
+func (h *partHeap) Len() int { return len(h.order) }
+
+func (h *partHeap) Less(i, j int) bool {
+	a, b := h.parts[h.order[i]], h.parts[h.order[j]]
+	return cmp.Or(cmp.Compare(a.duration, b.duration), cmp.Compare(len(a.names), len(b.names)), cmp.Compare(h.order[i], h.order[j])) < 0
+}
+
+func (h *partHeap) Swap(i, j int) { h.order[i], h.order[j] = h.order[j], h.order[i] }
+
+func (h *partHeap) Push(x any) { h.order = append(h.order, x.(int)) }
+
+func (h *partHeap) Pop() any {
+	last := h.order[len(h.order)-1]
+	h.order = h.order[:len(h.order)-1]
+	return last
 }
