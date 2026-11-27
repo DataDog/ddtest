@@ -223,3 +223,18 @@ func TestDescribeRejectsIncompleteOrMixedCIFlags(t *testing.T) {
 		require.Error(t, root.Execute(), args)
 	}
 }
+
+func TestDescribePreservesCustomConfigurations(t *testing.T) {
+	describeTestSettings(t)
+	t.Setenv("DD_TAGS", "ordinary:ignored,test.configuration.variant:worker,test.configuration.empty:")
+	tags, err := describeConfigurations(context.Background(), "", []string{"pytest"})
+	require.NoError(t, err)
+	require.Equal(t, "worker", tags["test.configuration.variant"])
+	require.Contains(t, tags, "test.configuration.empty")
+	require.NotContains(t, tags, "ordinary")
+	viper.Set("runtime_tags", `{"runtime.name":"CPython","runtime.version":"3.12.9","os.platform":"Linux","os.architecture":"x86_64","os.version":"worker","test.configuration.variant":"declared"}`)
+	settings.Init()
+	tags, err = describeConfigurations(context.Background(), "", []string{"pytest"})
+	require.NoError(t, err)
+	require.Equal(t, "declared", tags["test.configuration.variant"])
+}

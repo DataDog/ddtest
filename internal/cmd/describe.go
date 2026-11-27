@@ -12,6 +12,7 @@ import (
 	"github.com/DataDog/ddtest/internal/git"
 	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/settings"
+	"github.com/DataDog/ddtest/internal/testoptimization/api"
 	"github.com/bmatcuk/doublestar/v4"
 	"github.com/spf13/cobra"
 )
@@ -194,6 +195,14 @@ func describeConfigurations(ctx context.Context, interpreter string, argv []stri
 			return nil, fmt.Errorf("describe requires a complete runtime configuration: missing %s", key)
 		}
 		configurations[key] = tags[key]
+	}
+	for key, value := range api.CustomConfigurationsFromTags(os.Getenv("DD_TAGS")) {
+		configurations["test.configuration."+key] = value
+	}
+	for key, value := range tags {
+		if strings.HasPrefix(key, "test.configuration.") || key == "runtime.architecture" || key == "test.bundle" {
+			configurations[key] = value
+		}
 	}
 	return configurations, nil
 }

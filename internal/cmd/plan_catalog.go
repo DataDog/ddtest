@@ -11,6 +11,7 @@ import (
 	"github.com/DataDog/ddtest/internal/planner"
 	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/telemetry"
+	"github.com/DataDog/ddtest/internal/testoptimization/api"
 	"github.com/spf13/cobra"
 )
 
@@ -194,6 +195,11 @@ func commandPlanningGap(job onboard.PythonCIJob, command onboard.PythonCICommand
 	for _, key := range []string{"DD_SERVICE", "DD_ENV", "DD_TAGS"} {
 		if value := job.Variables[key]; value != "" && value != os.Getenv(key) {
 			return "worker identity override requires separate planning: " + key
+		}
+	}
+	for key, value := range api.CustomConfigurationsFromTags(job.Variables["DD_TAGS"]) {
+		if actual, exists := tags["test.configuration."+key]; !exists || actual != value {
+			return "worker custom configuration differs from command metadata: " + key
 		}
 	}
 	return ""

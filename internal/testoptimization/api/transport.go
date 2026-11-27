@@ -125,20 +125,7 @@ func newTransportWithServiceNameAndSubdomain(serviceName, subdomain string, test
 		serviceName = runmetadata.ResolveServiceName(ciTags[constants.GitRepositoryURL])
 	}
 
-	// get all custom configuration (test.configuration.*)
-	var customConfiguration map[string]string
-	if v := os.Getenv("DD_TAGS"); v != "" {
-		prefix := "test.configuration."
-		for k, v := range parseTagString(v) {
-			if strings.HasPrefix(k, prefix) {
-				if customConfiguration == nil {
-					customConfiguration = map[string]string{}
-				}
-
-				customConfiguration[strings.TrimPrefix(k, prefix)] = v
-			}
-		}
-	}
+	customConfiguration := CustomConfigurationsFromTags(os.Getenv("DD_TAGS"))
 
 	// create default http headers and get base url
 	defaultHeaders := map[string]string{}
@@ -238,6 +225,20 @@ func newTransportWithServiceNameAndSubdomain(serviceName, subdomain string, test
 // NewTransportWithServiceName creates a new transport with the given service name.
 func NewTransportWithServiceName(serviceName string) Transport {
 	return NewTransportWithServiceNameAndSubdomain(serviceName, "api")
+}
+
+// CustomConfigurationsFromTags reads test identity values from DD_TAGS.
+func CustomConfigurationsFromTags(value string) map[string]string {
+	var custom map[string]string
+	for key, value := range parseTagString(value) {
+		if name, ok := strings.CutPrefix(key, "test.configuration."); ok {
+			if custom == nil {
+				custom = map[string]string{}
+			}
+			custom[name] = value
+		}
+	}
+	return custom
 }
 
 func parseTagString(str string) map[string]string {

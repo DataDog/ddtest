@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/DataDog/ddtest/internal/environment"
+	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/telemetry"
 	"github.com/spf13/cobra"
@@ -172,4 +173,17 @@ func TestPlanCatalogRejectsIncompleteOrMixedArguments(t *testing.T) {
 		command.SetArgs(args)
 		require.Error(t, command.Execute())
 	}
+}
+
+func TestCatalogRequiresDeclaredCustomConfigurations(t *testing.T) {
+	t.Setenv("DD_TAGS", "test.configuration.variant:worker")
+	job := onboard.PythonCIJob{CICommandJob: onboard.CICommandJob{Variables: map[string]string{"DD_TAGS": os.Getenv("DD_TAGS")}}}
+	tags := map[string]string{}
+	require.NoError(t, json.Unmarshal([]byte(describeRuntimeTags), &tags))
+	command := onboard.PythonCICommand{PythonCatalogCommand: onboard.PythonCatalogCommand{Cwd: "."}, PythonVersion: "3.12", CandidateTestFiles: []string{"tests/test_case.py"}, Configurations: tags}
+	require.Contains(t, commandPlanningGap(job, command), "worker custom configuration differs")
+	tags["test.configuration.variant"] = "other"
+	require.Contains(t, commandPlanningGap(job, command), "worker custom configuration differs")
+	tags["test.configuration.variant"] = "worker"
+	require.Empty(t, commandPlanningGap(job, command))
 }
