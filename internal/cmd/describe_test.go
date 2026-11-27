@@ -257,3 +257,12 @@ func TestDescribeUsesEffectiveIdentityDefaults(t *testing.T) {
 	require.Equal(t, "repo", description.TIARequest.Service)
 	require.Equal(t, "none", description.TIARequest.Env)
 }
+
+func TestDescribeRejectsDiscoveryOverrides(t *testing.T) {
+	for _, options := range [][]string{{"-o", "python_files=check_*.py"}, {"-opython_files=check_*.py"}, {"--override-ini=python_files=check_*.py"}, {"--override-ini", "python_files=check_*.py"}, {"-c", "alternate.ini"}, {"-calternate.ini"}} {
+		_, err := describePytestArgv(append([]string{"pytest"}, options...), "")
+		require.ErrorContains(t, err, "unsupported pytest discovery override")
+	}
+	_, err := describePytestArgv([]string{"pytest", "tests"}, "-o python_files=check_*.py")
+	require.ErrorContains(t, err, "unsupported pytest discovery override")
+}

@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 
 	"github.com/DataDog/ddtest/internal/discovery"
 	"github.com/DataDog/ddtest/internal/utils"
@@ -40,7 +41,14 @@ func PytestCommandArguments(args []string, addopts string) ([]string, error) {
 	}
 	argv := slices.Clone(args[:insert])
 	argv = append(argv, options...)
-	return append(argv, args[insert:]...), nil
+	argv = append(argv, args[insert:]...)
+	for _, arg := range argv[insert:] {
+		if arg == "--override-ini" || strings.HasPrefix(arg, "--override-ini=") ||
+			(strings.HasPrefix(arg, "-o") || strings.HasPrefix(arg, "-c")) && !strings.HasPrefix(arg, "--") {
+			return nil, fmt.Errorf("unsupported pytest discovery override %q", arg)
+		}
+	}
+	return argv, nil
 }
 
 // CandidateFiles discovers files under explicit roots without collecting tests.

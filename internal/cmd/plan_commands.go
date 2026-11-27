@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/DataDog/ddtest/internal/framework"
 	"github.com/DataDog/ddtest/internal/onboard"
 )
 
@@ -81,6 +82,9 @@ func loadCommandSet(path string) (onboard.PythonCICommandCatalog, error) {
 				// describe probes the worker interpreter, so its version is the environment's.
 				PythonVersion:      majorMinor(d.TIARequest.Configurations["runtime.version"]),
 				CandidateTestFiles: d.CandidateTestFiles,
+			}
+			if _, err := framework.PytestCommandArguments(d.Command.Argv, ""); err != nil {
+				command.Unresolved = err.Error()
 			}
 			if d.TIARequest.TestLevel != "suite" {
 				command.Unresolved = "command planning supports suite level only"

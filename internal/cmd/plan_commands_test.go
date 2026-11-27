@@ -156,3 +156,13 @@ func TestCommandRepositoryIdentity(t *testing.T) {
 		require.False(t, sameCommandRepository(remote, "https://example.com/org/repo.git"), remote)
 	}
 }
+
+func TestCommandSetKeepsUnsupportedDiscoveryRunnable(t *testing.T) {
+	sha := commandSetFixture(t)
+	description := describedFixture(t, "unit", "svc", sha, "tests/test_case.py")
+	description.Command.Argv = []string{"pytest", "-o", "python_files=check_*.py", "tests"}
+	writeCommandSet(t, map[string][]commandDescription{"unit": {description}}, "unit")
+	catalog, err := loadCommandSet("commands.json")
+	require.NoError(t, err)
+	require.Contains(t, catalog.Jobs[0].Commands[0].Unresolved, "unsupported pytest discovery override")
+}

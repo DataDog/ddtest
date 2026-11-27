@@ -1012,14 +1012,19 @@ The caller supplies the command ID and its candidate test directories.
 Repeat `--test-root` for multiple directories.
 The command accepts `pytest` and `python -m pytest` invocations.
 It includes `PYTEST_ADDOPTS` in the exported arguments.
+
+Discovery overrides through `-c`, `-o`, and `--override-ini` are unsupported and cause an error.
+This also applies to overrides in `PYTEST_ADDOPTS`.
 Filters such as `-k` remain arguments. The inventory contains candidate files,
 not the exact cases that those filters select.
 
 The catalog contains the command, candidate files, and TIA request context.
 Its command ID groups work in CI. It does not replace test or suite identities.
 The request context uses the checkout URL and SHA, `DD_SERVICE`, `DD_ENV`,
-the test level, and five runtime and OS fields.
+the test level, five required runtime and OS fields, and custom test configurations.
 
+An unset or empty `DD_SERVICE` uses the repository service name.
+An unset or empty `DD_ENV` uses `none`.
 If `_CI_DD_ENV` is set, its value overrides `DD_ENV`.
 The test level follows `_DD_CIVISIBILITY_ITR_SUITE_MODE` when present.
 An explicit `--test-skipping-mode` takes precedence.
@@ -1034,6 +1039,8 @@ The probe uses the existing runtime helper.
 To describe a future worker, supply all five fields through `--runtime-tags`:
 `runtime.name`, `runtime.version`, `os.platform`, `os.architecture`, and `os.version`.
 A complete override avoids the runtime probe. A partial override fails.
+Custom `test.configuration.*` entries from `DD_TAGS` are retained.
+Explicit custom entries in `--runtime-tags` take precedence.
 
 JSON goes to standard output. `--output` also writes it to a file.
 The catalog makes no skip decision. Use `plan` for existing execution planning.
