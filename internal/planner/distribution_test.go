@@ -829,3 +829,80 @@ func TestPythonDistributionPreservesFilesWithInsufficientRunners(t *testing.T) {
 		})
 	}
 }
+
+// writeTestTree creates files, empty, under the current directory.
+func writeTestTree(t *testing.T, files ...string) {
+	t.Helper()
+	for _, file := range files {
+		if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(file, nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestPytestModuleNameFollowsPackages(t *testing.T) {
+	t.Chdir(t.TempDir())
+	writeTestTree(t,
+		"tests/__init__.py", "tests/components/__init__.py", "tests/components/light/__init__.py",
+		"tests/components/light/test_init.py",
+		"flat/test_util.py",
+		"mixed/pkg/__init__.py", "mixed/pkg/test_init.py",
+		"suite-one/__init__.py", "suite-one/test_util.py",
+		"\u037a/__init__.py", "\u037a/test_greek.py",
+		"other/niño/__init__.py", "other/niño/test_util.py", "left/café/__init__.py", "left/café/test_util.py",
+		"top/__init__.py", "top/not-a-name/__init__.py", "top/not-a-name/pkg/__init__.py", "top/not-a-name/pkg/test_x.py",
+	)
+	namer := newPytestModuleNamer()
+	for path, want := range map[string]string{
+		"tests/components/light/test_init.py": "tests.components.light.test_init",
+		"flat/test_util.py":                   "test_util",
+		"mixed/pkg/test_init.py":              "pkg.test_init",
+		"suite-one/test_util.py":              "test_util",
+		"\u037a/test_greek.py":                "test_greek",
+		"other/niño/test_util.py":             "niño.test_util",
+		"left/café/test_util.py":              "café.test_util",
+		"top/not-a-name/pkg/test_x.py":        "pkg.test_x",
+	} {
+		if got := namer.pytestModuleName(path); got != want {
+			t.Errorf("pytestModuleName(%q) = %q, want %q", path, got, want)
+		}
+	}
+}
+
+func TestSameBasenameFilesInPackagesDontCollide(t *testing.T) {
+	t.Chdir(t.TempDir())
+	writeTestTree(t,
+		"tests/__init__.py",
+		"tests/a/__init__.py", "tests/a/test_init.py",
+		"tests/b/__init__.py", "tests/b/test_init.py",
+		"tests/c/__init__.py", "tests/c/test_init.py",
+		"loose/x/test_util.py", "loose/y/test_util.py",
+	)
+	inPackages := map[string]int{"tests/a/test_init.py": 10, "tests/b/test_init.py": 10, "tests/c/test_init.py": 10}
+	if hasDuplicateBasenames(inPackages) {
+		t.Error("files in packages with distinct module names reported as colliding")
+	}
+	if groups := basenameCollisionGroups(inPackages); len(groups) != 0 {
+		t.Errorf("collision groups for files in packages: %v", groups)
+	}
+
+	loose := map[string]int{"loose/x/test_util.py": 10, "loose/y/test_util.py": 10}
+	if !hasDuplicateBasenames(loose) {
+		t.Error("same-basename files outside packages not reported as colliding")
+	}
+	groups := basenameCollisionGroups(loose)
+	if len(groups) != 1 || len(groups[0]) != 2 {
+		t.Fatalf("collision groups for files outside packages = %v, want one group of two", groups)
+	}
+	// Outside packages, the two files still go to distinct runners.
+	builder := newTestSplitBuilder(2)
+	splits := builder.distributeFiles(loose, true)
+	for _, split := range splits {
+		if len(split) != 1 {
+			t.Errorf("runner got %v, want one of the colliding files each", split)
+		}
+	}
+}

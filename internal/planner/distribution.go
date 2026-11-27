@@ -10,8 +10,10 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/DataDog/ddtest/internal/constants"
+	"golang.org/x/text/unicode/norm"
 )
 
 // DistributeTestFiles distributes test files using weights loaded into this planner.
@@ -31,9 +33,9 @@ func (tp *TestPlanner) DistributeTestFiles(testFiles []string, parallelRunners i
 }
 
 // DistributeWeightedTestFiles distributes test files across parallel runners using weighted list scheduling.
-// For Python projects, files sharing a basename are kept on distinct runners when possible:
-// pytest's default import mode derives module names from basenames, so two
-// same-basename files collected in one worker fail with an import file mismatch.
+// For Python projects, files that pytest would import under the same module
+// name are kept on distinct runners when possible: two such files collected in
+// one worker fail with an import file mismatch (see pytestModuleName).
 func (tp *TestPlanner) DistributeWeightedTestFiles(testFiles map[string]int, parallelRunners int) [][]string {
 	builder := newTestSplitBuilder(parallelRunners)
 	return builder.distributeFiles(testFiles, tp.basenameAffinityEnabled())
@@ -46,11 +48,97 @@ func (tp *TestPlanner) basenameAffinityEnabled() bool {
 	return tp.planMetadata.Platform == "python"
 }
 
-// hasDuplicateBasenames reports whether any two files share a basename.
+// pytestModuleName is the module name pytest's default import mode (prepend)
+// gives a test file: its basename without the extension when its directory
+// isn't a package, and otherwise its dotted path from the directory above its
+// outermost package, the closest ancestor directories that have an
+// __init__.py. Two files only collide in one pytest process when their module
+// names are equal, so test files in packages, as in most large projects, don't
+// collide however many share a basename. Package lookups are cached per
+// directory, since many files share each one.
+type pytestModuleNamer struct {
+	isPackage map[string]bool
+}
+
+func newPytestModuleNamer() *pytestModuleNamer {
+	return &pytestModuleNamer{isPackage: make(map[string]bool)}
+}
+
+func (n *pytestModuleNamer) pytestModuleName(path string) string {
+	name := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+	for directory := filepath.Dir(path); n.directoryIsPackage(directory); directory = filepath.Dir(directory) {
+		name = filepath.Base(directory) + "." + name
+		if parent := filepath.Dir(directory); parent == directory {
+			break
+		}
+	}
+	return name
+}
+
+func (n *pytestModuleNamer) directoryIsPackage(directory string) bool {
+	if directory == "." || directory == string(filepath.Separator) || filepath.Dir(directory) == directory {
+		return false
+	}
+	if isPackage, ok := n.isPackage[directory]; ok {
+		return isPackage
+	}
+	// pytest stops at a directory whose name isn't a Python identifier, such
+	// as tests-unit, even when it has an __init__.py.
+	_, err := os.Stat(filepath.Join(directory, "__init__.py"))
+	isPackage := err == nil && isPythonIdentifier(filepath.Base(directory))
+	n.isPackage[directory] = isPackage
+	return isPackage
+}
+
+// isPythonIdentifier reports whether name is a Python identifier, as
+// str.isidentifier does: an XID_Start character or an underscore, then
+// XID_Continue characters. XID_Start is a letter or letter number, and
+// XID_Continue adds marks, digits and connector punctuation, each without
+// pattern syntax or white space and whose NFKC form keeps those properties,
+// which excludes such characters as U+037A. Checked against Python 3.14 over
+// every character of its Unicode version.
+func isPythonIdentifier(name string) bool {
+	for i, r := range name {
+		if !isIdentifierRune(r, i == 0) {
+			return false
+		}
+	}
+	return name != ""
+}
+
+func isIdentifierRune(r rune, first bool) bool {
+	allowed := isIdentifierContinue
+	if first {
+		allowed = isIdentifierStart
+	}
+	if !allowed(r) {
+		return false
+	}
+	for i, n := range norm.NFKC.String(string(r)) {
+		if !allowed(n) && (i == 0 || !isIdentifierContinue(n)) {
+			return false
+		}
+	}
+	return true
+}
+
+func isIdentifierStart(r rune) bool {
+	return r == '_' || unicode.In(r, unicode.L, unicode.Nl, unicode.Other_ID_Start) &&
+		!unicode.In(r, unicode.Pattern_Syntax, unicode.Pattern_White_Space)
+}
+
+func isIdentifierContinue(r rune) bool {
+	return isIdentifierStart(r) || unicode.In(r, unicode.Mn, unicode.Mc, unicode.Nd, unicode.Pc, unicode.Other_ID_Continue) &&
+		!unicode.In(r, unicode.Pattern_Syntax, unicode.Pattern_White_Space)
+}
+
+// hasDuplicateBasenames reports whether any two files would get the same
+// pytest module name (see pytestModuleName).
 func hasDuplicateBasenames(testFiles map[string]int) bool {
+	namer := newPytestModuleNamer()
 	basenames := make(map[string]int, len(testFiles))
 	for path := range testFiles {
-		basenames[filepath.Base(path)]++
+		basenames[namer.pytestModuleName(path)]++
 	}
 	for _, count := range basenames {
 		if count > 1 {
@@ -60,13 +148,16 @@ func hasDuplicateBasenames(testFiles map[string]int) bool {
 	return false
 }
 
-// basenameCollisionGroups groups files that share a basename with at least
-// one other file. Groups are ordered by total weight (desc) and each group's
-// members by weight (desc) for deterministic, reasonably balanced placement.
+// basenameCollisionGroups groups files that share a pytest module name (see
+// pytestModuleName) with at least one other file. Groups are ordered by total
+// weight (desc) and each group's members by weight (desc) for deterministic,
+// reasonably balanced placement.
 func basenameCollisionGroups(testFiles map[string]int) [][]weightedTestFile {
+	namer := newPytestModuleNamer()
 	byBasename := make(map[string][]weightedTestFile, len(testFiles))
 	for path, weight := range testFiles {
-		byBasename[filepath.Base(path)] = append(byBasename[filepath.Base(path)], weightedTestFile{path: path, weight: weight})
+		name := namer.pytestModuleName(path)
+		byBasename[name] = append(byBasename[name], weightedTestFile{path: path, weight: weight})
 	}
 	groups := make([][]weightedTestFile, 0)
 	for _, files := range byBasename {
@@ -142,7 +233,7 @@ func (tp *TestPlanner) CreateTestSplits(testFiles map[string]int, parallelRunner
 			for _, file := range group {
 				files = append(files, file.path)
 			}
-			slog.Warn("Same-basename test files share a single runner; pytest import collisions cannot be avoided",
+			slog.Warn("Test files with the same pytest module name share a single runner; pytest import collisions cannot be avoided",
 				"basename", filepath.Base(files[0]), "files", files,
 				"hint", "use more parallel runners, add __init__.py packages, or rename files")
 		}
@@ -296,7 +387,7 @@ func (b *testSplitBuilder) addFile(weight int) int {
 func (b *testSplitBuilder) distributeFiles(testFiles map[string]int, basenameAffinity bool) [][]string {
 	result, unavoidableCollisions := b.placeFiles(testFiles, basenameAffinity)
 	for basename, files := range unavoidableCollisions {
-		slog.Warn("Same-basename test files exceed the runner count; pytest import collisions cannot be avoided",
+		slog.Warn("Test files with the same pytest module name exceed the runner count; pytest import collisions cannot be avoided",
 			"basename", basename, "files", files, "parallelRunners", b.parallelRunners)
 	}
 	return result
