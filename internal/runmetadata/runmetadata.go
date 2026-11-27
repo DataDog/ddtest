@@ -49,3 +49,11 @@ func ServiceNameFromRepositoryURL(repositoryURL string) string {
 	}
 	return normalizedRepositoryURL
 }
+
+// EnvironmentName applies the default Test Optimization environment.
+func EnvironmentName(value string) string {
+	if value == "" {
+		return "none"
+	}
+	return value
+}

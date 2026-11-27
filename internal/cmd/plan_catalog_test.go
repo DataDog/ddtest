@@ -181,11 +181,11 @@ func TestCatalogRequiresDeclaredCustomConfigurations(t *testing.T) {
 	tags := map[string]string{}
 	require.NoError(t, json.Unmarshal([]byte(describeRuntimeTags), &tags))
 	command := onboard.PythonCICommand{PythonCatalogCommand: onboard.PythonCatalogCommand{Cwd: "."}, PythonVersion: "3.12", CandidateTestFiles: []string{"tests/test_case.py"}, Configurations: tags}
-	require.Contains(t, commandPlanningGap(job, command), "worker custom configuration differs")
+	require.Contains(t, commandPlanningGap(job, command, "https://example.com/org/repo.git"), "worker custom configuration differs")
 	tags["test.configuration.variant"] = "other"
-	require.Contains(t, commandPlanningGap(job, command), "worker custom configuration differs")
+	require.Contains(t, commandPlanningGap(job, command, "https://example.com/org/repo.git"), "worker custom configuration differs")
 	tags["test.configuration.variant"] = "worker"
-	require.Empty(t, commandPlanningGap(job, command))
+	require.Empty(t, commandPlanningGap(job, command, "https://example.com/org/repo.git"))
 }
 
 func TestCatalogKeepsExplicitEmptyWorkerIdentityRunnable(t *testing.T) {
@@ -196,9 +196,21 @@ func TestCatalogKeepsExplicitEmptyWorkerIdentityRunnable(t *testing.T) {
 		t.Run(key, func(t *testing.T) {
 			t.Setenv(key, "planner")
 			job := onboard.PythonCIJob{CICommandJob: onboard.CICommandJob{Variables: map[string]string{key: ""}}}
-			require.Contains(t, commandPlanningGap(job, command), "worker identity override")
+			require.Contains(t, commandPlanningGap(job, command, "https://example.com/org/repo.git"), "worker identity override")
 			delete(job.Variables, key)
-			require.Empty(t, commandPlanningGap(job, command))
+			require.Empty(t, commandPlanningGap(job, command, "https://example.com/org/repo.git"))
 		})
 	}
+}
+
+func TestCatalogUsesEffectiveWorkerIdentityDefaults(t *testing.T) {
+	t.Setenv("DD_SERVICE", "")
+	t.Setenv("DD_ENV", "")
+	tags := map[string]string{}
+	require.NoError(t, json.Unmarshal([]byte(describeRuntimeTags), &tags))
+	command := onboard.PythonCICommand{PythonCatalogCommand: onboard.PythonCatalogCommand{Cwd: "."}, PythonVersion: "3.12", CandidateTestFiles: []string{"tests/test_case.py"}, Configurations: tags}
+	job := onboard.PythonCIJob{CICommandJob: onboard.CICommandJob{Variables: map[string]string{"DD_SERVICE": "repo", "DD_ENV": "none"}}}
+	require.Empty(t, commandPlanningGap(job, command, "https://example.com/org/repo.git"))
+	job.Variables["DD_ENV"] = "ci"
+	require.Contains(t, commandPlanningGap(job, command, "https://example.com/org/repo.git"), "worker identity override")
 }

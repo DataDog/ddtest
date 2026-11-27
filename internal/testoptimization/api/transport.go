@@ -115,10 +115,7 @@ func newTransportWithServiceNameAndSubdomain(serviceName, subdomain string, test
 	ciTags := environment.GetGitCheckoutTags()
 
 	// get the environment
-	environment := os.Getenv("DD_ENV")
-	if environment == "" {
-		environment = "none"
-	}
+	environment := runmetadata.EnvironmentName(os.Getenv("DD_ENV"))
 
 	// get the service name
 	if serviceName == "" {

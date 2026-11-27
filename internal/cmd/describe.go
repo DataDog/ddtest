@@ -11,6 +11,7 @@ import (
 	"github.com/DataDog/ddtest/internal/framework"
 	"github.com/DataDog/ddtest/internal/git"
 	"github.com/DataDog/ddtest/internal/platform"
+	"github.com/DataDog/ddtest/internal/runmetadata"
 	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/testoptimization/api"
 	"github.com/bmatcuk/doublestar/v4"
@@ -122,12 +123,12 @@ func newDescribeCommand() *cobra.Command {
 			}
 			env, exists := os.LookupEnv("_CI_DD_ENV")
 			if !exists {
-				env = os.Getenv("DD_ENV")
+				env = runmetadata.EnvironmentName(os.Getenv("DD_ENV"))
 			}
 			description := commandDescription{
 				SchemaVersion: 2,
 				Command:       describedCommand{ID: id, Argv: argv, Cwd: ".", TestRoots: normalizedRoots, TestsLocation: location},
-				TIARequest: describedRequest{Service: os.Getenv("DD_SERVICE"), Env: env,
+				TIARequest: describedRequest{Service: runmetadata.ResolveServiceName(metadata.RepositoryURL), Env: env,
 					RepositoryURL: metadata.RepositoryURL, SHA: metadata.CommitSha,
 					TestLevel: level, Configurations: configurations},
 				CandidateTestFiles: files,

@@ -238,3 +238,22 @@ func TestDescribePreservesCustomConfigurations(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "declared", tags["test.configuration.variant"])
 }
+
+func TestDescribeUsesEffectiveIdentityDefaults(t *testing.T) {
+	commandSetFixture(t)
+	describeTestSettings(t)
+	describeTestFile(t, "tests/test_case.py", "raise AssertionError('must not import')\n")
+	t.Setenv("DD_SERVICE", "")
+	t.Setenv("DD_ENV", "")
+	t.Setenv("_CI_DD_ENV", "")
+	require.NoError(t, os.Unsetenv("_CI_DD_ENV"))
+	command := newDescribeCommand()
+	var output bytes.Buffer
+	command.SetOut(&output)
+	command.SetArgs([]string{"--id", "unit", "--test-root", "tests", "--", "pytest", "tests"})
+	require.NoError(t, command.Execute())
+	var description commandDescription
+	require.NoError(t, json.Unmarshal(output.Bytes(), &description))
+	require.Equal(t, "repo", description.TIARequest.Service)
+	require.Equal(t, "none", description.TIARequest.Env)
+}

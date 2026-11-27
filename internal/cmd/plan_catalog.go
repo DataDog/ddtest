@@ -9,6 +9,7 @@ import (
 
 	"github.com/DataDog/ddtest/internal/onboard"
 	"github.com/DataDog/ddtest/internal/planner"
+	"github.com/DataDog/ddtest/internal/runmetadata"
 	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/telemetry"
 	"github.com/DataDog/ddtest/internal/testoptimization/api"
@@ -134,7 +135,7 @@ func selectCatalogCommands(ctx context.Context, catalog onboard.PythonCICommandC
 			}
 			decision := commandSelection{PythonCICommand: command, Job: job.Name, Decision: "run",
 				RunnableFiles: slices.Clone(command.CandidateTestFiles)}
-			decision.Reason = commandPlanningGap(job, command)
+			decision.Reason = commandPlanningGap(job, command, catalog.RepositoryURL)
 			if decision.Reason == "" {
 				selected, err := planner.SelectPythonSuiteFiles(ctx, command.CandidateTestFiles, command.Configurations, telemetryClient)
 				switch {
@@ -168,7 +169,7 @@ func selectCatalogCommands(ctx context.Context, catalog onboard.PythonCICommandC
 	return result, nil
 }
 
-func commandPlanningGap(job onboard.PythonCIJob, command onboard.PythonCICommand) string {
+func commandPlanningGap(job onboard.PythonCIJob, command onboard.PythonCICommand, repositoryURL string) string {
 	if command.Unresolved != "" || len(job.Unresolved) > 0 {
 		return "unresolved command or job"
 	}
@@ -193,7 +194,7 @@ func commandPlanningGap(job onboard.PythonCIJob, command onboard.PythonCICommand
 		}
 	}
 	for _, key := range []string{"DD_SERVICE", "DD_ENV", "DD_TAGS"} {
-		if value, declared := job.Variables[key]; declared && value != os.Getenv(key) {
+		if value, declared := job.Variables[key]; declared && planningIdentityValue(key, value, repositoryURL) != planningIdentityValue(key, os.Getenv(key), repositoryURL) {
 			return "worker identity override requires separate planning: " + key
 		}
 	}
@@ -203,4 +204,16 @@ func commandPlanningGap(job onboard.PythonCIJob, command onboard.PythonCICommand
 		}
 	}
 	return ""
+}
+
+func planningIdentityValue(key, value, repositoryURL string) string {
+	switch key {
+	case "DD_SERVICE":
+		if value == "" {
+			return runmetadata.ServiceNameFromRepositoryURL(repositoryURL)
+		}
+	case "DD_ENV":
+		return runmetadata.EnvironmentName(value)
+	}
+	return value
 }
