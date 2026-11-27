@@ -1078,3 +1078,29 @@ Complete TIA request configurations still require the future worker's metadata.
 
 Manual command descriptions retain schema version 2 and their existing flags.
 Do not combine the two modes. Neither mode changes `plan` or decides to skip.
+
+A manual description also accepts the global `--tests-location` glob. It
+narrows the candidates found under `--test-root` and is recorded as
+`command.tests_location`. A pattern that matches no candidate fails.
+
+### Planning described commands
+
+An orchestrator that owns its pipeline format can describe each test command
+itself and plan them together, without a CI-provider parser:
+
+```sh
+ddtest plan --commands commands.json --output selection.json
+```
+
+`commands.json` groups manual `describe` outputs by job:
+
+```json
+{"schema_version": 1, "jobs": [{"name": "unit-tests", "commands": [<describe output>]}]}
+```
+
+Run it from the checkout the commands were described in: every description
+must carry the checkout's SHA. Each command's Python version is taken from its
+described runtime. The output and decisions are the same as for CI catalogs.
+A command whose service or environment differs from the process environment
+stays runnable, so plan each worker identity separately. `--commands` cannot
+be combined with `--ci-provider`, `--ci-config` or `--command-environments`.

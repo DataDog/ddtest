@@ -12,6 +12,7 @@ import (
 	"github.com/DataDog/ddtest/internal/git"
 	"github.com/DataDog/ddtest/internal/platform"
 	"github.com/DataDog/ddtest/internal/settings"
+	"github.com/bmatcuk/doublestar/v4"
 	"github.com/spf13/cobra"
 )
 
@@ -27,6 +28,8 @@ type describedCommand struct {
 	Argv      []string `json:"argv"`
 	Cwd       string   `json:"cwd"`
 	TestRoots []string `json:"test_roots"`
+	// TestsLocation is the --tests-location glob that narrowed the candidates.
+	TestsLocation string `json:"tests_location,omitempty"`
 }
 
 type describedRequest struct {
@@ -94,6 +97,11 @@ func newDescribeCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			// Narrow candidates to the global --tests-location glob.
+			location := settings.GetTestsLocation()
+			if files, err = filterTestsLocation(files, location); err != nil {
+				return err
+			}
 			metadata, err := describeCheckout()
 			if err != nil {
 				return err
@@ -117,7 +125,7 @@ func newDescribeCommand() *cobra.Command {
 			}
 			description := commandDescription{
 				SchemaVersion: 2,
-				Command:       describedCommand{ID: id, Argv: argv, Cwd: ".", TestRoots: normalizedRoots},
+				Command:       describedCommand{ID: id, Argv: argv, Cwd: ".", TestRoots: normalizedRoots, TestsLocation: location},
 				TIARequest: describedRequest{Service: os.Getenv("DD_SERVICE"), Env: env,
 					RepositoryURL: metadata.RepositoryURL, SHA: metadata.CommitSha,
 					TestLevel: level, Configurations: configurations},
@@ -141,6 +149,26 @@ func describePytestArgv(args []string, addopts string) ([]string, error) {
 }
 func describePytestFiles(ctx context.Context, roots []string) ([]string, []string, error) {
 	return framework.NewPytest(platform.NewPython()).CandidateFiles(ctx, roots)
+}
+
+// filterTestsLocation keeps candidate files matching a doublestar glob.
+func filterTestsLocation(files []string, location string) ([]string, error) {
+	if location == "" {
+		return files, nil
+	}
+	if !doublestar.ValidatePattern(location) {
+		return nil, fmt.Errorf("invalid --tests-location pattern %q", location)
+	}
+	kept := []string{}
+	for _, file := range files {
+		if matched, _ := doublestar.Match(location, file); matched {
+			kept = append(kept, file)
+		}
+	}
+	if len(kept) == 0 {
+		return nil, fmt.Errorf("no candidate test files match --tests-location %q", location)
+	}
+	return kept, nil
 }
 
 func describeConfigurations(ctx context.Context, interpreter string, argv []string) (map[string]string, error) {

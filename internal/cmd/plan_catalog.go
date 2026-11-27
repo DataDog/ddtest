@@ -45,6 +45,7 @@ func addCatalogPlanFlags(cmd *cobra.Command) {
 	cmd.Flags().String("ci-config", "", "Expanded CI configuration inside this repository")
 	cmd.Flags().String("command-environments", "", "Exported commands with optional per-environment configurations")
 	cmd.Flags().String("output", "", "Write CI command decisions as JSON")
+	cmd.Flags().String("commands", "", "Plan a set of `ddtest describe` outputs grouped by job (instead of --ci-provider)")
 }
 
 func catalogFlag(cmd *cobra.Command, name string) string {
@@ -53,7 +54,7 @@ func catalogFlag(cmd *cobra.Command, name string) string {
 }
 
 func isCatalogPlan(cmd *cobra.Command) bool {
-	for _, name := range []string{"ci-provider", "ci-config", "command-environments", "output"} {
+	for _, name := range []string{"ci-provider", "ci-config", "command-environments", "output", "commands"} {
 		if catalogFlag(cmd, name) != "" {
 			return true
 		}
@@ -65,7 +66,16 @@ func validatePlanArguments(cmd *cobra.Command, args []string) error {
 	if !isCatalogPlan(cmd) {
 		return usePositionalTestPatterns(cmd, args)
 	}
-	for _, name := range []string{"ci-provider", "ci-config", "command-environments", "output"} {
+	required := []string{"ci-provider", "ci-config", "command-environments", "output"}
+	if catalogFlag(cmd, "commands") != "" {
+		for _, name := range []string{"ci-provider", "ci-config", "command-environments"} {
+			if catalogFlag(cmd, name) != "" {
+				return fmt.Errorf("--commands cannot be combined with --%s", name)
+			}
+		}
+		required = []string{"output"}
+	}
+	for _, name := range required {
 		if catalogFlag(cmd, name) == "" {
 			return fmt.Errorf("CI command planning requires --%s", name)
 		}
@@ -81,7 +91,13 @@ func validatePlanArguments(cmd *cobra.Command, args []string) error {
 }
 
 func runCatalogPlan(cmd *cobra.Command, telemetryClient telemetry.Client) error {
-	catalog, err := describeCI(cmd, catalogFlag(cmd, "ci-provider"), catalogFlag(cmd, "ci-config"), catalogFlag(cmd, "command-environments"))
+	var catalog onboard.PythonCICommandCatalog
+	var err error
+	if path := catalogFlag(cmd, "commands"); path != "" {
+		catalog, err = loadCommandSet(path)
+	} else {
+		catalog, err = describeCI(cmd, catalogFlag(cmd, "ci-provider"), catalogFlag(cmd, "ci-config"), catalogFlag(cmd, "command-environments"))
+	}
 	if err != nil {
 		return err
 	}
