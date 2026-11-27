@@ -223,7 +223,7 @@ func TestAnUpstreamThatDoesntAnswer(t *testing.T) {
 }
 
 func TestAnUpstreamOnAUnixSocket(t *testing.T) {
-	dir, err := os.MkdirTemp("/tmp", "ddtest-upstream-")
+	dir, err := os.MkdirTemp(socketTempParent(), "ddtest-upstream-")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 	socket := filepath.Join(dir, "agent.sock")
@@ -262,4 +262,15 @@ func TestParseUpstream(t *testing.T) {
 		require.Error(t, err, value)
 		assert.NotContains(t, err.Error(), "secret", "the error repeats no credential of %s", value)
 	}
+}
+
+// socketTempParent is where a test's Unix domain socket goes: /tmp when there
+// is one, since a socket's path is limited to about 104 bytes on macOS and
+// t.TempDir() can take most of that, and the system's temporary directory
+// otherwise, such as on Windows.
+func socketTempParent() string {
+	if info, err := os.Stat("/tmp"); err == nil && info.IsDir() {
+		return "/tmp"
+	}
+	return ""
 }
