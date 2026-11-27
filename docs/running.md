@@ -37,6 +37,68 @@ ddtest plan --runtime-tags '{"os.platform":"linux","os.architecture":"x86_64","o
 Use values from the environment that will execute the tests. Framework discovery
 may still need that framework and its runtime installed in the planning job.
 
+## Plan CI commands before test setup
+
+Expanded GitLab jobs can use suite-level TIA before workers install test dependencies.
+The current Python adapter reads jobs with `TEST_SUITE` and `TEST_ENVIRONMENTS_*` variables.
+The repository exports the commands for those environments as JSON.
+
+Each environment can include `configurations` with the target worker's full runtime and OS tags.
+For example, a job with `TEST_SUITE: feature` and `TEST_ENVIRONMENTS_1: python312` uses this metadata:
+
+```json
+{
+  "suites": [{
+    "name": "feature",
+    "venvs": [{
+      "hash": "python312",
+      "python_version": "3.12",
+      "packages": "dependency==1",
+      "command": "pytest tests/feature {cmdargs}",
+      "configurations": {
+        "runtime.name": "CPython",
+        "runtime.version": "3.12.9",
+        "os.platform": "Linux",
+        "os.architecture": "x86_64",
+        "os.version": "6.8.0"
+      }
+    }]
+  }]
+}
+```
+
+After the repository generates its expanded CI YAML and exports `environments.json`, run:
+
+```bash
+ddtest plan \
+  --ci-provider gitlab \
+  --ci-config .gitlab/tests-gen.yml \
+  --command-environments environments.json \
+  --output selection.json
+```
+
+The command discovers current test files and requests suite-level TIA decisions for each configured worker.
+It does not start Python, collect tests with pytest, or change an existing worker plan.
+The output contains a `commands` array with each command's ID, decision, reason, and runnable files.
+The `jobs` array preserves CI scripts and lists each job's command IDs and aggregate decision.
+A job can skip only when all its commands can skip and the job has no unresolved entries.
+
+Missing worker configurations, mismatched Python versions, unresolved commands, and unavailable skipping data keep commands runnable.
+New suites and suites marked unskippable remain runnable.
+The static marker check also keeps suites runnable when an ancestor conftest contains the unskippable marker.
+Unresolved support jobs remain runnable, and catalog gaps remain in the output.
+
+Supply custom identity tags as `test.configuration.<name>` keys in each environment's `configurations` map.
+Worker tags replace the planner host's runtime and custom tags for these requests.
+Service and environment use the command's usual `DD_SERVICE` and `DD_ENV` values.
+Jobs with different identity overrides remain runnable.
+A missing configuration never causes a local interpreter probe.
+
+The CI scheduler can use the decisions to create workers only for runnable commands.
+Those workers install dependencies and execute their existing test commands.
+This mode produces selection decisions rather than a shared `.testoptimization/` worker plan.
+The JSON format is experimental.
+
 ## Single CI Node
 
 ```bash
@@ -932,3 +994,120 @@ for a fresh final response. `--report --detail plan` inspects resolved commands
 without running them. `onboard --apply --yes` adds recognized setup first. See
 [agent coordination](onboarding.md#agent-coordination-and-fresh-results) for
 bounded resume, setup facts, services, exclusions and freshness guarantees.
+
+## Experimental command catalog
+
+The temporary `describe` command exports a pytest command catalog as JSON.
+It does not collect tests, contact Datadog, or change a saved execution plan.
+The output format can change during exploration.
+
+Run this command from the repository root:
+
+```sh
+ddtest describe --id unit/python312 --test-root tests/unit --python python \
+  --output .testoptimization/command.json -- pytest tests/unit
+```
+
+The caller supplies the command ID and its candidate test directories.
+Repeat `--test-root` for multiple directories.
+The command accepts `pytest` and `python -m pytest` invocations.
+It includes `PYTEST_ADDOPTS` in the exported arguments.
+
+Discovery overrides through `-c`, `-o`, and `--override-ini` are unsupported and cause an error.
+This also applies to overrides in `PYTEST_ADDOPTS`.
+Filters such as `-k` remain arguments. The inventory contains candidate files,
+not the exact cases that those filters select.
+
+The catalog contains the command, candidate files, and TIA request context.
+Its command ID groups work in CI. It does not replace test or suite identities.
+The request context uses the checkout URL and SHA, `DD_SERVICE`, `DD_ENV`,
+the test level, five required runtime and OS fields, and custom test configurations.
+
+An unset or empty `DD_SERVICE` uses the repository service name.
+An unset or empty `DD_ENV` uses `none`.
+If `_CI_DD_ENV` is set, its value overrides `DD_ENV`.
+The test level follows `_DD_CIVISIBILITY_ITR_SUITE_MODE` when present.
+An explicit `--test-skipping-mode` takes precedence.
+
+File discovery uses the existing pytest file names and exclusions without importing tests.
+Explicit roots override configured `testpaths`.
+The command rejects missing directories and an empty inventory.
+For `pytest` entry points, `--python` names the worker interpreter to probe.
+For `python -m pytest`, the command interpreter supplies the runtime by default.
+The probe uses the existing runtime helper.
+
+To describe a future worker, supply all five fields through `--runtime-tags`:
+`runtime.name`, `runtime.version`, `os.platform`, `os.architecture`, and `os.version`.
+A complete override avoids the runtime probe. A partial override fails.
+Custom `test.configuration.*` entries from `DD_TAGS` are retained.
+Explicit custom entries in `--runtime-tags` take precedence.
+
+JSON goes to standard output. `--output` also writes it to a file.
+The catalog makes no skip decision. Use `plan` for existing execution planning.
+
+### Catalog from expanded GitLab jobs
+
+Generate dynamic child-pipeline YAML with the repository's own generator first.
+Export the runner's environment metadata as JSON, then run:
+
+```sh
+ddtest describe --ci-provider gitlab --ci-config .gitlab/generated.yml \
+  --command-environments environments.json \
+  --output .testoptimization/commands.json
+```
+
+This mode uses the existing CI-provider parser for local includes, inheritance,
+and script references. It retains every concrete job and its declared scripts.
+It does not execute scripts or evaluate CI rules. Unsupported includes and
+unresolved jobs remain visible in the catalog.
+
+The experimental Python adapter supports jobs that declare `TEST_SUITE` and
+`TEST_ENVIRONMENTS_*`, then invoke `scripts/run-tests`.
+The metadata file uses this structure:
+
+```json
+{"suites":[{"name":"unit","venvs":[{"hash":"environment","python_version":"3.12","packages":"dependency==1","command":"pytest {cmdargs} tests/unit"}]}]}
+```
+
+Each environment must describe one test invocation. Metadata exporters that
+omit additional invocations cannot describe those commands completely.
+ddtest substitutes the runner's literal forwarded arguments for `{cmdargs}`.
+Unknown wrappers and dynamic arguments produce unresolved entries.
+Missing environments and unsupported pytest arguments also produce unresolved entries.
+
+The catalog uses schema version 3 and suite-level candidate files.
+Each command ID combines its CI job name and environment hash.
+It records the declared Python version and packages from the metadata.
+It does not probe the local interpreter or invent future workers' runtime and OS fields.
+
+Host `PYTEST_ADDOPTS` does not apply to CI catalogs. Declared job options do apply.
+Complete TIA request configurations still require the future worker's metadata.
+
+Manual command descriptions retain schema version 2 and their existing flags.
+Do not combine the two modes. Neither mode changes `plan` or decides to skip.
+
+A manual description also accepts the global `--tests-location` glob. It
+narrows the candidates found under `--test-root` and is recorded as
+`command.tests_location`. A pattern that matches no candidate fails.
+
+### Planning described commands
+
+An orchestrator that owns its pipeline format can describe each test command
+itself and plan them together, without a CI-provider parser:
+
+```sh
+ddtest plan --commands commands.json --output selection.json
+```
+
+`commands.json` groups manual `describe` outputs by job:
+
+```json
+{"schema_version": 1, "jobs": [{"name": "unit-tests", "commands": [<describe output>]}]}
+```
+
+Run it from the checkout the commands were described in: every description
+must carry the checkout's SHA. Each command's Python version is taken from its
+described runtime. The output and decisions are the same as for CI catalogs.
+A command whose service or environment differs from the process environment
+stays runnable, so plan each worker identity separately. `--commands` cannot
+be combined with `--ci-provider`, `--ci-config` or `--command-environments`.

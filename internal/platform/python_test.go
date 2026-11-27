@@ -648,3 +648,23 @@ func TestPythonExecutableNamesRejectUnknownWrappers(t *testing.T) {
 		require.False(t, IsPythonExecutable(command), command)
 	}
 }
+
+func TestPythonCreateTagsMapForInterpreterUsesTheSelectedInterpreter(t *testing.T) {
+	t.Chdir(t.TempDir())
+	executor := &mockCommandExecutor{onCombinedOutput: func(name string, args []string, _ map[string]string) {
+		if name != "worker-python" {
+			t.Errorf("interpreter = %q", name)
+		}
+		if err := os.WriteFile(args[2], []byte(`{"runtime.version":"3.12.9"}`), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}}
+	python := &Python{executor: executor}
+	tags, err := python.CreateTagsMapForInterpreter(context.Background(), "worker-python")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tags["runtime.version"] != "3.12.9" {
+		t.Fatalf("tags = %v", tags)
+	}
+}

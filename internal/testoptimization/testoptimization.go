@@ -72,6 +72,19 @@ func NewTestOptimizationClientWithTelemetry(testSkippingLevel settings.TestSkipp
 	return client
 }
 
+// NewSuiteSelectionClient owns a worker configuration and does not write response caches.
+func NewSuiteSelectionClient(tags map[string]string, telemetryClient telemetry.Client) *TestOptimizationClient {
+	if telemetryClient == nil {
+		telemetryClient = telemetry.NoopClient()
+	}
+	client := NewTestOptimizationClientWithTelemetry(settings.TestSkippingLevelSuite, telemetryClient)
+	client.cacheManager.disabled = true
+	client.newAPITransport = func(serviceName string, level settings.TestSkippingLevel) api.Transport {
+		return api.NewTransportWithConfigurations(serviceName, level, tags, telemetryClient)
+	}
+	return client
+}
+
 func NewTestOptimizationClientWithDependencies(apiTransport api.Transport) *TestOptimizationClient {
 	return newTestOptimizationClient(apiTransport, nil, func() (int64, error) { return 0, nil })
 }

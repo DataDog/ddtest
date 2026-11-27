@@ -18,7 +18,7 @@ const (
 )
 
 // CacheManager handles creation and storage of cache data for test runners
-type CacheManager struct{}
+type CacheManager struct{ disabled bool }
 
 // NewCacheManager creates a new CacheManager instance
 func NewCacheManager() *CacheManager {
@@ -74,6 +74,9 @@ func (cm *CacheManager) readJSONFromFile(filePath string, data any) error {
 }
 
 func (cm *CacheManager) storeHTTPResponse(data json.RawMessage, fileName string) error {
+	if cm.disabled {
+		return nil
+	}
 	if len(data) == 0 {
 		return nil
 	}

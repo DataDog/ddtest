@@ -48,11 +48,23 @@ func (p *PyTest) Name() string {
 // Multiple testpaths or python_files from config are collapsed into brace-expansion
 // syntax that doublestar handles natively, e.g. {tests,src}/**/{test_*,*_test}.py.
 func (p *PyTest) TestPattern() string {
+	return p.testPattern(nil)
+}
+
+// TestPatternForRoots uses explicit roots instead of configured testpaths.
+func (p *PyTest) TestPatternForRoots(roots []string) string {
+	return p.testPattern(roots)
+}
+
+func (p *PyTest) testPattern(roots []string) string {
 	if custom := settings.GetTestsLocation(); custom != "" {
 		return custom
 	}
 
 	cfg := loadPytestConfig()
+	if roots != nil {
+		cfg.Testpaths = roots
+	}
 
 	filePatterns := cfg.PythonFiles
 	if len(filePatterns) == 0 {

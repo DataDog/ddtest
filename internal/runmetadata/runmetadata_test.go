@@ -88,3 +88,12 @@ func TestRunInfoIsZero(t *testing.T) {
 		t.Fatal("RunInfo with branch should not be zero")
 	}
 }
+
+func TestEnvironmentName(t *testing.T) {
+	if actual := EnvironmentName(""); actual != "none" {
+		t.Fatalf("empty environment = %q, want none", actual)
+	}
+	if actual := EnvironmentName("ci"); actual != "ci" {
+		t.Fatalf("explicit environment = %q, want ci", actual)
+	}
+}
