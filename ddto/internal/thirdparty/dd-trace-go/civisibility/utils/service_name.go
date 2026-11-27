@@ -11,7 +11,6 @@ import (
 	"sync/atomic"
 
 	infra "github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go"
-	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/civisibility/constants"
 	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/env"
 	"github.com/DataDog/ddtest/ddto/internal/thirdparty/dd-trace-go/log"
 )
@@ -50,7 +49,7 @@ func ServiceFromCodeOwners() string {
 	}
 	codeOwnersServiceOnce.Do(func() {
 		tags := GetCITagsReadOnly()
-		workspace := tags[constants.CIWorkspacePath]
+		workspace := GetCITagsSourceRoot()
 		if workspace == "" {
 			return
 		}
@@ -70,7 +69,7 @@ func ServiceFromCodeOwnersForDirectory(directory string) string {
 	if env.Get("DD_SERVICE") != "" || !infra.BoolEnv(ServiceFromCodeOwnersEnv, false) {
 		return ""
 	}
-	workspace := GetCITagsReadOnly()[constants.CIWorkspacePath]
+	workspace := GetCITagsSourceRoot()
 	if workspace == "" {
 		return ""
 	}
@@ -125,7 +124,8 @@ func codeOwnersPackageDirectory(workspace string, tags map[string]string, locati
 		return filepath.ToSlash(relative), ok
 	}
 	if location != nil {
-		source := resolveSourceFilePath(location.source, tags, buildInfoMainModulePath())
+		modulePath, moduleDir := sourceModuleInfo()
+		source := resolveSourceFilePathForModule(location.source, tags, modulePath, moduleDir)
 		// A resolved compiler path identifies the package even when a -c
 		// binary runs from another package's directory. Unknown import paths
 		// retain the registered working directory as their fallback.

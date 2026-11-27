@@ -112,7 +112,7 @@ func NewTransportWithTelemetry(serviceName string, testSkippingLevel settings.Te
 }
 
 func newTransportWithServiceNameAndSubdomain(serviceName, subdomain string, testSkippingLevel settings.TestSkippingLevel, telemetryClient telemetry.Client) Transport {
-	ciTags := environment.GetCITags()
+	ciTags := environment.GetGitCheckoutTags()
 
 	// get the environment
 	environment := os.Getenv("DD_ENV")
@@ -201,9 +201,10 @@ func newTransportWithServiceNameAndSubdomain(serviceName, subdomain string, test
 		// if not we try to use the tag (checkout over a tag)
 		bName = ciTags[constants.GitTag]
 	}
-	if bName == "" {
-		// if is still empty we assume the customer just used a detached HEAD
-		bName = "auto:git-detached-head"
+
+	workingDirectory := ciTags[constants.GitCheckoutRoot]
+	if workingDirectory == "" {
+		workingDirectory = ciTags[constants.CIWorkspacePath]
 	}
 
 	return &transport{
@@ -212,7 +213,7 @@ func newTransportWithServiceNameAndSubdomain(serviceName, subdomain string, test
 		baseURL:           baseURL,
 		environment:       environment,
 		serviceName:       serviceName,
-		workingDirectory:  ciTags[constants.CIWorkspacePath],
+		workingDirectory:  workingDirectory,
 		repositoryURL:     ciTags[constants.GitRepositoryURL],
 		commitSha:         ciTags[constants.GitCommitSHA],
 		commitMessage:     ciTags[constants.GitCommitMessage],

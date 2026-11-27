@@ -1,0 +1,47 @@
+{
+  "events": [
+    {
+      "content": {
+        "duration": 1,
+        "error": 0,
+        "meta": {
+          "bazel.package": "pkg",
+          "bazel.target": "//pkg:fixture.topt",
+          "bazel.test_optimization.repo_name": "repo",
+          "bazel.test_optimization.runtime_name": "go",
+          "bazel.test_optimization.service_name": "reporting",
+          "git.commit.sha": "abcdef",
+          "git.repository_url": "https://example.org/repo",
+          "runtime.name": "go",
+          "service.name": "reporting",
+          "test.codeowners": "[\"@test-team\"]",
+          "test.name": "fixture",
+          "test.source.file": "pkg/thing_test.go",
+          "test.status": "pass",
+          "topt.sync.repository_name": "repo"
+        },
+        "metrics": {},
+        "name": "go.test",
+        "resource": "fixture",
+        "service": "reporting",
+        "span_id": 9007199254740993,
+        "start": 1000000000000000000,
+        "test_module_id": 4,
+        "test_session_id": 3,
+        "test_suite_id": 5,
+        "trace_id": 18446744073709551615,
+        "type": "test"
+      },
+      "type": "test",
+      "version": 2
+    }
+  ],
+  "metadata": {
+    "*": {
+      "language": "go",
+      "library_version": "fixture",
+      "runtime-id": "process-a"
+    }
+  },
+  "version": 1
+}

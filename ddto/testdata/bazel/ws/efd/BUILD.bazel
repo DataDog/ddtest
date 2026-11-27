@@ -1,0 +1,17 @@
+load("@ddtest_bazel_test//:defs.bzl", "ddtest_go_test")
+
+exports_files(["manifest.txt"])
+
+filegroup(
+    name = "manifest",
+    srcs = ["manifest.txt"] + glob(["cache/**"]),
+)
+
+ddtest_go_test(
+    name = "deadline_test",
+    srcs = ["deadline_test.go"],
+    env = {"DD_CIVISIBILITY_EARLY_FLAKE_DETECTION_ENABLED": "true"},
+    manifest = ":manifest",
+    manifest_file = ":manifest.txt",
+    tags = ["manual"],
+)

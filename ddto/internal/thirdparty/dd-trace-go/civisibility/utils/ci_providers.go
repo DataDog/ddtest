@@ -103,6 +103,14 @@ func getEnvVarsJSON(envVars ...string) ([]byte, error) {
 
 // getProviderTags extracts CI information from environment variables.
 func getProviderTags() map[string]string {
+	tags := getCIProviderTags()
+	for key, value := range userGitTags() {
+		tags[key] = value
+	}
+	return tags
+}
+
+func getCIProviderTags() map[string]string {
 	// One provider, the same in every process: the first, in name order, whose
 	// variable is set and whose tags name it. CodeBuild's variable outside a
 	// CodePipeline build, as on a CodeBuild-hosted runner of another CI,
@@ -118,8 +126,8 @@ func getProviderTags() map[string]string {
 		}
 	}
 
-	// replace with user specific tags
-	replaceWithUserSpecificTags(tags)
+	// Preserve the workflow revision before explicit Git overrides.
+	addMergeCommitTag(tags)
 
 	// Normalize tags
 	normalizeTags(tags)
@@ -149,6 +157,7 @@ func getProviderTags() map[string]string {
 
 // normalizeTags normalizes specific tags to remove prefixes and sensitive information.
 func normalizeTags(tags map[string]string) {
+	normalizeCommitSHAs(tags)
 	if tag, ok := tags[constants.GitBranch]; ok && tag != "" {
 		if strings.Contains(tag, "refs/tags") || strings.Contains(tag, "origin/tags") || strings.Contains(tag, "refs/heads/tags") {
 			tags[constants.GitTag] = normalizeRef(tag)
@@ -194,6 +203,7 @@ func replaceWithUserSpecificTags(tags map[string]string) {
 	replace(constants.GitCommitCommitterDate, "DD_GIT_COMMIT_COMMITTER_DATE")
 	replace(constants.GitPrBaseBranch, "DD_GIT_PULL_REQUEST_BASE_BRANCH")
 	replace(constants.GitPrBaseCommit, "DD_GIT_PULL_REQUEST_BASE_BRANCH_SHA")
+	replace(constants.GitHeadCommit, "DD_GIT_COMMIT_HEAD_SHA")
 }
 
 // getEnvironmentVariableIfIsNotEmpty returns the environment variable value if it is not empty, otherwise returns the default value.
@@ -302,6 +312,7 @@ func extractAzurePipelines() map[string]string {
 
 	tags[constants.GitRepositoryURL] = firstEnv("SYSTEM_PULLREQUEST_SOURCEREPOSITORYURI", "BUILD_REPOSITORY_URI")
 	tags[constants.GitCommitSHA] = firstEnv("SYSTEM_PULLREQUEST_SOURCECOMMITID", "BUILD_SOURCEVERSION")
+	tags[constants.GitHeadCommit] = env.Get("SYSTEM_PULLREQUEST_SOURCECOMMITID")
 	tags[constants.GitBranch] = branch
 	tags[constants.GitTag] = tag
 	tags[constants.GitCommitMessage] = env.Get("BUILD_SOURCEVERSIONMESSAGE")

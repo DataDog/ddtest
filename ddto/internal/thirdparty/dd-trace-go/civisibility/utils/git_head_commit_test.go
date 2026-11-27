@@ -69,8 +69,8 @@ func TestFetchCommitDataFetchesOnlyMissingCommits(t *testing.T) {
 			if !tc.fetch && len(fetches) != 0 {
 				t.Fatalf("present commit was fetched: %q", recorded)
 			}
-			if got := len(commandsNamed(recorded, "show")); got != 1 {
-				t.Fatalf("show commands = %d, want 1: %q", got, recorded)
+			if got := len(commandsNamed(recorded, "log")); got != 1 {
+				t.Fatalf("metadata commands = %d, want 1: %q", got, recorded)
 			}
 		})
 	}

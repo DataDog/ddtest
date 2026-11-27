@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"sync"
@@ -68,6 +69,7 @@ type CLIGitRecord struct {
 	SourceRoot    string       `json:"source_root"`
 	RepositoryURL string       `json:"repository_url"`
 	Branch        string       `json:"branch"`
+	Tag           string       `json:"tag,omitempty"`
 	Commit        CLIGitCommit `json:"commit"`
 	// HeadCommit is the CI provider's head commit, if any, and Head its
 	// metadata or HeadError the reason fetchCommitData could not read it.
@@ -120,8 +122,13 @@ func CollectCLIGitRecord() CLIGitRecord {
 	record.SourceRoot = gitData.SourceRoot
 	record.RepositoryURL = gitData.RepositoryURL
 	record.Branch = gitData.Branch
+	record.Tag = gitData.Tag
 	record.Commit = newCLIGitCommit(gitData.localCommitData)
-	if headCommitSha, ok := getProviderTagsFunc()[constants.GitHeadCommit]; ok {
+	tags := getProviderTagsFunc()
+	provider := maps.Clone(tags)
+	normalizeCommitSHAs(provider)
+	applyCheckoutMetadata(tags, gitData, provider)
+	if headCommitSha := checkoutOperationTags(tags, provider)[constants.GitHeadCommit]; headCommitSha != "" {
 		headCommitData, err := localCommitDataFunc(headCommitSha)
 		switch {
 		case errors.Is(err, errCommitNotFetched):
@@ -135,7 +142,7 @@ func CollectCLIGitRecord() CLIGitRecord {
 }
 
 func (r *CLIGitRecord) localGitData() localGitData {
-	return localGitData{localCommitData: r.Commit.commitData(), SourceRoot: r.SourceRoot, RepositoryURL: r.RepositoryURL, Branch: r.Branch}
+	return localGitData{localCommitData: r.Commit.commitData(), SourceRoot: r.SourceRoot, RepositoryURL: r.RepositoryURL, Branch: r.Branch, Tag: r.Tag}
 }
 
 // headCommitData returns what fetchCommitData would return for sha.
@@ -286,8 +293,15 @@ func UseCLIGitState(dir string, record CLIGitRecord) {
 // fetches it. The worker calls it once a test process uses its state, before
 // the upload and the impacted-tests diff, which needs that commit.
 func FetchCLIHeadCommit() {
-	headCommitSha, ok := getProviderTagsFunc()[constants.GitHeadCommit]
-	if !ok || cliGitRecord == nil || cliGitRecord.HeadCommit == headCommitSha {
+	if cliGitRecord == nil {
+		return
+	}
+	tags := getProviderTagsFunc()
+	provider := maps.Clone(tags)
+	normalizeCommitSHAs(provider)
+	applyCheckoutMetadata(tags, cliGitRecord.localGitData(), provider)
+	headCommitSha, ok := checkoutOperationTags(tags, provider)[constants.GitHeadCommit]
+	if !ok || cliGitRecord.HeadCommit == headCommitSha {
 		return
 	}
 	if _, err := fetchCommitDataFunc(headCommitSha); err != nil {

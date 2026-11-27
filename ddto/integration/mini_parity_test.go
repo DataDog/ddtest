@@ -245,6 +245,29 @@ func withPortedEmptySession(events []map[string]any) []map[string]any {
 	return out
 }
 
+// withPortedCheckoutRoot adds the checkout tag that the pinned SDK predates.
+// The fixture supplies the expected root; the comparison still checks every
+// event's actual value, including a missing or incorrect root.
+func withPortedCheckoutRoot(events []map[string]any, root string) []map[string]any {
+	if root == "" {
+		return events
+	}
+	out := make([]map[string]any, len(events))
+	for i, event := range events {
+		out[i] = event
+		if kind, _ := event["type"].(string); !isSharedCIKind(kind) {
+			continue
+		}
+		content := maps.Clone(event["content"].(map[string]any))
+		meta := maps.Clone(content["meta"].(map[string]any))
+		meta["git.checkout.root"] = root
+		content["meta"] = meta
+		out[i] = maps.Clone(event)
+		out[i]["content"] = content
+	}
+	return out
+}
+
 // withPortedListCoverage drops the session coverage that the pinned SDK
 // reports with -test.list, where testing ran no test: ddto reports none
 // (ADAPTATIONS.md, Coverage line printed once).
@@ -385,7 +408,7 @@ func TestCIComparatorRetainsProductAttributes(t *testing.T) {
 	if reflect.DeepEqual(base, ciWireEvents(changedType)) {
 		t.Fatal("CI event envelope type excluded")
 	}
-	for _, key := range []string{"version", "test.status", "test.session", "_dd.library_capabilities.auto_test_retries", "git.commit.sha", "custom"} {
+	for _, key := range []string{"version", "test.status", "test.session", "_dd.library_capabilities.auto_test_retries", "git.commit.sha", "git.checkout.root", "git.checkout.is_custom", "ci.git.merge_commit_sha", "custom"} {
 		if reflect.DeepEqual(base, ciWireEvents(event(map[string]any{key: "present"}, map[string]any{}))) {
 			t.Fatalf("CI attribute excluded: %s", key)
 		}
@@ -395,6 +418,15 @@ func TestCIComparatorRetainsProductAttributes(t *testing.T) {
 	}
 	if !reflect.DeepEqual(base, ciWireEvents(event(map[string]any{"_dd.p.dm": "-0"}, map[string]any{"_dd.profiling.enabled": 1}))) {
 		t.Fatal("APM enrichment retained")
+	}
+	sdk := event(map[string]any{}, map[string]any{})
+	want := ciWireEvents(withPortedCheckoutRoot(sdk, "/checkout"))
+	if !reflect.DeepEqual(want, ciWireEvents(event(map[string]any{"git.checkout.root": "/checkout"}, map[string]any{}))) ||
+		reflect.DeepEqual(want, base) || reflect.DeepEqual(want, ciWireEvents(event(map[string]any{"git.checkout.root": "/other"}, map[string]any{}))) {
+		t.Fatal("ported checkout root was not compared exactly")
+	}
+	if !reflect.DeepEqual(base, ciWireEvents(sdk)) {
+		t.Fatal("ported checkout root mutated SDK evidence")
 	}
 }
 

@@ -2956,7 +2956,8 @@ Matching and owner classification use Go runes and standard Unicode tables.
 Section names use `strings.ToUpper`. Keep these contracts when updating the
 SDK; the package does not carry Unicode compatibility tables. Pattern and
 matching limits apply per segment. File decoding accepts BOMs and common line
-endings separately from the UTF-8 parser.
+endings separately from the UTF-8 parser. `LoadFS` lets the Bazel uploader use
+the same decoder and matcher with a file confined to its upload root.
 
 Results have private immutable state. Owner lists are deduplicated once. A
 result encodes its tag on first use, because most rules never match a test's
@@ -3071,3 +3072,122 @@ parent, so this holds in process mode; a no_auto_retry test that first runs in
 a process retry attempt cannot stop the attempts already scheduled. Checks:
 `TestTestFuncExclusionsReadDeclarationComments` and
 `TestMiniDeclarationExclusions`, which fails without each part.
+
+## EFD admission under the parent test deadline
+
+`gotesting/retry_attempt_integration.go` admits another EFD sample only when
+the earlier of the original `testing.T` deadline and Bazel's timeout budget
+can fit the larger of the first and latest observed execution durations plus
+finalization time. `TEST_TIMEOUT` and `TEST_UNDECLARED_OUTPUTS_DIR` are read
+once during package initialization, before consumer `TestMain` preparation;
+malformed, nonpositive or overflowing timeouts select no extra deadline.
+In-process execution reserves 100 ms. Process mode adds the observed startup
+duration to its existing child teardown reserve, because each child repeats
+that preparation. A child rejected at admission is never launched and does not
+produce a synthetic timeout failure. Deferred process groups check again when preparing a child;
+parallel groups drain already-owned children before closing their events.
+The EFD-only check runs after the existing faulty-session policy has resolved
+whether a failed test switches to ordinary flaky retries.
+
+The first execution and test order are unchanged. This check does not reserve
+time for later original tests in the package. Attempt-to-fix and ordinary flaky
+retry admission policies retain their existing semantics; process children are
+also capped by the earlier Bazel deadline. Failfast failure bookkeeping
+precedes the deadline decision, so rejecting another sample cannot hide an
+already-observed failure. An estimate cannot guarantee that a later, slower
+execution finishes; startup before Mini initializes is not measured, and hard
+termination can still prevent a final flush.
+
+`retry_deadline_test.go` covers fixed-time admission boundaries, failfast and
+retry-family precedence, simulated `TestMain` preparation, repeated child
+startup, and draining an active child before releasing its
+group or closing its final event. `TestMiniBazelRetryDeadline` covers
+actual Go alarms, PASS-to-FAIL failfast status and payload finalization; the
+manual `//efd:deadline_test` in the Bazel fixture is run by
+`scripts/bazel_basic.py` under Bazel's five-second outer timeout.
+
+## Tested checkout identity
+
+A readable checkout supplies the repository URL, branch or unambiguous detached
+tag, commit and commit details as one source. Explicit `DD_GIT_*` settings stay
+authoritative; CI and environmental-file Git identity is used when the checkout
+is unreadable. A detached checkout keeps the CI branch/tag and canonical URL only
+when its canonical root and commit match the actual CI workspace and revision
+(or a positively identified provider head or merge revision). File fallback values do
+not establish this match. `ci.workspace_path` is retained, while
+`git.checkout.root`, `git.checkout.is_custom` and `ci.git.merge_commit_sha`
+describe the checkout and workflow separately.
+
+Source paths, coverage, CODEOWNERS and its optional service use the checkout root.
+A custom checkout reports workflow PR relationships but excludes them from Git
+operations and requests unless explicitly overridden. A same-root replacement
+also excludes foreign relationships when its selected revision does not match
+the original provider commit, head or merge revision. Provider evidence is
+snapshotted before checkout selection and user overrides; a new explicit head
+cannot validate an inherited base, while a repeated known provider head can.
+Git commands retain their
+initial working directory, transport environment and cancellation context. The
+worker carries detached tags without doing fetch work before its state is used.
+Metadata uses NUL-delimited no-walk reads, and history/search/upload all use the
+selected canonical SHA, with the existing 1,000-commit cap, negative revisions
+and an old selected commit/tree fallback. Both revision walks stream positive
+and negative revisions through stdin, keeping a full capped history below
+Windows process command-line limits. Revisions containing CR/LF are rejected
+before framing the input. The native cap test also exercises a full exclusion
+list through the old-commit fallback and checks the actual Git command sizes.
+No branch name is invented for a detached checkout. Upload search stops without a selected SHA, even when Git
+could otherwise enumerate HEAD. The root uploader and `gitupload_test.go`
+exercise this boundary with a readable checkout and zero backend calls.
+
+Checks: `checkout_test.go` and `checkout_native_test.go` in `utils`, the request
+constructor regression in `utils/net/checkout_test.go`, and
+`TestMiniCheckoutIdentity` cover detached CI mirrors, different revisions, custom
+checkouts, explicit overrides, file fallback, all event levels and worker state.
+The native pack tests inspect objects, caps, exclusions, missing parents, tags
+and configured remotes; source/ownership tests keep outer workspace rules out.
+
+Synthetic source-path and LCOV fixtures select their own checkout root explicitly;
+the repository-relative LCOV case also retains a distinct outer CI workspace.
+Their existing source-parsing, coverage and trimpath assertions stay intact.
+
+Unreadable-checkout fallback retains provider fields, including empty values;
+checkout selection does not erase the CI workspace or unrelated CI attributes.
+`TestUnreadableCheckoutPreservesProviderFields` and the full clock/coverage
+comparison retain this behavior without normalizing changed CI values away.
+The feature matrices expect the known fixture checkout root on every CI event;
+missing and incorrect values still fail the strict comparison. Telemetry also
+expects the single added remote-discovery command and its no-repository error,
+with all other counters unchanged against the pinned SDK.
+
+Trimpath source resolution uses the package module's declared import path and
+physical directory independently of the reported remote URL. The CLI's package
+handoff takes precedence; otherwise a cached nearest-go.mod lookup handles
+nested modules, semantic import versions and symlinked directories without
+per-function filesystem reads. The existing repository-URL and runfiles
+fallbacks remain for unavailable or foreign module contexts. Mirror regressions
+exercise source parsing, CODEOWNERS services and modified-test classification;
+the ported source-path fixture uses the actual ddtest repository root and keeps
+all upstream assertions.
+
+Remote selection queries only branch-remote and clone-default keys from local
+configuration and its evaluated includes, keeping authentication headers and
+credential helpers out of Git command debug output. No matching selection keys
+retain the normal remote fallback. Relative objects-directory paths are resolved
+against the pinned Git working directory, including a relative
+`GIT_OBJECT_DIRECTORY`, so pack creation can still fall back to the objects
+directory after the process changes directories. Native regressions capture
+debug logs with synthetic credentials and force the pack fallback, verifying
+the selected commit and cleanup.
+
+## Pull request revisions from CI providers
+
+Azure Pipelines keeps `SYSTEM_PULLREQUEST_SOURCECOMMITID` in
+`git.commit.head.sha` as well as its existing commit fallback. AppVeyor sets
+`ci.git.merge_commit_sha` when a numeric pull request has valid, distinct build
+and head revisions. SHA comparison ignores case, and the merge tag uses lowercase.
+Checkout identity and explicit user override precedence stay the same.
+
+Both provider fixture sets retain existing cases and add merge evidence, invalid
+merge revisions, and mixed-case SHA cases. `TestCIMergeCommitEvidence` rejects
+missing or invalid AppVeyor evidence and equal revisions.
+`TestAzurePullRequestHeadSHA` covers a mixed-case head and a missing source revision.

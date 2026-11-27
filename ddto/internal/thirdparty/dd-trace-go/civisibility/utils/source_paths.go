@@ -8,6 +8,7 @@ package utils
 import (
 	"net"
 	"net/url"
+	"os"
 	"path"
 	"path/filepath"
 	"runtime/debug"
@@ -34,7 +35,73 @@ type SourceFilePath struct {
 
 // ResolveSourceFilePathFromCITags resolves a runtime source path into tag and filesystem forms.
 func ResolveSourceFilePathFromCITags(sourcePath string) SourceFilePath {
-	return withRunfilesSource(resolveSourceFilePath(sourcePath, GetCITagsReadOnly(), buildInfoMainModulePath()), bazel.SourceRlocation)
+	modulePath, moduleDir := "", ""
+	if sourcePath != "" && !filepath.IsAbs(sourcePath) {
+		modulePath, moduleDir = sourceModuleInfo()
+	}
+	return withRunfilesSource(resolveSourceFilePathForModule(sourcePath, GetCITagsReadOnly(), modulePath, moduleDir), bazel.SourceRlocation)
+}
+
+// Compiler import paths describe modules, independently of a checkout's remote.
+func resolveSourceFilePathForModule(sourcePath string, tags map[string]string, modulePath, moduleDir string) SourceFilePath {
+	runtimePath := sourcePath
+	if !filepath.IsAbs(sourcePath) && filepath.IsAbs(moduleDir) {
+		root := tags[constants.GitCheckoutRoot]
+		if root == "" {
+			root = tags[constants.CIWorkspacePath]
+		}
+		_, insideCheckout := relativePathInsideWorkspace(root, moduleDir)
+		if root == "" || insideCheckout {
+			if relative, ok := trimLogicalPrefix(cleanLogicalSourcePath(sourcePath), modulePath); ok {
+				sourcePath = filepath.Join(moduleDir, filepath.FromSlash(relative))
+			}
+		}
+	}
+	result := resolveSourceFilePath(sourcePath, tags, modulePath)
+	result.RuntimePath = runtimePath
+	return result
+}
+
+// Capture the package directory before TestMain or a test changes directories.
+var sourcePackageDirectory, _ = os.Getwd()
+
+// Module discovery and CLI package lookup happen once, outside per-function work.
+var sourceModuleInfo = sync.OnceValues(func() (string, string) {
+	if modulePath, moduleDir := discoverSourceModule(sourcePackageDirectory); modulePath != "" {
+		return modulePath, canonicalCheckoutPath(moduleDir)
+	}
+	return buildInfoMainModulePath(), ""
+})
+
+func discoverSourceModule(directory string) (modulePath, moduleDir string) {
+	if directory == "" {
+		return "", ""
+	}
+	if modulePath, moduleDir, ok := CLITestPackageModule(directory); ok {
+		return modulePath, moduleDir
+	}
+	for directory = filepath.Clean(directory); ; directory = filepath.Dir(directory) {
+		data, err := os.ReadFile(filepath.Join(directory, "go.mod"))
+		if err == nil {
+			for line := range strings.SplitSeq(string(data), "\n") {
+				fields := strings.Fields(line)
+				if len(fields) >= 2 && fields[0] == "module" {
+					modulePath = fields[1]
+					if strings.HasPrefix(modulePath, "\"") || strings.HasPrefix(modulePath, "`") {
+						modulePath, err = strconv.Unquote(modulePath)
+						if err != nil {
+							return "", ""
+						}
+					}
+					return modulePath, canonicalCheckoutPath(directory)
+				}
+			}
+			return "", ""
+		}
+		if !os.IsNotExist(err) || filepath.Dir(directory) == directory {
+			return "", ""
+		}
+	}
 }
 
 // resolveSourceFilePath resolves a runtime source path with injectable inputs for deterministic tests.
@@ -50,7 +117,10 @@ func resolveSourceFilePath(sourcePath string, tags map[string]string, mainModule
 		FilesystemKnown: false,
 	}
 
-	workspacePath := tags[constants.CIWorkspacePath]
+	workspacePath := tags[constants.GitCheckoutRoot]
+	if workspacePath == "" {
+		workspacePath = tags[constants.CIWorkspacePath]
+	}
 	if filepath.IsAbs(sourcePath) {
 		cleanedPath := filepath.Clean(sourcePath)
 		result.FilesystemPath = cleanedPath
@@ -264,7 +334,7 @@ func cleanRepositoryHostPath(host, repositoryPath string) string {
 	return host + "/" + repositoryPath
 }
 
-// isWorkspaceRelativeLogicalPath reports whether logicalPath is safe to resolve from ci.workspace_path.
+// isWorkspaceRelativeLogicalPath reports whether logicalPath is safe to resolve from the selected source root.
 func isWorkspaceRelativeLogicalPath(logicalPath string) bool {
 	if logicalPath == "" || strings.HasPrefix(logicalPath, "../") || logicalPath == ".." {
 		return false

@@ -5,7 +5,7 @@ go 1.27.4
 require (
 	github.com/DataDog/ddtest/ddto v0.0.0-00010101000000-000000000000
 	github.com/Masterminds/semver/v3 v3.5.0
-	github.com/bmatcuk/doublestar/v4 v4.10.4
+	github.com/bmatcuk/doublestar/v4 v4.10.7
 	github.com/kballard/go-shellquote v0.0.0-20180428030007-95032a82bc51
 	github.com/klauspost/cpuid/v2 v2.4.2
 	github.com/pelletier/go-toml/v2 v2.4.3

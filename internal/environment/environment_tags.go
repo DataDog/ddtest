@@ -45,7 +45,10 @@ var (
 	addedTags      map[string]string // addedTags holds the tags added by the user
 	ciTagsMutex    sync.Mutex
 
-	getProviderTagsFunc = getProviderTags
+	// The provider snapshot proves relationships before explicit overrides change tags.
+	originalProviderTags map[string]string
+
+	getProviderTagsFunc = getCIProviderTags
 	getLocalGitDataFunc = git.GetLocalGitData
 	fetchCommitDataFunc = git.FetchCommitData
 )
@@ -101,10 +104,12 @@ func AddCITagsMap(tags map[string]string) {
 
 // ResetCITags resets the CI/CD tags to their original values.
 func ResetCITags() {
+	git.ResetCheckout()
 	ciTagsMutex.Lock()
 	defer ciTagsMutex.Unlock()
 
 	originalCiTags = nil
+	originalProviderTags = nil
 	currentCiTags = nil
 	addedTags = nil
 }
@@ -117,6 +122,8 @@ func ResetCITags() {
 //	A map[string]string containing the extracted CI/CD tags.
 func createCITagsMap() map[string]string {
 	localTags := getProviderTagsFunc()
+	originalProviderTags = maps.Clone(localTags)
+	normalizeCommitSHAs(originalProviderTags)
 
 	// Populate runtime values
 	localTags[constants.OSPlatform] = runtime.GOOS
@@ -164,47 +171,16 @@ func createCITagsMap() map[string]string {
 	// Populate missing git data
 	gitData, _ := getLocalGitDataFunc()
 
-	// Populate Git metadata from the local Git repository if not already present in localTags
-	if _, ok := localTags[constants.CIWorkspacePath]; !ok {
-		localTags[constants.CIWorkspacePath] = gitData.SourceRoot
-	}
-	if _, ok := localTags[constants.GitRepositoryURL]; !ok {
-		localTags[constants.GitRepositoryURL] = gitData.RepositoryURL
-	}
-	if _, ok := localTags[constants.GitCommitSHA]; !ok {
-		localTags[constants.GitCommitSHA] = gitData.CommitSha
-	}
-	if _, ok := localTags[constants.GitBranch]; !ok {
-		localTags[constants.GitBranch] = gitData.Branch
-	}
-
-	// If the commit SHA matches, populate additional Git metadata
-	if localTags[constants.GitCommitSHA] == gitData.CommitSha {
-		if _, ok := localTags[constants.GitCommitAuthorDate]; !ok {
-			localTags[constants.GitCommitAuthorDate] = gitData.AuthorDate.String()
-		}
-		if _, ok := localTags[constants.GitCommitAuthorName]; !ok {
-			localTags[constants.GitCommitAuthorName] = gitData.AuthorName
-		}
-		if _, ok := localTags[constants.GitCommitAuthorEmail]; !ok {
-			localTags[constants.GitCommitAuthorEmail] = gitData.AuthorEmail
-		}
-		if _, ok := localTags[constants.GitCommitCommitterDate]; !ok {
-			localTags[constants.GitCommitCommitterDate] = gitData.CommitterDate.String()
-		}
-		if _, ok := localTags[constants.GitCommitCommitterName]; !ok {
-			localTags[constants.GitCommitCommitterName] = gitData.CommitterName
-		}
-		if _, ok := localTags[constants.GitCommitCommitterEmail]; !ok {
-			localTags[constants.GitCommitCommitterEmail] = gitData.CommitterEmail
-		}
-		if _, ok := localTags[constants.GitCommitMessage]; !ok {
-			localTags[constants.GitCommitMessage] = gitData.CommitMessage
+	applyCheckoutMetadata(localTags, gitData, localTags)
+	// Preserve the existing unknown-field tags when local Git is unreadable.
+	for _, key := range []string{constants.CIWorkspacePath, constants.GitRepositoryURL, constants.GitCommitSHA, constants.GitBranch} {
+		if _, ok := localTags[key]; !ok {
+			localTags[key] = ""
 		}
 	}
 
 	// If the head commit SHA is available, populate additional Git head metadata
-	if headCommitSha, ok := localTags[constants.GitHeadCommit]; ok {
+	if headCommitSha := checkoutOperationTags(localTags, originalProviderTags)[constants.GitHeadCommit]; headCommitSha != "" {
 		if headCommitData, err := fetchCommitDataFunc(headCommitSha); err != nil {
 			slog.Warn("testoptimization: failed to fetch head commit data", "headCommitSha", headCommitSha, "error", err.Error())
 		} else if headCommitSha == headCommitData.CommitSha {

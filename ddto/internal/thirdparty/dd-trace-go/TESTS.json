@@ -81,9 +81,9 @@
       "source": "internal/civisibility/utils/environmentTags_test.go",
       "destination": "internal/thirdparty/dd-trace-go/civisibility/utils/environmentTags_test.go",
       "source_sha256": "f7692324404a701d3146785da7a3006801da91a387fd9782f5938ab6326451bd",
-      "adapted_sha256": "4aede20fd390e0a15d120129393f3ba0812bcec841edda62d6c5bec5c306e778",
+      "adapted_sha256": "db823676797caa7b84be4849457b15cc1cbd8c464c8210767723c08eb43a0536",
       "kind": "full",
-      "adaptation": "Internal import relocation only; standard-library assertion helpers"
+      "adaptation": "Internal import relocation only; standard-library assertion helpers; the foreign-head enrichment fixture explicitly identifies its provider merge revision"
     },
     {
       "source": "internal/civisibility/utils/file_environmental_data_test.go",
@@ -369,9 +369,9 @@
       "source": "internal/civisibility/integrations/gotesting/coverage/lcov_report_test.go",
       "destination": "internal/thirdparty/dd-trace-go/civisibility/integrations/gotesting/coverage/lcov_report_test.go",
       "source_sha256": "c524a44acc49c08a288f387aa4157879369ac8798711f1e142d4c6a9f9495d33",
-      "adapted_sha256": "d2fd6849dafef3e95ab63fc8bd9492972b89b9aa70b641fcc29058569d330e8c",
+      "adapted_sha256": "cb1acde92895e02df194ebcba652a5fed1b1648f79586cda6e80c3e14090b713",
       "kind": "full",
-      "adaptation": "Internal import relocation only; adds TestWriteLCOVReportFromProfileUsesNestedModuleDirectory, TestWriteLCOVReportFromProfileKeepsDottedModuleDirectories, TestBackfillPrefersNestedModuleRepositoryPath and TestTestCoverageNamesTrimmedTestFileInRepository"
+      "adaptation": "Internal import relocation only; adds TestWriteLCOVReportFromProfileUsesNestedModuleDirectory, TestWriteLCOVReportFromProfileKeepsDottedModuleDirectories, TestBackfillPrefersNestedModuleRepositoryPath and TestTestCoverageNamesTrimmedTestFileInRepository; synthetic metadata selects the fixture checkout root explicitly; source and coverage assertions are preserved; repository-relative LCOV case uses a distinct outer CI workspace to verify checkout-root precedence"
     },
     {
       "source": "internal/civisibility/integrations/gotesting/coverage/process_coverage_test.go",
@@ -489,9 +489,9 @@
       "source": "internal/civisibility/integrations/manual_api_sourcepath_test.go",
       "destination": "internal/thirdparty/dd-trace-go/civisibility/integrations/manual_api_sourcepath_test.go",
       "source_sha256": "51f8df98c5891dd6c6ef4e64525e5aba3da0f5017d876737185ffb9a4902b1b7",
-      "adapted_sha256": "75e43e0f5b5f9b06db7f650c87f5ff0426883bd6439757086034980ddd6301ec",
+      "adapted_sha256": "cc6c0ac5df2ee7c60c056e0e9f7358e0d351be69e9e2cfbd0989342ba2cfc2c9",
       "kind": "full",
-      "adaptation": "Runtime self-path, repository URL and the module's ddto directory in that repository are relocated; source parsing and trimpath assertions remain intact; standard-library assertion helpers"
+      "adaptation": "Runtime self-path, repository URL and the module's ddto directory in that repository are relocated; source parsing and trimpath assertions remain intact; standard-library assertion helpers; synthetic metadata selects the fixture checkout root explicitly; source and coverage assertions are preserved; package-relative repository discovery accounts for the port nested under ddto/internal/thirdparty"
     },
     {
       "source": "internal/civisibility/integrations/gotesting/instrumentation_selector_test.go",

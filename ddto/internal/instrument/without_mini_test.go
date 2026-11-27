@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -194,8 +195,20 @@ func TestInstrumentedTestingWithoutMiniRunsNatively(t *testing.T) {
 	if !hook.Match(symbols) || regexp.MustCompile(`(?m)^\s*[0-9a-f]+ [Tt] github.com/DataDog/ddtest/`).Match(symbols) {
 		t.Fatalf("the edited binary lacks the edits or links Mini:\n%s", regexp.MustCompile(`(?m)^.*DataDog/ddtest.*$`).FindAll(symbols, -1))
 	}
-	normalize := regexp.MustCompile(`\(\d+\.\d+s\)|\s+\d+\s+\d+(\.\d+)? ns/op.*|\t\d+(\.\d+)?s\b`)
-	if nativeCode != 1 || instrumentedCode != nativeCode || normalize.ReplaceAllString(instrumented, "") != normalize.ReplaceAllString(native, "") {
+	timings := regexp.MustCompile(`\(\d+\.\d+s\)|\s+\d+\s+\d+(\.\d+)? ns/op.*|\t\d+(\.\d+)?s\b`)
+	// TestParallel/x and TestParallel/y resume and report in either order,
+	// even with -test.parallel=1: the testing package wakes both together and
+	// frees a subtest's slot before it reports. Each such run of lines is
+	// sorted, so both outputs must still hold the same lines.
+	parallelRuns := regexp.MustCompile(`(?m)(?:^=== CONT  TestParallel/.*\n)+|(?:^ +--- PASS: TestParallel/.*\n)+`)
+	normalize := func(output string) string {
+		return parallelRuns.ReplaceAllStringFunc(timings.ReplaceAllString(output, ""), func(run string) string {
+			lines := strings.SplitAfter(run, "\n")
+			slices.Sort(lines)
+			return strings.Join(lines, "")
+		})
+	}
+	if nativeCode != 1 || instrumentedCode != nativeCode || normalize(instrumented) != normalize(native) {
 		t.Fatalf("native exit %d:\n%s\nedited exit %d:\n%s", nativeCode, native, instrumentedCode, instrumented)
 	}
 }

@@ -125,9 +125,26 @@ func comparableSidePayloads(t *testing.T, receiver *parityReceiver) map[string][
 	}
 	return result
 }
-func assertSidePayloadParity(t *testing.T, want, got *parityReceiver) {
+func assertSidePayloadParity(t *testing.T, want, got *parityReceiver, checkoutRoot string) {
 	t.Helper()
 	a, b := comparableSidePayloads(t, want), comparableSidePayloads(t, got)
+	// Coverage reports carry the same checkout tags as CI events. Add only the
+	// fixture's expected root to the frozen SDK's decoded report metadata.
+	if checkoutRoot != "" {
+		for i, body := range a["coverage-report"] {
+			var report map[string]any
+			if err := json.Unmarshal([]byte(body), &report); err != nil {
+				t.Fatal(err)
+			}
+			report["event"].(map[string]any)["git.checkout.root"] = checkoutRoot
+			encoded, err := json.Marshal(report)
+			if err != nil {
+				t.Fatal(err)
+			}
+			a["coverage-report"][i] = string(encoded)
+		}
+		sort.Strings(a["coverage-report"])
+	}
 	if !reflect.DeepEqual(a, b) {
 		t.Fatalf("side payloads differ: SDK %v Mini %v", a, b)
 	}

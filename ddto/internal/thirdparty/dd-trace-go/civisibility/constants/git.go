@@ -6,6 +6,13 @@
 package constants
 
 const (
+	// GitCheckoutRoot is the root of the tested Git checkout.
+	GitCheckoutRoot = "git.checkout.root"
+	// GitCheckoutIsCustom is true when the checkout root differs from the CI workspace.
+	GitCheckoutIsCustom = "git.checkout.is_custom"
+	// CIGitMergeCommitSHA is a merge revision positively identified by the CI provider.
+	CIGitMergeCommitSHA = "ci.git.merge_commit_sha"
+
 	// GitBranch indicates the current git branch.
 	// This constant is used to tag traces with the branch name being used in the CI/CD process.
 	GitBranch = "git.branch"

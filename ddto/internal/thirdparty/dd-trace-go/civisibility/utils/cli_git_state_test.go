@@ -51,7 +51,9 @@ func TestCLIGitWorkerFetchesHeadOnlyAfterUse(t *testing.T) {
 	for _, c := range []struct {
 		head, want string
 	}{{first, ""}, {second, second}} {
-		getProviderTagsFunc = func() map[string]string { return map[string]string{constants.GitHeadCommit: c.head} }
+		getProviderTagsFunc = func() map[string]string {
+			return map[string]string{constants.GitHeadCommit: c.head, constants.CIGitMergeCommitSHA: second}
+		}
 		record := CollectCLIGitRecord()
 		if record.HeadCommit != c.want || (c.want != "" && record.Head.Sha != c.want) || record.HeadError != "" {
 			t.Fatalf("head %s: record %+v", c.head, record)
@@ -64,7 +66,9 @@ func TestCLIGitWorkerFetchesHeadOnlyAfterUse(t *testing.T) {
 		t.Fatal("the record fetched the missing head commit")
 	}
 
-	getProviderTagsFunc = func() map[string]string { return map[string]string{constants.GitHeadCommit: first} }
+	getProviderTagsFunc = func() map[string]string {
+		return map[string]string{constants.GitHeadCommit: first, constants.CIGitMergeCommitSHA: second}
+	}
 	t.Cleanup(ResetHandedCLIGitStateForTesting)
 	t.Cleanup(ResetCITags)
 	ResetHandedCLIGitStateForTesting()

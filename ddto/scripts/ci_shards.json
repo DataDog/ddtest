@@ -13,6 +13,7 @@
       "TestDecodeWirePayload",
       "TestDynamicToolSelection",
       "TestMiniBazelOfflineAndPayloadFiles",
+      "TestMiniBazelRetryDeadline",
       "TestBazelCompilerInstrumentsTheSDK",
       "TestMiniCLIActivation",
       "TestCLIGoTestIsTest",
@@ -43,6 +44,7 @@
       "TestMiniGitStateCacheWithTemporaryDirectoryInModule",
       "TestMiniGitStateDeferredWaitsForUpload",
       "TestMiniGitStateHandoff",
+      "TestMiniCheckoutIdentity",
       "TestMiniGitStateImpactedTests",
       "TestMiniGitStateStopsUploadCleanly",
       "TestMiniGitStateUploadsOnce",
@@ -205,6 +207,7 @@
   },
   "mini": {
     "native": [
+      "TestMiniCheckoutIdentity",
       "TestGoleakCacheAndAPIGuard",
       "TestMiniChdirSymlinkWithUserTool",
       "TestMiniConsumerAddsOnlyOwnModule",
@@ -263,7 +266,8 @@
       "TestMiniVendorSelectionMatchesGo",
       "TestMiniVendorTreeMatchesGo",
       "TestMiniVendorWorkspaceLinksAndReusesBuildCache",
-      "TestMiniDeclarationExclusions"
+      "TestMiniDeclarationExclusions",
+      "TestMiniBazelRetryDeadline"
     ],
     "fuzz": [
       "TestMiniFuzzExampleLifecycle",

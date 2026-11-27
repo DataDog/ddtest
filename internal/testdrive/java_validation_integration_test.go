@@ -271,10 +271,11 @@ class ExampleTest extends spock.lang.Specification {
 	// 1.67.1 and 1.68.0 fail each test of such a suite ("Could not find test
 	// suite with descriptor"), so the build reports other results with the
 	// agent: validation must not pass.
+	// Pin this scenario to 1.67.1 because 1.69.0 fixes the regression.
 	run("scalatest junit runner", func(t *testing.T) {
 		root := project(t, "scalatest", map[string]string{"pom.xml": pomWith("fixture", scala+`<dependency><groupId>org.scalatest</groupId><artifactId>scalatest_2.13</artifactId><version>3.2.19</version><scope>test</scope></dependency><dependency><groupId>org.scalatestplus</groupId><artifactId>junit-4-13_2.13</artifactId><version>3.2.19.0</version><scope>test</scope></dependency>`, "3.5.3", scalaPlugin), "src/main/java/example/Calc.java": calc,
 			"src/test/scala/example/CalcTest.scala": "package example\n\n@org.junit.runner.RunWith(classOf[org.scalatestplus.junit.JUnitRunner])\nclass CalcTest extends org.scalatest.funsuite.AnyFunSuite {\n  test(\"adds\") { assert(Calc.add(2, 2) == 4) }\n  test(\"existing failure\") { assert(Calc.add(2, 2) == 5, \"customer expected failure\") }\n  ignore(\"ignored\") {}\n}\n"})
-		output, err := testdrive(root, "--framework", "scalatest")
+		output, err := testdrive(root, "--framework", "scalatest", "--tracer-version", "1.67.1")
 		require.Error(t, err, output)
 		require.Contains(t, output, "Compatibility (this invocation): suspected regression")
 		require.False(t, read(t, root).Success)

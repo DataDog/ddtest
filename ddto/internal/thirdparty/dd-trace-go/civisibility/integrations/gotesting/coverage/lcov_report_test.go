@@ -113,7 +113,8 @@ func TestWriteLCOVReportFromProfileUsesRepositoryRelativePathsFromCITags(t *test
 
 	workspace := t.TempDir()
 	civisibilityutils.AddCITagsMap(map[string]string{
-		constants.CIWorkspacePath:  workspace,
+		constants.CIWorkspacePath:  filepath.Dir(workspace),
+		constants.GitCheckoutRoot:  workspace,
 		constants.GitRepositoryURL: "https://github.com/acme/project.git",
 	})
 
@@ -209,7 +210,7 @@ func TestWriteLCOVReportFromProfileUsesNestedModuleDirectory(t *testing.T) {
 	})
 
 	workspace := t.TempDir()
-	civisibilityutils.AddCITagsMap(map[string]string{constants.CIWorkspacePath: workspace})
+	civisibilityutils.AddCITagsMap(map[string]string{constants.CIWorkspacePath: workspace, constants.GitCheckoutRoot: workspace})
 	modulePath = "github.com/acme/project/services/api"
 	moduleDir = filepath.Join(workspace, "services", "api")
 	profilePath := writeLCOVTestProfile(t, `mode: count
@@ -303,7 +304,7 @@ func TestBackfillPrefersNestedModuleRepositoryPath(t *testing.T) {
 	})
 
 	workspace := t.TempDir()
-	civisibilityutils.AddCITagsMap(map[string]string{constants.CIWorkspacePath: workspace})
+	civisibilityutils.AddCITagsMap(map[string]string{constants.CIWorkspacePath: workspace, constants.GitCheckoutRoot: workspace})
 	modulePath = "example.com/api"
 	moduleDir = filepath.Join(workspace, "services", "api")
 	root, nested := filebitmap.FromActiveRange(3, 3), filebitmap.FromActiveRange(9, 9)
@@ -332,6 +333,7 @@ func TestTestCoverageNamesTrimmedTestFileInRepository(t *testing.T) {
 	workspace := t.TempDir()
 	civisibilityutils.AddCITagsMap(map[string]string{
 		constants.CIWorkspacePath:  workspace,
+		constants.GitCheckoutRoot:  workspace,
 		constants.GitRepositoryURL: "https://github.com/acme/project.git",
 	})
 	for path, want := range map[string]string{
