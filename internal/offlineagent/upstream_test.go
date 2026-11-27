@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -223,6 +224,9 @@ func TestAnUpstreamThatDoesntAnswer(t *testing.T) {
 }
 
 func TestAnUpstreamOnAUnixSocket(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix domain socket URLs aren't checked on Windows")
+	}
 	dir, err := os.MkdirTemp(socketTempParent(), "ddtest-upstream-")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })

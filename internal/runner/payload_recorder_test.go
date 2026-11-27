@@ -80,6 +80,9 @@ func TestRunRecordsTheWorkersPayloadsWhenAsked(t *testing.T) {
 }
 
 func TestRunRecordsOverAUnixSocketWhenAsked(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix domain socket URLs aren't checked on Windows")
+	}
 	assertRunRecordsOverAUnixSocket(t, "unix", false)
 }
 

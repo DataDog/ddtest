@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/DataDog/ddtest/internal/git"
@@ -41,6 +42,9 @@ func TestOfflineAgentServesUntilCancelled(t *testing.T) {
 }
 
 func TestOfflineAgentServesOnAUnixSocket(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix domain socket URLs aren't checked on Windows")
+	}
 	// Not t.TempDir(): a socket's path is limited to about 104 bytes on macOS.
 	dir, err := os.MkdirTemp(socketTempParent(), "ddtest-")
 	require.NoError(t, err)
