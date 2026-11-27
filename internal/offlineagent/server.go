@@ -18,13 +18,18 @@ type Server struct {
 	err     error
 }
 
-// Serve starts serving the agent on listener.
-func Serve(listener net.Listener, config Config) *Server {
+// Serve starts serving the agent on listener, and on each of more, such as
+// the same port on another loopback address; URL and Done are listener's.
+func Serve(listener net.Listener, config Config, more ...net.Listener) *Server {
 	s := &Server{
 		server:  &http.Server{Handler: NewHandler(config), ReadHeaderTimeout: 10 * time.Second},
 		network: listener.Addr().Network(),
 		address: listener.Addr().String(),
 		done:    make(chan struct{}),
+	}
+	for _, l := range more {
+		// Stop closes them with listener's; their Serve ends then.
+		go func() { _ = s.server.Serve(l) }()
 	}
 	go func() {
 		s.err = s.server.Serve(listener)

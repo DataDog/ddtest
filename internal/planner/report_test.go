@@ -584,6 +584,7 @@ func TestPrintDDTestSettingsReport_AllSupportedSettings(t *testing.T) {
 	config.ReportEnabled = false
 	config.RecordPayloads = "/tmp/payloads"
 	config.PayloadsTransport = settings.PayloadsTransportUnix
+	config.RecordPayloadsUpstream = "http://localhost:8126"
 
 	var output strings.Builder
 	printDDTestSettingsReport(&output, &config)
@@ -625,6 +626,7 @@ func TestPrintDDTestSettingsReport_AllSupportedSettings(t *testing.T) {
 		"Report enabled",
 		"Record payloads",
 		"Record payloads transport",
+		"Record payloads upstream",
 	}
 	if !reflect.DeepEqual(names, expectedNames) {
 		t.Fatalf("unexpected changed setting names:\ngot:  %v\nwant: %v", names, expectedNames)
