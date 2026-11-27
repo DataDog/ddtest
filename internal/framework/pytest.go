@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/DataDog/ddtest/internal/constants"
 	"github.com/DataDog/ddtest/internal/discovery"
 	"github.com/DataDog/ddtest/internal/ext"
 	"github.com/DataDog/ddtest/internal/settings"
@@ -179,13 +180,22 @@ func (p *PyTest) HasUnskippableMarker(testFile string) bool {
 
 func (p *PyTest) RunTests(ctx context.Context, testFiles []string, envMap map[string]string) error {
 	command, args := p.Command()
-	slog.Info("Running tests with command", "command", command, "args", args)
-	args = withFrameworkFiles(command, args, "pytest", testFiles)
-
 	mergedEnv, err := p.platform.RunEnv(RuntimeOptions{Env: envMap})
 	if err != nil {
 		return err
 	}
+	if envMap[constants.TestRunPartialEnvVar] == "true" && !ignoresPythonEnvironment(command, args) {
+		// syrupy fails the session on unused snapshots, which only a run of
+		// the whole suite can judge: the plugin makes it warn instead.
+		cleanup, err := loadSyrupyPartialPlugin(mergedEnv)
+		if err != nil {
+			return err
+		}
+		defer cleanup()
+	}
+	slog.Info("Running tests with command", "command", command, "args", args)
+	args = withFrameworkFiles(command, args, "pytest", testFiles)
+
 	err = p.executor.Run(ctx, command, args, mergedEnv)
 	skippingPlatform, ok := p.platform.(interface {
 		TestSkippingLevel() settings.TestSkippingLevel

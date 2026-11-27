@@ -29,7 +29,7 @@ func (e testExecutor) runSequential() runExecutionResult {
 		return report.success()
 	}
 
-	if err := e.runBatch(testFiles, 0, 0); err != nil {
+	if err := e.runBatch(testFiles, 0, 0, false); err != nil {
 		return report.failure(errcode.WithCode(errcode.RunSequentialTestsFailed, fmt.Errorf("failed to run tests: %w", err)))
 	}
 	return report.success()

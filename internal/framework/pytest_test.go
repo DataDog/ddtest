@@ -9,8 +9,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
+	"github.com/DataDog/ddtest/internal/constants"
 	"github.com/DataDog/ddtest/internal/discovery"
 	"github.com/DataDog/ddtest/internal/settings"
 	"github.com/DataDog/ddtest/internal/testoptimization"
@@ -503,5 +505,71 @@ func TestIsUnderExcludedDir(t *testing.T) {
 				t.Fatalf("isUnderExcludedDir(%q) = %v, want %v", tt.file, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestPyTest_RunTests_LoadsTheSyrupyPluginInPartialRuns(t *testing.T) {
+	for _, partial := range []bool{true, false} {
+		t.Setenv("PYTEST_PLUGINS", "user_plugin")
+		var plugins, pythonPath string
+		var pluginExisted bool
+		executor := &mockCommandExecutor{}
+		executor.onExecution = func(string, []string) {
+			plugins, pythonPath = executor.capturedEnvMap["PYTEST_PLUGINS"], executor.capturedEnvMap["PYTHONPATH"]
+			dir, _, _ := strings.Cut(pythonPath, string(os.PathListSeparator))
+			_, err := os.Stat(filepath.Join(dir, syrupyPartialModule+".py"))
+			pluginExisted = err == nil
+		}
+		pytest := &PyTest{executor: executor, platform: &testPlatform{}}
+		env := map[string]string{}
+		if partial {
+			env[constants.TestRunPartialEnvVar] = "true"
+		}
+		if err := pytest.RunTests(context.Background(), []string{"tests/test_a.py"}, env); err != nil {
+			t.Fatalf("RunTests failed: %v", err)
+		}
+		if !partial {
+			if plugins != "" {
+				t.Errorf("whole-suite run: PYTEST_PLUGINS = %q, want it left alone", plugins)
+			}
+			continue
+		}
+		if plugins != syrupyPartialModule+",user_plugin" {
+			t.Errorf("PYTEST_PLUGINS = %q, want the plugin before the user's", plugins)
+		}
+		if !pluginExisted {
+			t.Errorf("the plugin wasn't on PYTHONPATH %q during the run", pythonPath)
+		}
+		dir, _, _ := strings.Cut(pythonPath, string(os.PathListSeparator))
+		if _, err := os.Stat(dir); !os.IsNotExist(err) {
+			t.Errorf("the plugin's directory %s outlived the run", dir)
+		}
+	}
+}
+
+func TestIgnoresPythonEnvironment(t *testing.T) {
+	for _, tt := range []struct {
+		command string
+		args    []string
+		want    bool
+	}{
+		{"python", []string{"-I", "-m", "pytest"}, true},
+		{"/venv/bin/python3", []string{"-bE", "-m", "pytest"}, true},
+		{"python", []string{"-m", "pytest", "-I"}, false},
+		{"python", []string{"-X", "importtime", "-m", "pytest"}, false},
+		{"python", []string{"-W", "error", "-m", "pytest"}, false},
+		{"python", []string{"-W", "error", "-I", "-m", "pytest"}, true},
+		{"python", []string{"-Xdev", "-E", "-m", "pytest"}, true},
+		{"python", []string{"-X", "IE", "-m", "pytest"}, false},
+		{"python", []string{"--check-hash-based-pycs", "always", "-I", "-m", "pytest"}, true},
+		{"python", []string{"-craise SystemExit(pytest.main())"}, false},
+		{"python", []string{"-mpytest", "-I"}, false},
+		{"python", []string{"-sI", "-m", "pytest"}, true},
+		{"pytest", []string{"-I"}, false},
+		{"python", []string{"-m", "pytest"}, false},
+	} {
+		if got := ignoresPythonEnvironment(tt.command, tt.args); got != tt.want {
+			t.Errorf("ignoresPythonEnvironment(%q, %q) = %v, want %v", tt.command, tt.args, got, tt.want)
+		}
 	}
 }

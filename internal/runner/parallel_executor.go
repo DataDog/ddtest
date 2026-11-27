@@ -43,8 +43,9 @@ func (e testExecutor) runParallel() runExecutionResult {
 			continue
 		}
 
+		partial := otherRunnersHaveTests(entry.Name())
 		g.Go(func() error {
-			return e.runBatch(testFiles, 0, workerIndex)
+			return e.runBatch(testFiles, 0, workerIndex, partial)
 		})
 	}
 

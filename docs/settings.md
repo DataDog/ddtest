@@ -105,6 +105,19 @@ during full test collection, which runs before distribution. Add `__init__.py`
 packages, rename the files, or configure pytest's `--import-mode=importlib` to
 resolve collisions that runner distribution cannot avoid.
 
+When a worker runs part of the suite's files, because the plan gives tests to
+other CI nodes, parallel runners or a CI node's other workers, DDTest loads a
+small pytest plugin through `PYTEST_PLUGINS` that makes syrupy warn about
+unused snapshots, as `--snapshot-warn-unused` does: syrupy fails the session
+on unused snapshots, which only a run of the whole suite can judge, and it can
+take the snapshots of the tests other workers run for unused. The plugin sets
+syrupy's option inside pytest, so it does nothing when syrupy isn't installed
+or is turned off, and it leaves `--snapshot-update` alone. DDTest doesn't load it
+when the command runs Python with `-I` or `-E`, which ignore `PYTHONPATH`; a
+wrapper that removes `PYTHONPATH` but keeps `PYTEST_PLUGINS` makes pytest fail
+to import it. A worker that runs
+the whole suite still fails on unused snapshots.
+
 ## Testdrive-only configuration check
 
 See [testdrive configuration checks](running.md#testdrive-configuration-checks) for command flags, result fields and limitations.
